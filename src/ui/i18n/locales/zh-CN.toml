@@ -1,0 +1,1310 @@
+[settings.pages.appearance]
+title = "外观"
+description = "配置终端界面与共享应用外壳的字体、布局和主题偏好。"
+
+[settings.pages.connections]
+title = "连接"
+description = "控制 Hosts 页面和连接历史记录的行为。"
+
+[settings.pages.key_bindings]
+title = "快捷键"
+description = "自定义工作区导航和终端操作的快捷键。点击修改后按下组合键（需要 Ctrl 或 Alt）。"
+
+[settings.pages.sync]
+title = "同步"
+description = "通过 GitHub Gist 或 WebDAV 在设备之间同步会话、脚本片段、托管密钥，以及不含外观项的设置，例如快捷键和连接偏好。密码与私钥会在上传前使用你的口令加密。"
+
+[settings.pages.vault]
+title = "本地保险库"
+description = "管理仅用于本机敏感信息的设备级保险库，包括已保存的密码、同步凭据和托管私钥；URL、用户名等普通同步设置不会存放在这里。"
+
+[settings.pages.about]
+title = "关于"
+description = "此设置页的项目背景与外部参考链接。"
+
+[settings.appearance.language_group]
+title = "语言"
+description = "选择整个应用界面使用的语言。"
+
+[settings.appearance.language]
+label = "界面语言"
+description = "随着更多页面完成迁移，设置导航、页面标题、通知和状态文本都会跟随这里切换。"
+
+[settings.appearance.typography_group]
+title = "排版"
+description = "这些值同时驱动 gpui-component 控件和终端度量。"
+
+[settings.appearance.font_family]
+label = "字体族"
+description = "为空或不可用时回退到 {font}。"
+
+[settings.appearance.font_fallbacks]
+label = "CJK 回退字体"
+description = "用逗号分隔 CJK 字符的回退字体列表。留空时只使用系统默认回退。"
+
+[settings.appearance.font_size]
+label = "字号"
+description = "调整共享等宽字体大小，范围 {min} 到 {max}。"
+
+[settings.appearance.line_height]
+label = "行高"
+description = "调整终端行高，范围 {min} 到 {max}。"
+
+[settings.appearance.theme_group]
+title = "主题"
+description = "Material 3 主题设置会同时影响应用外壳、组件和终端颜色。"
+
+[settings.appearance.dark_mode]
+label = "深色模式"
+description = "在浅色和深色 Material 3 配色之间切换应用。"
+
+[settings.appearance.seed_color]
+label = "种子色"
+description = "使用 gpui-component 颜色选择器驱动应用外壳、终端背景和 ANSI 颜色。"
+
+[settings.appearance.swatches]
+seed = "种子"
+primary = "主色"
+secondary = "次色"
+tertiary = "第三色"
+
+[settings.connections.recent_group]
+title = "最近连接"
+description = "控制 Hosts 页面顶部显示多少最近连接过的主机。"
+
+[settings.connections.recent_count]
+label = "最近数量"
+description = "设为 0 可隐藏该分区。最大值为 {max}。"
+
+[settings.connections.monitor_group]
+title = "会话监控"
+description = "控制终端会话在 SSH 连接就绪后，是否立即开始采集远端 CPU、内存、SWAP、网络和负载指标。"
+
+[settings.connections.auto_collect_monitoring]
+label = "连接后自动采集监控数据"
+description = "关闭后，终端底部监控抽屉仍可展开，但会显示当前未开启自动采集。"
+
+[settings.connections.monitor_history]
+label = "图表历史窗口"
+description = "监控图表显示多长时间内的数据。窗口越长，内存占用越多。"
+
+[settings.connections.tabs_group]
+title = "标签页"
+description = "选择关闭顶部栏最后一个标签页时应用应执行的行为。"
+
+[settings.connections.last_tab_close_behavior]
+label = "关闭最后一个标签页时"
+description = "可以直接退出应用，或者自动打开一个新的 Hosts 主页标签页。"
+
+[settings.connections.import_group]
+title = "导入配置"
+description = "从其他客户端导入 SSH 配置。像 RDP 这样的不支持协议会被自动识别并跳过。"
+
+[settings.connections.import_source]
+label = "来源格式"
+description = "选择与待导入文件相匹配的客户端格式。"
+
+[settings.connections.import_action]
+label = "导入"
+action = "选择文件并导入"
+description = "将所选文件里所有支持的 SSH 配置作为新的副本导入，不会覆盖现有条目。"
+
+[settings.connections.import_sources]
+openssh = "OpenSSH 配置"
+putty = "PuTTY .reg"
+securecrt = "SecureCRT .xml"
+finalshell = "FinalShell .json"
+
+[settings.connections.import_messages]
+dialog_title = "选择 {source} 文件"
+success_title = "配置已导入"
+partial_success_title = "配置已导入，但有警告"
+imported = "已从 {source} 导入 {imported} 个新配置。"
+imported_with_warnings = "已从 {source} 导入 {imported} 个新配置，并产生 {warnings} 条警告。"
+no_profiles = "所选 {source} 文件中没有可导入的 SSH 配置。"
+failed = "导入 {source} 配置失败：{error}"
+file_type_mismatch = "所选文件与当前选择的 {source} 格式不匹配。"
+
+[settings.about.overview]
+title = "概览"
+version = "版本 {version}"
+description = "一个基于 GPUI 的桌面外壳，面向 SSH、SFTP 和终端会话，并采用 Material 3 驱动的组件主题。"
+
+[settings.about.onboarding]
+title = "引导"
+label = "首次启动引导"
+action = "显示引导"
+description = "重新打开首次启动欢迎页，以便导入配置或调整基础偏好。"
+
+[settings.about.reset_local]
+title = "清除本地数据"
+label = "重置这台设备"
+action = "清除本地数据"
+description = "删除这台设备上的本地设置、已保存主机、脚本片段、known hosts、同步配置、keyring 中的凭据，以及可能存在的本地保险库文件。"
+
+[settings.about.reset_local.confirm]
+title = "要清除这台设备上的全部本地数据吗？"
+message = "这会删除本地设置、已保存连接、known hosts、脚本片段、同步配置、keyring 中的凭据，以及可能存在的本地保险库文件。远端 GitHub Gist 或 WebDAV 数据不会被删除。"
+confirm = "继续"
+
+[settings.about.reset_local.popup]
+title = "输入 RESET 以确认"
+description = "此操作会永久清空这台设备上的本地状态，并让应用回到首次启动引导。"
+field_label = "确认文本"
+placeholder = "输入 RESET"
+confirm = "全部清除"
+
+[settings.about.reset_local.validation]
+required = "请输入 RESET 以确认清除本地数据。"
+mismatch = "确认文本必须为 RESET。"
+
+[settings.about.reset_local.notifications.success]
+title = "本地数据已清除"
+message = "这台设备上的本地设置、凭据和保险库数据已被清除，Miaominal 已回到首次启动引导。"
+
+[settings.about.reset_local.notifications.failed]
+title = "清除本地数据失败"
+message = "无法清除本地数据：{error}"
+
+[settings.about.reset_local.notifications.window_unavailable]
+message = "本地数据已经清除，但当前窗口无法自动重建。"
+
+[onboarding.hero]
+title = "欢迎使用 Miaominal"
+
+[onboarding.welcome]
+
+[onboarding.import]
+title = "导入已有配置"
+
+[onboarding.quick_start]
+
+[onboarding.preferences]
+title = "先调好基础项"
+
+[onboarding.finish]
+title = "一切就绪！"
+congratulations_description = "基础设置已完成，开始你的终端之旅吧。"
+
+[onboarding.steps]
+welcome = "欢迎"
+preferences = "偏好"
+import = "导入"
+finish = "完成"
+
+[settings.key_bindings.workspace_group]
+title = "工作区"
+description = "这些快捷键在整个 shell 内都可用，包括终端、侧边栏和设置页。"
+
+[settings.key_bindings.terminal_group]
+title = "终端"
+description = "这些快捷键会在输入到达终端之前被拦截。"
+
+[settings.key_bindings.mouse_group]
+title = "鼠标"
+description = "选择本地终端鼠标处理启用时，右键应执行的动作。"
+
+[settings.key_bindings.right_click]
+label = "右键"
+description = "上下文菜单会保留 pane 操作。Copy/Paste 会复制当前选区；如果没有选区，则粘贴剪贴板。"
+
+[settings.key_bindings.shift_right_click]
+label = "Shift + 右键菜单"
+description = "启用后，即使普通右键被设置为 Copy/Paste，按住 Shift 再右键也会强制打开终端 pane 上下文菜单。"
+
+[settings.key_bindings]
+context_menu_option = "上下文菜单"
+copy_paste_option = "复制/粘贴"
+
+[settings.key_bindings.capture]
+press_combo = "按下快捷键组合…"
+esc_to_cancel = "按 Esc 取消"
+
+[settings.key_bindings.capture.modifier]
+ctrl = "CTRL + "
+alt = "ALT + "
+shift = "SHIFT + "
+
+[settings.key_bindings.slots.next_tab]
+label = "下一个标签"
+description = "切换到顶部栏中下一个可见标签。"
+
+[settings.key_bindings.slots.close_tab]
+label = "关闭标签"
+description = "关闭当前顶部栏标签。"
+
+[settings.key_bindings.slots.reopen_tab]
+label = "重新打开标签"
+description = "恢复最近关闭的顶部栏标签。"
+
+[settings.key_bindings.slots.open_settings]
+label = "打开设置"
+description = "在侧边栏中打开 Settings 视图。"
+
+[settings.key_bindings.slots.copy]
+label = "复制选区"
+description = "将当前终端选区复制到剪贴板。"
+
+[settings.key_bindings.slots.paste]
+label = "粘贴"
+description = "把剪贴板文本粘贴到终端。"
+
+[settings.key_bindings.slots.search]
+label = "打开搜索"
+description = "打开终端回滚搜索栏。"
+
+[settings.key_bindings.slots.split_right]
+label = "向右分屏"
+description = "将当前 pane 向右拆分。"
+
+[settings.key_bindings.slots.split_down]
+label = "向下分屏"
+description = "将当前 pane 向下拆分。"
+
+[settings.key_bindings.slots.close_pane]
+label = "关闭 pane"
+description = "关闭当前终端 pane。"
+
+[settings.values]
+off = "关闭"
+on = "开启"
+
+[settings.sync.placeholders]
+github_token = "GitHub Personal Access Token"
+gist_id = "Gist ID 或 Gist URL"
+webdav_url = "https://example.com/dav/miaominal_sync.json"
+webdav_username = "用户名"
+webdav_password = "密码"
+passphrase = "加密口令"
+vault_passphrase = "本地保险库密码"
+vault_passphrase_confirmation = "再次输入本地保险库密码"
+
+[placeholders.saved]
+keep_existing = "（已保存，留空则保留）"
+
+[placeholders.host_editor]
+profile_name = "配置名称"
+new_group_name = "新分组名称"
+tags = "标签-a, 标签-b"
+host = "主机"
+username = "用户名"
+password = "密码"
+private_key_path = "私钥路径"
+managed_key_id = "搜索托管密钥"
+agent_identity = "Agent 标识"
+certificate_path = "OpenSSH 证书路径"
+key_passphrase = "密钥口令"
+startup_command = "可选的启动命令"
+environment_variable_name = "变量名"
+environment_variable_value = "值"
+
+[placeholders.keychain]
+managed_key_name = "托管密钥名称"
+import_private_key_path = "要导入的私钥路径"
+import_private_key_body = "在此粘贴 OpenSSH 私钥"
+import_public_key_body = "在此粘贴 OpenSSH 公钥"
+import_passphrase_optional = "导入口令（可选）"
+filter = "搜索托管密钥、ID 或 Agent 标识..."
+deploy_location = "远端目录路径"
+deploy_filename = "远端文件名"
+deploy_command = "可选部署命令模板"
+
+[placeholders.forward]
+rule_label = "规则标签"
+listen_host = "监听主机"
+listen_port = "监听端口"
+target_host = "目标主机"
+target_port = "目标端口"
+filter = "按标签搜索转发规则..."
+
+[placeholders.snippets]
+description_example = "示例：检查网络负载"
+new_package_name = "新包名"
+script_body = "在这里编写脚本..."
+filter = "搜索描述、包名或脚本..."
+
+[placeholders.hosts]
+filter = "搜索连接、分组..."
+
+[placeholders.sftp]
+local_path = "本地路径"
+remote_path = "远程路径"
+new_name = "新名称"
+
+[placeholders.workspace]
+tab_name = "标签名"
+search_scrollback = "搜索回滚内容"
+snippet_filter = "搜索脚本片段"
+
+[dialogs.profile_delete]
+untitled_profile = "未命名配置"
+title = "删除配置？"
+message = "要删除配置“{profile_name}”吗？这也会删除与之关联的已保存凭据。"
+cancel = "取消"
+confirm = "删除"
+
+[dialogs.managed_key_delete]
+untitled_key = "未命名密钥"
+title = "删除托管密钥？"
+message = "要删除托管密钥“{key_name}”吗？此操作会同时删除已保存的私钥。"
+cancel = "取消"
+confirm = "删除"
+
+[dialogs.known_host_delete]
+title = "删除已保存指纹？"
+message = "要删除 {host}:{port} 的已保存指纹吗？下次连接时需要再次验证。"
+cancel = "取消"
+confirm = "删除"
+
+[dialogs.snippet_delete]
+untitled_snippet = "未命名脚本片段"
+title = "删除脚本片段？"
+message = "要删除脚本片段“{description}”吗？此操作会将其从已保存的脚本片段中移除。"
+cancel = "取消"
+confirm = "删除"
+
+[dialogs.forwarding_rule_delete]
+title = "删除转发规则？"
+message = "要从“{profile}”删除转发规则“{rule}”吗？如果该规则当前处于活动状态，其隧道也会被断开。"
+cancel = "取消"
+confirm = "删除"
+
+[dialogs.common]
+cancel = "取消"
+submit = "提交"
+
+[prompts]
+authentication_challenge = "认证挑战"
+
+[status.workspace]
+moved_into_split = "已将 {title} 移入拆分窗格"
+moved_into_pane = "已将 {title} 移入窗格"
+
+[session.status]
+host_key_mismatch = "主机密钥不匹配，需要复核"
+verify_host_key = "请先验证主机密钥后继续"
+connection_closed_before_ready = "终端尚未就绪时连接已关闭。"
+test_succeeded = "测试成功：{connection}"
+forwarding_connected = "端口转发已连接：{connection}"
+connected = "已连接：{connection}"
+disconnected = "已断开"
+error = "错误"
+closed = "已关闭"
+
+[session.footer]
+connected = "已连接"
+offline = "离线"
+traffic = "上:{upload}  下:{download}"
+
+[session.workspace]
+connecting_forwarding_rule = "正在连接转发规则"
+connecting_to_host = "正在连接主机"
+forwarding_connection_failed = "转发连接失败"
+connection_failed = "连接失败"
+session_closed = "会话已关闭"
+reconnecting = "正在重连..."
+reconnect_attempt = "正在进行第 {attempt} 次重连，共 {max} 次"
+reconnect_action = "重连"
+hide_action = "隐藏"
+empty_tab_label = "（空）"
+click_to_focus = "点击以聚焦"
+
+[chrome.menu]
+rename_tab = "重命名标签页"
+duplicate_profile = "复制配置"
+open_sftp_tab = "打开 SFTP 标签页"
+close_other_tabs = "关闭其他标签页"
+close_tab = "关闭标签页"
+
+[workspace.menu]
+copy = "复制"
+paste = "粘贴"
+split_right = "向右拆分"
+split_down = "向下拆分"
+split_left = "向左拆分"
+split_up = "向上拆分"
+open_sftp_tab = "打开 SFTP 标签页"
+close_pane = "关闭窗格"
+
+[workspace.empty]
+open_ssh_tab_title = "打开一个 SSH 标签页"
+open_ssh_tab_body = "创建或连接一个主机以加载终端。"
+
+[workspace.panel.monitor]
+disabled_title = "监控尚未开启"
+disabled_body = "可在设置里开启“连接后自动采集监控数据”实现自动启动，或仅为当前会话手动开始一次采样。"
+start_now = "开始当前会话采集"
+loading = "正在采集远端指标..."
+cpu = "CPU"
+memory = "内存"
+swap = "SWAP"
+network = "网络"
+load = "负载"
+network_detail = "上 {upload}  下 {download}"
+axis_now = "现在"
+axis_seconds_ago = "-{seconds}秒"
+axis_minutes_ago = "-{minutes}分"
+axis_minutes_seconds_ago = "-{minutes}分{seconds}秒"
+
+[workspace.panel.snippets]
+empty = "还没有保存任何片段。"
+no_search_matches = "当前搜索下没有匹配的片段。"
+
+[session.notifications]
+connection_closed_title = "连接已关闭"
+connection_succeeded_title = "连接成功"
+test_connection_failed_title = "测试连接失败"
+port_forwarding_failed_title = "端口转发失败"
+session_error_title = "会话错误"
+connection_failed_title = "连接失败"
+
+[session.messages]
+testing_connection_to = "正在测试连接到 {profile}"
+opening_tab_for = "正在为 {profile} 打开标签页"
+open_sftp_requires_active_ssh = "打开 SFTP 标签页需要先有一个活动的 SSH 会话标签页。"
+no_tab_to_close = "没有可关闭的标签页"
+no_recently_closed_tab = "没有最近关闭的标签页"
+reopened_tab = "已重新打开标签页 {title}"
+closed_tab = "已关闭标签页 {title}"
+connection_succeeded_body = "{connection} 已成功连接。"
+test_connection_succeeded_for = "已完成 {connection} 的连接测试"
+test_connection_failed_for = "{profile} 的连接测试失败"
+port_forwarding_failed_for = "{title} 的端口转发失败：{error}"
+connection_test_closed_before_complete = "{title}：连接测试完成前连接已关闭。"
+finished_test_connection_for = "已完成 {title} 的连接测试"
+port_forwarding_disconnected_for = "{title} 的端口转发已断开"
+clipboard_osc52 = "终端已将文本复制到剪贴板（OSC 52）"
+closed_other_tabs = "已关闭其他标签页"
+source_profile_not_found_for_tab = "未找到此标签页对应的来源配置"
+opened_same_profile_tab = "已用相同配置再打开一个标签页"
+accepted_host_key_session_only = "本次会话已接受 {host} 的主机密钥"
+trusting_host_key = "已信任 {host} 的主机密钥"
+rejected_host_key = "已拒绝 {host} 的主机密钥"
+removed_host_key = "已移除 {host}:{port} 的主机密钥"
+no_host_key_entry = "{host}:{port} 没有主机密钥记录"
+remove_host_key_failed = "移除主机密钥失败：{error}"
+
+[session.terminal]
+forward_prefix = "[转发]"
+host_key_prefix = "[主机密钥]"
+closed_marker = "[会话已关闭]"
+reconnecting_marker = "[正在重连...]"
+reconnecting_attempt_marker = "[正在重连（第 {attempt} 次尝试）...]\r\n"
+error_line = "[错误] {error}\r\n"
+
+[session.terminal_messages]
+connection_starting = "连接仍在启动中"
+read_only_history = "终端历史当前为只读，重新连接后才能继续输入。"
+input_failed = "输入失败：{error}"
+no_selection_to_copy = "没有可复制的选区"
+copied_characters = "已复制 {count} 个字符"
+clipboard_empty = "剪贴板为空"
+paste_failed = "粘贴失败：{error}"
+pasted_characters = "已粘贴 {count} 个字符"
+failed_to_open_link = "打开 {uri} 失败：{error}"
+opened_link = "已打开 {uri}"
+nothing_to_paste = "没有可粘贴的内容"
+focus_report_failed = "焦点上报失败：{error}"
+mouse_report_failed = "鼠标上报失败：{error}"
+
+[sftp_browser.columns]
+name = "名称"
+size = "大小"
+type = "类型"
+modified = "修改时间"
+attributes = "属性"
+owner = "所有者"
+
+[sftp_browser.types]
+folder = "文件夹"
+directory = "目录"
+symlink = "符号链接"
+other = "其他"
+file = "文件"
+
+[sftp_browser.empty]
+local = "本地目录为空或无法读取。"
+remote = "远程目录为空，或尚未加载完成。"
+
+[sftp.menu]
+open = "打开"
+upload = "上传"
+go_up = "返回上级"
+refresh = "刷新"
+download = "下载"
+edit = "编辑"
+rename = "重命名"
+delete = "删除"
+create_directory = "新建目录"
+
+[sftp.prompts]
+cancel = "取消"
+skip_existing = "跳过已存在项"
+directory_name_placeholder = "目录名称"
+
+[sftp.prompts.create_remote_directory]
+title = "创建远程目录"
+confirm = "创建"
+
+[sftp.prompts.confirm_overwrite]
+title = "要覆盖现有文件吗？"
+confirm = "全部替换"
+single_message = "目标位置已存在 1 个文件。"
+multi_message = "目标位置已存在 {count} 个文件。"
+
+[sftp.prompts.confirm_delete]
+title = "要删除远程文件吗？"
+confirm = "删除"
+single_message = "\"{name}\" 将被永久删除。"
+multi_message = "{count} 个项目将被永久删除。"
+
+[sftp.ui]
+drop_to_upload = "拖放以上传"
+remote_path_label = "远程：{path}"
+progress_center = "进度中心"
+local_section = "本地"
+remote_section = "远程"
+
+[sftp.transfer_status]
+queued = "排队中"
+running = "进行中"
+paused = "已暂停"
+done = "已完成"
+cancelled = "已取消"
+failed = "失败 · {message}"
+
+[sftp.messages]
+opened_tab_for = "已为 {profile} 打开 SFTP 标签页"
+loaded_remote_items = "已加载 {count} 个远程项"
+
+[sftp.notifications]
+download_complete_title = "下载完成"
+download_complete_message = "已下载：{filename}"
+transfer_failed_title = "传输失败"
+
+[sftp.attributes]
+readonly = "只读"
+read_write = "可读写"
+
+[hosts.editor.environment_variables]
+section_title = "环境变量"
+name_label = "名称"
+value_label = "值"
+
+[hosts.menu]
+add_to_favorites = "加入收藏"
+remove_from_favorites = "移出收藏"
+duplicate_profile = "复制配置"
+delete_profile = "删除配置"
+
+[hosts.page]
+groups = "分组"
+recent_connections = "最近连接"
+favorites = "收藏"
+active_connections = "活动连接"
+
+[hosts.empty]
+no_profiles = "还没有主机配置。点击添加按钮创建第一个配置。"
+no_filter_matches = "当前筛选条件下没有匹配的主机。"
+
+[hosts.groups]
+fallback_icon = "分组"
+host_count_one = "{count} 个主机"
+host_count_other = "{count} 个主机"
+
+[hosts.messages]
+cleared_group_filter = "已清除分组筛选"
+filtering_by_group = "正在按分组 {group} 筛选主机"
+
+[trusted.page]
+port_badge = "端口 {port}"
+empty = "还没有受信任的主机。信任某台服务器后会保存在这里。"
+saved_fingerprints = "已保存的指纹"
+
+[trusted.prompt]
+mismatch_subtitle = "{host}:{port} 提供的密钥与之前信任的密钥不一致。这可能表示存在中间人攻击。"
+verify_subtitle = "首次连接到 {host}:{port}。请先与服务器管理员确认指纹，再决定是否信任。"
+
+[trusted.details]
+algorithm = "算法"
+fingerprint_sha256 = "指纹（SHA256）"
+previously_trusted = "此前已信任"
+
+[trusted.actions]
+reject = "拒绝"
+accept_once = "仅接受一次"
+trust_and_remember = "信任并记住"
+
+[hosts.editor.titles]
+add = "添加主机"
+edit = "编辑主机"
+
+[hosts.editor.sections]
+general = "常规"
+credentials = "凭据"
+advanced = "高级"
+
+[hosts.editor.auth_methods]
+password = "密码"
+managed_key = "托管密钥"
+ssh_agent = "SSH Agent"
+interactive = "交互式"
+
+[hosts.editor.shell_types]
+posix = "POSIX"
+fish = "Fish"
+powershell = "PowerShell"
+cmd = "CMD"
+
+[hosts.editor.fields]
+address = "地址"
+ssh_port = "SSH 端口"
+label = "标签"
+group = "分组"
+tags = "标签"
+backspace = "退格键"
+username = "用户名"
+identity_source = "身份来源"
+password = "密码"
+managed_key_id = "托管密钥"
+agent_identity = "Agent 标识"
+certificate = "证书"
+agent_forwarding = "Agent 转发"
+startup_command = "启动命令"
+host_chaining = "主机链"
+shell_type = "Shell 类型"
+character_set = "字符集"
+search_character_set = "搜索字符集"
+
+[hosts.editor.group]
+no_existing_groups = "没有现有分组"
+select_existing = "选择现有分组"
+
+[hosts.editor.proxy_jump]
+hop = "跳转 {index}"
+target = "目标"
+add_jump_host = "添加跳板主机"
+available_hosts = "可用主机"
+no_additional_saved_hosts = "没有更多可用的已保存主机"
+search_saved_hosts = "搜索已保存主机"
+
+[hosts.editor.values]
+default = "默认"
+
+[hosts.editor.buttons]
+test_connection = "测试连接"
+
+[errors.host_editor.environment_variables]
+missing_name = "环境变量 {index} 缺少名称。"
+invalid_name = "无效的环境变量名称：{name}"
+
+[keychain.source]
+generated = "已生成"
+imported = "已导入"
+
+[keychain.card]
+os_keyring_badge = "系统密钥环"
+no_comment = "无备注"
+available_through_ssh_agent = "可通过本地 SSH Agent 使用。"
+
+[keychain.page]
+managed_keys = "托管密钥"
+agent_identities = "Agent 标识"
+
+[keychain.empty]
+no_managed_keys_title = "还没有托管密钥"
+no_managed_keys_copy = "使用悬浮新增按钮打开侧边栏，然后生成或导入第一个托管密钥。"
+no_matching_managed_keys_title = "没有匹配的托管密钥"
+no_matching_managed_keys_copy = "调整搜索文本以扩大托管密钥结果。"
+no_agent_identities_title = "没有 SSH Agent 标识"
+no_agent_identities_copy = "启动 ssh-agent 或 Pageant，然后刷新此页以选择 Agent 提供的标识。"
+no_matching_agent_identities_title = "没有匹配的 Agent 标识"
+no_matching_agent_identities_copy = "调整搜索文本以扩大 Agent 标识结果。"
+
+[keychain.editor]
+title = "创建托管密钥"
+details = "密钥详情"
+os_keyring_ready = "系统密钥环就绪"
+storage_unavailable = "存储不可用"
+generate_ed25519 = "生成 Ed25519"
+key_name = "密钥名称"
+import_private_key_file = "导入私钥文件"
+select_private_key_to_import = "选择要导入的私钥"
+choose_private_key_file_copy = "使用系统原生文件选择器选择一个私钥文件。"
+or_paste_private_key = "或粘贴私钥"
+or_paste_public_key = "可选公钥"
+import_passphrase = "导入口令"
+
+[keychain.deploy]
+title = "部署托管密钥"
+badge = "部署"
+section = "部署配置"
+selected_key = "已选密钥"
+key_missing = "当前选中的托管密钥已不存在。"
+profile = "Profile"
+search_profiles = "搜索主机配置"
+no_profiles = "没有兼容的主机配置"
+no_profiles_copy = "请先保存一个类 Unix 的主机配置。这个部署流程会排除 KeyboardInteractive 和 PowerShell/Cmd 配置。"
+select_profile = "选择主机配置"
+location = "Location ($1)"
+filename = "Filename ($2)"
+command = "部署命令"
+command_copy = "命令会按 sh -lc <script> gpui-keychain-deploy <location> <filename> <public-key> 运行。可在脚本中使用 $1、$2、$3。"
+deploy_button = "部署密钥"
+
+[keychain.notifications]
+deploy_succeeded_title = "密钥已部署"
+deploy_failed_title = "密钥部署失败"
+
+[keychain.messages]
+managed_key_noun_one = "托管密钥"
+managed_key_noun_other = "托管密钥"
+agent_identity_noun_one = "Agent 标识"
+agent_identity_noun_other = "Agent 标识"
+preparing_new_managed_key = "正在准备新的托管密钥"
+closed_sidebar = "已关闭密钥链侧边栏"
+selected_import_file = "已选择导入文件 {path}"
+load_failed = "密钥链加载失败：{error}"
+loaded = "已加载 {managed_count} 个{managed_keys_label}和 {agent_count} 个{agent_identities_label}。"
+loaded_agent_scan_failed = "已加载 {managed_count} 个{managed_keys_label}，但扫描 Agent 失败：{error}"
+storage_unavailable = "当前环境无法使用托管密钥存储。"
+generation_failed = "密钥生成失败：{error}"
+generated = "已将 Ed25519 密钥对生成到编辑器中。请检查内容后再导入保存。"
+import_private_key_required = "请选择一个私钥文件，或粘贴私钥文本进行导入。"
+imported_key_default_name = "已导入的密钥"
+import_failed = "密钥导入失败：{error}"
+imported = "已导入托管密钥 {summary}"
+preparing_deploy = "正在为 {summary} 准备部署"
+deploy_started = "正在将 {summary} 部署到 {profile}"
+deploy_profile_required = "部署这个密钥前，请先选择一个兼容的主机配置。"
+deploy_location_required = "必须填写部署目录。"
+deploy_filename_required = "必须填写部署文件名。"
+deploy_profile_not_found = "找不到所选的部署主机配置。"
+deploy_profile_unsupported = "这个主机配置不支持密钥部署。请使用类 Unix 且不依赖 KeyboardInteractive 的配置。"
+deploy_public_key_missing = "这个托管密钥没有可部署的公钥内容。"
+deployed = "已将 {summary} 部署到 {profile}"
+deploy_failed = "将 {summary} 部署到 {profile} 失败：{error}"
+not_found = "找不到托管密钥。"
+removed_locally_save_failed = "已在本地移除密钥，但保存失败：{error}"
+removed_locally_session_save_failed = "已在本地移除密钥，但会话保存失败：{error}"
+removed = "已移除托管密钥 {summary}"
+
+[snippets.preview]
+empty = "还没有脚本预览"
+
+[snippets.package_card]
+fallback_icon = "包"
+count_one = "{count} 个片段"
+count_other = "{count} 个片段"
+
+[snippets.page]
+packages = "软件包"
+snippets = "脚本片段"
+
+[snippets.empty]
+no_snippets = "还没有脚本片段。点击新增按钮来创建第一个可复用脚本。"
+no_search_matches = "当前搜索下没有匹配的脚本片段。"
+no_package_matches = "所选软件包下没有匹配的脚本片段。"
+
+[snippets.editor]
+edit_title = "编辑脚本片段"
+create_title = "创建脚本片段"
+cancel = "取消"
+save = "保存脚本片段"
+general = "常规"
+description = "按软件包分组管理可复用的 shell 命令。"
+action_description = "动作描述"
+package = "软件包"
+no_existing_packages = "没有现有软件包"
+select_existing_package = "选择现有软件包"
+script = "脚本"
+
+[snippets.messages]
+preparing_new = "正在准备新的脚本片段"
+editing = "正在编辑脚本片段 {description}"
+closed_sidebar = "已关闭脚本片段侧边栏"
+filtering_by_package = "正在按软件包 {package} 筛选脚本片段"
+viewing_all = "正在查看全部脚本片段"
+saved = "已保存脚本片段 {description}"
+saved_memory_only = "已仅在内存中保存 {description}"
+save_failed = "保存失败：{message}"
+select_to_delete = "请先选择一个要删除的脚本片段。"
+already_removed = "脚本片段 {description} 已被删除。"
+deleted = "已删除脚本片段 {description}"
+deleted_save_failed = "已在本地删除 {description}，但保存失败：{error}"
+
+[errors.snippets.validation]
+action_description_required = "必须填写动作描述。"
+script_required = "必须填写脚本。"
+
+[notifications.validation]
+required_input_missing = "缺少必填输入"
+invalid_input = "输入无效"
+
+[navigation.section.hosts]
+title = "主机"
+subtitle = "已保存的机器和实时访问窗口。"
+
+[navigation.section.keychain]
+title = "密钥链"
+subtitle = "密码、密钥和口令短语存储。"
+
+[navigation.section.forwarding]
+title = "转发"
+subtitle = "反向与本地隧道路由。"
+
+[navigation.section.snippets]
+title = "脚本片段"
+subtitle = "可复用的命令和 shell 脚本配方。"
+
+[navigation.section.known_hosts]
+title = "信任"
+subtitle = "指纹与信任决策。"
+
+[navigation.section.settings]
+title = "设置"
+subtitle = "外观、字体和主题偏好。"
+
+[navigation.messages]
+opened_new_hosts_tab = "已打开新的主机标签页"
+viewing_section = "正在查看 {section}"
+editing_profile = "正在编辑 {name}"
+
+[tabs.initial]
+hosts_tab_title = "新标签页"
+session_connecting_to = "正在连接到 {connection}"
+port_forward_title = "转发 {kind} {listen_host}:{listen_port} -> {target_host}:{target_port}"
+port_forward_named_title = "转发 {label}"
+port_forward_connecting_to = "正在连接转发到 {profile}"
+connection_test_title = "测试 {profile}"
+connection_test_status = "正在测试 {profile}"
+sftp_connecting = "正在连接 SFTP"
+sftp_starting_worker = "正在启动 SFTP 工作线程"
+
+[search.messages]
+no_matches = "没有匹配项"
+invalid_search = "搜索无效：{error}"
+
+[errors.profile.validation]
+profile_name_required = "必须填写配置名称。"
+host_required = "必须填写主机。"
+username_required = "必须填写用户名。"
+invalid_port = "端口无效：{port}"
+password_requires_password = "密码认证需要提供密码。"
+managed_key_requires_id = "托管密钥认证需要提供托管密钥 ID。"
+ssh_agent_requires_identity = "SSH Agent 认证需要提供 Agent 标识。"
+certificate_requires_key_based_identity = "OpenSSH 证书需要基于密钥的身份。"
+
+[profile.messages]
+new_profile_created = "已创建新的主机配置。填写表单后点击保存。"
+select_profile_to_delete = "请选择一个要删除的主机配置。"
+already_removed = "主机配置 {name} 已被删除。"
+deleted_local_save_failed = "已在本地删除 {name}，但保存失败：{error}"
+deleted = "已删除主机配置 {name}"
+duplicate_name = "{name} 副本"
+duplicated_local_save_failed = "已在本地复制 {name}，但保存失败：{error}"
+duplicated_as = "已将主机配置复制为 {name}"
+starred_local_save_failed = "已在本地将 {name} 加星，但保存失败：{error}"
+unstarred_local_save_failed = "已在本地取消 {name} 的加星，但保存失败：{error}"
+added_to_favorites = "已将 {name} 加入收藏"
+removed_from_favorites = "已将 {name} 移出收藏"
+saved = "已保存主机配置 {name}"
+saved_memory_only = "已仅在内存中保存 {name}"
+save_failed = "保存失败：{message}"
+test_connection_failed = "测试连接失败：{message}"
+test_connection_failed_title = "测试连接失败"
+selected = "已选择 {name}"
+
+[forwarding.status]
+idle = "空闲"
+
+[forwarding.tile]
+online_sessions_one = "{count} 个在线"
+online_sessions_other = "{count} 个在线"
+drag_to_target_composer = "拖到投放区域即可将其设为编辑器目标。"
+
+[forwarding.tooltips]
+toggle_rule = "启用或禁用这条转发规则及其隧道"
+
+[forwarding.menu]
+connect = "连接"
+disconnect = "断开连接"
+edit = "编辑"
+duplicate = "复制"
+remove = "移除"
+
+[forwarding.actions]
+cancel = "取消"
+save_rule = "保存规则"
+create_rule = "创建规则"
+delete_rule = "删除规则"
+
+[forwarding.fields]
+host = "主机"
+port = "端口"
+label = "标签"
+mode = "模式"
+ssh_host_profile = "SSH 主机配置"
+
+[forwarding.editor]
+listen_locally = "本地监听"
+destination_behind_ssh_host = "SSH 主机后的目标地址"
+forward_connections_copy = "通过所选主机配置把这些连接转发到这个远端地址。"
+destination_on_this_machine = "本机上的目标地址"
+expose_on_ssh_host = "暴露到 SSH 主机上"
+ask_selected_host_copy = "让所选主机配置在这个远端地址和端口上监听。"
+search_host_profiles = "搜索主机配置"
+no_saved_host_profiles = "没有已保存的主机配置"
+select_host_profile = "选择主机配置"
+local = "本地"
+remote = "远端"
+rule_configuration = "规则配置"
+profile_switching_disabled = "编辑现有规则时无法切换主机配置。"
+edit_tunnel_rule = "编辑隧道规则"
+add_tunnel_rule = "添加隧道规则"
+
+[forwarding.page]
+forwarding_rules = "转发规则"
+
+[forwarding.empty]
+no_hosts_available = "还没有可用主机。先在 Hosts 中保存一个主机后才能创建隧道。"
+no_filter_matches = "当前筛选下没有匹配的转发规则。"
+no_host_profiles = "还没有主机配置。在添加隧道规则前先到 Hosts 保存一个。"
+no_rules = "还没有转发规则。可从侧边栏添加一条。"
+
+[forwarding.messages]
+rule_not_found = "找不到转发规则"
+already_removed = "{profile} 上的转发规则 {rule} 已被删除。"
+duplicate_label = "{label} 副本"
+duplicated = "已在 {profile} 上复制转发规则 {rule}{synced_suffix}"
+duplicated_memory_only = "已仅在内存中复制转发规则 {rule}{synced_suffix}：{error}"
+removed = "已从 {profile} 移除转发规则 {rule}{disconnect_suffix}{synced_suffix}"
+removed_memory_only = "已仅在内存中移除转发规则 {rule}{disconnect_suffix}{synced_suffix}：{error}"
+choose_profile_before_adding = "添加转发规则前请先选择一个主机配置"
+profile_not_found = "找不到用于端口转发的主机配置"
+creating_rule_for_profile = "正在为 {profile} 创建转发规则"
+fallback_tab_title = "转发 {profile_id}"
+already_connected = "这条转发规则已经连接"
+connecting = "正在连接转发规则 {rule}{synced_suffix}"
+not_connected = "这条转发规则尚未连接"
+disconnected = "已断开 {title}{synced_suffix}"
+create_host_profile_before_adding = "添加转发规则前请先创建一个主机配置"
+choose_host_profile_for_new_rule = "请为新转发规则选择一个主机配置"
+editing_rule = "正在编辑转发规则 {rule}"
+canceled_editing = "已取消编辑转发规则"
+canceled_new = "已取消新建转发规则"
+save_failed = "保存失败：{message}"
+rule_no_longer_exists = "转发规则已不存在"
+saved = "已在 {profile} 上保存转发规则 {rule}{synced_suffix}"
+saved_memory_only = "已仅在内存中保存转发规则 {rule}{synced_suffix}：{error}"
+added = "已将转发规则 {rule} 添加到 {profile}{synced_suffix}"
+added_memory_only = "已仅在内存中添加转发规则 {rule}{synced_suffix}：{error}"
+updated_memory_only = "已仅在内存中更新转发规则 {rule}{synced_suffix}：{error}"
+disabled = "已在 {profile} 上禁用转发规则 {rule}{stopped_suffix}{synced_suffix}"
+disabled_memory_only = "已仅在内存中禁用转发规则 {rule}{stopped_suffix}{synced_suffix}：{error}"
+disabled_plain = "已在 {profile} 上禁用转发规则 {rule}{synced_suffix}"
+synced_suffix_one = "，并已同步 {count} 个活动会话"
+synced_suffix_other = "，并已同步 {count} 个活动会话"
+closed_connection_suffix = "，并关闭其连接"
+stopped_tunnel_suffix = "，并停止其隧道"
+
+[errors.forwarding.validation]
+host_profile_required = "必须选择主机配置。"
+selected_host_profile_missing = "所选主机配置已不存在。"
+listen_host_required = "必须填写监听主机。"
+listen_port_required = "必须填写监听端口。"
+target_host_required = "必须填写目标主机。"
+target_port_required = "必须填写目标端口。"
+invalid_listen_port = "监听端口无效：{port}"
+invalid_target_port = "目标端口无效：{port}"
+
+[status.sftp]
+expand_local_failed = "展开 {path} 失败：{error}"
+expand_remote_failed = "SFTP 展开 {path} 失败：{error}"
+rename_requires_single_remote_entry = "重命名要求恰好选中一个远程项"
+
+[errors.sftp.validation]
+name_required = "名称不能为空"
+
+[errors.sftp.local_read]
+directory = "读取 {path} 失败"
+entry = "读取 {path} 中的一个条目失败"
+metadata = "读取 {path} 的元数据失败"
+
+[settings.sync]
+save_action = "保存"
+
+[settings.sync.provider_group]
+title = "同步提供方"
+description = "选择配置备份存储到哪里。选择 None 可禁用同步。"
+
+[settings.sync.gist.enabled]
+label = "GitHub Gist 同步"
+description = "通过 GitHub Gist 启用同步。需要设置加密密码。"
+
+[settings.sync.webdav.enabled]
+label = "WebDAV 同步"
+description = "通过 WebDAV 启用同步。需要设置加密密码。"
+
+[settings.sync.provider.backend]
+label = "后端"
+description = "选择同步后端。"
+
+[settings.sync.providers]
+none = "None"
+gist = "GitHub Gist"
+webdav = "WebDAV"
+
+[settings.sync.gist_group]
+title = "GitHub Gist"
+description = "你可以通过 Gist ID 绑定已有 secret Gist；如果留空，首次 push 时会自动创建一个新的 secret Gist。Token 需要具备 gist 权限。"
+
+[settings.sync.gist.token]
+label = "Personal Access Token"
+description = "不会以明文存储。默认保存在系统钥匙串中；启用本地保险库后会改存入保险库。"
+
+[settings.sync.gist.gist_id]
+label = "Gist ID"
+description = "粘贴已有 Gist 的 ID 或完整 Gist URL，把当前设备绑定到已有同步远端。"
+
+[settings.sync.webdav_group]
+title = "WebDAV"
+description = "可上传到任意 WebDAV 服务器（Nextcloud、Owncloud 等）。URL 应直接指向目标文件。"
+
+[settings.sync.webdav.url]
+label = "服务器 URL"
+description = "示例：https://cloud.example.com/remote.php/dav/files/user/miaominal_sync.json"
+
+[settings.sync.webdav.username]
+label = "用户名"
+description = "WebDAV 账户用户名。"
+
+[settings.sync.webdav.password]
+label = "密码"
+description = "不会以明文存储。默认保存在系统钥匙串中；启用本地保险库后会改存入保险库。"
+
+[settings.sync.encryption_group]
+title = "端到端加密"
+description = "密码和 SSH 私钥会使用由该口令派生的密钥（Argon2id）通过 AES-256-GCM 加密。留空可跳过密文上传。"
+
+[settings.sync.vault_group]
+title = "本地保险库"
+description = "用一套仅限当前设备的本地保险库保护已保存的密码、同步凭据和托管私钥；URL、用户名和同步开关等普通设置仍保存在常规配置中。"
+
+[settings.sync.vault.status]
+label = "保险库状态"
+description = "本地保险库可以保持锁定，直到你在当前应用会话中显式解锁。"
+
+[settings.sync.vault.state]
+disabled = "使用系统钥匙串"
+locked = "保险库已启用，当前已锁定"
+unlocked = "当前会话已解锁保险库"
+
+[settings.sync.vault.passphrase]
+label = "保险库密码"
+description = "使用一套仅限当前设备的密码，并与同步加密口令区分开。"
+unlocked_hint = "本地保险库在当前会话中已解锁。如需再次要求输入密码，请重新锁定。"
+
+[settings.sync.vault.confirm_passphrase]
+label = "确认保险库密码"
+
+[settings.sync.vault.auto_lock_duration]
+label = "自动锁定时间"
+description = "解锁成功后，本地保险库保持解锁状态的时长。"
+
+[settings.sync.vault.disable]
+label = "停用本地保险库"
+description = "把已保存的 secrets 迁回系统钥匙串，并在启动时停止使用本地保险库。"
+
+[settings.sync.vault.actions]
+enable = "启用保险库"
+unlock = "解锁保险库"
+lock = "立即锁定"
+disable = "改用系统钥匙串"
+change_passphrase = "更新保险库密码"
+
+[settings.sync.vault.passphrase_required_error]
+message = "启用或解锁保险库前，请先输入本地保险库密码。"
+
+[settings.sync.vault.passphrase_confirmation_required_error]
+message = "启用保险库前，请再次输入本地保险库密码进行确认。"
+
+[settings.sync.vault.passphrase_mismatch_error]
+message = "两次输入的本地保险库密码不一致。"
+
+[settings.sync.vault.disable_requires_unlock_error]
+message = "请先解锁本地保险库，再把已保存的 secrets 迁回系统钥匙串。"
+
+[settings.sync.vault.change_requires_unlock_error]
+message = "请先解锁本地保险库，再更新它的密码。"
+
+[settings.sync.vault.notifications]
+enabled_title = "本地保险库已启用"
+enabled_message = "已将保存的 secrets 迁移到本地保险库，并把后续写入从系统钥匙串切换出去。"
+unlocked_title = "本地保险库已解锁"
+unlocked_message = "本地 secrets 已可在当前应用会话中使用。"
+locked_title = "本地保险库已锁定"
+locked_message = "本地 secrets 已重新锁定，直到再次输入保险库密码。"
+disabled_title = "本地保险库已停用"
+disabled_message = "已将保存的 secrets 迁回系统钥匙串，并在启动时停止使用本地保险库。"
+passphrase_changed_title = "保险库密码已更新"
+passphrase_changed_message = "已使用新的本机保险库密码重新加密本地 vault。"
+failed_title = "本地保险库操作失败"
+failed_message = "{action}失败：{error}"
+
+[settings.sync.vault.dialogs.disable_confirm]
+title = "改用系统钥匙串？"
+message = "已保存的密码、同步凭据和托管私钥将迁移回当前设备的系统钥匙串，之后应用启动时将不再要求本地保险库。"
+confirm = "迁移机密并停用保险库"
+
+[settings.sync.vault.access_required_error]
+message = "请先在 设置 > 同步 中解锁本地保险库，再重试。"
+
+[settings.sync.encryption.passphrase]
+label = "加密口令"
+description = "默认存储在系统钥匙串中；启用本地保险库后会改存入保险库。所有设备必须使用相同口令。"
+configured_hint = "当前设备已配置同步加密口令。如需轮换共享密钥，可在这里更新。"
+unconfigured_hint = "启用同步提供方前必须先配置。所有设备都必须使用同一口令。"
+
+[settings.sync.encryption.passphrase.actions]
+set = "设置口令"
+update = "更新口令"
+clear = "清空口令"
+
+[settings.sync.encryption.passphrase.clear_confirm]
+title = "清除同步口令？"
+message = "这会移除当前设备上保存的同步加密口令。此设备下次使用加密同步前，需要重新输入该口令。"
+confirm = "清除口令"
+
+[settings.sync.encryption.passphrase.confirm_passphrase]
+label = "确认加密口令"
+
+[settings.sync.encryption.passphrase.required_error]
+message = "保存前请输入加密口令。"
+
+[settings.sync.encryption.passphrase.confirmation_required_error]
+message = "保存前请再次输入加密口令进行确认。"
+
+[settings.sync.encryption.passphrase.mismatch_error]
+message = "两次输入的加密口令不一致。"
+
+[settings.sync.encryption.passphrase.notifications]
+cleared_title = "同步加密口令已清空"
+cleared_message = "已清空当前设备上的同步加密口令。"
+clear_failed_title = "清空同步加密口令失败"
+clear_failed_message = "清空同步加密口令失败：{error}"
+
+[settings.sync.passphrase_required_error]
+message = "请先设置加密密码后再启用同步。"
+
+[settings.sync.save_feedback]
+saved_title = "同步设置已保存"
+saved_message = "已保存 {field}。"
+failed_title = "保存同步设置失败"
+failed_message = "保存 {field} 失败：{error}"
+
+[settings.sync.toggle_failed_error]
+title = "同步设置更新失败"
+message = "更新 {provider} 同步设置失败：{error}"
+
+[settings.sync.provider_required_error]
+title = "需要配置同步提供方"
+message = "请先选择并启用一个同步提供方，然后再执行立即同步。"
+
+[settings.sync.status_group]
+title = "状态"
+description = "可手动触发完整同步，或查看上次同步时间。"
+
+[settings.sync.status.last_synced]
+label = "上次同步"
+description = "最近一次成功 push 或 pull 的时间戳。"
+never = "从未"
+
+[settings.sync.status.state]
+label = "同步状态"
+description = "当前同步状态。"
+idle = "空闲"
+syncing = "同步中…"
+github_gist_binding_required = "GitHub Gist 尚未绑定。请先保存 Gist ID 再执行 pull，或者先 push 一次来创建新的 secret Gist。"
+remote_binding_required = "{provider} 尚未绑定远端资源。请先完成绑定再执行 pull。"
+pulled_at = "已拉取于 {time}"
+pushed_at = "已推送于 {time}"
+pull_required_at = "需要先拉取：远端已于 {time} 更新"
+up_to_date = "已是最新"
+error = "错误：{message}"
+
+[settings.sync.status.action]
+label = "立即同步"
+description = "手动选择将本地配置推送到远端，或从远端拉取配置。"
+
+[settings.sync.dialogs.common]
+cancel = "取消"
+
+[settings.sync.dialogs.direction]
+title = "选择同步方向"
+message = "你可以把当前本地配置推送到远端，也可以把远端配置拉取并应用到本地。"
+push = "推送到远端"
+pull = "从远端拉取"
+
+[settings.sync.dialogs.pull_confirm]
+title = "拉取远端配置？"
+message = "如果远端存在更新的同步数据，它将覆盖当前本地已同步的配置。"
+remote_newer_message = "远端同步数据比你尝试推送的本地状态更新。现在拉取会覆盖当前本地已同步的配置。"
+force_push = "推送本地状态并覆盖远端"
+confirm = "拉取并覆盖"
+
+[settings.sync.status.notifications]
+succeeded_title = "同步完成"
+failed_title = "同步失败"
+action_required_title = "同步需要处理"
+reload_failed_title = "同步已应用，刷新失败"
+reload_failed_message = "已从远端拉取数据，但部分内容未能重新加载至内存。请重启应用以查看最新状态。"
+
+[enum.theme]
+light = "浅色"
+dark = "深色"
+
+[enum.last_tab_close_behavior]
+exit_application = "关闭应用"
+open_new_home_tab = "打开新的主页标签页"
+
+[enum.monitor_history]
+one_minute = "1 分钟"
+five_minutes = "5 分钟"
+ten_minutes = "10 分钟"
+thirty_minutes = "30 分钟"
+
+[enum.local_vault_auto_lock]
+off = "不自动锁定"
+five_minutes = "5 分钟"
+fifteen_minutes = "15 分钟"
+one_hour = "1 小时"
+one_day = "1 天"
+
+[status]
+language_changed = "语言：{language}"
+font_set = "字体已设为 {font}"
+font_reset = "字体已重置为 {font}"
+font_size = "字号 {value}"
+line_height = "行高 {value}"
+invalid_seed_color = "无效的种子色，请使用 #RRGGBB。"
+theme_seed = "主题种子色：{value}"
+theme_seed_reset = "主题种子色已重置为 {value}"
+theme_changed = "主题：{theme}"
+recent_connections_hidden = "最近连接已隐藏"
+recent_connections_show_count = "最近连接：显示 {count} 项"
+key_binding_updated = "快捷键已更新：{name} -> {binding}"
+key_binding_reset = "快捷键已重置：{name} -> {binding}"
+right_click_context_menu = "终端右键将打开上下文菜单"
+right_click_copy_paste = "终端右键将复制选区或粘贴剪贴板"
+shift_right_click_enabled = "Shift+右键将打开终端上下文菜单"
+shift_right_click_disabled = "Shift+右键不再打开终端上下文菜单"
+auto_collect_session_monitoring_enabled = "会话监控将在连接后自动开始采集"
+auto_collect_session_monitoring_disabled = "会话监控自动采集已关闭"
+last_tab_close_behavior_exit = "关闭最后一个标签页时将退出应用"
+last_tab_close_behavior_open_home = "关闭最后一个标签页时将打开新的主页标签页"
+monitor_history_duration_changed = "监控历史窗口已更新"
+local_vault_auto_lock_duration_changed = "本地保险库自动锁定时间已更新"
+session_monitoring_started = "已开始当前会话的远端监控"
+session_monitoring_pending = "当前会话就绪后将开始远端监控"
+session_monitoring_start_failed = "启动远端监控失败：{error}"

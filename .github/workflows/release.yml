@@ -1,0 +1,241 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: Miaominal
+  BIN_NAME: miaominal
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  build_macos:
+    name: Build macOS ${{ matrix.arch_label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch_label: arm64
+            artifact_name: Miaominal-macos-arm64
+            dmg_name: Miaominal-macos-arm64.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle --locked
+
+      - name: Build macOS app bundle
+        run: cargo bundle --release --format osx
+
+      - name: Package DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          bash packaging/macos/build-dmg.sh \
+            "target/release/bundle/osx/${APP_NAME}.app" \
+            "dist/${{ matrix.dmg_name }}" \
+            "${APP_NAME}"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.dmg_name }}
+          if-no-files-found: error
+
+  build_linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            elfutils \
+            g++ \
+            gcc \
+            gettext-base \
+            git \
+            jq \
+            libasound2-dev \
+            libdbus-1-dev \
+            libfontconfig-dev \
+            libgit2-dev \
+            libglib2.0-dev \
+            libsecret-1-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libva-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libzstd-dev \
+            llvm \
+            lld \
+            make \
+            musl-dev \
+            musl-tools \
+            pipewire \
+            pkg-config \
+            xdg-desktop-portal
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle --locked
+
+      - name: Build Linux AppImage
+        run: cargo bundle --release --format appimage
+
+      - name: Normalize AppImage artifact
+        shell: pwsh
+        run: |
+          $appImage = Get-ChildItem -Path target/release/bundle -Filter *.AppImage -Recurse | Select-Object -First 1
+          if (-not $appImage) {
+            throw "AppImage output was not produced."
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $appImage.FullName dist/Miaominal-linux-x86_64.AppImage
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miaominal-linux-x86_64
+          path: dist/Miaominal-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  build_windows:
+    name: Build Windows portable and MSI
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install NASM
+        shell: pwsh
+        run: |
+          choco install nasm --yes --no-progress
+          $nasmPath = Join-Path $env:ProgramFiles 'NASM'
+          $env:PATH = "$nasmPath;$env:PATH"
+          $nasmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          nasm -v
+
+      - name: Read app version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$').Matches[0].Groups[1].Value
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows release binary
+        run: cargo build --release --locked
+
+      - name: Collect portable artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/miaominal.exe dist/Miaominal-windows-x64-portable.exe
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          ./packaging/windows/build-msi.ps1 -BinaryPath target/release/miaominal.exe -Version $env:APP_VERSION -OutputPath dist/Miaominal-windows-x64.msi
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miaominal-windows-x64
+          path: |
+            dist/Miaominal-windows-x64-portable.exe
+            dist/Miaominal-windows-x64.msi
+          if-no-files-found: error
+
+  checksums:
+    name: Generate release checksums
+    runs-on: ubuntu-24.04
+    needs:
+      - build_macos
+      - build_linux
+      - build_windows
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miaominal-checksums
+          path: release-assets/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs:
+      - checksums
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

@@ -1,0 +1,1310 @@
+[settings.pages.appearance]
+title = "Appearance"
+description = "Font, layout, and theme preferences for the terminal surface and shared UI chrome."
+
+[settings.pages.connections]
+title = "Connections"
+description = "Behavior settings for the Hosts page and connection history."
+
+[settings.pages.key_bindings]
+title = "Key Bindings"
+description = "Customize shortcuts for workspace navigation and terminal actions. Click Change, then press a key combo (requires Ctrl or Alt)."
+
+[settings.pages.sync]
+title = "Sync"
+description = "Sync your sessions, snippets, managed keys, and non-appearance settings such as shortcuts and connection preferences across devices via GitHub Gist or WebDAV. Passwords and private keys are encrypted with your passphrase before upload."
+
+[settings.pages.vault]
+title = "Local Vault"
+description = "Manage the device-only vault for locally stored secrets such as saved passwords, sync credentials, and managed private keys. Regular sync settings such as URLs and usernames are not stored there."
+
+[settings.pages.about]
+title = "About"
+description = "Project context and external references for this settings surface."
+
+[settings.appearance.language_group]
+title = "Language"
+description = "Choose the interface language used across the application."
+
+[settings.appearance.language]
+label = "App language"
+description = "Changes settings navigation, page titles, notifications, and status text as more screens are migrated."
+
+[settings.appearance.typography_group]
+title = "Typography"
+description = "These values drive both gpui-component controls and terminal metrics."
+
+[settings.appearance.font_family]
+label = "Font family"
+description = "Falls back to {font} when blank or unavailable."
+
+[settings.appearance.font_fallbacks]
+label = "CJK font fallbacks"
+description = "Comma-separated list of fallback fonts for CJK characters. Leave blank to use only system defaults."
+
+[settings.appearance.font_size]
+label = "Font size"
+description = "Adjust the shared monospace size between {min} and {max}."
+
+[settings.appearance.line_height]
+label = "Line height"
+description = "Tune terminal row height between {min} and {max}."
+
+[settings.appearance.theme_group]
+title = "Theme"
+description = "Material 3 theme settings shared by app chrome, components, and terminal colors."
+
+[settings.appearance.dark_mode]
+label = "Dark mode"
+description = "Switches the application between light and dark Material 3 palettes."
+
+[settings.appearance.seed_color]
+label = "Seed color"
+description = "Uses the gpui-component color picker to drive app chrome, terminal background, and ANSI colors."
+
+[settings.appearance.swatches]
+seed = "Seed"
+primary = "Primary"
+secondary = "Secondary"
+tertiary = "Tertiary"
+
+[settings.connections.recent_group]
+title = "Recent connections"
+description = "Controls how many recently connected hosts appear at the top of the Hosts page."
+
+[settings.connections.recent_count]
+label = "Recent count"
+description = "Set to 0 to hide the section. Maximum is {max}."
+
+[settings.connections.monitor_group]
+title = "Session monitoring"
+description = "Controls whether terminal sessions start collecting remote CPU, memory, swap, network, and load metrics as soon as the SSH connection becomes ready."
+
+[settings.connections.auto_collect_monitoring]
+label = "Collect monitoring data on connect"
+description = "When disabled, the terminal monitoring drawer stays visible but shows that automatic collection is turned off."
+
+[settings.connections.monitor_history]
+label = "Chart history window"
+description = "How far back the monitor charts scroll. Longer windows consume more memory."
+
+[settings.connections.tabs_group]
+title = "Tabs"
+description = "Choose what happens when closing the last remaining tab in the top bar."
+
+[settings.connections.last_tab_close_behavior]
+label = "When the last tab closes"
+description = "Either quit the application immediately or open a fresh Hosts home tab."
+
+[settings.connections.import_group]
+title = "Import profiles"
+description = "Import SSH profiles from other clients. Unsupported protocols such as RDP are detected and skipped automatically."
+
+[settings.connections.import_source]
+label = "Source format"
+description = "Choose the client format that matches the file you want to import."
+
+[settings.connections.import_action]
+label = "Import"
+action = "Choose file and import"
+description = "Imports every supported SSH profile in the selected file as a new copy without overwriting existing entries."
+
+[settings.connections.import_sources]
+openssh = "OpenSSH config"
+putty = "PuTTY .reg"
+securecrt = "SecureCRT .xml"
+finalshell = "FinalShell .json"
+
+[settings.connections.import_messages]
+dialog_title = "Select a {source} file"
+success_title = "Profiles imported"
+partial_success_title = "Profiles imported with warnings"
+imported = "Imported {imported} new profiles from {source}."
+imported_with_warnings = "Imported {imported} new profiles from {source} with {warnings} warnings."
+no_profiles = "No importable SSH profiles were found in the selected {source} file."
+failed = "Failed to import {source} profiles: {error}"
+file_type_mismatch = "The selected file does not match the chosen {source} format."
+
+[settings.about.overview]
+title = "Overview"
+version = "Version {version}"
+description = "A GPUI desktop shell for SSH, SFTP, and terminal sessions with a Material 3-driven component theme."
+
+[settings.about.onboarding]
+title = "Onboarding"
+label = "First-run onboarding"
+action = "Show onboarding"
+description = "Reopen the first-run welcome screen to import profiles or adjust basic preferences."
+
+[settings.about.reset_local]
+title = "Clear local data"
+label = "Reset this device"
+action = "Clear local data"
+description = "Delete local settings, saved hosts, snippets, known hosts, sync configuration, keyring-backed secrets, and any local vault file from this device."
+
+[settings.about.reset_local.confirm]
+title = "Clear all local data from this device?"
+message = "This removes local settings, saved connections, known hosts, snippets, sync configuration, keyring-backed secrets, and any local vault file. Remote GitHub Gist or WebDAV data is not deleted."
+confirm = "Continue"
+
+[settings.about.reset_local.popup]
+title = "Type RESET to confirm"
+description = "This permanently clears the local state for this device and returns the app to first-run onboarding."
+field_label = "Confirmation text"
+placeholder = "Type RESET"
+confirm = "Clear everything"
+
+[settings.about.reset_local.validation]
+required = "Type RESET to confirm clearing local data."
+mismatch = "The confirmation text must be RESET."
+
+[settings.about.reset_local.notifications.success]
+title = "Local data cleared"
+message = "Local settings, secrets, and vault data were cleared from this device. Miaominal has returned to first-run onboarding."
+
+[settings.about.reset_local.notifications.failed]
+title = "Failed to clear local data"
+message = "Could not clear local data: {error}"
+
+[settings.about.reset_local.notifications.window_unavailable]
+message = "Local data was cleared, but the window could not be rebuilt automatically."
+
+[onboarding.hero]
+title = "Welcome to Miaominal"
+
+[onboarding.welcome]
+
+[onboarding.import]
+title = "Import existing profiles"
+
+[onboarding.quick_start]
+
+[onboarding.preferences]
+title = "Tune the basics"
+
+[onboarding.finish]
+title = "Ready to go"
+congratulations_description = "Your basic setup is complete. Ready to start your terminal journey."
+
+[onboarding.steps]
+welcome = "Welcome"
+preferences = "Preferences"
+import = "Import"
+finish = "Finish"
+
+[settings.key_bindings.workspace_group]
+title = "Workspace"
+description = "These shortcuts work across the shell, including the terminal, sidebar, and settings pages."
+
+[settings.key_bindings.terminal_group]
+title = "Terminal"
+description = "These shortcuts are intercepted before input reaches the terminal."
+
+[settings.key_bindings.mouse_group]
+title = "Mouse"
+description = "Choose what terminal right click does when local terminal mouse handling is active."
+
+[settings.key_bindings.right_click]
+label = "Right click"
+description = "Context menu keeps pane actions. Copy/Paste copies the current selection, or pastes the clipboard when nothing is selected."
+
+[settings.key_bindings.shift_right_click]
+label = "Shift + Right click menu"
+description = "When enabled, Shift + right click forces the terminal pane context menu even if normal right click is set to Copy/Paste."
+
+[settings.key_bindings]
+context_menu_option = "Context menu"
+copy_paste_option = "Copy/Paste"
+
+[settings.key_bindings.capture]
+press_combo = "Press key combo…"
+esc_to_cancel = "Esc to cancel"
+
+[settings.key_bindings.capture.modifier]
+ctrl = "CTRL + "
+alt = "ALT + "
+shift = "SHIFT + "
+
+[settings.key_bindings.slots.next_tab]
+label = "Next tab"
+description = "Switch to the next visible top bar tab."
+
+[settings.key_bindings.slots.close_tab]
+label = "Close tab"
+description = "Close the current top bar tab."
+
+[settings.key_bindings.slots.reopen_tab]
+label = "Reopen tab"
+description = "Restore the most recently closed top bar tab."
+
+[settings.key_bindings.slots.open_settings]
+label = "Open settings"
+description = "Open the Settings view in the sidebar."
+
+[settings.key_bindings.slots.copy]
+label = "Copy selection"
+description = "Copy the current terminal selection to the clipboard."
+
+[settings.key_bindings.slots.paste]
+label = "Paste"
+description = "Paste clipboard text into the terminal."
+
+[settings.key_bindings.slots.search]
+label = "Open search"
+description = "Open the terminal scrollback search bar."
+
+[settings.key_bindings.slots.split_right]
+label = "Split right"
+description = "Split the active pane to the right."
+
+[settings.key_bindings.slots.split_down]
+label = "Split down"
+description = "Split the active pane downward."
+
+[settings.key_bindings.slots.close_pane]
+label = "Close pane"
+description = "Close the active terminal pane."
+
+[settings.values]
+off = "Off"
+on = "On"
+
+[settings.sync.placeholders]
+github_token = "GitHub Personal Access Token"
+gist_id = "Gist ID or Gist URL"
+webdav_url = "https://example.com/dav/miaominal_sync.json"
+webdav_username = "Username"
+webdav_password = "Password"
+passphrase = "Encryption passphrase"
+vault_passphrase = "Local vault passphrase"
+vault_passphrase_confirmation = "Confirm local vault passphrase"
+
+[placeholders.saved]
+keep_existing = "(saved — leave blank to keep)"
+
+[placeholders.host_editor]
+profile_name = "Profile name"
+new_group_name = "New group name"
+tags = "tag-a, tag-b"
+host = "Host"
+username = "Username"
+password = "Password"
+private_key_path = "Private key path"
+managed_key_id = "Search managed keys"
+agent_identity = "Agent identity"
+certificate_path = "OpenSSH certificate path"
+key_passphrase = "Key passphrase"
+startup_command = "Optional startup command"
+environment_variable_name = "VARIABLE_NAME"
+environment_variable_value = "value"
+
+[placeholders.keychain]
+managed_key_name = "Managed key name"
+import_private_key_path = "Private key path to import"
+import_private_key_body = "Paste an OpenSSH private key here"
+import_public_key_body = "Paste an OpenSSH public key here"
+import_passphrase_optional = "Import passphrase (optional)"
+filter = "Search managed keys, ids, or agent identities..."
+deploy_location = "Remote folder path"
+deploy_filename = "Remote file name"
+deploy_command = "Optional deploy command template"
+
+[placeholders.forward]
+rule_label = "Rule label"
+listen_host = "Listen host"
+listen_port = "Listen port"
+target_host = "Target host"
+target_port = "Target port"
+filter = "Search forwarding rules by label..."
+
+[placeholders.snippets]
+description_example = "Example: check network load"
+new_package_name = "New package name"
+script_body = "Write your script here..."
+filter = "Search descriptions, packages, or scripts..."
+
+[placeholders.hosts]
+filter = "Search connections, groups..."
+
+[placeholders.sftp]
+local_path = "Local path"
+remote_path = "Remote path"
+new_name = "New name"
+
+[placeholders.workspace]
+tab_name = "Tab name"
+search_scrollback = "Search scrollback"
+snippet_filter = "Search snippets"
+
+[dialogs.profile_delete]
+untitled_profile = "Untitled profile"
+title = "Delete profile?"
+message = "Delete profile \"{profile_name}\"? This also removes any saved credentials linked to it."
+cancel = "Cancel"
+confirm = "Delete"
+
+[dialogs.managed_key_delete]
+untitled_key = "Untitled key"
+title = "Delete managed key?"
+message = "Delete managed key \"{key_name}\"? This also removes the saved private key."
+cancel = "Cancel"
+confirm = "Delete"
+
+[dialogs.known_host_delete]
+title = "Delete saved fingerprint?"
+message = "Delete the saved fingerprint for {host}:{port}? You'll be asked to verify it again on the next connection."
+cancel = "Cancel"
+confirm = "Delete"
+
+[dialogs.snippet_delete]
+untitled_snippet = "Untitled snippet"
+title = "Delete snippet?"
+message = "Delete snippet \"{description}\"? This removes it from your saved snippets."
+cancel = "Cancel"
+confirm = "Delete"
+
+[dialogs.forwarding_rule_delete]
+title = "Delete forwarding rule?"
+message = "Delete forwarding rule \"{rule}\" from \"{profile}\"? If it is active, its tunnel will be disconnected."
+cancel = "Cancel"
+confirm = "Delete"
+
+[dialogs.common]
+cancel = "Cancel"
+submit = "Submit"
+
+[prompts]
+authentication_challenge = "Authentication challenge"
+
+[status.workspace]
+moved_into_split = "Moved {title} into split"
+moved_into_pane = "Moved {title} into pane"
+
+[session.status]
+host_key_mismatch = "Host key MISMATCH — review required"
+verify_host_key = "Verify host key to continue"
+connection_closed_before_ready = "Connection closed before the terminal became ready."
+test_succeeded = "Test succeeded: {connection}"
+forwarding_connected = "Forwarding connected: {connection}"
+connected = "Connected: {connection}"
+disconnected = "Disconnected"
+error = "Error"
+closed = "Closed"
+
+[session.footer]
+connected = "CONNECTED"
+offline = "OFFLINE"
+traffic = "U:{upload}  D:{download}"
+
+[session.workspace]
+connecting_forwarding_rule = "Connecting forwarding rule"
+connecting_to_host = "Connecting to host"
+forwarding_connection_failed = "Forwarding connection failed"
+connection_failed = "Connection failed"
+session_closed = "Session closed"
+reconnecting = "Reconnecting..."
+reconnect_attempt = "Attempt {attempt} of {max}"
+reconnect_action = "Reconnect"
+hide_action = "Hide"
+empty_tab_label = "(empty)"
+click_to_focus = "Click to focus"
+
+[chrome.menu]
+rename_tab = "Rename tab"
+duplicate_profile = "Duplicate profile"
+open_sftp_tab = "Open SFTP tab"
+close_other_tabs = "Close other tabs"
+close_tab = "Close tab"
+
+[workspace.menu]
+copy = "Copy"
+paste = "Paste"
+split_right = "Split right"
+split_down = "Split down"
+split_left = "Split left"
+split_up = "Split up"
+open_sftp_tab = "Open SFTP tab"
+close_pane = "Close pane"
+
+[workspace.empty]
+open_ssh_tab_title = "Open an SSH tab"
+open_ssh_tab_body = "Create or connect a host to load a terminal."
+
+[workspace.panel.monitor]
+disabled_title = "Monitoring is turned off"
+disabled_body = "Enable 'Collect monitoring data on connect' in Settings for automatic startup, or start sampling once for just this session."
+start_now = "Start this session"
+loading = "Collecting remote metrics..."
+cpu = "CPU"
+memory = "Memory"
+swap = "Swap"
+network = "Network"
+load = "Load"
+network_detail = "U {upload}  D {download}"
+axis_now = "Now"
+axis_seconds_ago = "-{seconds}s"
+axis_minutes_ago = "-{minutes}m"
+axis_minutes_seconds_ago = "-{minutes}m {seconds}s"
+
+[workspace.panel.snippets]
+empty = "No snippets saved yet."
+no_search_matches = "No snippets match the current search."
+
+[session.notifications]
+connection_closed_title = "Connection closed"
+connection_succeeded_title = "Connection succeeded"
+test_connection_failed_title = "Test connection failed"
+port_forwarding_failed_title = "Port forwarding failed"
+session_error_title = "Session error"
+connection_failed_title = "Connection failed"
+
+[session.messages]
+testing_connection_to = "Testing connection to {profile}"
+opening_tab_for = "Opening tab for {profile}"
+open_sftp_requires_active_ssh = "Opening an SFTP tab requires an active SSH session tab."
+no_tab_to_close = "No tab to close"
+no_recently_closed_tab = "No recently closed tab"
+reopened_tab = "Reopened tab {title}"
+closed_tab = "Closed tab {title}"
+connection_succeeded_body = "{connection} connected successfully."
+test_connection_succeeded_for = "Test connection succeeded for {connection}"
+test_connection_failed_for = "Test connection failed for {profile}"
+port_forwarding_failed_for = "Port forwarding failed for {title}: {error}"
+connection_test_closed_before_complete = "{title}: connection closed before the test completed."
+finished_test_connection_for = "Finished test connection for {title}"
+port_forwarding_disconnected_for = "Port forwarding disconnected for {title}"
+clipboard_osc52 = "Terminal copied text to clipboard (OSC 52)"
+closed_other_tabs = "Closed other tabs"
+source_profile_not_found_for_tab = "Source profile not found for tab"
+opened_same_profile_tab = "Opened another tab with the same profile"
+accepted_host_key_session_only = "Accepted host key for {host} this session only"
+trusting_host_key = "Trusting host key for {host}"
+rejected_host_key = "Rejected host key for {host}"
+removed_host_key = "Removed host key for {host}:{port}"
+no_host_key_entry = "No host key entry for {host}:{port}"
+remove_host_key_failed = "Failed to remove host key: {error}"
+
+[session.terminal]
+forward_prefix = "[Forward]"
+host_key_prefix = "[Host key]"
+closed_marker = "[Session closed]"
+reconnecting_marker = "[Reconnecting...]"
+reconnecting_attempt_marker = "[Reconnecting (attempt {attempt})...]\r\n"
+error_line = "[Error] {error}\r\n"
+
+[session.terminal_messages]
+connection_starting = "Connection is still starting"
+read_only_history = "Terminal history is read-only until you reconnect."
+input_failed = "Input failed: {error}"
+no_selection_to_copy = "No selection to copy"
+copied_characters = "Copied {count} characters"
+clipboard_empty = "Clipboard is empty"
+paste_failed = "Paste failed: {error}"
+pasted_characters = "Pasted {count} characters"
+failed_to_open_link = "Failed to open {uri}: {error}"
+opened_link = "Opened {uri}"
+nothing_to_paste = "Nothing to paste"
+focus_report_failed = "Focus report failed: {error}"
+mouse_report_failed = "Mouse report failed: {error}"
+
+[sftp_browser.columns]
+name = "Name"
+size = "Size"
+type = "Type"
+modified = "Modified"
+attributes = "Attributes"
+owner = "Owner"
+
+[sftp_browser.types]
+folder = "Folder"
+directory = "Directory"
+symlink = "Symlink"
+other = "Other"
+file = "File"
+
+[sftp_browser.empty]
+local = "Local directory is empty or unreadable."
+remote = "Remote directory is empty or has not loaded yet."
+
+[sftp.menu]
+open = "Open"
+upload = "Upload"
+go_up = "Go up"
+refresh = "Refresh"
+download = "Download"
+edit = "Edit"
+rename = "Rename"
+delete = "Delete"
+create_directory = "Create directory"
+
+[sftp.prompts]
+cancel = "Cancel"
+skip_existing = "Skip Existing"
+directory_name_placeholder = "Directory name"
+
+[sftp.prompts.create_remote_directory]
+title = "Create remote directory"
+confirm = "Create"
+
+[sftp.prompts.confirm_overwrite]
+title = "Overwrite existing files?"
+confirm = "Replace All"
+single_message = "1 file already exists at the destination."
+multi_message = "{count} files already exist at the destination."
+
+[sftp.prompts.confirm_delete]
+title = "Delete remote files?"
+confirm = "Delete"
+single_message = "\"{name}\" will be permanently deleted."
+multi_message = "{count} items will be permanently deleted."
+
+[sftp.ui]
+drop_to_upload = "Drop to upload"
+remote_path_label = "Remote: {path}"
+progress_center = "Progress Center"
+local_section = "Local"
+remote_section = "Remote"
+
+[sftp.transfer_status]
+queued = "Queued"
+running = "Running"
+paused = "Paused"
+done = "Done"
+cancelled = "Cancelled"
+failed = "Failed · {message}"
+
+[sftp.messages]
+opened_tab_for = "Opened SFTP tab for {profile}"
+loaded_remote_items = "Loaded {count} remote items"
+
+[sftp.notifications]
+download_complete_title = "Download Complete"
+download_complete_message = "Downloaded: {filename}"
+transfer_failed_title = "Transfer Failed"
+
+[sftp.attributes]
+readonly = "readonly"
+read_write = "read-write"
+
+[hosts.editor.environment_variables]
+section_title = "Environment variables"
+name_label = "Name"
+value_label = "Value"
+
+[hosts.menu]
+add_to_favorites = "Add to favorites"
+remove_from_favorites = "Remove from favorites"
+duplicate_profile = "Duplicate profile"
+delete_profile = "Delete profile"
+
+[hosts.page]
+groups = "Groups"
+recent_connections = "Recent Connections"
+favorites = "Favorites"
+active_connections = "Active Connections"
+
+[hosts.empty]
+no_profiles = "No host profiles yet. Click the add button to create your first one."
+no_filter_matches = "No hosts match the current filters."
+
+[hosts.groups]
+fallback_icon = "GRP"
+host_count_one = "{count} Host"
+host_count_other = "{count} Hosts"
+
+[hosts.messages]
+cleared_group_filter = "Cleared group filter"
+filtering_by_group = "Filtering hosts by group {group}"
+
+[trusted.page]
+port_badge = "Port {port}"
+empty = "No trusted hosts yet. Trust a server to save it here."
+saved_fingerprints = "Saved fingerprints"
+
+[trusted.prompt]
+mismatch_subtitle = "The key offered by {host}:{port} does NOT match the one previously trusted. This may indicate a man-in-the-middle attack."
+verify_subtitle = "First connection to {host}:{port}. Confirm the fingerprint with the server administrator before trusting it."
+
+[trusted.details]
+algorithm = "Algorithm"
+fingerprint_sha256 = "Fingerprint (SHA256)"
+previously_trusted = "Previously trusted"
+
+[trusted.actions]
+reject = "Reject"
+accept_once = "Accept once"
+trust_and_remember = "Trust & remember"
+
+[hosts.editor.titles]
+add = "Add Host"
+edit = "Edit Host"
+
+[hosts.editor.sections]
+general = "General"
+credentials = "Credentials"
+advanced = "Advanced"
+
+[hosts.editor.auth_methods]
+password = "Password"
+managed_key = "Managed key"
+ssh_agent = "SSH agent"
+interactive = "Interactive"
+
+[hosts.editor.shell_types]
+posix = "POSIX"
+fish = "Fish"
+powershell = "PowerShell"
+cmd = "CMD"
+
+[hosts.editor.fields]
+address = "Address"
+ssh_port = "SSH Port"
+label = "Label"
+group = "Group"
+tags = "Tags"
+backspace = "Backspace"
+username = "Username"
+identity_source = "Identity source"
+password = "Password"
+managed_key_id = "Managed key"
+agent_identity = "Agent identity"
+certificate = "Certificate"
+agent_forwarding = "Agent forwarding"
+startup_command = "Startup command"
+host_chaining = "Host Chaining"
+shell_type = "Shell type"
+character_set = "Character set"
+search_character_set = "Search character set"
+
+[hosts.editor.group]
+no_existing_groups = "No existing groups"
+select_existing = "Select existing group"
+
+[hosts.editor.proxy_jump]
+hop = "Hop {index}"
+target = "Target"
+add_jump_host = "Add jump host"
+available_hosts = "Available hosts"
+no_additional_saved_hosts = "No additional saved hosts available"
+search_saved_hosts = "Search saved hosts"
+
+[hosts.editor.values]
+default = "Default"
+
+[hosts.editor.buttons]
+test_connection = "Test Connection"
+
+[errors.host_editor.environment_variables]
+missing_name = "Environment variable {index} is missing a name."
+invalid_name = "Invalid environment variable name: {name}"
+
+[keychain.source]
+generated = "Generated"
+imported = "Imported"
+
+[keychain.card]
+os_keyring_badge = "OS keyring"
+no_comment = "No comment"
+available_through_ssh_agent = "Available through the local SSH agent."
+
+[keychain.page]
+managed_keys = "Managed Keys"
+agent_identities = "Agent Identities"
+
+[keychain.empty]
+no_managed_keys_title = "No managed keys yet"
+no_managed_keys_copy = "Use the floating add button to open the sidebar, then generate or import your first managed key."
+no_matching_managed_keys_title = "No matching managed keys"
+no_matching_managed_keys_copy = "Adjust the search text to widen the managed-key results."
+no_agent_identities_title = "No SSH agent identities"
+no_agent_identities_copy = "Start ssh-agent or Pageant, then refresh this page to pick an agent-backed identity."
+no_matching_agent_identities_title = "No matching agent identities"
+no_matching_agent_identities_copy = "Adjust the search text to widen the agent identity results."
+
+[keychain.editor]
+title = "Create Managed Key"
+details = "Key details"
+os_keyring_ready = "OS keyring ready"
+storage_unavailable = "Storage unavailable"
+generate_ed25519 = "Generate Ed25519"
+key_name = "Key name"
+import_private_key_file = "Import private key file"
+select_private_key_to_import = "Select a private key to import"
+choose_private_key_file_copy = "Choose a private key file with the native file picker."
+or_paste_private_key = "Or paste private key"
+or_paste_public_key = "Optional public key"
+import_passphrase = "Import passphrase"
+
+[keychain.deploy]
+title = "Deploy Managed Key"
+badge = "Deploy"
+section = "Deployment"
+selected_key = "Selected key"
+key_missing = "The selected managed key is no longer available."
+profile = "Profile"
+search_profiles = "Search host profiles"
+no_profiles = "No compatible host profiles"
+no_profiles_copy = "Save a Unix-compatible host profile first. Keyboard-interactive and PowerShell/Cmd profiles are excluded from this deploy flow."
+select_profile = "Select host profile"
+location = "Location ($1)"
+filename = "Filename ($2)"
+command = "Deploy command"
+command_copy = "The command runs as sh -lc <script> gpui-keychain-deploy <location> <filename> <public-key>. Use $1, $2, and $3 inside the script."
+deploy_button = "Deploy key"
+
+[keychain.notifications]
+deploy_succeeded_title = "Key deployed"
+deploy_failed_title = "Key deployment failed"
+
+[keychain.messages]
+managed_key_noun_one = "managed key"
+managed_key_noun_other = "managed keys"
+agent_identity_noun_one = "agent identity"
+agent_identity_noun_other = "agent identities"
+preparing_new_managed_key = "Preparing a new managed key"
+closed_sidebar = "Closed keychain sidebar"
+selected_import_file = "Selected import file {path}"
+load_failed = "Keychain load failed: {error}"
+loaded = "Loaded {managed_count} {managed_keys_label} and {agent_count} {agent_identities_label}."
+loaded_agent_scan_failed = "Loaded {managed_count} {managed_keys_label}, but agent scan failed: {error}"
+storage_unavailable = "Managed key storage is unavailable in this environment."
+generation_failed = "Key generation failed: {error}"
+generated = "Generated an Ed25519 key pair into the editor. Review it and import to save it."
+import_private_key_required = "Choose a private key file or paste private key text to import."
+imported_key_default_name = "Imported key"
+import_failed = "Key import failed: {error}"
+imported = "Imported managed key {summary}"
+preparing_deploy = "Preparing deployment for {summary}"
+deploy_started = "Deploying {summary} to {profile}"
+deploy_profile_required = "Select a compatible host profile before deploying this key."
+deploy_location_required = "Deployment location is required."
+deploy_filename_required = "Deployment filename is required."
+deploy_profile_not_found = "The selected deployment profile is no longer available."
+deploy_profile_unsupported = "This profile is not supported for key deployment. Use a Unix-compatible profile without keyboard-interactive authentication."
+deploy_public_key_missing = "This managed key does not have a public key to deploy."
+deployed = "Deployed {summary} to {profile}"
+deploy_failed = "Failed to deploy {summary} to {profile}: {error}"
+not_found = "Managed key not found."
+removed_locally_save_failed = "Removed key locally, but save failed: {error}"
+removed_locally_session_save_failed = "Removed key locally, but session save failed: {error}"
+removed = "Removed managed key {summary}"
+
+[snippets.preview]
+empty = "No script preview yet"
+
+[snippets.package_card]
+fallback_icon = "PKG"
+count_one = "{count} snippet"
+count_other = "{count} snippets"
+
+[snippets.page]
+packages = "Packages"
+snippets = "Snippets"
+
+[snippets.empty]
+no_snippets = "No snippets yet. Click the add button to create your first reusable script."
+no_search_matches = "No snippets match the current search."
+no_package_matches = "No snippets match the selected package."
+
+[snippets.editor]
+edit_title = "Edit Snippet"
+create_title = "Create Snippet"
+cancel = "Cancel"
+save = "Save Snippet"
+general = "General"
+description = "Manage reusable shell commands grouped by package."
+action_description = "Action description"
+package = "Package"
+no_existing_packages = "No existing packages"
+select_existing_package = "Select existing package"
+script = "Script"
+
+[snippets.messages]
+preparing_new = "Preparing a new snippet"
+editing = "Editing snippet {description}"
+closed_sidebar = "Closed snippet sidebar"
+filtering_by_package = "Filtering snippets by {package}"
+viewing_all = "Viewing all snippets"
+saved = "Saved snippet {description}"
+saved_memory_only = "Saved {description} in memory only"
+save_failed = "Save failed: {message}"
+select_to_delete = "Select a snippet to delete."
+already_removed = "Snippet {description} was already removed."
+deleted = "Deleted snippet {description}"
+deleted_save_failed = "Deleted {description} locally, but save failed: {error}"
+
+[errors.snippets.validation]
+action_description_required = "Action description is required."
+script_required = "Script is required."
+
+[notifications.validation]
+required_input_missing = "Required input missing"
+invalid_input = "Invalid input"
+
+[navigation.section.hosts]
+title = "Hosts"
+subtitle = "Saved machines and live access windows."
+
+[navigation.section.keychain]
+title = "Keychain"
+subtitle = "Passwords, keys, and passphrase storage."
+
+[navigation.section.forwarding]
+title = "Forward"
+subtitle = "Reverse and local tunnel lanes."
+
+[navigation.section.snippets]
+title = "Snippets"
+subtitle = "Reusable commands and shell recipes."
+
+[navigation.section.known_hosts]
+title = "Trusted"
+subtitle = "Fingerprints and trust decisions."
+
+[navigation.section.settings]
+title = "Settings"
+subtitle = "Appearance, font, and theme preferences."
+
+[navigation.messages]
+opened_new_hosts_tab = "Opened a new Hosts tab"
+viewing_section = "Viewing {section}"
+editing_profile = "Editing {name}"
+
+[tabs.initial]
+hosts_tab_title = "New Tab"
+session_connecting_to = "Connecting to {connection}"
+port_forward_title = "Forward {kind} {listen_host}:{listen_port} -> {target_host}:{target_port}"
+port_forward_named_title = "Forward {label}"
+port_forward_connecting_to = "Connecting forwarding to {profile}"
+connection_test_title = "Test {profile}"
+connection_test_status = "Testing {profile}"
+sftp_connecting = "Connecting SFTP"
+sftp_starting_worker = "Starting SFTP worker"
+
+[search.messages]
+no_matches = "No matches"
+invalid_search = "Invalid search: {error}"
+
+[profile.messages]
+new_profile_created = "New profile created. Fill the form and click Save."
+select_profile_to_delete = "Select a profile to delete."
+already_removed = "Profile {name} was already removed."
+deleted_local_save_failed = "Deleted {name} locally, but save failed: {error}"
+deleted = "Deleted profile {name}"
+duplicate_name = "{name} copy"
+duplicated_local_save_failed = "Duplicated {name} locally, but save failed: {error}"
+duplicated_as = "Duplicated profile as {name}"
+starred_local_save_failed = "Starred {name} locally, but save failed: {error}"
+unstarred_local_save_failed = "Unstarred {name} locally, but save failed: {error}"
+added_to_favorites = "Added {name} to favorites"
+removed_from_favorites = "Removed {name} from favorites"
+saved = "Saved profile {name}"
+saved_memory_only = "Saved {name} in memory only"
+save_failed = "Save failed: {message}"
+test_connection_failed = "Test connection failed: {message}"
+test_connection_failed_title = "Test connection failed"
+selected = "Selected {name}"
+
+[errors.profile.validation]
+profile_name_required = "Profile name is required."
+host_required = "Host is required."
+username_required = "Username is required."
+invalid_port = "Invalid port: {port}"
+password_requires_password = "Password authentication requires a password."
+managed_key_requires_id = "Managed key authentication requires a managed key ID."
+ssh_agent_requires_identity = "SSH agent authentication requires an agent identity."
+certificate_requires_key_based_identity = "OpenSSH certificates require a key-based identity."
+
+[forwarding.status]
+idle = "Idle"
+
+[forwarding.tile]
+online_sessions_one = "{count} online"
+online_sessions_other = "{count} online"
+drag_to_target_composer = "Drag onto the drop zone to target the composer."
+
+[forwarding.tooltips]
+toggle_rule = "Enable or disable this forwarding rule and its tunnel"
+
+[forwarding.menu]
+connect = "Connect"
+disconnect = "Disconnect"
+edit = "Edit"
+duplicate = "Duplicate"
+remove = "Remove"
+
+[forwarding.actions]
+cancel = "Cancel"
+save_rule = "Save rule"
+create_rule = "Create rule"
+delete_rule = "Delete rule"
+
+[forwarding.fields]
+host = "Host"
+port = "Port"
+label = "Label"
+mode = "Mode"
+ssh_host_profile = "SSH host profile"
+
+[forwarding.editor]
+listen_locally = "Listen locally"
+destination_behind_ssh_host = "Destination behind the SSH host"
+forward_connections_copy = "Forward those connections through the selected host profile to this remote address."
+destination_on_this_machine = "Destination on this machine"
+expose_on_ssh_host = "Expose on the SSH host"
+ask_selected_host_copy = "Ask the selected host profile to listen on this remote address and port."
+search_host_profiles = "Search host profiles"
+no_saved_host_profiles = "No saved host profiles"
+select_host_profile = "Select host profile"
+local = "Local"
+remote = "Remote"
+rule_configuration = "Rule Configuration"
+profile_switching_disabled = "Profile switching is disabled while editing an existing rule."
+edit_tunnel_rule = "Edit Tunnel Rule"
+add_tunnel_rule = "Add Tunnel Rule"
+
+[forwarding.page]
+forwarding_rules = "Forwarding Rules"
+
+[forwarding.empty]
+no_hosts_available = "No hosts available yet. Save one in Hosts to enable tunnel creation."
+no_filter_matches = "No forwarding rules match the current filter."
+no_host_profiles = "No host profiles yet. Save one in Hosts before adding tunnel rules."
+no_rules = "No forwarding rules yet. Add one from the side panel."
+
+[forwarding.messages]
+rule_not_found = "Forwarding rule not found"
+already_removed = "Forwarding rule {rule} on {profile} was already removed."
+duplicate_label = "{label} copy"
+duplicated = "Duplicated forwarding rule {rule} on {profile}{synced_suffix}"
+duplicated_memory_only = "Duplicated forwarding rule {rule} in memory only{synced_suffix}: {error}"
+removed = "Removed forwarding rule {rule} from {profile}{disconnect_suffix}{synced_suffix}"
+removed_memory_only = "Removed forwarding rule {rule} in memory only{disconnect_suffix}{synced_suffix}: {error}"
+choose_profile_before_adding = "Choose a host profile before adding a forwarding rule"
+profile_not_found = "Profile not found for port forwarding"
+creating_rule_for_profile = "Creating a forwarding rule for {profile}"
+fallback_tab_title = "Forward {profile_id}"
+already_connected = "Forwarding is already connected for this rule"
+connecting = "Connecting forwarding rule {rule}{synced_suffix}"
+not_connected = "Forwarding is not connected for this rule"
+disconnected = "Disconnected {title}{synced_suffix}"
+create_host_profile_before_adding = "Create a host profile before adding a forwarding rule"
+choose_host_profile_for_new_rule = "Choose a host profile for the new forwarding rule"
+editing_rule = "Editing forwarding rule {rule}"
+canceled_editing = "Canceled editing forwarding rule"
+canceled_new = "Canceled new forwarding rule"
+save_failed = "Save failed: {message}"
+rule_no_longer_exists = "Forwarding rule no longer exists"
+saved = "Saved forwarding rule {rule} on {profile}{synced_suffix}"
+saved_memory_only = "Saved forwarding rule {rule} in memory only{synced_suffix}: {error}"
+added = "Added forwarding rule {rule} to {profile}{synced_suffix}"
+added_memory_only = "Added forwarding rule {rule} in memory only{synced_suffix}: {error}"
+updated_memory_only = "Updated forwarding rule {rule} in memory only{synced_suffix}: {error}"
+disabled = "Disabled forwarding rule {rule} on {profile}{stopped_suffix}{synced_suffix}"
+disabled_memory_only = "Disabled forwarding rule {rule} in memory only{stopped_suffix}{synced_suffix}: {error}"
+disabled_plain = "Disabled forwarding rule {rule} on {profile}{synced_suffix}"
+synced_suffix_one = " and synced {count} live session"
+synced_suffix_other = " and synced {count} live sessions"
+closed_connection_suffix = " and closed its connection"
+stopped_tunnel_suffix = " and stopped its tunnel"
+
+[errors.forwarding.validation]
+host_profile_required = "Host profile is required."
+selected_host_profile_missing = "Selected host profile no longer exists."
+listen_host_required = "Listen host is required."
+listen_port_required = "Listen port is required."
+target_host_required = "Target host is required."
+target_port_required = "Target port is required."
+invalid_listen_port = "Invalid listen port: {port}"
+invalid_target_port = "Invalid target port: {port}"
+
+[status.sftp]
+expand_local_failed = "Failed to expand {path}: {error}"
+expand_remote_failed = "SFTP expand failed for {path}: {error}"
+rename_requires_single_remote_entry = "Rename requires exactly one remote entry"
+
+[errors.sftp.validation]
+name_required = "Name cannot be empty"
+
+[errors.sftp.local_read]
+directory = "Failed to read {path}"
+entry = "Failed to read an entry in {path}"
+metadata = "Failed to read metadata for {path}"
+
+[settings.sync]
+save_action = "Save"
+
+[settings.sync.provider_group]
+title = "Provider"
+description = "Choose where to store your configuration backup. Select None to disable sync."
+
+[settings.sync.gist.enabled]
+label = "GitHub Gist sync"
+description = "Enable synchronization via GitHub Gist. Requires an encryption passphrase."
+
+[settings.sync.webdav.enabled]
+label = "WebDAV sync"
+description = "Enable synchronization via WebDAV. Requires an encryption passphrase."
+
+[settings.sync.provider.backend]
+label = "Backend"
+description = "Select a sync backend."
+
+[settings.sync.providers]
+none = "None"
+gist = "GitHub Gist"
+webdav = "WebDAV"
+
+[settings.sync.gist_group]
+title = "GitHub Gist"
+description = "Bind an existing secret Gist by ID, or leave the ID empty to create one on the first push. The token requires the `gist` scope."
+
+[settings.sync.gist.token]
+label = "Personal Access Token"
+description = "Never stored in plain text. Saved to the OS keychain by default, or to the local vault when enabled."
+
+[settings.sync.gist.gist_id]
+label = "Gist ID"
+description = "Paste an existing Gist ID or full Gist URL to bind this device to an existing sync remote."
+
+[settings.sync.webdav_group]
+title = "WebDAV"
+description = "Upload to any WebDAV server (Nextcloud, Owncloud, etc.). The URL should point directly to the target file."
+
+[settings.sync.webdav.url]
+label = "Server URL"
+description = "Example: https://cloud.example.com/remote.php/dav/files/user/miaominal_sync.json"
+
+[settings.sync.webdav.username]
+label = "Username"
+description = "WebDAV account username."
+
+[settings.sync.webdav.password]
+label = "Password"
+description = "Never stored in plain text. Saved to the OS keychain by default, or to the local vault when enabled."
+
+[settings.sync.encryption_group]
+title = "End-to-end Encryption"
+description = "Passwords and SSH private keys are encrypted with AES-256-GCM using a key derived from this passphrase (Argon2id). Leave blank to skip encrypting secrets."
+
+[settings.sync.vault_group]
+title = "Local Vault"
+description = "Protect locally stored passwords, sync credentials, and managed private keys with a separate device-only vault. Regular sync settings such as URLs, usernames, and toggles stay in the normal config files."
+
+[settings.sync.vault.status]
+label = "Vault status"
+description = "The local vault can stay locked until you explicitly unlock it for the current app session."
+
+[settings.sync.vault.state]
+disabled = "Using OS keychain"
+locked = "Vault enabled, currently locked"
+unlocked = "Vault unlocked for this session"
+
+[settings.sync.vault.passphrase]
+label = "Vault passphrase"
+description = "Use a device-only passphrase that is different from your sync encryption passphrase."
+unlocked_hint = "The local vault is unlocked for this session. Lock it again to require the passphrase."
+
+[settings.sync.vault.confirm_passphrase]
+label = "Confirm vault passphrase"
+
+[settings.sync.vault.auto_lock_duration]
+label = "Auto-lock after"
+description = "How long to keep the local vault unlocked after a successful unlock."
+
+[settings.sync.vault.disable]
+label = "Disable local vault"
+description = "Move saved secrets back to the OS keychain and stop requiring the local vault on startup."
+
+[settings.sync.vault.actions]
+enable = "Enable vault"
+unlock = "Unlock vault"
+lock = "Lock now"
+disable = "Use OS keychain"
+change_passphrase = "Update vault passphrase"
+
+[settings.sync.vault.passphrase_required_error]
+message = "Enter a local vault passphrase before enabling or unlocking the vault."
+
+[settings.sync.vault.passphrase_confirmation_required_error]
+message = "Confirm the local vault passphrase before enabling the vault."
+
+[settings.sync.vault.passphrase_mismatch_error]
+message = "The local vault passphrases do not match."
+
+[settings.sync.vault.disable_requires_unlock_error]
+message = "Unlock the local vault before moving saved secrets back to the OS keychain."
+
+[settings.sync.vault.change_requires_unlock_error]
+message = "Unlock the local vault before updating its passphrase."
+
+[settings.sync.vault.notifications]
+enabled_title = "Local vault enabled"
+enabled_message = "Migrated saved secrets into the local vault and switched new writes away from the OS keychain."
+unlocked_title = "Local vault unlocked"
+unlocked_message = "Local secrets are available for this app session."
+locked_title = "Local vault locked"
+locked_message = "Local secrets are locked again until you enter the vault passphrase."
+disabled_title = "Local vault disabled"
+disabled_message = "Moved saved secrets back to the OS keychain and stopped using the local vault on startup."
+passphrase_changed_title = "Vault passphrase updated"
+passphrase_changed_message = "Re-encrypted the local vault with the new passphrase for this device."
+failed_title = "Local vault action failed"
+failed_message = "{action} failed: {error}"
+
+[settings.sync.vault.dialogs.disable_confirm]
+title = "Use OS keychain instead?"
+message = "Saved passwords, sync credentials, and managed private keys will be moved back to the OS keychain on this device, and the local vault will no longer be required on startup."
+confirm = "Move secrets and disable vault"
+
+[settings.sync.vault.access_required_error]
+message = "Unlock the local vault in Settings > Sync and try again."
+
+[settings.sync.encryption.passphrase]
+label = "Encryption passphrase"
+description = "Stored in the OS keychain by default, or in the local vault when enabled. All devices must use the same passphrase."
+configured_hint = "Configured for this device. Update it when you need to rotate the shared sync secret."
+unconfigured_hint = "Required before enabling sync providers. All devices must use the same passphrase."
+
+[settings.sync.encryption.passphrase.actions]
+set = "Set passphrase"
+update = "Update passphrase"
+clear = "Clear passphrase"
+
+[settings.sync.encryption.passphrase.clear_confirm]
+title = "Clear sync passphrase?"
+message = "This removes the sync encryption passphrase stored on this device. This device will need the passphrase again before it can use encrypted sync."
+confirm = "Clear passphrase"
+
+[settings.sync.encryption.passphrase.confirm_passphrase]
+label = "Confirm encryption passphrase"
+
+[settings.sync.encryption.passphrase.required_error]
+message = "Enter an encryption passphrase before saving."
+
+[settings.sync.encryption.passphrase.confirmation_required_error]
+message = "Confirm the encryption passphrase before saving."
+
+[settings.sync.encryption.passphrase.mismatch_error]
+message = "The encryption passphrases do not match."
+
+[settings.sync.encryption.passphrase.notifications]
+cleared_title = "Sync passphrase cleared"
+cleared_message = "Cleared the sync encryption passphrase for this device."
+clear_failed_title = "Failed to clear sync passphrase"
+clear_failed_message = "Failed to clear the sync encryption passphrase: {error}"
+
+[settings.sync.passphrase_required_error]
+message = "Please set an encryption passphrase before enabling sync."
+
+[settings.sync.save_feedback]
+saved_title = "Sync setting saved"
+saved_message = "Saved {field}."
+failed_title = "Failed to save sync setting"
+failed_message = "Failed to save {field}: {error}"
+
+[settings.sync.toggle_failed_error]
+title = "Failed to update sync setting"
+message = "Failed to update {provider} sync: {error}"
+
+[settings.sync.provider_required_error]
+title = "Sync provider required"
+message = "Select and enable a sync provider before running Sync Now."
+
+[settings.sync.status_group]
+title = "Status"
+description = "Manually trigger a full sync or inspect the last synchronization time."
+
+[settings.sync.status.last_synced]
+label = "Last synced"
+description = "Timestamp of the last successful push or pull."
+never = "Never"
+
+[settings.sync.status.state]
+label = "Sync state"
+description = "Current synchronization state."
+idle = "Idle"
+syncing = "Syncing…"
+github_gist_binding_required = "GitHub Gist is not bound yet. Save a Gist ID before pulling, or push once to create a new secret Gist."
+remote_binding_required = "{provider} is not bound to a remote resource yet. Finish the binding before pulling."
+pulled_at = "Pulled at {time}"
+pushed_at = "Pushed at {time}"
+pull_required_at = "Pull required: remote updated at {time}"
+up_to_date = "Up to date"
+error = "Error: {message}"
+
+[settings.sync.status.action]
+label = "Sync Now"
+description = "Choose whether to push local configuration or pull the remote configuration manually."
+
+[settings.sync.dialogs.common]
+cancel = "Cancel"
+
+[settings.sync.dialogs.direction]
+title = "Choose sync direction"
+message = "Push your current local configuration to the remote backend, or pull the remote configuration and apply it locally."
+push = "Push to remote"
+pull = "Pull from remote"
+
+[settings.sync.dialogs.pull_confirm]
+title = "Pull remote configuration?"
+message = "If newer remote sync data is available, it will replace the current local synced configuration."
+remote_newer_message = "Remote sync data is newer than the local state you tried to push. Pulling now will replace your current local synced configuration."
+force_push = "Push local state and replace remote"
+confirm = "Pull and overwrite"
+
+[settings.sync.status.notifications]
+succeeded_title = "Sync completed"
+failed_title = "Sync failed"
+action_required_title = "Sync action required"
+reload_failed_title = "Sync applied, reload failed"
+reload_failed_message = "Data was pulled from remote but could not be fully reloaded. Restart the app to see the latest state."
+
+[enum.theme]
+light = "Light"
+dark = "Dark"
+
+[enum.last_tab_close_behavior]
+exit_application = "Close the application"
+open_new_home_tab = "Open a new home tab"
+
+[enum.monitor_history]
+one_minute = "1 minute"
+five_minutes = "5 minutes"
+ten_minutes = "10 minutes"
+thirty_minutes = "30 minutes"
+
+[enum.local_vault_auto_lock]
+off = "Do not auto-lock"
+five_minutes = "5 minutes"
+fifteen_minutes = "15 minutes"
+one_hour = "1 hour"
+one_day = "1 day"
+
+[status]
+language_changed = "Language: {language}"
+font_set = "Font set to {font}"
+font_reset = "Font reset to {font}"
+font_size = "Font size {value}"
+line_height = "Line height {value}"
+invalid_seed_color = "Invalid seed color. Use #RRGGBB."
+theme_seed = "Theme seed: {value}"
+theme_seed_reset = "Theme seed reset to {value}"
+theme_changed = "Theme: {theme}"
+recent_connections_hidden = "Recent connections hidden"
+recent_connections_show_count = "Recent connections: show {count}"
+key_binding_updated = "Key binding updated: {name} -> {binding}"
+key_binding_reset = "Key binding reset: {name} -> {binding}"
+right_click_context_menu = "Terminal right click opens the context menu"
+right_click_copy_paste = "Terminal right click copies selection or pastes clipboard"
+shift_right_click_enabled = "Shift+Right click opens the terminal context menu"
+shift_right_click_disabled = "Shift+Right click no longer opens the terminal context menu"
+auto_collect_session_monitoring_enabled = "Session monitoring will start collecting on connect"
+auto_collect_session_monitoring_disabled = "Session monitoring auto-collection disabled"
+last_tab_close_behavior_exit = "Closing the last tab will quit the application"
+last_tab_close_behavior_open_home = "Closing the last tab will open a new home tab"
+monitor_history_duration_changed = "Monitor history window updated"
+local_vault_auto_lock_duration_changed = "Local vault auto-lock timeout updated"
+session_monitoring_started = "Remote monitoring started for this session"
+session_monitoring_pending = "Remote monitoring will start when this session becomes ready"
+session_monitoring_start_failed = "Couldn't start remote monitoring: {error}"

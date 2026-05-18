@@ -1,0 +1,529 @@
+use crate::domain::keychain::ManagedKeyRecord;
+use crate::domain::profile::{
+    AuthMethod, PortForwardKind, PortForwardRule, SessionEnvironmentVariable, SessionProfile,
+    ShellType,
+};
+use crate::domain::snippet::SnippetRecord;
+use crate::domain::sync::SyncStatus;
+use crate::infra::sftp::{
+    self, SftpCommandSender, SftpEntry, SftpEvent, TransferDirection, TransferId,
+};
+use crate::infra::ssh::{
+    self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,
+    SessionMonitorSnapshot,
+};
+use crate::infra::sync::engine::SyncEngine;
+use crate::settings::{self, KeyBinding, SettingsStore};
+use crate::terminal::{
+    MouseEncoding, MouseProtocol, MouseReportButton, MouseReportKind, MouseReportModifiers,
+    TerminalInputModes, TerminalScroll, TerminalState, encode_mouse_report, sanitize_paste,
+    terminal_cell_width_default, terminal_line_height_default,
+};
+use crate::ui::assets::AppIcon;
+use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
+use futures::StreamExt;
+use futures::channel::mpsc::UnboundedReceiver as FuturesUnboundedReceiver;
+use gpui::{
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Div, ElementId, Entity,
+    ExternalPaths, FocusHandle, FontWeight, InteractiveElement, KeyDownEvent, KeyUpEvent,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful, Styled,
+    Subscription, WeakEntity, Window, WindowControlArea, div, prelude::*, px, rgb,
+};
+use gpui_component::{
+    Colorize, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+    h_flex,
+    input::TabSize,
+    input::{Input, InputEvent, InputState},
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    scroll::ScrollableElement,
+    select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState},
+    stepper::{Stepper, StepperItem},
+    table::{Column, TableDelegate, TableEvent, TableState},
+    v_flex,
+};
+use gpui_component::{Icon, IconName, Root};
+use tokio::runtime::Handle as TokioHandle;
+
+mod actions;
+#[path = "shell/app_view.rs"]
+mod app_view;
+mod bootstrap;
+mod bootstrap_form_factory;
+mod bootstrap_loaders;
+mod bootstrap_subscriptions;
+mod containers;
+mod controllers;
+mod forms;
+mod layout;
+mod metrics;
+mod navigation;
+mod pages;
+mod panes;
+mod render;
+mod settings_labels;
+mod sftp_browser;
+mod state;
+mod support;
+mod workspace;
+
+pub use app_view::AppView;
+
+pub(in crate::ui::shell) use crate::services::AppServices;
+pub(crate) use crate::ui::components::{
+    BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, IconTileTone,
+    SearchInputStyle, TextInputSurface, badge, basic_dialog_action_button, basic_dialog_panel,
+    bottom_popup_panel, card_surface, editor_footer_actions, fab_button, fab_icon_button,
+    field_label, icon_button, icon_tile, list_item_card, page_muted_icon_tile,
+    page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item, pill_label,
+    search_filter_input, setting_field_with_reset_action, surface_secret_text_input,
+    surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
+    surface_text_input, surface_text_input_stack,
+};
+pub(crate) use crate::ui::utils::{
+    format_byte_size, format_local_timestamp, truncate_with_ellipsis,
+};
+pub(in crate::ui::shell) use actions::{ValidationFailure, ValidationNotificationKind};
+use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
+use controllers::ControllerSet;
+pub(in crate::ui::shell) use forms::KeyBindingSlot;
+use forms::{
+    HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms, SettingsForms,
+    SftpBrowserForms, SnippetsForms, TerminalSearchForms, WorkspaceForms, WorkspaceSnippetsForms,
+};
+pub(in crate::ui::shell) use metrics::*;
+pub(in crate::ui::shell) use navigation::SidebarSection;
+use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
+pub(in crate::ui::shell) use panes::{PaneId, TerminalHoveredLink, TerminalScrollbarDrag};
+pub(in crate::ui::shell) use settings_labels::*;
+pub(in crate::ui::shell) use sftp_browser::{
+    SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
+};
+pub(in crate::ui::shell) use state::{
+    ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot, DialogState, DraggedTab,
+    ExitingDialogState, HostEditorEnvironmentVariableRow, InlineRenameState, LocalSftpEntry,
+    MonitorChartPoint, OnboardingState, PanelState, PendingKnownHostDeleteState,
+    PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
+    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
+    PendingSyncDirectionState, PendingSyncPassphrasePopupState, PendingSyncPullConfirmState,
+    SecretVisibilityState, SessionConnectionState, SessionMonitoringState, SessionPurpose,
+    SessionTabState,
+    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
+    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
+    SyncUiState, TabKind, TabState, WorkspaceState,
+};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime};
+use workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
+
+pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
+use support::{
+    OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase,
+    TerminalScrollbarMetrics, classify_terminal_key, new_input_state, render_basic_dialog,
+    render_basic_dialog_with_config, render_bottom_popup, render_terminal_canvas_for_pane,
+    set_input_placeholder, set_input_value, terminal_cell_width, terminal_line_height,
+    terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
+};
+
+pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {
+    gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
+}
+
+const APP_TITLE: &str = "Miaominal";
+pub(in crate::ui::shell) const TERMINAL_SCROLLBAR_IDLE_HIDE_DELAY: Duration =
+    Duration::from_millis(1200);
+pub(in crate::ui::shell) const KEYCHAIN_DEPLOY_DEFAULT_LOCATION: &str = ".ssh";
+pub(in crate::ui::shell) const KEYCHAIN_DEPLOY_DEFAULT_FILENAME: &str = "authorized_keys";
+pub(in crate::ui::shell) const KEYCHAIN_DEPLOY_DEFAULT_COMMAND: &str = "if test ! -e $1;\nthen mkdir -p $1;\nchmod 700 $1;\nfi;\nif test ! -e \"$1/$2\";\nthen touch \"$1/$2\";\nchmod 600 \"$1/$2\";\nfi;\necho $3 >> \"$1/$2\";";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum ProfileViewMode {
+    Grid,
+    List,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum KeychainPageView {
+    ManagedKeys,
+    AgentIdentities,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum KeychainEditorMode {
+    Import,
+    Deploy,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) enum HostsToTerminalTransitionDirection {
+    ToTerminal,
+    ToHosts,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct HostsToTerminalTransition {
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+    pub(in crate::ui::shell) active_tab_id: usize,
+    pub(in crate::ui::shell) terminal_tab_id: usize,
+    pub(in crate::ui::shell) direction: HostsToTerminalTransitionDirection,
+    pub(in crate::ui::shell) show_host_editor_sidebar: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum TerminalViewTransitionPhase {
+    Entering,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct TerminalViewTransition {
+    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) phase: TerminalViewTransitionPhase,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum TopbarTabVisualKind {
+    Hosts,
+    Session,
+    Sftp,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct TopbarTabSnapshot {
+    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) visible_index: usize,
+    pub(in crate::ui::shell) title: String,
+    pub(in crate::ui::shell) kind: TopbarTabVisualKind,
+    pub(in crate::ui::shell) status_color: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct TopbarTabEnterTransition {
+    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct TopbarTabExitTransition {
+    pub(in crate::ui::shell) snapshot: TopbarTabSnapshot,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct TopbarActiveTabTransition {
+    pub(in crate::ui::shell) from_tab_id: Option<usize>,
+    pub(in crate::ui::shell) to_tab_id: Option<usize>,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum PageEditorSidebarKind {
+    Hosts,
+    PortForwarding,
+    Snippets,
+    Keychain,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum PageEditorSidebarTransitionPhase {
+    Entering,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct PageEditorSidebarTransition {
+    pub(in crate::ui::shell) kind: PageEditorSidebarKind,
+    pub(in crate::ui::shell) phase: PageEditorSidebarTransitionPhase,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum OnboardingStep {
+    Welcome,
+    Preferences,
+    Import,
+    Finish,
+}
+
+impl OnboardingStep {
+    pub(in crate::ui::shell) const ALL: [Self; 4] =
+        [Self::Welcome, Self::Preferences, Self::Import, Self::Finish];
+
+    pub(in crate::ui::shell) const fn index(self) -> usize {
+        match self {
+            Self::Welcome => 0,
+            Self::Preferences => 1,
+            Self::Import => 2,
+            Self::Finish => 3,
+        }
+    }
+
+    pub(in crate::ui::shell) fn next(self) -> Option<Self> {
+        Self::ALL.get(self.index() + 1).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum OnboardingStepTransitionPhase {
+    Exiting,
+    Entering,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum LocalVaultStatus {
+    Disabled,
+    Locked,
+    Unlocked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum LocalVaultPassphrasePopupMode {
+    PrimaryAction,
+    ChangePassphrase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum SecretRevealTarget {
+    SyncGithubToken,
+    SyncWebdavPassword,
+    HostPassword,
+    SyncPassphrase,
+    SyncPassphraseConfirmation,
+    LocalVaultPassphrase,
+    LocalVaultPassphraseConfirmation,
+}
+
+impl SecretRevealTarget {
+    pub(in crate::ui::shell) fn uses_stored_secret(self) -> bool {
+        matches!(
+            self,
+            Self::SyncGithubToken | Self::SyncWebdavPassword | Self::HostPassword
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
+    OpenSession(SessionProfile),
+    OpenSyncNow,
+    DeployManagedKey,
+    SaveProfile,
+    ImportManagedKey,
+    SavePortForwardRule,
+    SaveSnippet,
+    SaveSyncGithubToken(String),
+    SaveSyncWebdavPassword(String),
+    SaveSyncPassphrase(String),
+    ClearSyncPassphrase,
+    RevealSecret(SecretRevealTarget),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct OnboardingStepTransition {
+    pub(in crate::ui::shell) phase: OnboardingStepTransitionPhase,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum WorkspaceSidePanelTransitionPhase {
+    Entering,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct WorkspaceSidePanelTransition {
+    pub(in crate::ui::shell) phase: WorkspaceSidePanelTransitionPhase,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) struct ForwardProfileSelectItem {
+    id: String,
+    title: SharedString,
+    summary: SharedString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) struct ProxyJumpCandidateSelectItem {
+    id: String,
+    title: SharedString,
+    summary: SharedString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) struct ManagedKeySelectItem {
+    id: String,
+    title: SharedString,
+    summary: SharedString,
+}
+
+impl ProxyJumpCandidateSelectItem {
+    pub(in crate::ui::shell) fn new(profile: &SessionProfile) -> Self {
+        Self {
+            id: profile.id.clone(),
+            title: SharedString::from(profile.name.clone()),
+            summary: SharedString::from(profile.summary()),
+        }
+    }
+}
+
+impl ForwardProfileSelectItem {
+    pub(in crate::ui::shell) fn new(profile: &SessionProfile) -> Self {
+        Self {
+            id: profile.id.clone(),
+            title: SharedString::from(profile.name.clone()),
+            summary: SharedString::from(profile.summary()),
+        }
+    }
+}
+
+impl ManagedKeySelectItem {
+    pub(in crate::ui::shell) fn new(key: &ManagedKeyRecord) -> Self {
+        Self {
+            id: key.id.clone(),
+            title: SharedString::from(key.name.clone()),
+            summary: SharedString::from(format!("{}  {}", key.id, key.algorithm)),
+        }
+    }
+}
+
+impl SelectItem for ForwardProfileSelectItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let roles = settings::current_theme().material.roles;
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(13.0))
+                    .text_color(rgb(roles.on_surface))
+                    .child(self.title.clone()),
+            )
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(11.0))
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(self.summary.clone()),
+            )
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+
+        format!("{} {}", self.title.as_ref(), self.summary.as_ref())
+            .to_ascii_lowercase()
+            .contains(&query)
+    }
+}
+
+impl SelectItem for ProxyJumpCandidateSelectItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let roles = settings::current_theme().material.roles;
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(13.0))
+                    .text_color(rgb(roles.on_surface))
+                    .child(self.title.clone()),
+            )
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(11.0))
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(self.summary.clone()),
+            )
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+
+        format!("{} {}", self.title.as_ref(), self.summary.as_ref())
+            .to_ascii_lowercase()
+            .contains(&query)
+    }
+}
+
+impl SelectItem for ManagedKeySelectItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let roles = settings::current_theme().material.roles;
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(13.0))
+                    .text_color(rgb(roles.on_surface))
+                    .child(self.title.clone()),
+            )
+            .child(
+                div()
+                    .text_size(settings::scaled_font_size(11.0))
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(self.summary.clone()),
+            )
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+
+        format!("{} {}", self.title.as_ref(), self.summary.as_ref())
+            .to_ascii_lowercase()
+            .contains(&query)
+    }
+}
