@@ -1896,6 +1896,7 @@ impl AppView {
         // Force the terminal canvas prepaint path to recompute on the next frame
         // by resetting cached metrics; the next paint will reseed them from the
         // latest font settings and resize the active PTY accordingly.
+        self.workspace_state.workspace.active_pane.terminal_bounds = None;
         self.workspace_state
             .workspace
             .active_pane
@@ -1904,6 +1905,12 @@ impl AppView {
             .workspace
             .active_pane
             .terminal_line_height = terminal_line_height_default();
+
+        for parked in self.workspace_state.workspace.parked_panes.values_mut() {
+            parked.terminal_bounds = None;
+            parked.terminal_cell_width = terminal_cell_width_default();
+            parked.terminal_line_height = terminal_line_height_default();
+        }
     }
 
     pub(in crate::ui::shell) fn begin_recording_key_binding(

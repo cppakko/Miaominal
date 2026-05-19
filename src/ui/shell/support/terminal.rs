@@ -33,7 +33,22 @@ pub(in crate::ui::shell) fn terminal_cell_width(window: &Window) -> f32 {
         .max(1.0)
 }
 
+fn resolved_terminal_line_height(configured: f32, measured: f32) -> f32 {
+    if configured.is_finite() && configured > 0.0 {
+        configured
+    } else if measured.is_finite() && measured > 0.0 {
+        measured
+    } else {
+        terminal_line_height_default().max(1.0)
+    }
+}
+
 pub(in crate::ui::shell) fn terminal_line_height(window: &Window) -> f32 {
+    let configured = terminal_line_height_default();
+    if configured.is_finite() && configured > 0.0 {
+        return configured;
+    }
+
     let terminal_font = terminal_font();
     let terminal_font_size = px(terminal_font_size());
     let terminal_font_id = window.text_system().resolve_font(&terminal_font);
@@ -45,7 +60,7 @@ pub(in crate::ui::shell) fn terminal_line_height(window: &Window) -> f32 {
             .size
             .height,
     ) + 4.0;
-    measured.max(terminal_line_height_default())
+    resolved_terminal_line_height(configured, measured)
 }
 
 pub(in crate::ui::shell) fn classify_terminal_key(
@@ -95,4 +110,21 @@ pub(in crate::ui::shell) fn classify_terminal_key(
     }
 
     terminal::encode_terminal_input(event, input_modes).map(TerminalKeyAction::Bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolved_terminal_line_height;
+
+    #[test]
+    fn terminal_line_height_uses_configured_value_even_when_measured_is_larger() {
+        assert_eq!(resolved_terminal_line_height(14.0, 20.0), 14.0);
+        assert_eq!(resolved_terminal_line_height(24.0, 20.0), 24.0);
+    }
+
+    #[test]
+    fn terminal_line_height_falls_back_to_measured_value_when_config_is_invalid() {
+        assert_eq!(resolved_terminal_line_height(0.0, 20.0), 20.0);
+        assert_eq!(resolved_terminal_line_height(f32::NAN, 20.0), 20.0);
+    }
 }
