@@ -109,10 +109,9 @@ pub(in crate::ui::shell) use state::{
     PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
     PendingSyncDirectionState, PendingSyncPassphrasePopupState, PendingSyncPullConfirmState,
     SecretVisibilityState, SessionConnectionState, SessionMonitoringState, SessionPurpose,
-    SessionTabState,
-    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
-    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, WorkspaceState,
+    SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
+    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
+    SyncPullConfirmReason, SyncUiState, TabKind, TabState, WorkspaceState,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

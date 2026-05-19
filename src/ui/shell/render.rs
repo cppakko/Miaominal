@@ -274,13 +274,16 @@ impl Render for AppView {
                     ))
                 },
             )
-            .when_some(pending_sync_passphrase_clear_confirm_popup, |this, prompt| {
-                this.child(self.render_sync_passphrase_clear_confirm_popup(
-                    entity.clone(),
-                    prompt,
-                    None,
-                ))
-            })
+            .when_some(
+                pending_sync_passphrase_clear_confirm_popup,
+                |this, prompt| {
+                    this.child(self.render_sync_passphrase_clear_confirm_popup(
+                        entity.clone(),
+                        prompt,
+                        None,
+                    ))
+                },
+            )
             .when_some(pending_sync_passphrase_popup, |this, prompt| {
                 this.child(self.render_sync_passphrase_popup(entity.clone(), prompt, None))
             })
@@ -1845,55 +1848,49 @@ impl AppView {
                     .text_color(rgb(roles.primary))
                     .child(Icon::new(AppIcon::Vault).size(px(128.0))),
             )
-            .child(
-                surface_secret_text_input_stack(
-                    i18n::string("settings.sync.vault.passphrase.label"),
-                    input.clone(),
+            .child(surface_secret_text_input_stack(
+                i18n::string("settings.sync.vault.passphrase.label"),
+                input.clone(),
+                TextInputSurface::Low,
+                gpui_component::Size::Large,
+                true,
+                operation_in_progress,
+                self.secret_reveal_icon(SecretRevealTarget::LocalVaultPassphrase),
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.toggle_secret_visibility(
+                                SecretRevealTarget::LocalVaultPassphrase,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                },
+            ))
+            .when(requires_passphrase_confirmation, |this| {
+                this.child(surface_secret_text_input_stack(
+                    i18n::string("settings.sync.vault.confirm_passphrase.label"),
+                    confirmation_input.clone(),
                     TextInputSurface::Low,
                     gpui_component::Size::Large,
                     true,
                     operation_in_progress,
-                    self.secret_reveal_icon(SecretRevealTarget::LocalVaultPassphrase),
+                    self.secret_reveal_icon(SecretRevealTarget::LocalVaultPassphraseConfirmation),
                     {
                         let entity = entity.clone();
                         move |window, cx| {
                             entity.update(cx, |this, cx| {
                                 this.toggle_secret_visibility(
-                                    SecretRevealTarget::LocalVaultPassphrase,
+                                    SecretRevealTarget::LocalVaultPassphraseConfirmation,
                                     window,
                                     cx,
                                 );
                             });
                         }
                     },
-                ),
-            )
-            .when(requires_passphrase_confirmation, |this| {
-                this.child(
-                    surface_secret_text_input_stack(
-                        i18n::string("settings.sync.vault.confirm_passphrase.label"),
-                        confirmation_input.clone(),
-                        TextInputSurface::Low,
-                        gpui_component::Size::Large,
-                        true,
-                        operation_in_progress,
-                        self.secret_reveal_icon(
-                            SecretRevealTarget::LocalVaultPassphraseConfirmation,
-                        ),
-                        {
-                            let entity = entity.clone();
-                            move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.toggle_secret_visibility(
-                                        SecretRevealTarget::LocalVaultPassphraseConfirmation,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }
-                        },
-                    ),
-                )
+                ))
             })
             .when(
                 mode == LocalVaultPassphrasePopupMode::PrimaryAction,
@@ -2008,54 +2005,48 @@ impl AppView {
                     .text_color(rgb(roles.primary))
                     .child(Icon::new(AppIcon::Key).size(px(128.0))),
             )
-            .child(
-                surface_secret_text_input_stack(
-                    i18n::string("settings.sync.encryption.passphrase.label"),
-                    input.clone(),
-                    TextInputSurface::Low,
-                    gpui_component::Size::Large,
-                    true,
-                    operation_in_progress,
-                    self.secret_reveal_icon(SecretRevealTarget::SyncPassphrase),
-                    {
-                        let entity = entity.clone();
-                        move |window, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.toggle_secret_visibility(
-                                    SecretRevealTarget::SyncPassphrase,
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    },
-                ),
-            )
-            .child(
-                surface_secret_text_input_stack(
-                    i18n::string(
-                        "settings.sync.encryption.passphrase.confirm_passphrase.label",
-                    ),
-                    confirmation_input.clone(),
-                    TextInputSurface::Low,
-                    gpui_component::Size::Large,
-                    true,
-                    operation_in_progress,
-                    self.secret_reveal_icon(SecretRevealTarget::SyncPassphraseConfirmation),
-                    {
-                        let entity = entity.clone();
-                        move |window, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.toggle_secret_visibility(
-                                    SecretRevealTarget::SyncPassphraseConfirmation,
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    },
-                ),
-            )
+            .child(surface_secret_text_input_stack(
+                i18n::string("settings.sync.encryption.passphrase.label"),
+                input.clone(),
+                TextInputSurface::Low,
+                gpui_component::Size::Large,
+                true,
+                operation_in_progress,
+                self.secret_reveal_icon(SecretRevealTarget::SyncPassphrase),
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.toggle_secret_visibility(
+                                SecretRevealTarget::SyncPassphrase,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                },
+            ))
+            .child(surface_secret_text_input_stack(
+                i18n::string("settings.sync.encryption.passphrase.confirm_passphrase.label"),
+                confirmation_input.clone(),
+                TextInputSurface::Low,
+                gpui_component::Size::Large,
+                true,
+                operation_in_progress,
+                self.secret_reveal_icon(SecretRevealTarget::SyncPassphraseConfirmation),
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.toggle_secret_visibility(
+                                SecretRevealTarget::SyncPassphraseConfirmation,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                },
+            ))
             .into_any_element();
 
         let actions = h_flex()

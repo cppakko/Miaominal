@@ -154,18 +154,21 @@ impl AppView {
             SecretRevealTarget::SyncPassphrase => {
                 self.panel_forms.settings.sync_passphrase_input.clone()
             }
-            SecretRevealTarget::SyncPassphraseConfirmation => {
-                self.panel_forms.settings.sync_passphrase_confirmation_input.clone()
-            }
-            SecretRevealTarget::LocalVaultPassphrase => {
-                self.panel_forms.settings.local_vault_passphrase_input.clone()
-            }
-            SecretRevealTarget::LocalVaultPassphraseConfirmation => {
-                self.panel_forms
-                    .settings
-                    .local_vault_passphrase_confirmation_input
-                    .clone()
-            }
+            SecretRevealTarget::SyncPassphraseConfirmation => self
+                .panel_forms
+                .settings
+                .sync_passphrase_confirmation_input
+                .clone(),
+            SecretRevealTarget::LocalVaultPassphrase => self
+                .panel_forms
+                .settings
+                .local_vault_passphrase_input
+                .clone(),
+            SecretRevealTarget::LocalVaultPassphraseConfirmation => self
+                .panel_forms
+                .settings
+                .local_vault_passphrase_confirmation_input
+                .clone(),
         }
     }
 
@@ -189,7 +192,11 @@ impl AppView {
                 self.sync.sync_engine.config_store.config.has_github_token
             }
             SecretRevealTarget::SyncWebdavPassword => {
-                self.sync.sync_engine.config_store.config.has_webdav_password
+                self.sync
+                    .sync_engine
+                    .config_store
+                    .config
+                    .has_webdav_password
             }
             SecretRevealTarget::HostPassword => self
                 .data
@@ -229,7 +236,12 @@ impl AppView {
             return;
         }
 
-        let current_password = self.host_editor_forms.password_input.read(cx).value().to_string();
+        let current_password = self
+            .host_editor_forms
+            .password_input
+            .read(cx)
+            .value()
+            .to_string();
 
         if current_password.is_empty() {
             self.set_secret_visibility(SecretRevealTarget::HostPassword, false, false, window, cx);
@@ -262,7 +274,9 @@ impl AppView {
                 self.refresh_sync_secret_inputs(window, cx);
                 Ok(())
             }
-            SecretRevealTarget::HostPassword => self.load_selected_profile_password_input(window, cx),
+            SecretRevealTarget::HostPassword => {
+                self.load_selected_profile_password_input(window, cx)
+            }
             SecretRevealTarget::SyncPassphrase
             | SecretRevealTarget::SyncPassphraseConfirmation
             | SecretRevealTarget::LocalVaultPassphrase
@@ -652,8 +666,7 @@ impl AppView {
 
     fn open_sync_passphrase_clear_confirm_popup(&mut self, cx: &mut Context<Self>) {
         let popup = PendingSyncPassphraseClearConfirmPopupState;
-        let stable_key =
-            DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup).stable_key();
+        let stable_key = DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup).stable_key();
         self.dialogs
             .exiting_dialogs
             .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
@@ -662,7 +675,11 @@ impl AppView {
     }
 
     fn dismiss_sync_passphrase_clear_confirm_popup(&mut self, cx: &mut Context<Self>) {
-        if let Some(popup) = self.dialogs.pending_sync_passphrase_clear_confirm_popup.take() {
+        if let Some(popup) = self
+            .dialogs
+            .pending_sync_passphrase_clear_confirm_popup
+            .take()
+        {
             self.start_dialog_exit(
                 DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup),
                 cx,
@@ -887,10 +904,8 @@ impl AppView {
         );
         self.secret_visibility
             .set_visible(SecretRevealTarget::SyncPassphrase, false);
-        self.secret_visibility.set_visible(
-            SecretRevealTarget::SyncPassphraseConfirmation,
-            false,
-        );
+        self.secret_visibility
+            .set_visible(SecretRevealTarget::SyncPassphraseConfirmation, false);
     }
 
     fn focus_sync_passphrase_input(&self, window: &mut Window, cx: &mut App) {
@@ -2183,10 +2198,8 @@ impl AppView {
 
         self.secret_visibility
             .set_visible(SecretRevealTarget::LocalVaultPassphrase, false);
-        self.secret_visibility.set_visible(
-            SecretRevealTarget::LocalVaultPassphraseConfirmation,
-            false,
-        );
+        self.secret_visibility
+            .set_visible(SecretRevealTarget::LocalVaultPassphraseConfirmation, false);
 
         cx.notify();
     }
@@ -3569,11 +3582,7 @@ impl AppView {
         );
     }
 
-    fn clear_local_vault_passphrase_input(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn clear_local_vault_passphrase_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         set_input_value(
             &self.panel_forms.settings.local_vault_passphrase_input,
             String::new(),
@@ -3608,10 +3617,8 @@ impl AppView {
         );
         self.secret_visibility
             .set_visible(SecretRevealTarget::LocalVaultPassphrase, false);
-        self.secret_visibility.set_visible(
-            SecretRevealTarget::LocalVaultPassphraseConfirmation,
-            false,
-        );
+        self.secret_visibility
+            .set_visible(SecretRevealTarget::LocalVaultPassphraseConfirmation, false);
     }
 
     fn focus_local_vault_passphrase_input(&self, window: &mut Window, cx: &mut App) {
