@@ -1,0 +1,17 @@
+[package]
+name = "miaominal-sftp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+miaominal-core = { path = "../miaominal-core" }
+miaominal-secrets = { path = "../miaominal-secrets" }
+miaominal-ssh = { path = "../miaominal-ssh" }
+miaominal-storage = { path = "../miaominal-storage" }
+russh.workspace = true
+russh-sftp.workspace = true
+tokio.workspace = true

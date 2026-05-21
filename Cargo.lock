@@ -4527,6 +4527,10 @@ dependencies = [
  "keyring",
  "log",
  "material-colors",
+ "miaominal-core",
+ "miaominal-paths",
+ "miaominal-settings",
+ "miaominal-ui",
  "notify 6.1.1",
  "open",
  "rand 0.10.1",
@@ -4548,6 +4552,185 @@ dependencies = [
  "usvg",
  "uuid",
  "winresource",
+]
+
+[[package]]
+name = "miaominal-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "miaominal-paths"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+]
+
+[[package]]
+name = "miaominal-secrets"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "anyhow",
+ "argon2",
+ "base64",
+ "keyring",
+ "log",
+ "miaominal-paths",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "miaominal-services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "miaominal-core",
+ "miaominal-paths",
+ "miaominal-secrets",
+ "miaominal-settings",
+ "miaominal-sftp",
+ "miaominal-ssh",
+ "miaominal-storage",
+ "miaominal-sync",
+ "tokio",
+ "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
+name = "miaominal-settings"
+version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "gpui",
+ "gpui-component",
+ "material-colors",
+ "serde",
+ "sys-locale",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "miaominal-sftp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "log",
+ "miaominal-core",
+ "miaominal-secrets",
+ "miaominal-ssh",
+ "miaominal-storage",
+ "russh",
+ "russh-sftp",
+ "tokio",
+]
+
+[[package]]
+name = "miaominal-ssh"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "log",
+ "miaominal-core",
+ "miaominal-secrets",
+ "miaominal-storage",
+ "miaominal-terminal",
+ "russh",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "miaominal-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "log",
+ "miaominal-core",
+ "miaominal-paths",
+ "miaominal-secrets",
+ "miaominal-settings",
+ "rand 0.10.1",
+ "roxmltree",
+ "russh",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
+name = "miaominal-sync"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "anyhow",
+ "argon2",
+ "base64",
+ "log",
+ "miaominal-core",
+ "miaominal-paths",
+ "miaominal-secrets",
+ "miaominal-settings",
+ "miaominal-storage",
+ "rand 0.10.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
+name = "miaominal-terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "gpui",
+ "miaominal-settings",
+]
+
+[[package]]
+name = "miaominal-ui"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "futures",
+ "gpui",
+ "gpui-component",
+ "gpui-component-assets",
+ "log",
+ "miaominal-core",
+ "miaominal-secrets",
+ "miaominal-services",
+ "miaominal-settings",
+ "miaominal-sftp",
+ "miaominal-ssh",
+ "miaominal-storage",
+ "miaominal-sync",
+ "miaominal-terminal",
+ "notify 6.1.1",
+ "open",
+ "rfd",
+ "rust-embed",
+ "time",
+ "tokio",
+ "toml 0.8.23",
+ "unicode-segmentation",
 ]
 
 [[package]]

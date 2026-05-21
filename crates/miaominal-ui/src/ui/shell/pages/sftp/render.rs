@@ -1,0 +1,1884 @@
+use super::super::super::*;
+use crate::ui::i18n;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use gpui_component::{
+    ElementExt, StyledExt,
+    breadcrumb::{Breadcrumb, BreadcrumbItem},
+    progress::Progress,
+    table::DataTable,
+};
+
+const SFTP_SPLIT_GAP: f32 = 8.0;
+const SFTP_MIN_SPLIT_FLEX: f32 = 0.05;
+const SFTP_DEFAULT_LOCAL_PANEL_FLEX: f32 = 0.5;
+const SFTP_DEFAULT_BROWSER_AREA_FLEX: f32 = 0.84;
+const SFTP_DEFAULT_BROWSER_AREA_FLEX_WITH_TRANSFERS: f32 = 0.76;
+const SFTP_LOCAL_PANEL_MIN_WIDTH: f32 = 260.0;
+const SFTP_REMOTE_PANEL_MIN_WIDTH: f32 = 260.0;
+const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 96.0;
+const SFTP_BROWSER_MIN_HEIGHT: f32 = 240.0;
+
+#[derive(Clone)]
+struct SftpSplitDragMarker {
+    divider: SftpSplitDivider,
+}
+
+impl Render for SftpSplitDragMarker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = self.divider;
+        div().size(px(1.0))
+    }
+}
+
+fn sftp_usable_container_size(size: Pixels) -> f32 {
+    (size.as_f32() - SFTP_SPLIT_GAP).max(1.0)
+}
+
+fn clamp_sftp_local_panel_flex(container_width: Pixels, requested: f32) -> f32 {
+    let available = sftp_usable_container_size(container_width);
+    let min = (SFTP_LOCAL_PANEL_MIN_WIDTH / available).clamp(SFTP_MIN_SPLIT_FLEX, 0.95);
+    let max = (1.0 - (SFTP_REMOTE_PANEL_MIN_WIDTH / available).clamp(SFTP_MIN_SPLIT_FLEX, 0.95))
+        .clamp(0.05, 0.95);
+
+    if max <= min {
+        return 0.5;
+    }
+
+    requested.clamp(min, max)
+}
+
+fn default_sftp_browser_area_flex(tab: &SftpTabState) -> f32 {
+    if tab.transfers.is_empty() {
+        SFTP_DEFAULT_BROWSER_AREA_FLEX
+    } else {
+        SFTP_DEFAULT_BROWSER_AREA_FLEX_WITH_TRANSFERS
+    }
+}
+
+fn clamp_sftp_browser_area_flex(container_height: Pixels, requested: f32) -> f32 {
+    let available = sftp_usable_container_size(container_height);
+    let min = (SFTP_BROWSER_MIN_HEIGHT / available).clamp(SFTP_MIN_SPLIT_FLEX, 0.95);
+    let max = (1.0
+        - (SFTP_PROGRESS_CENTER_MIN_HEIGHT / available).clamp(SFTP_MIN_SPLIT_FLEX, 0.95))
+    .clamp(0.05, 0.95);
+
+    if max <= min {
+        return 0.5;
+    }
+
+    requested.clamp(min, max)
+}
+
+fn sftp_local_panel_flex(tab: &SftpTabState) -> f32 {
+    clamp_sftp_local_panel_flex(
+        tab.layout.browser_container_width,
+        tab.layout
+            .local_panel_flex
+            .unwrap_or(SFTP_DEFAULT_LOCAL_PANEL_FLEX),
+    )
+}
+
+fn sftp_browser_area_flex(tab: &SftpTabState) -> f32 {
+    clamp_sftp_browser_area_flex(
+        tab.layout.page_container_height,
+        tab.layout
+            .browser_area_flex
+            .unwrap_or_else(|| default_sftp_browser_area_flex(tab)),
+    )
+}
+
+fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+
+    div()
+        .flex_1()
+        .min_w(px(0.0))
+        .h(px(32.0))
+        .rounded(px(10.0))
+        .bg(rgb(roles.surface_container_low))
+        .px_3()
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .child(
+            Input::new(input)
+                .appearance(false)
+                .border_0()
+                .small()
+                .h_full()
+                .w_full(),
+        )
+}
+
+fn sftp_path_button(
+    icon: AppIcon,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+
+    icon_button(
+        icon,
+        28.0,
+        32.0,
+        Some(roles.secondary_container),
+        Some(roles.on_secondary_container),
+        None,
+        on_click,
+    )
+}
+
+fn sftp_path_breadcrumb_shell(content: impl IntoElement) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+
+    div()
+        .flex_1()
+        .min_w(px(0.0))
+        .h(px(32.0))
+        .rounded(px(10.0))
+        .bg(rgb(roles.surface_container_low))
+        .px_3()
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .child(content),
+        )
+}
+
+fn local_sftp_breadcrumb_label(path: &Path) -> SharedString {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| AppView::display_sftp_local_path(path))
+}
+
+fn build_local_sftp_breadcrumb(path: &Path, entity: Entity<AppView>, tab_id: usize) -> Breadcrumb {
+    let mut breadcrumb = Breadcrumb::new();
+    let mut ancestors: Vec<PathBuf> = path
+        .ancestors()
+        .map(|ancestor| ancestor.to_path_buf())
+        .collect();
+    ancestors.reverse();
+
+    for ancestor in ancestors {
+        let label = local_sftp_breadcrumb_label(&ancestor);
+        let is_current = ancestor.as_path() == path;
+        let item = if is_current {
+            BreadcrumbItem::new(label).disabled(true)
+        } else {
+            let click_entity = entity.clone();
+            let target = ancestor.clone();
+            BreadcrumbItem::new(label).on_click(move |_, _, cx| {
+                let target = target.clone();
+                click_entity.update(cx, |this, cx| {
+                    this.navigate_sftp_local_to_path(tab_id, target.clone(), cx);
+                });
+            })
+        };
+        breadcrumb = breadcrumb.child(item);
+    }
+
+    breadcrumb
+}
+
+fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usize) -> Breadcrumb {
+    let trimmed = path.trim();
+    let current_path = if trimmed.is_empty() { "." } else { trimmed };
+    let mut segments: Vec<(String, SharedString)> = Vec::new();
+
+    if current_path == "/" {
+        segments.push(("/".into(), "/".into()));
+    } else if current_path == "." {
+        segments.push((".".into(), ".".into()));
+    } else if current_path.starts_with('/') {
+        segments.push(("/".into(), "/".into()));
+        let mut accumulated = "/".to_string();
+        for segment in current_path
+            .trim_matches('/')
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+        {
+            accumulated = AppView::join_remote_path(&accumulated, segment);
+            segments.push((accumulated.clone(), segment.to_string().into()));
+        }
+    } else {
+        let mut accumulated = ".".to_string();
+        segments.push((accumulated.clone(), ".".into()));
+        for segment in current_path
+            .split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+        {
+            accumulated = AppView::join_remote_path(&accumulated, segment);
+            segments.push((accumulated.clone(), segment.to_string().into()));
+        }
+    }
+
+    let mut breadcrumb = Breadcrumb::new();
+    for (target_path, label) in segments {
+        let is_current = target_path == current_path;
+        let item = if is_current {
+            BreadcrumbItem::new(label).disabled(true)
+        } else {
+            let click_entity = entity.clone();
+            let target = target_path.clone();
+            BreadcrumbItem::new(label).on_click(move |_, _, cx| {
+                let target = target.clone();
+                click_entity.update(cx, |this, cx| {
+                    this.request_sftp_remote_directory(tab_id, target.clone(), cx);
+                });
+            })
+        };
+        breadcrumb = breadcrumb.child(item);
+    }
+
+    breadcrumb
+}
+
+fn sftp_path_bar(
+    path_content: impl IntoElement,
+    show_edit_button: bool,
+    on_up: impl Fn(&mut Window, &mut App) + 'static,
+    on_edit: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .min_w(px(0.0))
+        .items_center()
+        .gap_2()
+        .child(path_content)
+        .child(sftp_path_button(
+            AppIcon::CornerLeftUp,
+            move |window, cx| on_up(window, cx),
+        ))
+        .when(show_edit_button, |this| {
+            this.child(sftp_path_button(AppIcon::Edit, move |window, cx| {
+                on_edit(window, cx)
+            }))
+        })
+}
+
+fn sftp_panel_card() -> Div {
+    let roles = miaominal_settings::current_theme().material.roles;
+
+    card_surface(roles.surface_container_highest, 16.0)
+        .size_full()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+}
+
+fn sftp_split_bar(
+    tab_id: usize,
+    divider: SftpSplitDivider,
+    is_dragging: bool,
+    cx: &mut Context<AppView>,
+) -> gpui::AnyElement {
+    let bar_id = SharedString::from(format!(
+        "sftp-split-bar-{tab_id}-{}",
+        match divider {
+            SftpSplitDivider::BrowserPanels => "browser",
+            SftpSplitDivider::ProgressCenter => "progress",
+        }
+    ));
+
+    let marker = SftpSplitDragMarker { divider };
+    let mut bar = div().id(bar_id).flex_shrink_0().occlude();
+    bar = match divider {
+        SftpSplitDivider::BrowserPanels => bar.w(px(SFTP_SPLIT_GAP)).h_full().cursor_col_resize(),
+        SftpSplitDivider::ProgressCenter => bar.h(px(SFTP_SPLIT_GAP)).w_full().cursor_row_resize(),
+    };
+
+    bar.on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+            let pointer = match divider {
+                SftpSplitDivider::BrowserPanels => f32::from(event.position.x),
+                SftpSplitDivider::ProgressCenter => f32::from(event.position.y),
+            };
+            this.start_sftp_split_drag(tab_id, divider, pointer, cx);
+        }),
+    )
+    .hover(move |this| {
+        if is_dragging {
+            this
+        } else {
+            match divider {
+                SftpSplitDivider::BrowserPanels => this.cursor_col_resize(),
+                SftpSplitDivider::ProgressCenter => this.cursor_row_resize(),
+            }
+        }
+    })
+    .on_drag(marker, |m, _offset, _window, cx| cx.new(|_| m.clone()))
+    .into_any_element()
+}
+
+fn sftp_browser_section<M>(
+    section_id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    _item_count: usize,
+    path_bar: impl IntoElement,
+    content: impl IntoElement,
+    menu_builder: M,
+) -> impl IntoElement
+where
+    M: for<'a, 'b, 'c> Fn(PopupMenu, &'a mut Window, &'b mut Context<'c, PopupMenu>) -> PopupMenu
+        + 'static,
+{
+    let roles = miaominal_settings::current_theme().material.roles;
+    let title = title.into();
+
+    sftp_panel_card()
+        .id(section_id)
+        .flex()
+        .flex_col()
+        .context_menu(menu_builder)
+        .child(
+            div().w_full().px_3().py_3().child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex().w_full().items_center().child(
+                            h_flex().items_center().gap_2().child(
+                                div()
+                                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(title),
+                            ),
+                        ),
+                    )
+                    .child(div().h_flex().w_full().min_w(px(0.0)).child(path_bar)),
+            ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(content),
+        )
+}
+
+fn sftp_progress_center_card(
+    section_id: impl Into<ElementId>,
+    status: impl Into<SharedString>,
+    content: impl IntoElement,
+) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let status = status.into();
+
+    sftp_panel_card()
+        .id(section_id)
+        .flex()
+        .flex_col()
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .px_3()
+                .pt_3()
+                .pb_2()
+                .child(
+                    div()
+                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                        .text_color(rgb(roles.on_surface))
+                        .child(i18n::string("sftp.ui.progress_center")),
+                )
+                .child(
+                    div()
+                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(status),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .w_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .child(content),
+        )
+}
+
+fn context_menu_local_sftp_entry(
+    entity: &Entity<AppView>,
+    tab_id: usize,
+    cx: &App,
+) -> Option<LocalSftpEntry> {
+    let shell = entity.read(cx);
+    let row_ix = shell
+        .workspace_forms
+        .sftp_browser
+        .local_table
+        .read(cx)
+        .right_clicked_row()?;
+    let path = shell
+        .workspace_forms
+        .sftp_browser
+        .local_table
+        .read(cx)
+        .delegate()
+        .row(row_ix)
+        .map(|row| PathBuf::from(row.path.as_str()))?;
+
+    shell
+        .workspace_state
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .and_then(TabState::as_sftp)
+        .and_then(|sftp| {
+            sftp.local_entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .cloned()
+        })
+}
+
+fn context_menu_remote_sftp_entry(
+    entity: &Entity<AppView>,
+    tab_id: usize,
+    cx: &App,
+) -> Option<SftpEntry> {
+    let shell = entity.read(cx);
+    let table = shell.workspace_forms.sftp_browser.remote_table.read(cx);
+    let row_ix = table.right_clicked_row()?;
+    let path = table.delegate().row(row_ix).map(|row| row.path.clone())?;
+    shell.resolve_remote_sftp_entry(tab_id, &path, cx)
+}
+
+fn build_local_sftp_context_menu(
+    menu: PopupMenu,
+    entity: Entity<AppView>,
+    tab_id: usize,
+    cx: &App,
+) -> PopupMenu {
+    let mut menu = menu;
+
+    if let Some(entry) = context_menu_local_sftp_entry(&entity, tab_id, cx) {
+        if entry.is_directory {
+            let open_entity = entity.clone();
+            let open_path = entry.path.clone();
+            menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
+                move |_, _, cx| {
+                    let entity = open_entity.clone();
+                    let path = open_path.clone();
+                    entity.update(cx, |this, cx| {
+                        this.select_sftp_local_path(tab_id, path.clone(), cx);
+                        this.navigate_sftp_local_into_selected(tab_id, cx);
+                    });
+                },
+            ));
+        }
+
+        let upload_entity = entity.clone();
+        let upload_path = entry.path.clone();
+        menu = menu
+            .item(
+                PopupMenuItem::new(i18n::string("sftp.menu.upload")).on_click(move |_, _, cx| {
+                    let entity = upload_entity.clone();
+                    let path = upload_path.clone();
+                    entity.update(cx, |this, cx| {
+                        let already_selected = this
+                            .workspace_state
+                            .tabs
+                            .iter()
+                            .find(|tab| tab.id == tab_id)
+                            .and_then(TabState::as_sftp)
+                            .map(|sftp| sftp.selected_local_paths.iter().any(|p| p == &path))
+                            .unwrap_or(false);
+                        if !already_selected {
+                            this.select_sftp_local_path(tab_id, path.clone(), cx);
+                        }
+                        this.queue_sftp_upload_selected(tab_id, cx);
+                    });
+                }),
+            )
+            .item(PopupMenuItem::separator());
+    }
+
+    let up_entity = entity.clone();
+    let refresh_entity = entity;
+    menu.item(
+        PopupMenuItem::new(i18n::string("sftp.menu.go_up")).on_click(move |_, _, cx| {
+            let entity = up_entity.clone();
+            entity.update(cx, |this, cx| {
+                this.navigate_sftp_local_up(tab_id, cx);
+            });
+        }),
+    )
+    .item(
+        PopupMenuItem::new(i18n::string("sftp.menu.refresh")).on_click(move |_, _, cx| {
+            let entity = refresh_entity.clone();
+            entity.update(cx, |this, cx| {
+                this.refresh_sftp_local_directory(tab_id, cx);
+            });
+        }),
+    )
+}
+
+fn build_remote_sftp_context_menu(
+    menu: PopupMenu,
+    entity: Entity<AppView>,
+    tab_id: usize,
+    cx: &App,
+) -> PopupMenu {
+    let mut menu = menu;
+
+    if let Some(entry) = context_menu_remote_sftp_entry(&entity, tab_id, cx) {
+        let is_single_selection = entity
+            .read(cx)
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp)
+            .map(|sftp| sftp.selected_remote_paths.len() == 1)
+            .unwrap_or(false);
+
+        if entry.kind == miaominal_sftp::SftpEntryKind::Directory {
+            let open_entity = entity.clone();
+            let open_path = entry.path.clone();
+            menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
+                move |_, _, cx| {
+                    let entity = open_entity.clone();
+                    let path = open_path.clone();
+                    entity.update(cx, |this, cx| {
+                        this.select_sftp_remote_path(tab_id, path.clone(), cx);
+                        this.navigate_sftp_remote_into_selected(tab_id, cx);
+                    });
+                },
+            ));
+        }
+
+        let download_entity = entity.clone();
+        let download_path = entry.path.clone();
+        let edit_entity = entity.clone();
+        let edit_path = entry.path.clone();
+        let is_file = entry.kind != miaominal_sftp::SftpEntryKind::Directory;
+        let rename_entity = entity.clone();
+        let delete_entity = entity.clone();
+        menu = menu.item(
+            PopupMenuItem::new(i18n::string("sftp.menu.download")).on_click(move |_, _, cx| {
+                let entity = download_entity.clone();
+                let path = download_path.clone();
+                entity.update(cx, |this, cx| {
+                    let already_selected = this
+                        .workspace_state
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id)
+                        .and_then(TabState::as_sftp)
+                        .map(|sftp| sftp.selected_remote_paths.iter().any(|p| p == &path))
+                        .unwrap_or(false);
+                    if !already_selected {
+                        this.select_sftp_remote_path(tab_id, path.clone(), cx);
+                    }
+                    this.queue_sftp_download_selected(tab_id, cx);
+                });
+            }),
+        );
+        if is_single_selection && is_file {
+            menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.edit")).on_click(
+                move |_, _, cx| {
+                    let entity = edit_entity.clone();
+                    let path = edit_path.clone();
+                    entity.update(cx, |this, cx| {
+                        this.open_remote_file_for_editing(tab_id, path, cx);
+                    });
+                },
+            ));
+        }
+        if is_single_selection {
+            menu = menu.item(
+                PopupMenuItem::new(i18n::string("sftp.menu.rename")).on_click(
+                    move |_, window, cx| {
+                        let entity = rename_entity.clone();
+                        entity.update(cx, |this, cx| {
+                            this.begin_sftp_rename_selected(tab_id, window, cx);
+                        });
+                    },
+                ),
+            );
+        }
+        menu = menu
+            .item(
+                PopupMenuItem::new(i18n::string("sftp.menu.delete")).on_click(move |_, _, cx| {
+                    let entity = delete_entity.clone();
+                    entity.update(cx, |this, cx| {
+                        this.delete_sftp_remote_selected(tab_id, cx);
+                    });
+                }),
+            )
+            .item(PopupMenuItem::separator());
+    }
+
+    let up_entity = entity.clone();
+    let refresh_entity = entity.clone();
+    let create_entity = entity;
+    menu.item(
+        PopupMenuItem::new(i18n::string("sftp.menu.go_up")).on_click(move |_, _, cx| {
+            let entity = up_entity.clone();
+            entity.update(cx, |this, cx| {
+                this.navigate_sftp_remote_up(tab_id, cx);
+            });
+        }),
+    )
+    .item(
+        PopupMenuItem::new(i18n::string("sftp.menu.refresh")).on_click(move |_, _, cx| {
+            let entity = refresh_entity.clone();
+            entity.update(cx, |this, cx| {
+                let path = this
+                    .workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(TabState::as_sftp)
+                    .map(|sftp| sftp.remote_path.clone())
+                    .unwrap_or_else(|| ".".into());
+                this.request_sftp_remote_directory(tab_id, path, cx);
+            });
+        }),
+    )
+    .item(PopupMenuItem::separator())
+    .item(
+        PopupMenuItem::new(i18n::string("sftp.menu.create_directory")).on_click(
+            move |_, window, cx| {
+                let entity = create_entity.clone();
+                entity.update(cx, |this, cx| {
+                    this.begin_sftp_create_directory(tab_id, window, cx);
+                });
+            },
+        ),
+    )
+}
+
+impl AppView {
+    fn sftp_tab_mut(&mut self, tab_id: usize) -> Option<&mut SftpTabState> {
+        self.workspace_state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp_mut)
+    }
+
+    fn cache_sftp_browser_container_width(
+        &mut self,
+        tab_id: usize,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+
+        if tab.layout.browser_container_width != width {
+            tab.layout.browser_container_width = width;
+            cx.notify();
+        }
+    }
+
+    fn cache_sftp_page_container_height(
+        &mut self,
+        tab_id: usize,
+        height: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+
+        if tab.layout.page_container_height != height {
+            tab.layout.page_container_height = height;
+            cx.notify();
+        }
+    }
+
+    fn start_sftp_split_drag(
+        &mut self,
+        tab_id: usize,
+        divider: SftpSplitDivider,
+        initial_pointer: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+
+        let (initial_flex_a, container_size) = match divider {
+            SftpSplitDivider::BrowserPanels => {
+                let flex_a = sftp_local_panel_flex(tab);
+                (
+                    flex_a,
+                    sftp_usable_container_size(tab.layout.browser_container_width),
+                )
+            }
+            SftpSplitDivider::ProgressCenter => {
+                let flex_a = sftp_browser_area_flex(tab);
+                (
+                    flex_a,
+                    sftp_usable_container_size(tab.layout.page_container_height),
+                )
+            }
+        };
+
+        tab.layout.drag = Some(SftpSplitDragState {
+            divider,
+            initial_pointer,
+            initial_flex_a,
+            container_size,
+        });
+        cx.notify();
+    }
+
+    fn update_sftp_split_drag(&mut self, tab_id: usize, pointer: f32, cx: &mut Context<Self>) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+        let Some(drag) = tab.layout.drag.clone() else {
+            return;
+        };
+
+        let delta_flex = if drag.container_size > 0.0 {
+            (pointer - drag.initial_pointer) / drag.container_size
+        } else {
+            0.0
+        };
+
+        match drag.divider {
+            SftpSplitDivider::BrowserPanels => {
+                let next_flex = clamp_sftp_local_panel_flex(
+                    tab.layout.browser_container_width,
+                    drag.initial_flex_a + delta_flex,
+                );
+                if tab.layout.local_panel_flex != Some(next_flex) {
+                    tab.layout.local_panel_flex = Some(next_flex);
+                    cx.notify();
+                }
+            }
+            SftpSplitDivider::ProgressCenter => {
+                let next_flex = clamp_sftp_browser_area_flex(
+                    tab.layout.page_container_height,
+                    drag.initial_flex_a + delta_flex,
+                );
+                if tab.layout.browser_area_flex != Some(next_flex) {
+                    tab.layout.browser_area_flex = Some(next_flex);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn finish_sftp_split_drag(&mut self, tab_id: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+
+        if tab.layout.drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui::shell) fn render_sftp_page(
+        &self,
+        entity: Entity<Self>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        self.render_sftp_page_content(entity, cx)
+    }
+
+    pub(in crate::ui::shell) fn render_sftp_page_content(
+        &self,
+        entity: Entity<Self>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let extended = material.extended;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+        let Some(active_index) = self.workspace_state.active_topbar_tab else {
+            return self.render_snippets_page_content();
+        };
+        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
+            return self.render_snippets_page_content();
+        };
+        let Some(sftp_tab) = tab.as_sftp() else {
+            return self.render_snippets_page_content();
+        };
+
+        let tab_id = tab.id;
+        let local_panel_flex = sftp_local_panel_flex(sftp_tab);
+        let browser_area_flex = sftp_browser_area_flex(sftp_tab);
+        let local_path_bar = if self.workspace_forms.sftp_browser.local_path_editing {
+            let up_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_input_shell(&self.workspace_forms.sftp_browser.local_path_input),
+                false,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_local_up(tab_id, cx);
+                    });
+                },
+                |_window, _cx| {},
+            )
+            .into_any_element()
+        } else {
+            let breadcrumb_entity = entity.clone();
+            let up_entity = entity.clone();
+            let edit_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_breadcrumb_shell(build_local_sftp_breadcrumb(
+                    &sftp_tab.local_path,
+                    breadcrumb_entity,
+                    tab_id,
+                )),
+                true,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_local_up(tab_id, cx);
+                    });
+                },
+                move |_window, cx| {
+                    edit_entity.update(cx, |this, cx| {
+                        this.set_sftp_local_path_editing(true, cx);
+                    });
+                },
+            )
+            .into_any_element()
+        };
+        let remote_path_bar = if self.workspace_forms.sftp_browser.remote_path_editing {
+            let up_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_input_shell(&self.workspace_forms.sftp_browser.remote_path_input),
+                false,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_remote_up(tab_id, cx);
+                    });
+                },
+                |_window, _cx| {},
+            )
+            .into_any_element()
+        } else {
+            let breadcrumb_entity = entity.clone();
+            let up_entity = entity.clone();
+            let edit_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_breadcrumb_shell(build_remote_sftp_breadcrumb(
+                    &sftp_tab.remote_path,
+                    breadcrumb_entity,
+                    tab_id,
+                )),
+                true,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_remote_up(tab_id, cx);
+                    });
+                },
+                move |_window, cx| {
+                    edit_entity.update(cx, |this, cx| {
+                        this.set_sftp_remote_path_editing(true, cx);
+                    });
+                },
+            )
+            .into_any_element()
+        };
+
+        let table_row_height = gpui_component::Size::Small.table_row_height();
+        let local_table_bounds = Rc::new(RefCell::new(None));
+        let remote_table_bounds = Rc::new(RefCell::new(None));
+        let local_sftp_table = self.workspace_forms.sftp_browser.local_table.clone();
+        let remote_sftp_table = self.workspace_forms.sftp_browser.remote_table.clone();
+        let local_table_for_menu = self.workspace_forms.sftp_browser.local_table.clone();
+        let remote_table_for_menu = self.workspace_forms.sftp_browser.remote_table.clone();
+
+        let local_list = div()
+            .id(("sftp-local-table-wrap", tab_id))
+            .relative()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .on_prepaint({
+                let local_table_bounds = local_table_bounds.clone();
+                let table = self.workspace_forms.sftp_browser.local_table.clone();
+                move |bounds, _, cx| {
+                    *local_table_bounds.borrow_mut() = Some(bounds);
+                    table.update(cx, |table, cx| {
+                        if table.delegate_mut().set_available_width(bounds.size.width) {
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .on_mouse_down(MouseButton::Left, {
+                let entity = entity.clone();
+                let local_table_bounds = local_table_bounds.clone();
+                move |event: &MouseDownEvent, _window, cx| {
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *local_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, _cx| {
+                        this.begin_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Local,
+                            event.position,
+                            bounds,
+                            table_row_height,
+                        );
+                    });
+                }
+            })
+            .on_mouse_move({
+                let entity = entity.clone();
+                let local_table_bounds = local_table_bounds.clone();
+                move |event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *local_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.update_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Local,
+                            event.position,
+                            bounds,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .capture_any_mouse_up({
+                let entity = entity.clone();
+                let local_table_bounds = local_table_bounds.clone();
+                move |event: &MouseUpEvent, _window, cx| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    let Some(bounds) = *local_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.finish_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Local,
+                            event.position,
+                            bounds,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_click({
+                let entity = entity.clone();
+                let local_table_bounds = local_table_bounds.clone();
+                move |event, _window, cx| {
+                    let Some(bounds) = *local_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.handle_sftp_blank_click(
+                            tab_id,
+                            SftpBrowserSide::Local,
+                            event.position(),
+                            bounds,
+                            table_row_height,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .child(
+                DataTable::new(&self.workspace_forms.sftp_browser.local_table)
+                    .with_size(gpui_component::Size::Small)
+                    .bordered(false)
+                    .scrollbar_visible(true, true),
+            )
+            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                if !event.modifiers.shift {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == px(0.) {
+                    return;
+                }
+                local_sftp_table.update(cx, |state, cx| {
+                    let mut offset = state.horizontal_scroll_handle.offset();
+                    offset.x += delta.y;
+                    state.horizontal_scroll_handle.set_offset(offset);
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            })
+            .when_some(sftp_tab.local_drag_selection, |this, drag| {
+                let bounds = drag.bounds();
+                this.child(
+                    div()
+                        .absolute()
+                        .left(bounds.origin.x)
+                        .top(bounds.origin.y)
+                        .w(bounds.size.width)
+                        .h(bounds.size.height)
+                        .bg(color_with_alpha(extended.info.color, 0x24)),
+                )
+            })
+            .into_any_element();
+
+        let remote_list = div()
+            .id(("sftp-remote-table-wrap", tab_id))
+            .group("sftp-remote-drop")
+            .relative()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .on_prepaint({
+                let remote_table_bounds = remote_table_bounds.clone();
+                let table = self.workspace_forms.sftp_browser.remote_table.clone();
+                move |bounds, _, cx| {
+                    *remote_table_bounds.borrow_mut() = Some(bounds);
+                    table.update(cx, |table, cx| {
+                        if table.delegate_mut().set_available_width(bounds.size.width) {
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .on_mouse_down(MouseButton::Left, {
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseDownEvent, _window, cx| {
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, _cx| {
+                        this.begin_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            table_row_height,
+                        );
+                    });
+                }
+            })
+            .on_mouse_move({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.update_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .capture_any_mouse_up({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseUpEvent, _window, cx| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.finish_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_click({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event, _window, cx| {
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.handle_sftp_blank_click(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position(),
+                            bounds,
+                            table_row_height,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .child(
+                DataTable::new(&self.workspace_forms.sftp_browser.remote_table)
+                    .with_size(gpui_component::Size::Small)
+                    .bordered(false)
+                    .scrollbar_visible(true, true),
+            )
+            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                if !event.modifiers.shift {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == px(0.) {
+                    return;
+                }
+                remote_sftp_table.update(cx, |state, cx| {
+                    let mut offset = state.horizontal_scroll_handle.offset();
+                    offset.x += delta.y;
+                    state.horizontal_scroll_handle.set_offset(offset);
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            })
+            .when_some(sftp_tab.remote_drag_selection, |this, drag| {
+                let bounds = drag.bounds();
+                this.child(
+                    div()
+                        .absolute()
+                        .left(bounds.origin.x)
+                        .top(bounds.origin.y)
+                        .w(bounds.size.width)
+                        .h(bounds.size.height)
+                        .bg(color_with_alpha(extended.info.color, 0x24)),
+                )
+            })
+            .on_drop::<ExternalPaths>({
+                let entity = entity.clone();
+                move |paths: &ExternalPaths, _window, cx| {
+                    let local_paths: Vec<PathBuf> = paths.paths().to_vec();
+                    entity.update(cx, |this, cx| {
+                        this.queue_sftp_upload_paths(tab_id, local_paths, cx);
+                    });
+                }
+            })
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .invisible()
+                    .group_drag_over::<ExternalPaths>("sftp-remote-drop", |style| style.visible())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .bg(color_with_alpha(roles.primary, 0x20))
+                    .child(
+                        div()
+                            .text_size(miaominal_settings::scaled_font_size(13.0))
+                            .text_color(rgb(roles.on_primary))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(i18n::string("sftp.ui.drop_to_upload")),
+                    ),
+            )
+            .into_any_element();
+
+        let footer = if sftp_tab.transfers.is_empty() {
+            sftp_progress_center_card(
+                format!("sftp-progress-center-{tab_id}"),
+                sftp_tab.last_status.clone(),
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .gap_2()
+                    .px_3()
+                    .pb_3()
+                    .child(
+                        div()
+                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_color(rgb(text_muted))
+                            .child(i18n::string_args(
+                                "sftp.ui.remote_path_label",
+                                &[("path", &sftp_tab.remote_path)],
+                            )),
+                    )
+                    .when_some(sftp_tab.last_error.clone(), |this, error| {
+                        this.child(
+                            div()
+                                .text_size(miaominal_settings::scaled_font_size(10.0))
+                                .line_height(miaominal_settings::scaled_line_height(16.0))
+                                .text_color(rgb(extended.warning.color))
+                                .child(error),
+                        )
+                    }),
+            )
+            .into_any_element()
+        } else {
+            let mut rows = v_flex().w_full().gap_1();
+            for transfer in &sftp_tab.transfers {
+                let transfer_id = transfer.transfer_id;
+                let direction_icon = match transfer.direction {
+                    TransferDirection::Upload => AppIcon::Upload,
+                    TransferDirection::Download => AppIcon::Download,
+                };
+                let progress = transfer.bytes_total.map_or_else(
+                    || format_byte_size(Some(transfer.bytes_complete)).to_string(),
+                    |total| {
+                        format!(
+                            "{} / {}",
+                            format_byte_size(Some(transfer.bytes_complete)),
+                            format_byte_size(Some(total))
+                        )
+                    },
+                );
+                let progress_value = match transfer.bytes_total {
+                    Some(total) if total > 0 => {
+                        ((transfer.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
+                    }
+                    Some(_) if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
+                    Some(_) => 0.0,
+                    None if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
+                    None => 0.0,
+                };
+                let progress_loading = transfer.bytes_total.is_none()
+                    && matches!(
+                        &transfer.status,
+                        SftpTransferStatus::Queued | SftpTransferStatus::Running
+                    );
+                let status_label = match &transfer.status {
+                    SftpTransferStatus::Queued => i18n::string("sftp.transfer_status.queued"),
+                    SftpTransferStatus::Running => i18n::string("sftp.transfer_status.running"),
+                    SftpTransferStatus::Paused => i18n::string("sftp.transfer_status.paused"),
+                    SftpTransferStatus::Done => i18n::string("sftp.transfer_status.done"),
+                    SftpTransferStatus::Cancelled => i18n::string("sftp.transfer_status.cancelled"),
+                    SftpTransferStatus::Failed(message) => {
+                        i18n::string_args("sftp.transfer_status.failed", &[("message", message)])
+                    }
+                };
+                let accent = match &transfer.status {
+                    SftpTransferStatus::Queued => extended.warning.color,
+                    SftpTransferStatus::Running => extended.info.color,
+                    SftpTransferStatus::Paused => extended.warning.color,
+                    SftpTransferStatus::Done => extended.success.color,
+                    SftpTransferStatus::Cancelled => roles.on_surface_variant,
+                    SftpTransferStatus::Failed(_) => extended.warning.color,
+                };
+                let speed_label = if matches!(&transfer.status, SftpTransferStatus::Running) {
+                    transfer
+                        .bytes_per_second
+                        .map(|bps| format!("{}/s", format_byte_size(Some(bps))))
+                } else {
+                    None
+                };
+                let transfer_actions = match &transfer.status {
+                    SftpTransferStatus::Queued | SftpTransferStatus::Running => {
+                        let pause_entity = entity.clone();
+                        let cancel_entity = entity.clone();
+                        Some(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .flex_shrink_0()
+                                .child(icon_button(
+                                    AppIcon::Pause,
+                                    22.0,
+                                    6.0,
+                                    Some(roles.surface_container_low),
+                                    Some(roles.on_surface_variant),
+                                    None,
+                                    move |_window, cx| {
+                                        pause_entity.update(cx, |this, cx| {
+                                            this.pause_sftp_transfer(tab_id, transfer_id, cx);
+                                        });
+                                    },
+                                ))
+                                .child(icon_button(
+                                    AppIcon::Close,
+                                    22.0,
+                                    6.0,
+                                    Some(roles.surface_container_low),
+                                    Some(roles.on_surface_variant),
+                                    None,
+                                    move |_window, cx| {
+                                        cancel_entity.update(cx, |this, cx| {
+                                            this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                                        });
+                                    },
+                                ))
+                                .into_any_element(),
+                        )
+                    }
+                    SftpTransferStatus::Paused => {
+                        let resume_entity = entity.clone();
+                        let cancel_entity = entity.clone();
+                        Some(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .flex_shrink_0()
+                                .child(icon_button(
+                                    AppIcon::Play,
+                                    22.0,
+                                    6.0,
+                                    Some(roles.surface_container_low),
+                                    Some(roles.on_surface_variant),
+                                    None,
+                                    move |_window, cx| {
+                                        resume_entity.update(cx, |this, cx| {
+                                            this.resume_sftp_transfer(tab_id, transfer_id, cx);
+                                        });
+                                    },
+                                ))
+                                .child(icon_button(
+                                    AppIcon::Close,
+                                    22.0,
+                                    6.0,
+                                    Some(roles.surface_container_low),
+                                    Some(roles.on_surface_variant),
+                                    None,
+                                    move |_window, cx| {
+                                        cancel_entity.update(cx, |this, cx| {
+                                            this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                                        });
+                                    },
+                                ))
+                                .into_any_element(),
+                        )
+                    }
+                    SftpTransferStatus::Done
+                    | SftpTransferStatus::Cancelled
+                    | SftpTransferStatus::Failed(_) => {
+                        let delete_entity = entity.clone();
+                        Some(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .flex_shrink_0()
+                                .child(icon_button(
+                                    AppIcon::Trash,
+                                    22.0,
+                                    6.0,
+                                    Some(roles.surface_container_low),
+                                    Some(roles.on_surface_variant),
+                                    None,
+                                    move |_window, cx| {
+                                        delete_entity.update(cx, |this, cx| {
+                                            this.remove_sftp_transfer_record(
+                                                tab_id,
+                                                transfer_id,
+                                                cx,
+                                            );
+                                        });
+                                    },
+                                ))
+                                .into_any_element(),
+                        )
+                    }
+                };
+
+                rows = rows.child(
+                    div()
+                        .w_full()
+                        .px_2()
+                        .py_2()
+                        .rounded(px(8.0))
+                        .when(
+                            matches!(
+                                &transfer.status,
+                                SftpTransferStatus::Running | SftpTransferStatus::Paused
+                            ),
+                            |this| this.bg(rgb(roles.surface_container_high)),
+                        )
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .items_center()
+                                        .gap_3()
+                                        .child(
+                                            div()
+                                                .w(px(20.0))
+                                                .flex_shrink_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_color(rgb(accent))
+                                                .child(Icon::new(direction_icon).small()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.0))
+                                                .text_size(miaominal_settings::scaled_font_size(
+                                                    11.0,
+                                                ))
+                                                .text_color(rgb(roles.on_surface))
+                                                .child(format!(
+                                                    "{} -> {}",
+                                                    transfer.source.display(),
+                                                    transfer.destination
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(miaominal_settings::scaled_font_size(
+                                                    10.0,
+                                                ))
+                                                .text_color(rgb(roles.on_surface_variant))
+                                                .child(progress),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(miaominal_settings::scaled_font_size(
+                                                    10.0,
+                                                ))
+                                                .text_color(rgb(accent))
+                                                .child(status_label),
+                                        )
+                                        .when_some(speed_label, |this, speed| {
+                                            this.child(
+                                                div()
+                                                    .text_size(
+                                                        miaominal_settings::scaled_font_size(10.0),
+                                                    )
+                                                    .text_color(rgb(text_muted))
+                                                    .child(speed),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div().flex_1().child(
+                                                Progress::new(format!(
+                                                    "sftp-transfer-progress-{tab_id}-{}",
+                                                    transfer_id.0
+                                                ))
+                                                .with_size(gpui_component::Size::Small)
+                                                .value(progress_value)
+                                                .loading(progress_loading)
+                                                .color(rgb(accent)),
+                                            ),
+                                        )
+                                        .when_some(transfer_actions, |this, actions| {
+                                            this.child(actions)
+                                        }),
+                                ),
+                        ),
+                );
+            }
+
+            sftp_progress_center_card(
+                format!("sftp-progress-center-{tab_id}"),
+                sftp_tab.last_status.clone(),
+                div()
+                    .flex_1()
+                    .w_full()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .overflow_y_scrollbar()
+                    .px_2()
+                    .pb_2()
+                    .child(rows),
+            )
+            .into_any_element()
+        };
+
+        let browser_panels = div()
+            .flex()
+            .flex_row()
+            .size_full()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .on_prepaint({
+                let entity = entity.clone();
+                move |bounds, _window, cx| {
+                    let entity = entity.clone();
+                    entity.update(cx, |this, cx| {
+                        this.cache_sftp_browser_container_width(tab_id, bounds.size.width, cx);
+                    });
+                }
+            })
+            .child(
+                div()
+                    .flex_grow()
+                    .flex_shrink()
+                    .flex_basis(gpui::relative(local_panel_flex))
+                    .h_full()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .child(sftp_browser_section(
+                        "local-sftp-section",
+                        i18n::string("sftp.ui.local_section"),
+                        sftp_tab.local_entries.len(),
+                        local_path_bar,
+                        local_list,
+                        {
+                            let entity = entity.clone();
+                            let local_table_for_menu = local_table_for_menu.clone();
+                            move |menu, _window, cx: &mut Context<PopupMenu>| {
+                                let is_header = local_table_for_menu.update(cx, |state, _| {
+                                    state.delegate_mut().take_col_header_right_clicked()
+                                });
+                                if is_header {
+                                    return menu;
+                                }
+                                build_local_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                            }
+                        },
+                    )),
+            )
+            .child(sftp_split_bar(
+                tab_id,
+                SftpSplitDivider::BrowserPanels,
+                matches!(
+                    sftp_tab.layout.drag.as_ref(),
+                    Some(drag) if drag.divider == SftpSplitDivider::BrowserPanels
+                ),
+                cx,
+            ))
+            .child(
+                div()
+                    .flex_grow()
+                    .flex_shrink()
+                    .flex_basis(gpui::relative(1.0 - local_panel_flex))
+                    .h_full()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .child(sftp_browser_section(
+                        "remote-sftp-section",
+                        i18n::string("sftp.ui.remote_section"),
+                        sftp_tab.remote_entries.len(),
+                        remote_path_bar,
+                        remote_list,
+                        {
+                            let entity = entity.clone();
+                            let remote_table_for_menu = remote_table_for_menu.clone();
+                            move |menu, _window, cx: &mut Context<PopupMenu>| {
+                                let is_header = remote_table_for_menu.update(cx, |state, _| {
+                                    state.delegate_mut().take_col_header_right_clicked()
+                                });
+                                if is_header {
+                                    return menu;
+                                }
+                                build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                            }
+                        },
+                    )),
+            );
+
+        div()
+            .size_full()
+            .relative()
+            .bg(rgb(roles.surface_container))
+            .on_mouse_move(
+                cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
+
+                    let Some(divider) = this
+                        .workspace_state
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id)
+                        .and_then(TabState::as_sftp)
+                        .and_then(|tab| tab.layout.drag.as_ref().map(|drag| drag.divider))
+                    else {
+                        return;
+                    };
+
+                    let pointer = match divider {
+                        SftpSplitDivider::BrowserPanels => f32::from(event.position.x),
+                        SftpSplitDivider::ProgressCenter => f32::from(event.position.y),
+                    };
+
+                    this.update_sftp_split_drag(tab_id, pointer, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+                if event.button != MouseButton::Left {
+                    return;
+                }
+
+                let is_dragging = this
+                    .workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(TabState::as_sftp)
+                    .is_some_and(|tab| tab.layout.drag.is_some());
+                if !is_dragging {
+                    return;
+                }
+
+                this.finish_sftp_split_drag(tab_id, cx);
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
+                    .size_full()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .on_prepaint({
+                        let entity = entity.clone();
+                        move |bounds, _window, cx| {
+                            let entity = entity.clone();
+                            entity.update(cx, |this, cx| {
+                                this.cache_sftp_page_container_height(
+                                    tab_id,
+                                    bounds.size.height,
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .min_w(px(0.0))
+                            .min_h(px(0.0))
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .flex_shrink()
+                                    .flex_basis(gpui::relative(browser_area_flex))
+                                    .min_w(px(0.0))
+                                    .min_h(px(0.0))
+                                    .child(browser_panels),
+                            )
+                            .child(sftp_split_bar(
+                                tab_id,
+                                SftpSplitDivider::ProgressCenter,
+                                matches!(
+                                    sftp_tab.layout.drag.as_ref(),
+                                    Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+                                ),
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .flex_shrink()
+                                    .flex_basis(gpui::relative(1.0 - browser_area_flex))
+                                    .min_w(px(0.0))
+                                    .min_h(px(0.0))
+                                    .child(footer),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    pub(in crate::ui::shell) fn render_sftp_prompt_overlay(
+        &self,
+        entity: Entity<Self>,
+        tab_id: usize,
+        prompt: &SftpPromptState,
+        exit_progress: Option<f32>,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let extended = material.extended;
+        let (
+            icon,
+            icon_tint,
+            title,
+            confirm_label,
+            supporting_text,
+            is_overwrite_prompt,
+            is_destructive_prompt,
+        ) = match &prompt.kind {
+            SftpPromptKind::CreateRemoteDirectory { .. } => (
+                AppIcon::Folder,
+                roles.primary,
+                i18n::string("sftp.prompts.create_remote_directory.title"),
+                i18n::string("sftp.prompts.create_remote_directory.confirm"),
+                None,
+                false,
+                false,
+            ),
+            SftpPromptKind::ConfirmOverwrite { conflict_count, .. } => {
+                let count_text = conflict_count.to_string();
+                let msg = if *conflict_count == 1 {
+                    i18n::string("sftp.prompts.confirm_overwrite.single_message")
+                } else {
+                    i18n::string_args(
+                        "sftp.prompts.confirm_overwrite.multi_message",
+                        &[("count", &count_text)],
+                    )
+                };
+                (
+                    AppIcon::Upload,
+                    extended.warning.color,
+                    i18n::string("sftp.prompts.confirm_overwrite.title"),
+                    i18n::string("sftp.prompts.confirm_overwrite.confirm"),
+                    Some(msg.to_string()),
+                    true,
+                    false,
+                )
+            }
+            SftpPromptKind::ConfirmDelete { entries, .. } => {
+                let msg = if entries.len() == 1 {
+                    i18n::string_args(
+                        "sftp.prompts.confirm_delete.single_message",
+                        &[(
+                            "name",
+                            entries[0].0.rsplit('/').next().unwrap_or(&entries[0].0),
+                        )],
+                    )
+                } else {
+                    let count = entries.len().to_string();
+                    i18n::string_args(
+                        "sftp.prompts.confirm_delete.multi_message",
+                        &[("count", &count)],
+                    )
+                };
+                (
+                    AppIcon::Trash,
+                    roles.error,
+                    i18n::string("sftp.prompts.confirm_delete.title"),
+                    i18n::string("sftp.prompts.confirm_delete.confirm"),
+                    Some(msg.to_string()),
+                    false,
+                    true,
+                )
+            }
+        };
+
+        let body = match &prompt.kind {
+            SftpPromptKind::CreateRemoteDirectory { .. } => Some(
+                Input::new(&self.workspace_forms.sftp_browser.prompt_input)
+                    .large()
+                    .w_full()
+                    .rounded(px(12.0))
+                    .into_any_element(),
+            ),
+            SftpPromptKind::ConfirmOverwrite { .. } | SftpPromptKind::ConfirmDelete { .. } => None,
+        };
+
+        let cancel_button = basic_dialog_action_button(
+            format!("sftp-prompt-cancel-{tab_id}"),
+            i18n::string("sftp.prompts.cancel"),
+            BasicDialogActionTone::Default,
+        )
+        .on_click({
+            let entity = entity.clone();
+            move |_, _, cx| {
+                entity.update(cx, |this, cx| {
+                    this.cancel_sftp_prompt(cx);
+                });
+            }
+        });
+
+        let confirm_button = if is_destructive_prompt {
+            basic_dialog_action_button(
+                format!("sftp-prompt-confirm-{tab_id}"),
+                confirm_label.clone(),
+                BasicDialogActionTone::Destructive,
+            )
+        } else {
+            basic_dialog_action_button(
+                format!("sftp-prompt-confirm-{tab_id}"),
+                confirm_label.clone(),
+                BasicDialogActionTone::Default,
+            )
+        }
+        .on_click({
+            let entity = entity.clone();
+            move |_, _, cx| {
+                entity.update(cx, |this, cx| {
+                    this.commit_sftp_prompt(cx);
+                });
+            }
+        });
+
+        render_basic_dialog_with_config(
+            format!("sftp-prompt-{tab_id}"),
+            crate::ui::shell::support::BasicDialogConfig {
+                title: title.to_string(),
+                supporting_text,
+                body,
+                actions: h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(cancel_button)
+                    .when(is_overwrite_prompt, |this| {
+                        this.child(
+                            basic_dialog_action_button(
+                                format!("sftp-prompt-skip-{tab_id}"),
+                                i18n::string("sftp.prompts.skip_existing"),
+                                BasicDialogActionTone::Default,
+                            )
+                            .on_click({
+                                let entity = entity.clone();
+                                move |_, _, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        this.skip_sftp_overwrite_prompt(cx);
+                                    });
+                                }
+                            }),
+                        )
+                    })
+                    .child(confirm_button)
+                    .into_any_element(),
+                icon: Some(BasicDialogIcon {
+                    icon,
+                    tint: icon_tint,
+                }),
+                header_alignment: BasicDialogHeaderAlignment::Center,
+                exit_progress,
+            },
+        )
+    }
+}
