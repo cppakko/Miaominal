@@ -1,4 +1,3 @@
-pub(crate) mod paths;
 pub(crate) mod runtime;
 
 #[cfg(target_os = "macos")]

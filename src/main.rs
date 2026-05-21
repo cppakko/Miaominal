@@ -4,19 +4,12 @@
 )]
 
 mod app;
-mod domain;
-mod infra;
-mod secrets;
-mod services;
-mod settings;
-mod terminal;
-mod ui;
 
-use crate::ui::assets::AppAssets;
 #[cfg(target_os = "macos")]
 use gpui::point;
 use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use gpui_component::Root;
+use miaominal_ui::AppAssets;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::Cursor;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -110,7 +103,7 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
             ..Default::default()
         },
         |window, cx| {
-            let view = cx.new(|cx| ui::AppView::new(runtime.clone(), window, cx));
+            let view = cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         },
     )
@@ -140,7 +133,7 @@ fn main() {
 
     application.run(move |cx: &mut App| {
         gpui_component::init(cx);
-        crate::ui::i18n::init();
+        miaominal_ui::i18n::init();
         app::install_app_menus(cx);
 
         open_main_window(cx, runtime.clone());
