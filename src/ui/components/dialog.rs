@@ -5,6 +5,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::{Icon, v_flex};
 
 const BASIC_DIALOG_MAX_WIDTH: f32 = 560.0;
@@ -116,8 +117,11 @@ pub(crate) fn bottom_popup_panel(
     supporting_text: Option<String>,
     body: Option<AnyElement>,
     actions: AnyElement,
+    viewport_height: f32,
 ) -> AnyElement {
     let roles = settings::current_theme().material.roles;
+    let compact_panel_height = viewport_height.max(1.0);
+    let use_compact_layout = compact_panel_height < BOTTOM_POPUP_MIN_HEIGHT;
 
     let title = div()
         .w_full()
@@ -138,7 +142,7 @@ pub(crate) fn bottom_popup_panel(
             .into_any_element()
     });
 
-    let mut content = v_flex()
+    let header = v_flex()
         .w_full()
         .min_w(px(0.0))
         .gap_5()
@@ -162,31 +166,39 @@ pub(crate) fn bottom_popup_panel(
                 }),
         );
 
+    let mut panel = v_flex()
+        .w_full()
+        .min_w(px(0.0))
+        .max_w(px(BOTTOM_POPUP_MAX_WIDTH))
+        .mx_auto()
+        .px_6()
+        .pt_6()
+        .pb_8()
+        .gap_6()
+        .rounded_t(px(BOTTOM_POPUP_RADIUS))
+        .bg(rgb(roles.surface_container_highest))
+        .when(use_compact_layout, |this| this.h(px(compact_panel_height)))
+        .when(!use_compact_layout, |this| {
+            this.min_h(px(BOTTOM_POPUP_MIN_HEIGHT))
+        })
+        .child(header);
+
     if let Some(body) = body {
-        content = content.child(body);
+        panel = panel.child(
+            div()
+                .flex_1()
+                .w_full()
+                .min_h_0()
+                .child(div().size_full().overflow_y_scrollbar().child(body)),
+        );
     }
+
+    panel = panel.child(div().w_full().child(actions));
 
     div()
         .w_full()
         .px_4()
-        .child(
-            div().relative().w_full().min_w(px(0.0)).child(
-                v_flex()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .min_h(px(BOTTOM_POPUP_MIN_HEIGHT))
-                    .max_w(px(BOTTOM_POPUP_MAX_WIDTH))
-                    .mx_auto()
-                    .px_6()
-                    .pt_6()
-                    .pb_8()
-                    .gap_6()
-                    .rounded_t(px(BOTTOM_POPUP_RADIUS))
-                    .bg(rgb(roles.surface_container_highest))
-                    .child(content)
-                    .child(div().w_full().child(actions)),
-            ),
-        )
+        .child(div().relative().w_full().min_w(px(0.0)).child(panel))
         .into_any_element()
 }
 

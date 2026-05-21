@@ -203,6 +203,7 @@ impl AppView {
         entity: Entity<AppView>,
         prompt: &HostKeyPrompt,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         let material = settings::current_theme().material;
         let roles = material.roles;
@@ -351,6 +352,7 @@ impl AppView {
                 Some(subtitle),
                 Some(body),
                 actions.into_any_element(),
+                bottom_popup_viewport_height,
             ),
             "trusted-host-key",
             exit_progress,

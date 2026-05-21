@@ -36,6 +36,7 @@ impl Render for AppView {
 
         let entity = cx.entity();
         let roles = settings::current_theme().material.roles;
+        let bottom_popup_viewport_height = f32::from(window.bounds().size.height);
         if self.onboarding.show_onboarding {
             return self.render_onboarding_page(entity, window, cx);
         }
@@ -212,7 +213,12 @@ impl Render for AppView {
             .child(shell_body)
             .child(self.render_status_footer(entity.clone()))
             .when_some(pending_host_key, |this, prompt| {
-                this.child(self.render_trusted_host_key_prompt(entity.clone(), &prompt, None))
+                this.child(self.render_trusted_host_key_prompt(
+                    entity.clone(),
+                    &prompt,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
             })
             .when_some(pending_kbi, |this, challenge| {
                 this.child(self.render_keyboard_interactive_prompt(
@@ -271,6 +277,7 @@ impl Render for AppView {
                         entity.clone(),
                         prompt,
                         None,
+                        bottom_popup_viewport_height,
                     ))
                 },
             )
@@ -281,21 +288,37 @@ impl Render for AppView {
                         entity.clone(),
                         prompt,
                         None,
+                        bottom_popup_viewport_height,
                     ))
                 },
             )
             .when_some(pending_sync_passphrase_popup, |this, prompt| {
-                this.child(self.render_sync_passphrase_popup(entity.clone(), prompt, None))
+                this.child(self.render_sync_passphrase_popup(
+                    entity.clone(),
+                    prompt,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
             })
             .when_some(pending_local_vault_passphrase_popup, |this, mode| {
-                this.child(self.render_local_vault_passphrase_popup(entity.clone(), mode, None))
+                this.child(self.render_local_vault_passphrase_popup(
+                    entity.clone(),
+                    mode,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
             })
             .when_some(pending_sftp_prompt, |this, prompt| {
                 let (tab_id, prompt) = prompt;
                 this.child(self.render_sftp_prompt_overlay(entity.clone(), tab_id, &prompt, None))
             })
             .children(exiting_dialogs.into_iter().map(|(snapshot, progress)| {
-                self.render_exiting_dialog_overlay(entity.clone(), snapshot, progress)
+                self.render_exiting_dialog_overlay(
+                    entity.clone(),
+                    snapshot,
+                    progress,
+                    bottom_popup_viewport_height,
+                )
             }))
             .when_some(
                 Root::render_notification_layer(window, cx),
@@ -1812,6 +1835,7 @@ impl AppView {
         entity: Entity<AppView>,
         mode: LocalVaultPassphrasePopupMode,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         let roles = settings::current_theme().material.roles;
         let operation_in_progress = self.local_vault_unlock_in_progress;
@@ -1965,7 +1989,13 @@ impl AppView {
             .into_any_element();
 
         render_bottom_popup(
-            bottom_popup_panel(title, None, Some(popup_body), actions),
+            bottom_popup_panel(
+                title,
+                None,
+                Some(popup_body),
+                actions,
+                bottom_popup_viewport_height,
+            ),
             "local-vault-passphrase",
             exit_progress,
             move |window, cx| {
@@ -1981,6 +2011,7 @@ impl AppView {
         entity: Entity<AppView>,
         _popup: PendingSyncPassphrasePopupState,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         let roles = settings::current_theme().material.roles;
         let operation_in_progress = self.sync_passphrase_operation_in_progress();
@@ -2097,7 +2128,13 @@ impl AppView {
             .into_any_element();
 
         render_bottom_popup(
-            bottom_popup_panel(title, None, Some(popup_body), actions),
+            bottom_popup_panel(
+                title,
+                None,
+                Some(popup_body),
+                actions,
+                bottom_popup_viewport_height,
+            ),
             "sync-passphrase",
             exit_progress,
             move |window, cx| {
@@ -2113,6 +2150,7 @@ impl AppView {
         entity: Entity<AppView>,
         _popup: PendingSyncPassphraseClearConfirmPopupState,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         let roles = settings::current_theme().material.roles;
         let operation_in_progress = self.sync_passphrase_operation_in_progress();
@@ -2186,6 +2224,7 @@ impl AppView {
                 None,
                 Some(popup_body),
                 actions,
+                bottom_popup_viewport_height,
             ),
             "sync-passphrase-clear-confirm",
             exit_progress,
@@ -2202,6 +2241,7 @@ impl AppView {
         entity: Entity<AppView>,
         _popup: PendingLocalDataResetConfirmationPopupState,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         let roles = settings::current_theme().material.roles;
         let input = self
@@ -2287,6 +2327,7 @@ impl AppView {
                 None,
                 Some(popup_body),
                 actions,
+                bottom_popup_viewport_height,
             ),
             "local-data-reset-confirmation",
             exit_progress,
@@ -2303,11 +2344,15 @@ impl AppView {
         entity: Entity<AppView>,
         snapshot: DialogOverlaySnapshot,
         exit_progress: f32,
+        bottom_popup_viewport_height: f32,
     ) -> gpui::AnyElement {
         match snapshot {
-            DialogOverlaySnapshot::HostKey(prompt) => {
-                self.render_trusted_host_key_prompt(entity, &prompt, Some(exit_progress))
-            }
+            DialogOverlaySnapshot::HostKey(prompt) => self.render_trusted_host_key_prompt(
+                entity,
+                &prompt,
+                Some(exit_progress),
+                bottom_popup_viewport_height,
+            ),
             DialogOverlaySnapshot::KeyboardInteractive(challenge) => {
                 self.render_keyboard_interactive_prompt(entity, &challenge, Some(exit_progress))
             }
@@ -2338,18 +2383,33 @@ impl AppView {
             DialogOverlaySnapshot::LocalDataResetConfirm(prompt) => {
                 self.render_local_data_reset_confirm_prompt(entity, &prompt, Some(exit_progress))
             }
-            DialogOverlaySnapshot::LocalDataResetConfirmationPopup(popup) => {
-                self.render_local_data_reset_confirmation_popup(entity, popup, Some(exit_progress))
-            }
-            DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup) => {
-                self.render_sync_passphrase_clear_confirm_popup(entity, popup, Some(exit_progress))
-            }
-            DialogOverlaySnapshot::SyncPassphrasePopup(popup) => {
-                self.render_sync_passphrase_popup(entity, popup, Some(exit_progress))
-            }
-            DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode) => {
-                self.render_local_vault_passphrase_popup(entity, mode, Some(exit_progress))
-            }
+            DialogOverlaySnapshot::LocalDataResetConfirmationPopup(popup) => self
+                .render_local_data_reset_confirmation_popup(
+                    entity,
+                    popup,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                ),
+            DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup) => self
+                .render_sync_passphrase_clear_confirm_popup(
+                    entity,
+                    popup,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                ),
+            DialogOverlaySnapshot::SyncPassphrasePopup(popup) => self.render_sync_passphrase_popup(
+                entity,
+                popup,
+                Some(exit_progress),
+                bottom_popup_viewport_height,
+            ),
+            DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode) => self
+                .render_local_vault_passphrase_popup(
+                    entity,
+                    mode,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                ),
             DialogOverlaySnapshot::SftpPrompt { tab_id, prompt } => {
                 self.render_sftp_prompt_overlay(entity, tab_id, &prompt, Some(exit_progress))
             }
