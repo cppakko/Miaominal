@@ -28,10 +28,13 @@ impl TextInputSurface {
 }
 
 pub(crate) fn surface_text_input(input: &Entity<InputState>, surface: TextInputSurface) -> Input {
+    let roles = miaominal_settings::current_theme().material.roles;
+
     Input::new(input)
         .w_full()
         .border_0()
         .rounded(px(14.0))
+        .text_color(rgb(roles.on_surface))
         .bg(rgb(surface.background()))
 }
 
