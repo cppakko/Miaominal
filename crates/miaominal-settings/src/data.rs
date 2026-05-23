@@ -288,7 +288,7 @@ pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 18.0;
 pub(crate) const DEFAULT_CELL_WIDTH: f32 = 8.0;
 
 #[cfg(target_os = "windows")]
-pub const PLATFORM_DEFAULT_FONT: &str = "Cascadia Mono";
+pub const PLATFORM_DEFAULT_FONT: &str = "Consolas";
 
 #[cfg(target_os = "macos")]
 pub const PLATFORM_DEFAULT_FONT: &str = "Menlo";
