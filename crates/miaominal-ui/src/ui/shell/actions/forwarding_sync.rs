@@ -357,18 +357,6 @@ impl AppView {
         else {
             return 0;
         };
-        let dedicated_rule_ids: HashSet<_> = self
-            .workspace_state
-            .tabs
-            .iter()
-            .filter_map(TabState::as_session)
-            .filter(|session| {
-                session.profile_id == profile_id
-                    && session.purpose == SessionPurpose::PortForwarding
-                    && session.commands.is_some()
-            })
-            .filter_map(|session| session.port_forward_rule_id.clone())
-            .collect();
 
         let mut synced_sessions = 0;
         for tab in &mut self.workspace_state.tabs {
@@ -381,6 +369,7 @@ impl AppView {
             let Some(commands) = session.commands.as_ref() else {
                 continue;
             };
+            let counts_as_synced = session.purpose == SessionPurpose::PortForwarding;
             let rules_for_session = if session.purpose == SessionPurpose::PortForwarding {
                 session
                     .port_forward_rule_id
@@ -394,13 +383,9 @@ impl AppView {
                     })
                     .unwrap_or_default()
             } else {
-                rules
-                    .iter()
-                    .filter(|rule| !dedicated_rule_ids.contains(&rule.id))
-                    .cloned()
-                    .collect()
+                Vec::new()
             };
-            if commands.sync_port_forward_rules(rules_for_session).is_ok() {
+            if commands.sync_port_forward_rules(rules_for_session).is_ok() && counts_as_synced {
                 synced_sessions += 1;
             }
         }

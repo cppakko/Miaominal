@@ -626,6 +626,8 @@ async fn run_session(
     )
     .await?;
 
+    configured_port_forward_rules.clear();
+
     let mut active_local_forwards: HashMap<String, ActiveLocalForward> = HashMap::new();
     let mut active_remote_forwards: HashMap<String, ActiveRemoteForward> = HashMap::new();
     sync_port_forward_rules(
