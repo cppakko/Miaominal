@@ -76,6 +76,9 @@ fn render_forward_rule_card(
     let switch_id = format!("forward-rule-switch-{}-{}", profile.id, rule.id);
     let menu_profile_id = profile.id.clone();
     let menu_rule_id = rule.id.clone();
+    let menu_listen_host = rule.listen_host.clone();
+    let menu_listen_port = rule.listen_port;
+    let menu_kind = rule.kind;
     let click_profile_id = profile.id.clone();
     let click_rule_id = rule.id.clone();
     let title = truncate_with_ellipsis(
@@ -119,6 +122,9 @@ fn render_forward_rule_card(
                 menu_profile_id.clone(),
                 menu_rule_id.clone(),
                 state.session_active,
+                menu_listen_host.clone(),
+                menu_listen_port,
+                menu_kind,
             )
         })
         .child(
@@ -173,6 +179,9 @@ fn render_forward_rule_list_row(
     let switch_id = format!("forward-rule-list-switch-{}-{}", profile.id, rule.id);
     let menu_profile_id = profile.id.clone();
     let menu_rule_id = rule.id.clone();
+    let menu_listen_host = rule.listen_host.clone();
+    let menu_listen_port = rule.listen_port;
+    let menu_kind = rule.kind;
     let click_profile_id = profile.id.clone();
     let click_rule_id = rule.id.clone();
     let title = truncate_with_ellipsis(&forward_rule_display_label(rule), 42);
@@ -223,6 +232,9 @@ fn render_forward_rule_list_row(
             menu_profile_id.clone(),
             menu_rule_id.clone(),
             state.session_active,
+            menu_listen_host.clone(),
+            menu_listen_port,
+            menu_kind,
         )
     })
     .border_1()

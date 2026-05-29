@@ -8,6 +8,9 @@ pub(super) fn build_forward_rule_context_menu(
     profile_id: String,
     rule_id: String,
     connected: bool,
+    listen_host: String,
+    listen_port: u16,
+    kind: miaominal_core::profile::PortForwardKind,
 ) -> PopupMenu {
     let connect_entity = entity.clone();
     let edit_entity = entity.clone();
@@ -60,6 +63,24 @@ pub(super) fn build_forward_rule_context_menu(
                 this.duplicate_port_forward_rule(&profile_id, &rule_id, cx);
             });
         }),
+    )
+    .when(
+        kind == miaominal_core::profile::PortForwardKind::Local,
+        |m| {
+            let host = if listen_host.is_empty() || listen_host == "0.0.0.0" {
+                "127.0.0.1".to_string()
+            } else {
+                listen_host.clone()
+            };
+            let url = format!("http://{}:{}", host, listen_port);
+            m.item(
+                PopupMenuItem::new(i18n::string("forwarding.menu.open_in_browser")).on_click(
+                    move |_, _, _cx| {
+                        let _ = open::that(&url);
+                    },
+                ),
+            )
+        },
     )
     .item(PopupMenuItem::separator())
     .item(

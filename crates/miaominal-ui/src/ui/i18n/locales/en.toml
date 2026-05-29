@@ -931,6 +931,7 @@ connect = "Connect"
 disconnect = "Disconnect"
 edit = "Edit"
 duplicate = "Duplicate"
+open_in_browser = "Open in Browser"
 remove = "Remove"
 
 [forwarding.actions]

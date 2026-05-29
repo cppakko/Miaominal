@@ -931,6 +931,7 @@ connect = "连接"
 disconnect = "断开连接"
 edit = "编辑"
 duplicate = "复制"
+open_in_browser = "在浏览器中打开"
 remove = "移除"
 
 [forwarding.actions]
