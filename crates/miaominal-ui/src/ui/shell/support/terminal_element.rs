@@ -447,7 +447,10 @@ fn paint_snapshot(
 ) {
     let cell_width_px = px(cell_width);
     let line_height_px = px(line_height);
-    let origin = bounds.origin;
+    let origin = Point {
+        x: px(f32::from(bounds.origin.x).round()),
+        y: px(f32::from(bounds.origin.y).round()),
+    };
     let terminal_font = terminal_font();
     let font_size = px(terminal_font_size());
     let cursor_unfocused = !snapshot.focused_cursor;
@@ -498,6 +501,7 @@ fn paint_backgrounds(
     line_height: Pixels,
     window: &mut gpui::Window,
 ) {
+    let scale_factor = window.scale_factor();
     for (row, cells) in snapshot.cells.iter().enumerate() {
         let mut col = 0usize;
         while col < cells.len() {
@@ -527,17 +531,46 @@ fn paint_backgrounds(
                 span += 1;
             }
 
-            let bounds = Bounds {
-                origin: Point {
-                    x: origin.x + cell_width * col as f32,
-                    y: origin.y + line_height * row as f32,
-                },
-                size: size(cell_width * col_advance as f32, line_height),
-            };
+            let bounds = snapped_cell_bounds(
+                origin,
+                cell_width,
+                line_height,
+                col,
+                col_advance,
+                row,
+                scale_factor,
+            );
             window.paint_quad(fill(bounds, Background::from(cell.bg)));
 
             col += span;
         }
+    }
+}
+
+fn snap_to_physical(value: Pixels, scale: f32) -> Pixels {
+    if scale > 0.0 {
+        px((f32::from(value) * scale).round() / scale)
+    } else {
+        value
+    }
+}
+
+fn snapped_cell_bounds(
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    col: usize,
+    advance: usize,
+    row: usize,
+    scale: f32,
+) -> Bounds<Pixels> {
+    let left = snap_to_physical(origin.x + cell_width * col as f32, scale);
+    let right = snap_to_physical(origin.x + cell_width * (col + advance) as f32, scale);
+    let top = snap_to_physical(origin.y + line_height * row as f32, scale);
+    let bottom = snap_to_physical(origin.y + line_height * (row + 1) as f32, scale);
+    Bounds {
+        origin: Point { x: left, y: top },
+        size: size(right - left, bottom - top),
     }
 }
 
@@ -548,19 +581,22 @@ fn paint_unfocused_cursor(
     line_height: Pixels,
     window: &mut gpui::Window,
 ) {
+    let scale_factor = window.scale_factor();
     for (row, cells) in snapshot.cells.iter().enumerate() {
         for (col, cell) in cells.iter().enumerate() {
             if !cell.is_cursor {
                 continue;
             }
             let advance = if cell.wide { 2 } else { 1 };
-            let bounds = Bounds {
-                origin: Point {
-                    x: origin.x + cell_width * col as f32,
-                    y: origin.y + line_height * row as f32,
-                },
-                size: size(cell_width * advance as f32, line_height),
-            };
+            let bounds = snapped_cell_bounds(
+                origin,
+                cell_width,
+                line_height,
+                col,
+                advance,
+                row,
+                scale_factor,
+            );
             window.paint_quad(gpui::outline(bounds, cell.bg, gpui::BorderStyle::Solid));
         }
     }
@@ -585,6 +621,7 @@ fn paint_search_highlights(
         l: 0.55,
         a: 0.75,
     };
+    let scale_factor = window.scale_factor();
     for (row, cells) in snapshot.cells.iter().enumerate() {
         for (col, cell) in cells.iter().enumerate() {
             let color = match cell.search_match {
@@ -593,13 +630,15 @@ fn paint_search_highlights(
                 SearchMatchKind::Current => current_color,
             };
             let advance = if cell.wide { 2 } else { 1 };
-            let bounds = Bounds {
-                origin: Point {
-                    x: origin.x + cell_width * col as f32,
-                    y: origin.y + line_height * row as f32,
-                },
-                size: size(cell_width * advance as f32, line_height),
-            };
+            let bounds = snapped_cell_bounds(
+                origin,
+                cell_width,
+                line_height,
+                col,
+                advance,
+                row,
+                scale_factor,
+            );
             window.paint_quad(fill(bounds, Background::from(color)));
         }
     }

@@ -29,6 +29,7 @@ pub(in crate::ui::shell) fn terminal_cell_width(window: &Window) -> f32 {
         .ch_advance(terminal_font_id, terminal_font_size)
         .map(f32::from)
         .unwrap_or(fallback)
+        .round()
         .max(1.0)
 }
 
