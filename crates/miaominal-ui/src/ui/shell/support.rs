@@ -1,5 +1,7 @@
 #[path = "support/animation.rs"]
 mod animation;
+#[path = "support/custom_glyphs.rs"]
+mod custom_glyphs;
 #[path = "support/group_accent.rs"]
 mod group_accent;
 #[path = "support/inputs.rs"]

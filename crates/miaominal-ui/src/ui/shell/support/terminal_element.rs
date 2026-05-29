@@ -1,3 +1,4 @@
+use super::custom_glyphs;
 use crate::ui::shell::{AppView, PaneId, TerminalHoveredLink};
 use gpui::{
     Background, Bounds, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
@@ -458,6 +459,7 @@ fn paint_snapshot(
     window.paint_quad(fill(bounds, Background::from(snapshot.default_bg)));
     paint_backgrounds(snapshot, origin, cell_width_px, line_height_px, window);
     paint_search_highlights(snapshot, origin, cell_width_px, line_height_px, window);
+    custom_glyphs::paint_custom_glyphs(snapshot, origin, cell_width_px, line_height_px, window);
 
     for (row, cells) in snapshot.cells.iter().enumerate() {
         let line_origin = Point {
@@ -657,6 +659,8 @@ fn build_line_text_and_runs(
     for (column, cell) in cells.iter().enumerate() {
         let start = text.len();
         let character = if cell.spacer || cell.character == '\0' {
+            ' '
+        } else if custom_glyphs::is_custom_glyph(cell.character) {
             ' '
         } else {
             cell.character
@@ -869,5 +873,23 @@ mod tests {
         };
 
         assert_eq!(hovered_link_range(&cells, 0, Some(&hovered)), Some((2, 6)));
+    }
+
+    #[test]
+    fn custom_glyphs_are_suppressed_from_text() {
+        let fg = default_foreground();
+        let bg = default_background();
+        let cells = ['a', '\u{2502}', 'b', '\u{2551}', 'c', '\u{2588}']
+            .into_iter()
+            .map(|character| {
+                let mut cell = miaominal_terminal::TerminalCell::blank(fg, bg);
+                cell.character = character;
+                cell
+            })
+            .collect::<Vec<_>>();
+
+        let (text, _) = build_line_text_and_runs(&cells, 0, None, &gpui::font("Consolas"));
+
+        assert_eq!(text, "a b c ");
     }
 }
