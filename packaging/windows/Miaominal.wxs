@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+    xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
     <Package
         Name="Miaominal"
         Manufacturer="cppakko"
@@ -8,6 +9,9 @@
         Language="1033"
         Scope="perMachine">
         <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+        <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+        <UIRef Id="WixUI_ErrorProgressText" />
 
         <Icon Id="MiaominalProductIcon" SourceFile="$(var.ProductIcon)" />
         <Property Id="ARPPRODUCTICON" Value="MiaominalProductIcon" />
@@ -48,6 +52,13 @@
                     Name="Miaominal"
                     Description="Desktop terminal for SSH, SFTP, and secure configuration management."
                     Target="[INSTALLFOLDER]miaominal.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+                <Shortcut
+                    Id="MaintenanceStartMenuShortcut"
+                    Name="Uninstall Miaominal"
+                    Description="Open the Miaominal maintenance wizard to uninstall the application."
+                    Target="[System64Folder]msiexec.exe"
+                    Arguments="/x [ProductCode] /qf"
                     WorkingDirectory="INSTALLFOLDER" />
                 <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
                 <RegistryValue
