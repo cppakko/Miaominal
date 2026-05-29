@@ -362,96 +362,109 @@ impl AppView {
                         ),
                 )
             })
-            .when(!recent_sessions.is_empty(), {
-                let is_list = self.panel_view.hosts_view_mode == ProfileViewMode::List;
-                let mut recent_connections = if is_list {
-                    v_flex().w_full().gap_2()
-                } else {
-                    div().flex().flex_wrap().gap_4()
-                };
-                for (index, profile) in recent_sessions {
-                    let entity = entity.clone();
-                    let subtitle = profile_subtitle(profile).map(SharedString::from);
-                    let display_title =
-                        truncate_with_ellipsis(&profile.name, if is_list { 40 } else { 18 });
-                    let is_fav = profile.is_favorite;
-                    if is_list {
-                        recent_connections = recent_connections.child(
-                            div()
-                                .id(SharedString::from(format!("recent-row-{index}")))
-                                .w_full()
-                                .context_menu({
-                                    let entity = entity.clone();
-                                    move |menu, _window, _cx| {
-                                        build_host_context_menu(menu, entity.clone(), index, is_fav)
-                                    }
-                                })
-                                .child(host_list_row(
-                                    SharedString::from(display_title.clone()),
-                                    subtitle,
-                                    None,
-                                    0,
-                                    Some(AppIcon::Edit),
-                                    {
-                                        let entity = entity.clone();
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.connect_profile(index, window, cx)
-                                            });
-                                        }
-                                    },
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.open_host_editor(index, window, cx)
-                                        });
-                                    },
-                                )),
-                        );
+            .when(
+                !recent_sessions.is_empty() && selected_group_filter.is_none(),
+                {
+                    let is_list = self.panel_view.hosts_view_mode == ProfileViewMode::List;
+                    let mut recent_connections = if is_list {
+                        v_flex().w_full().gap_2()
                     } else {
-                        let tags = prepare_host_card_tags(&profile.tags);
-                        recent_connections = recent_connections.child(
-                            div()
-                                .id(SharedString::from(format!("recent-card-{index}")))
-                                .w(px(HOST_CARD_WIDTH))
-                                .context_menu({
-                                    let entity = entity.clone();
-                                    move |menu, _window, _cx| {
-                                        build_host_context_menu(menu, entity.clone(), index, is_fav)
-                                    }
-                                })
-                                .child(host_card_with_action(
-                                    display_title,
-                                    subtitle,
-                                    tags,
-                                    AppIcon::Edit,
-                                    {
+                        div().flex().flex_wrap().gap_4()
+                    };
+                    for (index, profile) in recent_sessions {
+                        let entity = entity.clone();
+                        let subtitle = profile_subtitle(profile).map(SharedString::from);
+                        let display_title =
+                            truncate_with_ellipsis(&profile.name, if is_list { 40 } else { 18 });
+                        let is_fav = profile.is_favorite;
+                        if is_list {
+                            recent_connections = recent_connections.child(
+                                div()
+                                    .id(SharedString::from(format!("recent-row-{index}")))
+                                    .w_full()
+                                    .context_menu({
                                         let entity = entity.clone();
+                                        move |menu, _window, _cx| {
+                                            build_host_context_menu(
+                                                menu,
+                                                entity.clone(),
+                                                index,
+                                                is_fav,
+                                            )
+                                        }
+                                    })
+                                    .child(host_list_row(
+                                        SharedString::from(display_title.clone()),
+                                        subtitle,
+                                        None,
+                                        0,
+                                        Some(AppIcon::Edit),
+                                        {
+                                            let entity = entity.clone();
+                                            move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.connect_profile(index, window, cx)
+                                                });
+                                            }
+                                        },
                                         move |window, cx| {
                                             entity.update(cx, |this, cx| {
-                                                this.connect_profile(index, window, cx)
+                                                this.open_host_editor(index, window, cx)
                                             });
+                                        },
+                                    )),
+                            );
+                        } else {
+                            let tags = prepare_host_card_tags(&profile.tags);
+                            recent_connections = recent_connections.child(
+                                div()
+                                    .id(SharedString::from(format!("recent-card-{index}")))
+                                    .w(px(HOST_CARD_WIDTH))
+                                    .context_menu({
+                                        let entity = entity.clone();
+                                        move |menu, _window, _cx| {
+                                            build_host_context_menu(
+                                                menu,
+                                                entity.clone(),
+                                                index,
+                                                is_fav,
+                                            )
                                         }
-                                    },
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.open_host_editor(index, window, cx)
-                                        });
-                                    },
-                                )),
-                        );
+                                    })
+                                    .child(host_card_with_action(
+                                        display_title,
+                                        subtitle,
+                                        tags,
+                                        AppIcon::Edit,
+                                        {
+                                            let entity = entity.clone();
+                                            move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.connect_profile(index, window, cx)
+                                                });
+                                            }
+                                        },
+                                        move |window, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.open_host_editor(index, window, cx)
+                                            });
+                                        },
+                                    )),
+                            );
+                        }
                     }
-                }
-                move |this| {
-                    this.child(
-                        v_flex()
-                            .gap_4()
-                            .child(page_section_title(i18n::string(
-                                "hosts.page.recent_connections",
-                            )))
-                            .child(recent_connections),
-                    )
-                }
-            })
+                    move |this| {
+                        this.child(
+                            v_flex()
+                                .gap_4()
+                                .child(page_section_title(i18n::string(
+                                    "hosts.page.recent_connections",
+                                )))
+                                .child(recent_connections),
+                        )
+                    }
+                },
+            )
             .when(!favorite_sessions.is_empty(), {
                 let is_list = self.panel_view.hosts_view_mode == ProfileViewMode::List;
                 let mut fav_connections = if is_list {
