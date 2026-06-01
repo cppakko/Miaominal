@@ -757,6 +757,7 @@ impl AppView {
             v_flex()
                 .w_full()
                 .gap_4()
+                .px_5()
                 .child(
                     h_flex().w_full().justify_center().child(
                         h_flex()
