@@ -20,9 +20,6 @@ pub enum AppIcon {
     Download,
     FingerPrint,
     Forward,
-    #[allow(dead_code)]
-    #[deprecated(note = "use AppIcon::Forward")]
-    Forword,
     FolderSymlink,
     Key,
     LaptopMinimal,
@@ -46,9 +43,6 @@ pub enum AppIcon {
     Play,
     Trash,
     Rotate,
-    #[allow(dead_code)]
-    #[deprecated(note = "use AppIcon::Rotate")]
-    Roate,
     Eye,
     EyeOff,
     Check,
@@ -69,7 +63,7 @@ impl IconNamed for AppIcon {
             Self::Download => "icons/download.svg",
             Self::Sparkles => "icons/sparkles.svg",
             Self::FingerPrint => "icons/fingerprint-pattern.svg",
-            Self::Forward | Self::Forword => "icons/forword.svg",
+            Self::Forward  => "icons/forward.svg",
             Self::FolderSymlink => "icons/folder-symlink.svg",
             Self::Key => "icons/key-round.svg",
             Self::LaptopMinimal => "icons/laptop-minimal.svg",
@@ -90,7 +84,7 @@ impl IconNamed for AppIcon {
             Self::Pause => "icons/pause.svg",
             Self::Play => "icons/play.svg",
             Self::Trash => "icons/trash-2.svg",
-            Self::Rotate | Self::Roate => "icons/rotate-ccw.svg",
+            Self::Rotate => "icons/rotate-ccw.svg",
             Self::Eye => "icons/eye.svg",
             Self::EyeOff => "icons/eye-off.svg",
             Self::Check => "icons/check.svg",
