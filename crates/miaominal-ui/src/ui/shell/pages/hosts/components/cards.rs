@@ -185,7 +185,9 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
                                                 .min_w(px(0.0))
                                                 .overflow_hidden()
                                                 .whitespace_nowrap()
-                                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
                                                 .line_height(
                                                     miaominal_settings::scaled_line_height(16.0),
                                                 )

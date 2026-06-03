@@ -63,7 +63,7 @@ impl IconNamed for AppIcon {
             Self::Download => "icons/download.svg",
             Self::Sparkles => "icons/sparkles.svg",
             Self::FingerPrint => "icons/fingerprint-pattern.svg",
-            Self::Forward  => "icons/forward.svg",
+            Self::Forward => "icons/forward.svg",
             Self::FolderSymlink => "icons/folder-symlink.svg",
             Self::Key => "icons/key-round.svg",
             Self::LaptopMinimal => "icons/laptop-minimal.svg",

@@ -446,7 +446,9 @@ impl AppView {
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
                                                 .text_color(rgb(roles.on_surface_variant))
                                                 .child(i18n::string(
                                                     "forwarding.fields.ssh_host_profile",

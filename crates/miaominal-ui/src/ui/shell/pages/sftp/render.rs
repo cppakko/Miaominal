@@ -1454,7 +1454,9 @@ impl AppView {
                                             div()
                                                 .flex_1()
                                                 .min_w(px(0.0))
-                                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
                                                 .text_color(rgb(roles.on_surface))
                                                 .child(format!(
                                                     "{} -> {}",
@@ -1464,13 +1466,17 @@ impl AppView {
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
                                                 .text_color(rgb(roles.on_surface_variant))
                                                 .child(progress),
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
                                                 .text_color(rgb(accent))
                                                 .child(status_label),
                                         )
