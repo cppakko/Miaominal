@@ -17,6 +17,7 @@ pub(in crate::ui::shell) struct SessionMonitoringState {
     pub(in crate::ui::shell) cpu_history: Vec<MonitorChartPoint>,
     pub(in crate::ui::shell) memory_history: Vec<MonitorChartPoint>,
     pub(in crate::ui::shell) swap_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui::shell) disk_history: Vec<MonitorChartPoint>,
     pub(in crate::ui::shell) network_history: Vec<MonitorChartPoint>,
     pub(in crate::ui::shell) load_history: Vec<MonitorChartPoint>,
     sample_count: usize,
@@ -31,6 +32,7 @@ impl SessionMonitoringState {
             cpu_history: Vec::new(),
             memory_history: Vec::new(),
             swap_history: Vec::new(),
+            disk_history: Vec::new(),
             network_history: Vec::new(),
             load_history: Vec::new(),
             sample_count: 0,
@@ -52,6 +54,7 @@ impl SessionMonitoringState {
         Self::push_history_point(&mut self.cpu_history, &label, snapshot.cpu_percent);
         Self::push_history_point(&mut self.memory_history, &label, snapshot.memory_percent);
         Self::push_history_point(&mut self.swap_history, &label, snapshot.swap_percent);
+        Self::push_history_point(&mut self.disk_history, &label, snapshot.disk_percent);
         Self::push_history_point(&mut self.network_history, &label, network_total);
         Self::push_history_point(&mut self.load_history, &label, snapshot.load);
 
@@ -902,6 +905,7 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) monitor_source_tabs: HashMap<String, usize>,
     pub(in crate::ui::shell) active_topbar_tab: Option<usize>,
     pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
+    pub(in crate::ui::shell) session_monitor_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
     pub(in crate::ui::shell) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
     pub(in crate::ui::shell) topbar_exiting_tabs: Vec<TopbarTabExitTransition>,

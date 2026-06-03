@@ -59,7 +59,7 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const LINUX_MONITOR_COMMAND: &str = "awk 'NR==1 { printf(\"cpu %s %s %s %s %s %s %s %s\\n\", $2, $3, $4, $5, $6, $7, $8, $9) }' /proc/stat; awk '/MemTotal:/ { total=$2 } /MemAvailable:/ { available=$2 } /SwapTotal:/ { swap_total=$2 } /SwapFree:/ { swap_free=$2 } END { printf(\"mem %s %s %s %s\\n\", total, available, swap_total, swap_free) }' /proc/meminfo; awk 'NR>2 && $1 !~ /^lo:/ { rx+=$2; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }' /proc/net/dev; awk '{ printf(\"load %s\\n\", $1) }' /proc/loadavg";
+        const LINUX_MONITOR_COMMAND: &str = "awk 'NR==1 { printf(\"cpu %s %s %s %s %s %s %s %s\\n\", $2, $3, $4, $5, $6, $7, $8, $9) }' /proc/stat; awk '/MemTotal:/ { total=$2 } /MemAvailable:/ { available=$2 } /SwapTotal:/ { swap_total=$2 } /SwapFree:/ { swap_free=$2 } END { printf(\"mem %s %s %s %s\\n\", total, available, swap_total, swap_free) }' /proc/meminfo; awk 'NR>2 && $1 !~ /^lo:/ { rx+=$2; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }' /proc/net/dev; awk '{ printf(\"load %s\\n\", $1) }' /proc/loadavg; df -P / 2>/dev/null | awk 'NR==2 { gsub(/%/, \"\", $5); printf(\"disk %s\\n\", $5) }'";
 
         let output = run_exec_command(session, LINUX_MONITOR_COMMAND).await?;
         let mut cpu_totals = None;
@@ -69,6 +69,7 @@ impl RemoteMonitorCollector {
         let mut swap_free_kib = None;
         let mut network_totals = None;
         let mut load = None;
+        let mut disk_percent = None;
 
         for line in output
             .lines()
@@ -107,6 +108,9 @@ impl RemoteMonitorCollector {
                 Some("load") => {
                     load = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
+                Some("disk") => {
+                    disk_percent = parts.next().and_then(parse_disk_percent);
+                }
                 _ => {}
             }
         }
@@ -136,6 +140,7 @@ impl RemoteMonitorCollector {
             cpu_percent,
             memory_percent,
             swap_percent,
+            disk_percent: disk_percent.unwrap_or_default(),
             network_rx_kbps,
             network_tx_kbps,
             load: load.unwrap_or_default(),
@@ -146,7 +151,7 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const MACOS_MONITOR_COMMAND: &str = "top -l 1 -n 0 | awk -F'[:,% ]+' '/CPU usage/ { printf(\"cpu %.2f\\n\", 100 - $(NF-1)) } /PhysMem:/ { used=0; free=0; for (i=1; i<=NF; i++) { if ($(i+1) == \"used\") used=$i; if ($(i+1) == \"unused\") free=$i } if (used + free > 0) { printf(\"mem %s %s\\n\", used, used + free) } }'; sysctl -n vm.swapusage | awk -F'[ =]+' '{ printf(\"swap %s %s\\n\", $4, $7) }'; netstat -ibn | awk 'NR>1 && $1 !~ /^lo/ && $7 ~ /^[0-9]+$/ && $10 ~ /^[0-9]+$/ { rx+=$7; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }'; sysctl -n vm.loadavg | awk '{ gsub(/[{}]/, \"\"); printf(\"load %s\\n\", $1) }'";
+        const MACOS_MONITOR_COMMAND: &str = "top -l 1 -n 0 | awk -F'[:,% ]+' '/CPU usage/ { printf(\"cpu %.2f\\n\", 100 - $(NF-1)) } /PhysMem:/ { used=0; free=0; for (i=1; i<=NF; i++) { if ($(i+1) == \"used\") used=$i; if ($(i+1) == \"unused\") free=$i } if (used + free > 0) { printf(\"mem %s %s\\n\", used, used + free) } }'; sysctl -n vm.swapusage | awk -F'[ =]+' '{ printf(\"swap %s %s\\n\", $4, $7) }'; netstat -ibn | awk 'NR>1 && $1 !~ /^lo/ && $7 ~ /^[0-9]+$/ && $10 ~ /^[0-9]+$/ { rx+=$7; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }'; sysctl -n vm.loadavg | awk '{ gsub(/[{}]/, \"\"); printf(\"load %s\\n\", $1) }'; df -P / 2>/dev/null | awk 'NR==2 { gsub(/%/, \"\", $5); printf(\"disk %s\\n\", $5) }'";
 
         let output = run_exec_command(session, MACOS_MONITOR_COMMAND).await?;
         let mut cpu_percent = None;
@@ -156,6 +161,7 @@ impl RemoteMonitorCollector {
         let mut swap_total = None;
         let mut network_totals = None;
         let mut load = None;
+        let mut disk_percent = None;
 
         for line in output
             .lines()
@@ -187,6 +193,9 @@ impl RemoteMonitorCollector {
                 Some("load") => {
                     load = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
+                Some("disk") => {
+                    disk_percent = parts.next().and_then(parse_disk_percent);
+                }
                 _ => {}
             }
         }
@@ -210,6 +219,7 @@ impl RemoteMonitorCollector {
             } else {
                 0.0
             },
+            disk_percent: disk_percent.unwrap_or_default(),
             network_rx_kbps,
             network_tx_kbps,
             load: load.unwrap_or_default(),
@@ -220,13 +230,15 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const WINDOWS_MONITOR_COMMAND: &str = r#"powershell -NoProfile -Command "$cpu=(Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples[0].CookedValue; $os=Get-CimInstance Win32_OperatingSystem; $mem=if($os.TotalVisibleMemorySize -gt 0){100 - (($os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100)} else {0}; $swapBase=[double]($os.TotalVirtualMemorySize - $os.TotalVisibleMemorySize); $swapUsed=[double](($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) - ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory)); $swap=if($swapBase -gt 0){[Math]::Max(0,[Math]::Min(100,($swapUsed / $swapBase) * 100))} else {0}; $stats=Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'Loopback' -and $_.ReceivedBytes -ne $null -and $_.SentBytes -ne $null }; $rx=($stats | Measure-Object -Property ReceivedBytes -Sum).Sum; $tx=($stats | Measure-Object -Property SentBytes -Sum).Sum; if($null -eq $rx){$rx=0}; if($null -eq $tx){$tx=0}; $load=(Get-Counter '\System\Processor Queue Length').CounterSamples[0].CookedValue; [pscustomobject]@{cpu=$cpu;mem=$mem;swap=$swap;rx=$rx;tx=$tx;load=$load} | ConvertTo-Json -Compress""#;
+        const WINDOWS_MONITOR_COMMAND: &str = r#"powershell -NoProfile -Command "$cpu=(Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples[0].CookedValue; $os=Get-CimInstance Win32_OperatingSystem; $mem=if($os.TotalVisibleMemorySize -gt 0){100 - (($os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100)} else {0}; $swapBase=[double]($os.TotalVirtualMemorySize - $os.TotalVisibleMemorySize); $swapUsed=[double](($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) - ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory)); $swap=if($swapBase -gt 0){[Math]::Max(0,[Math]::Min(100,($swapUsed / $swapBase) * 100))} else {0}; $stats=Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'Loopback' -and $_.ReceivedBytes -ne $null -and $_.SentBytes -ne $null }; $rx=($stats | Measure-Object -Property ReceivedBytes -Sum).Sum; $tx=($stats | Measure-Object -Property SentBytes -Sum).Sum; if($null -eq $rx){$rx=0}; if($null -eq $tx){$tx=0}; $load=(Get-Counter '\System\Processor Queue Length').CounterSamples[0].CookedValue; $systemDrive=$env:SystemDrive; $diskInfo=Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $systemDrive }; $disk=if($diskInfo -and $diskInfo.Size -gt 0){100 - (($diskInfo.FreeSpace / $diskInfo.Size) * 100)} else {0}; [pscustomobject]@{cpu=$cpu;mem=$mem;swap=$swap;disk=$disk;rx=$rx;tx=$tx;load=$load} | ConvertTo-Json -Compress""#;
 
         #[derive(serde::Deserialize)]
         struct WindowsMonitorPayload {
             cpu: f64,
             mem: f64,
             swap: f64,
+            #[serde(default)]
+            disk: f64,
             rx: f64,
             tx: f64,
             load: f64,
@@ -244,6 +256,7 @@ impl RemoteMonitorCollector {
             cpu_percent: payload.cpu,
             memory_percent: payload.mem,
             swap_percent: payload.swap,
+            disk_percent: payload.disk.clamp(0.0, 100.0),
             network_rx_kbps,
             network_tx_kbps,
             load: payload.load,
@@ -433,4 +446,34 @@ fn parse_scaled_number(value: &str) -> Option<f64> {
         .parse::<f64>()
         .ok()
         .map(|value| value * scale)
+}
+
+fn parse_disk_percent(value: &str) -> Option<f64> {
+    value
+        .trim()
+        .trim_end_matches('%')
+        .parse::<f64>()
+        .ok()
+        .map(|value| {
+            if value.is_finite() {
+                value.clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_disk_percent_variants() {
+        assert_eq!(parse_disk_percent("42"), Some(42.0));
+        assert_eq!(parse_disk_percent("87%"), Some(87.0));
+        assert_eq!(parse_disk_percent("120%"), Some(100.0));
+        assert_eq!(parse_disk_percent("-1"), Some(0.0));
+        assert_eq!(parse_disk_percent(""), None);
+        assert_eq!(parse_disk_percent("n/a"), None);
+    }
 }

@@ -1318,6 +1318,7 @@ impl AppView {
                 monitor_source_tabs: Default::default(),
                 active_topbar_tab: Some(0),
                 topbar_tab_scroll_handle: ScrollHandle::new(),
+                session_monitor_scroll_handle: ScrollHandle::new(),
                 topbar_previous_visible_tabs: Vec::new(),
                 topbar_entering_tabs: Vec::new(),
                 topbar_exiting_tabs: Vec::new(),

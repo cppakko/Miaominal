@@ -47,6 +47,7 @@ pub struct SessionMonitorSnapshot {
     pub cpu_percent: f64,
     pub memory_percent: f64,
     pub swap_percent: f64,
+    pub disk_percent: f64,
     pub network_rx_kbps: f64,
     pub network_tx_kbps: f64,
     pub load: f64,
