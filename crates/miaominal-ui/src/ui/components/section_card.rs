@@ -48,7 +48,7 @@ impl RenderOnce for SectionCard {
                             )
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                                     .text_color(rgb(roles.on_surface))
                                     .child(self.title),
                             ),

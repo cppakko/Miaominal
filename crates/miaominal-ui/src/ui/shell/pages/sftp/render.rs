@@ -347,7 +347,7 @@ where
                         h_flex().w_full().items_center().child(
                             h_flex().items_center().gap_2().child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                                    .text_size(miaominal_settings::FontSize::Input.scaled())
                                     .text_color(rgb(roles.on_surface))
                                     .child(title),
                             ),
@@ -391,13 +391,13 @@ fn sftp_progress_center_card(
                 .pb_2()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(roles.on_surface))
                         .child(i18n::string("sftp.ui.progress_center")),
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(roles.on_surface_variant))
                         .child(status),
                 ),
@@ -1215,7 +1215,7 @@ impl AppView {
                     .bg(color_with_alpha(roles.primary, 0x20))
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(13.0))
+                            .text_size(miaominal_settings::FontSize::Subheading.scaled())
                             .text_color(rgb(roles.on_primary))
                             .font_weight(FontWeight::MEDIUM)
                             .child(i18n::string("sftp.ui.drop_to_upload")),
@@ -1237,7 +1237,7 @@ impl AppView {
                     .pb_3()
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(i18n::string_args(
                                 "sftp.ui.remote_path_label",
@@ -1247,7 +1247,7 @@ impl AppView {
                     .when_some(sftp_tab.last_error.clone(), |this, error| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(10.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .line_height(miaominal_settings::scaled_line_height(16.0))
                                 .text_color(rgb(extended.warning.color))
                                 .child(error),
@@ -1454,9 +1454,7 @@ impl AppView {
                                             div()
                                                 .flex_1()
                                                 .min_w(px(0.0))
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    11.0,
-                                                ))
+                                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                                 .text_color(rgb(roles.on_surface))
                                                 .child(format!(
                                                     "{} -> {}",
@@ -1466,17 +1464,13 @@ impl AppView {
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    10.0,
-                                                ))
+                                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                                 .text_color(rgb(roles.on_surface_variant))
                                                 .child(progress),
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    10.0,
-                                                ))
+                                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                                 .text_color(rgb(accent))
                                                 .child(status_label),
                                         )
@@ -1484,7 +1478,7 @@ impl AppView {
                                             this.child(
                                                 div()
                                                     .text_size(
-                                                        miaominal_settings::scaled_font_size(10.0),
+                                                        miaominal_settings::FontSize::Body.scaled(),
                                                     )
                                                     .text_color(rgb(text_muted))
                                                     .child(speed),

@@ -38,7 +38,7 @@ pub(in crate::ui::shell::pages::forward) fn draggable_profile_tile(
                         .gap_3()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(13.0))
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child(profile.name.clone()),
                         )
@@ -69,13 +69,13 @@ pub(in crate::ui::shell::pages::forward) fn draggable_profile_tile(
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(roles.on_surface_variant))
                         .child(profile.summary()),
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("forwarding.tile.drag_to_target_composer")),
                 ),

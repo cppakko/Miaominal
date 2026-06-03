@@ -144,7 +144,7 @@ pub(super) fn render_forward_endpoint_editor(
         .gap_3()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .text_color(rgb(roles.on_surface_variant))
                 .child(title),
         )
@@ -162,7 +162,7 @@ pub(super) fn render_forward_endpoint_editor(
                         .gap_1()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("forwarding.fields.host")),
                         )
@@ -176,7 +176,7 @@ pub(super) fn render_forward_endpoint_editor(
                         .gap_1()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("forwarding.fields.port")),
                         )

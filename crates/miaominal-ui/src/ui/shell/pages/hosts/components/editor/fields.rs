@@ -28,13 +28,13 @@ pub(super) fn editor_static_field(
                 .gap_3()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(text_muted))
                         .child(label),
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(roles.on_surface_variant))
                         .child(detail),
                 ),

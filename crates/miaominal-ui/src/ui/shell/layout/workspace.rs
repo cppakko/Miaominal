@@ -444,7 +444,7 @@ fn session_snippet_package_card(
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(if is_selected {
                                 palette.on_accent
                             } else {
@@ -458,13 +458,13 @@ fn session_snippet_package_card(
                             .gap_1()
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                                    .text_size(miaominal_settings::FontSize::Input.scaled())
                                     .text_color(rgb(roles.on_surface))
                                     .child(title),
                             )
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(10.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                     .text_color(rgb(text_muted))
                                     .child(count_label),
                             ),
@@ -887,14 +887,14 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(22.0))
+                            .text_size(miaominal_settings::FontSize::Display.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(i18n::string("session.workspace.session_closed")),
                     )
                     .when(!summary.is_empty(), |this| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(summary),
                         )
@@ -985,14 +985,14 @@ impl AppView {
                     .child(md3_spinner(64.0))
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(22.0))
+                            .text_size(miaominal_settings::FontSize::Display.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(title),
                     )
                     .when(!summary.is_empty(), |this| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(summary),
                         )
@@ -1007,7 +1007,7 @@ impl AppView {
                                 .bg(color_with_alpha(text_muted, 0x10))
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                                        .text_size(miaominal_settings::FontSize::Input.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(status),
                                 ),
@@ -1053,21 +1053,21 @@ impl AppView {
                     .child(md3_spinner(64.0))
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(22.0))
+                            .text_size(miaominal_settings::FontSize::Display.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(i18n::string("session.workspace.reconnecting")),
                     )
                     .when(!summary.is_empty(), |this| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(summary),
                         )
                     })
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
                             .text_color(rgb(text_muted))
                             .child(i18n::string_args(
                                 "session.workspace.reconnect_attempt",
@@ -1080,7 +1080,7 @@ impl AppView {
                     .child(
                         div().w_full().p_4().child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(13.0))
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child(error.clone()),
                         ),
@@ -1180,14 +1180,14 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(22.0))
+                            .text_size(miaominal_settings::FontSize::Display.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(title),
                     )
                     .when(!summary.is_empty(), |this| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(summary),
                         )
@@ -1199,7 +1199,7 @@ impl AppView {
 
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(text_muted))
                                 .child(status),
                         )
@@ -1207,7 +1207,7 @@ impl AppView {
                     .child(
                         div().w_full().p_4().child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(13.0))
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child(error),
                         ),
@@ -1356,7 +1356,7 @@ impl AppView {
                 div()
                     .w_full()
                     .text_center()
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .line_height(miaominal_settings::scaled_line_height(20.0))
                     .text_color(rgb(roles.on_surface_variant))
                     .child(i18n::string("session.terminal_messages.read_only_history")),
@@ -1459,7 +1459,7 @@ impl AppView {
                     div()
                         .w_full()
                         .text_center()
-                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(roles.on_surface_variant))
                         .child(status),
                 )
@@ -1474,7 +1474,7 @@ impl AppView {
                     .child(
                         div()
                             .w_full()
-                            .text_size(miaominal_settings::scaled_font_size(13.0))
+                            .text_size(miaominal_settings::FontSize::Subheading.scaled())
                             .line_height(miaominal_settings::scaled_line_height(18.0))
                             .text_color(rgb(roles.on_surface))
                             .child(error),
@@ -1484,7 +1484,7 @@ impl AppView {
                 div()
                     .w_full()
                     .text_center()
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .line_height(miaominal_settings::scaled_line_height(20.0))
                     .text_color(rgb(roles.on_surface_variant))
                     .child(i18n::string("session.terminal_messages.read_only_history")),
@@ -1927,7 +1927,7 @@ impl AppView {
             })
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .text_color(rgb(if is_active {
                         roles.on_surface
                     } else {
@@ -2195,7 +2195,7 @@ impl AppView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(text_muted))
                     .child(i18n::string("session.workspace.click_to_focus"))
                     .into_any_element()
@@ -2447,13 +2447,15 @@ impl AppView {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(18.0))
+                                        .text_size(
+                                            miaominal_settings::FontSize::SectionTitle.scaled(),
+                                        )
                                         .text_color(rgb(roles.on_surface))
                                         .child(i18n::string("workspace.empty.open_ssh_tab_title")),
                                 )
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                                        .text_size(miaominal_settings::FontSize::Input.scaled())
                                         .text_color(rgb(text_muted))
                                         .child(i18n::string("workspace.empty.open_ssh_tab_body")),
                                 ),
@@ -2530,7 +2532,7 @@ impl AppView {
                 .gap_3()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(roles.on_surface))
                         .child(i18n::string("workspace.panel.monitor.disabled_title")),
                 )
@@ -2538,7 +2540,7 @@ impl AppView {
                     div()
                         .max_w(px(360.0))
                         .text_center()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("workspace.panel.monitor.disabled_body")),
                 )
@@ -2560,7 +2562,7 @@ impl AppView {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(error.clone()),
                 )
@@ -2693,7 +2695,7 @@ impl AppView {
                 .child(md3_spinner(18.0))
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("workspace.panel.monitor.loading")),
                 )
@@ -2738,7 +2740,7 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let axis_label_font_size = miaominal_settings::scaled_font_size(8.0);
+        let axis_label_font_size = miaominal_settings::scaled_font_size(11.0);
         let axis_label_width =
             estimate_monitor_axis_label_width(&y_tick_labels, axis_label_font_size.as_f32());
         let chart_data = history.to_vec();
@@ -2751,7 +2753,7 @@ impl AppView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(miaominal_settings::scaled_font_size(10.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .text_color(rgb(text_muted))
                 .child(i18n::string("workspace.panel.monitor.loading"))
                 .into_any_element()
@@ -2800,20 +2802,20 @@ impl AppView {
                     .gap_3()
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(title),
                     )
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(13.0))
+                            .text_size(miaominal_settings::FontSize::Subheading.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(value),
                     )
                     .when_some(detail, |this, detail| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(9.0))
+                                .text_size(miaominal_settings::scaled_font_size(11.0))
                                 .text_color(rgb(text_muted))
                                 .child(detail),
                         )
@@ -2919,7 +2921,7 @@ impl AppView {
                 .justify_center()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("workspace.panel.snippets.no_search_matches")),
                 )
@@ -2931,7 +2933,7 @@ impl AppView {
                 .justify_center()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("snippets.empty.no_package_matches")),
                 )
@@ -2975,7 +2977,7 @@ impl AppView {
                                             .child(
                                                 div()
                                                     .text_size(
-                                                        miaominal_settings::scaled_font_size(11.0),
+                                                        miaominal_settings::FontSize::Body.scaled(),
                                                     )
                                                     .text_color(rgb(roles.on_surface))
                                                     .child(snippet.description.clone()),
@@ -2983,23 +2985,11 @@ impl AppView {
                                             .child(
                                                 div()
                                                     .text_size(
-                                                        miaominal_settings::scaled_font_size(10.0),
+                                                        miaominal_settings::FontSize::Body.scaled(),
                                                     )
                                                     .text_color(rgb(text_muted))
                                                     .child(preview),
-                                            )
-                                            .when_some(package, |this, package| {
-                                                this.child(
-                                                    div()
-                                                        .text_size(
-                                                            miaominal_settings::scaled_font_size(
-                                                                9.0,
-                                                            ),
-                                                        )
-                                                        .text_color(rgb(text_muted))
-                                                        .child(package),
-                                                )
-                                            }),
+                                            ),
                                     )
                                     .child(div().id(button_id).child(icon_button(
                                         AppIcon::Play,
@@ -3029,7 +3019,7 @@ impl AppView {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                     .text_color(rgb(roles.on_surface))
                                     .child(i18n::string("snippets.page.packages")),
                             )
@@ -3069,7 +3059,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child(i18n::string("snippets.page.snippets")),
                         )
@@ -3197,7 +3187,7 @@ impl AppView {
                             .child(
                                 div()
                                     .min_w(px(48.0))
-                                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                     .text_color(rgb(text_muted))
                                     .child(counter),
                             )

@@ -101,7 +101,9 @@ fn managed_key_card(key: &ManagedKeyRecord, entity: Entity<AppView>) -> impl Int
                                     .gap_1()
                                     .child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(15.0))
+                                            .text_size(
+                                                miaominal_settings::FontSize::Subtitle.scaled(),
+                                            )
                                             .line_height(miaominal_settings::scaled_line_height(
                                                 20.0,
                                             ))
@@ -110,7 +112,7 @@ fn managed_key_card(key: &ManagedKeyRecord, entity: Entity<AppView>) -> impl Int
                                     )
                                     .child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
                                             .text_color(rgb(text_muted))
                                             .child(key.algorithm.clone()),
                                     ),
@@ -215,14 +217,14 @@ fn agent_identity_card(identity: &miaominal_ssh::AgentIdentitySummary) -> impl I
                                 .gap_1()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(15.0))
+                                        .text_size(miaominal_settings::FontSize::Subtitle.scaled())
                                         .line_height(miaominal_settings::scaled_line_height(20.0))
                                         .text_color(rgb(roles.on_surface))
                                         .child(identity.label.clone()),
                                 )
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                         .text_color(rgb(text_muted))
                                         .child(comment),
                                 ),
@@ -491,7 +493,7 @@ impl AppView {
             .child(
                 v_flex().flex_1().gap_1().child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(20.0))
+                        .text_size(miaominal_settings::FontSize::PageTitle.scaled())
                         .text_color(rgb(roles.on_surface))
                         .child(if is_deploy_mode {
                             i18n::string("keychain.deploy.title")
@@ -591,7 +593,7 @@ impl AppView {
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .line_height(miaominal_settings::scaled_line_height(18.0))
                                 .text_color(rgb(text_muted))
                                 .child(i18n::string(
@@ -673,13 +675,15 @@ impl AppView {
                                 .when_some(selected_deploy_key, |this, key| {
                                     this.child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(14.0))
+                                            .text_size(
+                                                miaominal_settings::FontSize::Heading.scaled(),
+                                            )
                                             .text_color(rgb(roles.on_surface))
                                             .child(key.name.clone()),
                                     )
                                     .child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
                                             .text_color(rgb(text_muted))
                                             .child(key.summary()),
                                     )
@@ -702,7 +706,7 @@ impl AppView {
                                 .when(selected_deploy_key.is_none(), |this| {
                                     this.child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                                            .text_size(miaominal_settings::FontSize::Input.scaled())
                                             .text_color(rgb(text_muted))
                                             .child(i18n::string("keychain.deploy.key_missing")),
                                     )
@@ -718,7 +722,7 @@ impl AppView {
                         .when(deployable_profile_count == 0, |this| {
                             this.child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                     .line_height(miaominal_settings::scaled_line_height(18.0))
                                     .text_color(rgb(text_muted))
                                     .child(i18n::string("keychain.deploy.no_profiles_copy")),
@@ -742,7 +746,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("keychain.deploy.command")),
                         )
@@ -753,7 +757,7 @@ impl AppView {
                         ))
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .line_height(miaominal_settings::scaled_line_height(18.0))
                                 .text_color(rgb(text_muted))
                                 .child(i18n::string("keychain.deploy.command_copy")),

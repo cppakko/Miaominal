@@ -1828,7 +1828,7 @@ impl AppView {
                                 .gap_1()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(prompt.prompt.clone()),
                                 )
@@ -2213,7 +2213,7 @@ impl AppView {
                 div()
                     .w_full()
                     .min_w(px(0.0))
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .line_height(miaominal_settings::scaled_line_height(20.0))
                     .text_color(rgb(roles.on_surface_variant))
                     .child(i18n::string(
@@ -2308,7 +2308,7 @@ impl AppView {
                 div()
                     .w_full()
                     .min_w(px(0.0))
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .line_height(miaominal_settings::scaled_line_height(20.0))
                     .text_color(rgb(roles.on_surface_variant))
                     .child(i18n::string("settings.about.reset_local.popup.description")),

@@ -231,7 +231,7 @@ impl AppView {
         let header = h_flex().w_full().items_start().gap_4().child(
             v_flex().flex_1().gap_1().child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(20.0))
+                    .text_size(miaominal_settings::FontSize::PageTitle.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(title),
             ),
@@ -266,7 +266,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.group")),
                         )
@@ -342,7 +342,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.identity_source")),
                         )
@@ -382,7 +382,7 @@ impl AppView {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(i18n::string("hosts.editor.fields.managed_key_id")),
                                 )
@@ -429,7 +429,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.agent_forwarding")),
                         )
@@ -448,7 +448,7 @@ impl AppView {
                         .gap_3()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.host_chaining")),
                         )
@@ -458,7 +458,7 @@ impl AppView {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(i18n::string("hosts.editor.proxy_jump.add_jump_host")),
                                 )
@@ -597,7 +597,7 @@ impl AppView {
                         .gap_3()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                             .child(i18n::string("hosts.editor.environment_variables.section_title")),
                         )
@@ -608,7 +608,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.shell_type")),
                         )
@@ -620,7 +620,7 @@ impl AppView {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.character_set")),
                         )

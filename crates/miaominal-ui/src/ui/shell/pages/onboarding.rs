@@ -308,7 +308,7 @@ fn render_onboarding_title_bar(
                         .gap_1()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(13.0))
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(rgb(roles.on_surface))
                                 .child(APP_TITLE),
@@ -499,7 +499,7 @@ fn render_onboarding_step_breadcrumb(
         )
         .child(
             breadcrumb
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .line_height(miaominal_settings::scaled_line_height(14.0)),
         )
         .into_any_element()
@@ -516,7 +516,7 @@ fn render_onboarding_step_header(step: OnboardingStep) -> AnyElement {
         .justify_center()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(30.0))
+                .text_size(miaominal_settings::FontSize::Hero.scaled())
                 .font_weight(FontWeight::BOLD)
                 .text_center()
                 .text_color(rgb(roles.on_surface))
@@ -777,7 +777,7 @@ fn render_onboarding_finish_step() -> AnyElement {
         .child(
             v_flex().gap_3().items_center().child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(14.0))
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
                     .text_color(rgb(roles.on_surface_variant))
                     .text_center()
                     .max_w(px(420.0))
@@ -884,14 +884,14 @@ fn onboarding_panel_header(
         .gap_2()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(18.0))
+                .text_size(miaominal_settings::FontSize::SectionTitle.scaled())
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(roles.on_surface))
                 .child(title),
         )
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(13.0))
+                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                 .line_height(miaominal_settings::scaled_line_height(20.0))
                 .text_color(rgb(roles.on_surface_variant))
                 .child(description),
@@ -936,14 +936,14 @@ fn onboarding_category_card(
                 .gap_1()
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(15.0))
+                        .text_size(miaominal_settings::FontSize::Subtitle.scaled())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(foreground_color))
                         .child(title),
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .line_height(miaominal_settings::scaled_line_height(18.0))
                         .text_color(rgb(foreground_color))
                         .opacity(0.82)
@@ -963,7 +963,7 @@ fn onboarding_field(label: impl Into<SharedString>, content: AnyElement) -> AnyE
         .gap_2()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(12.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(roles.on_surface_variant))
                 .child(label.into()),
@@ -987,7 +987,7 @@ fn onboarding_field_with_description(
         .gap_2()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(12.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(roles.on_surface_variant))
                 .child(label),
@@ -995,7 +995,7 @@ fn onboarding_field_with_description(
         .child(content)
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .line_height(miaominal_settings::scaled_line_height(16.0))
                 .text_color(rgb(roles.on_surface_variant))
                 .child(description),
@@ -1022,7 +1022,7 @@ fn onboarding_theme_swatch(label_key: &'static str, color: u32) -> AnyElement {
         .child(div().size(px(12.0)).rounded(px(999.0)).bg(rgb(color)))
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .text_color(rgb(roles.on_surface_variant))
                 .child(i18n::string(label_key)),
         )
@@ -1249,7 +1249,7 @@ fn onboarding_stepper(
                 .rounded(px(10.0))
                 .bg(rgb(roles.surface_container_highest))
                 .text_color(rgb(roles.on_surface))
-                .text_size(miaominal_settings::scaled_font_size(13.0))
+                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                 .text_center()
                 .child(value),
         )

@@ -12,13 +12,13 @@ pub(super) fn proxy_jump_stepper_item(
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(title.into()),
             )
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(roles.on_surface_variant))
                     .child(detail.into()),
             ),

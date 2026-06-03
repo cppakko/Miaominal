@@ -21,7 +21,7 @@ impl AppView {
         entity: Entity<AppView>,
     ) -> gpui::AnyElement {
         Settings::new("app-settings")
-            .with_size(Size::Medium)
+            .with_size(Size::Large)
             .with_group_variant(GroupBoxVariant::Outline)
             .sidebar_width(px(220.0))
             .pages(setting_pages(entity))
@@ -308,13 +308,13 @@ fn about_page(entity: Entity<AppView>) -> SettingPage {
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(16.0))
+                                .text_size(miaominal_settings::FontSize::Title.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child("Miaominal"),
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string_args(
                                     "settings.about.overview.version",
@@ -323,7 +323,7 @@ fn about_page(entity: Entity<AppView>) -> SettingPage {
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(text_muted))
                                 .child(i18n::string("settings.about.overview.description")),
                         )
@@ -947,7 +947,7 @@ fn stepper_control(
                 .rounded(px(10.0))
                 .bg(rgb(roles.surface_container_high))
                 .text_color(rgb(roles.on_surface))
-                .text_size(miaominal_settings::scaled_font_size(13.0))
+                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                 .text_center()
                 .child(value),
         )
@@ -967,7 +967,7 @@ fn theme_swatch(label_key: &'static str, color: u32) -> impl IntoElement {
         .child(div().size(px(14.0)).rounded_full().bg(rgb(color)))
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(10.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .text_color(rgb(roles.on_surface_variant))
                 .child(i18n::string(label_key)),
         )
@@ -1225,7 +1225,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                                 .rounded(px(14.0))
                                 .bg(rgb(capture_bg))
                                 .text_color(rgb(capture_fg))
-                                .text_size(miaominal_settings::scaled_font_size(13.0))
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .child(preview_text)
                                 .on_key_down(move |event: &KeyDownEvent, _window, cx| {
@@ -1255,7 +1255,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(SharedString::from(i18n::string(
                                     "settings.key_bindings.capture.esc_to_cancel",
@@ -1300,7 +1300,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                     )
                     .py_1()
                     .rounded(px(10.0))
-                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
                     .font_weight(gpui::FontWeight::MEDIUM),
                 )
             })
@@ -1641,7 +1641,7 @@ fn render_text_action_field(text: String, action: Option<Button>) -> AnyElement 
         div()
             .flex_1()
             .min_w(px(0.0))
-            .text_size(miaominal_settings::scaled_font_size(12.0))
+            .text_size(miaominal_settings::FontSize::Input.scaled())
             .text_color(rgb(roles.on_surface_variant))
             .child(text),
     );
@@ -1669,7 +1669,7 @@ fn render_text_actions_field(text: String, actions: Vec<AnyElement>) -> AnyEleme
         .child(
             div()
                 .min_w(px(0.0))
-                .text_size(miaominal_settings::scaled_font_size(12.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .text_color(rgb(roles.on_surface_variant))
                 .child(text),
         )
@@ -1832,7 +1832,7 @@ fn sync_gist_group(entity: Entity<AppView>) -> SettingGroup {
                             .when(show_binding_hint, |this| {
                                 this.child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(12.0))
+                                        .text_size(miaominal_settings::FontSize::Input.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(i18n::string("settings.sync.gist.binding_hint")),
                                 )
@@ -2148,7 +2148,7 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
                         };
                         let roles = miaominal_settings::current_theme().material.roles;
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
                             .text_color(rgb(roles.on_surface_variant))
                             .child(text)
                             .into_any_element()
@@ -2170,7 +2170,7 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
                             .min_w(px(0.0))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
                             .text_color(rgb(roles.on_surface_variant))
                             .child(status_text)
                             .into_any_element()

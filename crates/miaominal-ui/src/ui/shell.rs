@@ -414,13 +414,13 @@ impl SelectItem for ForwardProfileSelectItem {
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(13.0))
+                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(self.title.clone()),
             )
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(roles.on_surface_variant))
                     .child(self.summary.clone()),
             )
@@ -457,13 +457,13 @@ impl SelectItem for ProxyJumpCandidateSelectItem {
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(13.0))
+                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(self.title.clone()),
             )
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(roles.on_surface_variant))
                     .child(self.summary.clone()),
             )
@@ -500,13 +500,13 @@ impl SelectItem for ManagedKeySelectItem {
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(13.0))
+                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(self.title.clone()),
             )
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(roles.on_surface_variant))
                     .child(self.summary.clone()),
             )

@@ -767,7 +767,7 @@ impl Render for DraggedTab {
                 roles.surface_container_high
             }))
             .opacity(0.92)
-            .text_size(miaominal_settings::scaled_font_size(11.0))
+            .text_size(miaominal_settings::FontSize::Body.scaled())
             .text_color(rgb(if self.is_active {
                 roles.on_secondary_container
             } else {

@@ -52,7 +52,7 @@ fn sidebar_item(
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                        .text_size(miaominal_settings::FontSize::Heading.scaled())
                         .text_color(rgb(if is_selected {
                             roles.secondary
                         } else {

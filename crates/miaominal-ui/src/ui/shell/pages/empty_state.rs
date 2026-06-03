@@ -30,7 +30,7 @@ pub(in crate::ui::shell) fn shell_empty_state(icon: AppIcon, copy: impl Into<Sha
                 )
                 .child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(13.0))
+                        .text_size(miaominal_settings::FontSize::Subheading.scaled())
                         .line_height(miaominal_settings::scaled_line_height(20.0))
                         .text_center()
                         .text_color(rgb(roles.on_surface_variant))

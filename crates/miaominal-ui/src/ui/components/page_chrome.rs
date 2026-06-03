@@ -10,7 +10,7 @@ pub(crate) fn page_section_title(title: impl Into<SharedString>) -> impl IntoEle
     let roles = miaominal_settings::current_theme().material.roles;
 
     div()
-        .text_size(miaominal_settings::scaled_font_size(18.0))
+        .text_size(miaominal_settings::FontSize::SectionTitle.scaled())
         .text_color(rgb(roles.on_surface))
         .child(title.into())
 }

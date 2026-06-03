@@ -148,7 +148,7 @@ fn render_forward_rule_card(
                                         .flex_1()
                                         .min_w(px(0.0))
                                         .overflow_hidden()
-                                        .text_size(miaominal_settings::scaled_font_size(14.0))
+                                        .text_size(miaominal_settings::FontSize::Heading.scaled())
                                         .text_color(rgb(roles.on_surface))
                                         .child(title),
                                 ),
@@ -201,7 +201,7 @@ fn render_forward_rule_list_row(
             .flex_1()
             .min_w(px(0.0))
             .overflow_hidden()
-            .text_size(miaominal_settings::scaled_font_size(13.0))
+            .text_size(miaominal_settings::FontSize::Subheading.scaled())
             .text_color(rgb(roles.on_surface))
             .child(title)
             .into_any_element(),
@@ -407,7 +407,7 @@ impl AppView {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_size(miaominal_settings::scaled_font_size(11.0))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                         .text_color(rgb(roles.on_surface_variant))
                                         .child(i18n::string("forwarding.fields.mode")),
                                 )
@@ -446,9 +446,7 @@ impl AppView {
                                         )
                                         .child(
                                             div()
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    11.0,
-                                                ))
+                                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                                 .text_color(rgb(roles.on_surface_variant))
                                                 .child(i18n::string(
                                                     "forwarding.fields.ssh_host_profile",
@@ -459,7 +457,7 @@ impl AppView {
                                 .when(is_editing_rule, |this| {
                                     this.child(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
                                             .text_color(rgb(text_muted))
                                             .child(i18n::string(
                                                 "forwarding.editor.profile_switching_disabled",
@@ -539,7 +537,7 @@ impl AppView {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(20.0))
+                            .text_size(miaominal_settings::FontSize::PageTitle.scaled())
                             .text_color(rgb(roles.on_surface))
                             .child(if is_editing_rule {
                                 i18n::string("forwarding.editor.edit_tunnel_rule")
@@ -550,7 +548,7 @@ impl AppView {
                     .when_some(selected_rule_label, |this, label| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(12.0))
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
                                 .text_color(rgb(roles.on_surface))
                                 .child(label),
                         )

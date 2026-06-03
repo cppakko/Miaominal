@@ -92,7 +92,7 @@ fn snippet_package_card(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
                     .text_color(rgb(if is_selected {
                         palette.on_accent
                     } else {
@@ -106,7 +106,7 @@ fn snippet_package_card(
                     .gap_1()
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(16.0))
+                            .text_size(miaominal_settings::FontSize::Title.scaled())
                             .text_color(rgb(if is_selected {
                                 palette.on_accent_container
                             } else {
@@ -116,7 +116,7 @@ fn snippet_package_card(
                     )
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
                             .text_color(rgb(text_muted))
                             .child(count_label),
                     ),
@@ -153,14 +153,14 @@ fn snippet_command_card(
                         .gap_2()
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(15.0))
+                                .text_size(miaominal_settings::FontSize::Subtitle.scaled())
                                 .line_height(miaominal_settings::scaled_line_height(20.0))
                                 .text_color(rgb(roles.on_surface))
                                 .child(snippet.description.clone()),
                         )
                         .child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(11.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .line_height(miaominal_settings::scaled_line_height(16.0))
                                 .text_color(rgb(text_muted))
                                 .child(preview),
@@ -193,13 +193,13 @@ fn snippet_list_row(
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(13.0))
+                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(snippet.description.clone()),
             )
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(text_muted))
                     .child(preview),
             )
@@ -212,7 +212,7 @@ fn snippet_list_row(
                 .when_some(package_label, |this, package| {
                     this.child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(roles.on_surface_variant))
                             .child(package),
                     )
@@ -220,7 +220,7 @@ fn snippet_list_row(
                 .when_some(language_label, |this, language| {
                     this.child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(language),
                     )
@@ -359,6 +359,7 @@ impl AppView {
                         .w_full()
                         .min_w(px(0.0))
                         .gap_2()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
                         .child(page_section_title(i18n::string("snippets.page.packages")))
                         .child(
                             div()
@@ -493,7 +494,7 @@ impl AppView {
         let header = h_flex().w_full().items_start().gap_4().child(
             v_flex().flex_1().gap_1().child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(20.0))
+                    .text_size(miaominal_settings::FontSize::PageTitle.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(editor_title),
             ),
@@ -574,7 +575,7 @@ impl AppView {
                                             .gap_4()
                                             .child(
                                                 div()
-                                                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                                                    .text_size(miaominal_settings::FontSize::Input.scaled())
                                                     .line_height(miaominal_settings::scaled_line_height(18.0))
                                                     .text_color(rgb(roles.on_surface_variant))
                                                     .child(i18n::string(

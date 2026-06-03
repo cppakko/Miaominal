@@ -76,7 +76,7 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_size(miaominal_settings::scaled_font_size(12.0))
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
                             .text_color(rgb(if is_selected {
                                 palette.on_accent
                             } else {
@@ -97,7 +97,7 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
             .child(
                 v_flex().gap_1().child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(14.0))
+                        .text_size(miaominal_settings::FontSize::Heading.scaled())
                         .text_color(rgb(if is_selected {
                             palette.on_accent_container
                         } else {
@@ -154,7 +154,7 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
                                 .child(
                                     icon_tile(
                                         div()
-                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
                                             .child(">_"),
                                         34.0,
                                         10.0,
@@ -185,9 +185,7 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
                                                 .min_w(px(0.0))
                                                 .overflow_hidden()
                                                 .whitespace_nowrap()
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    11.0,
-                                                ))
+                                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                                 .line_height(
                                                     miaominal_settings::scaled_line_height(16.0),
                                                 )
@@ -267,7 +265,7 @@ pub(in crate::ui::shell::pages::hosts) fn host_list_row(
     list_item_card(
         icon_tile(
             div()
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Body.scaled())
                 .child(">_"),
             30.0,
             10.0,
@@ -281,13 +279,13 @@ pub(in crate::ui::shell::pages::hosts) fn host_list_row(
             .gap_1()
             .child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(13.0))
+                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
                     .text_color(rgb(roles.on_surface))
                     .child(title),
             )
             .children(subtitle.into_iter().map(|subtitle| {
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(text_muted))
                     .child(subtitle)
             }))

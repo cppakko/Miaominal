@@ -46,14 +46,14 @@ pub(crate) fn field_label(label: impl Into<SharedString>, required: bool) -> imp
         .gap_1()
         .child(
             div()
-                .text_size(miaominal_settings::scaled_font_size(11.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .text_color(rgb(roles.on_surface_variant))
                 .child(label.into()),
         )
         .when(required, |this| {
             this.child(
                 div()
-                    .text_size(miaominal_settings::scaled_font_size(11.0))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
                     .text_color(rgb(roles.error))
                     .child("*"),
             )

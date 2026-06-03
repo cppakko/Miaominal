@@ -5,8 +5,9 @@ mod global;
 mod model;
 
 pub use global::{
-    cell_width_default, current_settings, current_theme, font_fallbacks, font_family, font_size,
-    install, line_height_default, scaled_font_size, scaled_line_height, sync_component_theme,
+    FontSize, cell_width_default, current_settings, current_theme, font_fallbacks, font_family,
+    font_size, install, line_height_default, scaled_font_size, scaled_line_height,
+    sync_component_theme,
 };
 pub use model::{
     AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding,

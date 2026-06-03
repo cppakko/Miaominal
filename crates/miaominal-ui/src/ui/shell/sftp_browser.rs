@@ -564,7 +564,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
             .flex()
             .items_center()
             .justify_center()
-            .text_size(miaominal_settings::scaled_font_size(11.0))
+            .text_size(miaominal_settings::FontSize::Body.scaled())
             .text_color(rgb(text_muted))
             .child(self.empty_message.clone())
             .into_any_element()

@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::ui::i18n;
 use gpui::{StyleRefinement, WindowControlArea, point};
+use gpui_component::StyledExt;
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_TITLE_CHARS: usize = 20;
@@ -840,7 +841,7 @@ impl AppView {
                                                             .min_w(px(0.0))
                                                             .h(px(14.0))
                                                             .overflow_hidden()
-                                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                                            .text_size(miaominal_settings::FontSize::Heading.scaled())
                                                             .line_height(miaominal_settings::scaled_line_height(14.0))
                                                             .text_color(rgb(tab_foreground_color))
                                                             .child(display_title)
@@ -1013,7 +1014,7 @@ impl AppView {
                                                                         .items_center()
                                                                         .justify_center()
                                                                         .cursor_pointer()
-                                                                        .text_size(miaominal_settings::scaled_font_size(10.0))
+                                                                        .text_size(miaominal_settings::FontSize::Body.scaled())
                                                                         .text_color(rgb(tab_foreground_color))
                                                                         .occlude()
                                                                         .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
@@ -1165,7 +1166,7 @@ impl AppView {
                                                                                             .min_w(px(0.0))
                                                                                             .h(px(14.0))
                                                                                             .overflow_hidden()
-                                                                                            .text_size(miaominal_settings::scaled_font_size(11.0))
+                                                                                            .text_size(miaominal_settings::FontSize::Body.scaled())
                                                                                             .line_height(miaominal_settings::scaled_line_height(14.0))
                                                                                             .text_color(rgb(tab_foreground_color))
                                                                                             .child(display_title),
@@ -1179,7 +1180,7 @@ impl AppView {
                                                                                     .flex()
                                                                                     .items_center()
                                                                                     .justify_center()
-                                                                                    .text_size(miaominal_settings::scaled_font_size(10.0))
+                                                                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                                                                     .text_color(rgb(tab_foreground_color))
                                                                                     .child(Icon::from(AppIcon::Close).small()),
                                                                             ),
@@ -1307,7 +1308,7 @@ impl AppView {
                             )
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(10.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
                                     .text_color(rgb(roles.on_surface_variant))
                                     .child(connection_label),
                             ),
@@ -1344,14 +1345,14 @@ impl AppView {
                             .min_w(px(0.0))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .text_size(miaominal_settings::scaled_font_size(10.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(self.status_message.clone()),
                     )
                     .when_some(pty_label, |this, label| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(10.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(text_muted))
                                 .child(label),
                         )
@@ -1359,7 +1360,7 @@ impl AppView {
                     .when_some(traffic_label, |this, label| {
                         this.child(
                             div()
-                                .text_size(miaominal_settings::scaled_font_size(10.0))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(text_muted))
                                 .child(label),
                         )
@@ -1392,7 +1393,7 @@ impl AppView {
                     })
                     .child(
                         div()
-                            .text_size(miaominal_settings::scaled_font_size(10.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(roles.on_surface_variant))
                             .child(connection_target),
                     ),

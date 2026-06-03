@@ -751,14 +751,14 @@ impl AppView {
                             .gap_3()
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::scaled_font_size(24.0))
+                                    .text_size(miaominal_settings::FontSize::DisplayLarge.scaled())
                                     .text_color(rgb(roles.on_surface))
                                     .child(self.panel_view.sidebar_section.title()),
                             )
                             .child(
                                 div()
                                     .max_w(px(420.0))
-                                    .text_size(miaominal_settings::scaled_font_size(12.0))
+                                    .text_size(miaominal_settings::FontSize::Input.scaled())
                                     .line_height(miaominal_settings::scaled_line_height(18.0))
                                     .text_color(rgb(text_muted))
                                     .child(self.panel_view.sidebar_section.subtitle()),

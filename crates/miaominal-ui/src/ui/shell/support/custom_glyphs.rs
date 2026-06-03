@@ -31,7 +31,7 @@ enum BlockGlyph {
         lower_right: bool,
     },
 }
- 
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CustomGlyph {
     Box(BoxGlyph),

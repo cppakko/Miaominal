@@ -214,6 +214,43 @@ pub fn scaled_font_size(base_size: f32) -> Pixels {
     px(base_size / DEFAULT_FONT_SIZE * current_settings().font_size)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontSize {
+    Body,
+    Input,
+    Subheading,
+    Heading,
+    Subtitle,
+    Title,
+    SectionTitle,
+    PageTitle,
+    Display,
+    DisplayLarge,
+    Hero,
+}
+
+impl FontSize {
+    pub fn scaled(&self) -> Pixels {
+        scaled_font_size(self.base_size())
+    }
+
+    fn base_size(&self) -> f32 {
+        match self {
+            FontSize::Body => 11.0,
+            FontSize::Input => 12.0,
+            FontSize::Subheading => 13.0,
+            FontSize::Heading => 14.0,
+            FontSize::Subtitle => 15.0,
+            FontSize::Title => 16.0,
+            FontSize::SectionTitle => 18.0,
+            FontSize::PageTitle => 20.0,
+            FontSize::Display => 22.0,
+            FontSize::DisplayLarge => 24.0,
+            FontSize::Hero => 30.0,
+        }
+    }
+}
+
 pub fn scaled_line_height(base_height: f32) -> Pixels {
     px(base_height / DEFAULT_FONT_SIZE * current_settings().font_size)
 }

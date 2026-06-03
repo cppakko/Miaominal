@@ -38,7 +38,9 @@ fn trusted_host_card(
                                     .child(
                                         div()
                                             .min_w(px(0.0))
-                                            .text_size(miaominal_settings::scaled_font_size(15.0))
+                                            .text_size(
+                                                miaominal_settings::FontSize::Subtitle.scaled(),
+                                            )
                                             .line_height(miaominal_settings::scaled_line_height(
                                                 20.0,
                                             ))
@@ -253,7 +255,7 @@ impl AppView {
             .child(
                 v_flex().flex_1().min_w(px(0.0)).justify_center().child(
                     div()
-                        .text_size(miaominal_settings::scaled_font_size(13.0))
+                        .text_size(miaominal_settings::FontSize::Subheading.scaled())
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(roles.on_surface))
                         .child(format!("{}:{}", prompt.host, prompt.port)),
@@ -377,14 +379,14 @@ fn detail_row(label: String, value: &str) -> gpui::AnyElement {
         .child(
             div()
                 .w(px(170.0))
-                .text_size(miaominal_settings::scaled_font_size(12.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .text_color(rgb(text_muted))
                 .child(label),
         )
         .child(
             div()
                 .flex_1()
-                .text_size(miaominal_settings::scaled_font_size(12.0))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
                 .text_color(rgb(roles.on_surface))
                 .child(value.to_string()),
         )
