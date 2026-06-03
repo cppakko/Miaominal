@@ -418,7 +418,7 @@ fn session_snippet_package_card(
         if is_selected {
             palette.accent_container
         } else {
-            roles.surface_container
+            roles.surface_container_high
         },
         16.0,
     )
@@ -476,12 +476,7 @@ fn session_snippet_package_card(
                                     .child(count_label),
                             ),
                     ),
-            )
-            .child(badge(
-                count,
-                roles.surface_container_highest,
-                roles.on_surface_variant,
-            )),
+            ),
     )
 }
 
