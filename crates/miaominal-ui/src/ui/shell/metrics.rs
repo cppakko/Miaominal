@@ -1,9 +1,9 @@
-pub(in crate::ui::shell) const LEFT_RAIL_WIDTH: f32 = 90.0;
+pub(in crate::ui::shell) const LEFT_RAIL_WIDTH: f32 = 64.0;
 pub(in crate::ui::shell) const TOP_BAR_HEIGHT: f32 = 52.0;
 pub(in crate::ui::shell) const TOPBAR_TAB_WIDTH: f32 = 176.0;
 pub(in crate::ui::shell) const STATUS_BAR_HEIGHT: f32 = 28.0;
 pub(in crate::ui::shell) const FOOTER_HEIGHT: f32 = STATUS_BAR_HEIGHT;
-pub(in crate::ui::shell) const NAV_ITEM_HEIGHT: f32 = 64.0;
+pub(in crate::ui::shell) const NAV_ITEM_HEIGHT: f32 = 48.0;
 pub(in crate::ui::shell) const GROUP_CARD_WIDTH: f32 = 194.0;
 pub(in crate::ui::shell) const GROUP_CARD_HEIGHT: f32 = 96.0;
 pub(in crate::ui::shell) const HOST_CARD_WIDTH: f32 = 284.0;

@@ -2,18 +2,30 @@ use super::super::*;
 
 fn sidebar_item(
     section: SidebarSection,
-    label: impl Into<SharedString>,
     is_selected: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let label = label.into();
     let theme = miaominal_settings::current_theme();
     let roles = theme.material.roles;
+    let hover_background = if is_selected {
+        roles.secondary_container
+    } else {
+        roles.surface_container_highest
+    };
+    let item_id = match section {
+        SidebarSection::Hosts => "sidebar-hosts",
+        SidebarSection::Keychain => "sidebar-keychain",
+        SidebarSection::PortForwarding => "sidebar-forwarding",
+        SidebarSection::Snippets => "sidebar-snippets",
+        SidebarSection::KnownHosts => "sidebar-known-hosts",
+        SidebarSection::Settings => "sidebar-settings",
+    };
 
     div()
+        .id(item_id)
         .w_full()
         .h(px(NAV_ITEM_HEIGHT))
-        .rounded(px(16.0))
+        .rounded(px(14.0))
         .border_color(rgb(if is_selected {
             roles.outline
         } else {
@@ -25,41 +37,26 @@ fn sidebar_item(
             roles.surface_container
         }))
         .cursor_pointer()
+        .flex()
         .items_center()
+        .justify_center()
+        .hover(move |this| this.bg(rgb(hover_background)))
         .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
             on_click(window, cx);
         })
         .child(
-            v_flex()
-                .w_full()
-                .h_full()
+            div()
+                .size(px(28.0))
+                .rounded(px(10.0))
+                .flex()
                 .items_center()
                 .justify_center()
-                .gap_1()
-                .child(
-                    div()
-                        .size(px(24.0))
-                        .rounded(px(8.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(rgb(if is_selected {
-                            roles.on_secondary_container
-                        } else {
-                            roles.on_surface_variant
-                        }))
-                        .child(section.icon()),
-                )
-                .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Heading.scaled())
-                        .text_color(rgb(if is_selected {
-                            roles.secondary
-                        } else {
-                            roles.on_surface_variant
-                        }))
-                        .child(label),
-                ),
+                .text_color(rgb(if is_selected {
+                    roles.on_secondary_container
+                } else {
+                    roles.on_surface_variant
+                }))
+                .child(section.icon()),
         )
 }
 
@@ -78,7 +75,7 @@ impl AppView {
                 v_flex()
                     .size_full()
                     .gap_4()
-                    .px_3()
+                    .px_2()
                     .py_4()
                     .children(SidebarSection::all().into_iter().map({
                         let entity = entity.clone();
@@ -86,7 +83,7 @@ impl AppView {
                             let entity = entity.clone();
                             let is_selected = self.panel_view.sidebar_section == section;
 
-                            sidebar_item(section, section.title(), is_selected, move |_, cx| {
+                            sidebar_item(section, is_selected, move |_, cx| {
                                 entity.update(cx, |this, cx| this.set_sidebar_section(section, cx));
                             })
                         }
@@ -94,7 +91,6 @@ impl AppView {
                     .child(div().flex_1())
                     .child(sidebar_item(
                         SidebarSection::Settings,
-                        SidebarSection::Settings.title(),
                         settings_selected,
                         move |_, cx| {
                             let entity = settings_entity.clone();
