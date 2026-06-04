@@ -1965,7 +1965,7 @@ impl AppView {
                                 false,
                             ))
                             .child(
-                                Select::new(&local_vault_auto_lock_duration_select)
+                                md3_select(&local_vault_auto_lock_duration_select)
                                     .large()
                                     .w_full()
                                     .rounded(px(14.0))

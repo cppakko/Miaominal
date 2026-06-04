@@ -1,4 +1,4 @@
-use crate::ui::components::{SectionCard, editor_button};
+use crate::ui::components::{SectionCard, editor_button, md3_select};
 use crate::ui::i18n;
 
 use super::super::super::*;
@@ -604,7 +604,7 @@ impl AppView {
                                                             .items_center()
                                                             .gap_2()
                                                             .child(
-                                                                Select::new(&forms.package_select)
+                                                                md3_select(&forms.package_select)
                                                                     .large()
                                                                     .w_full()
                                                                     .rounded(px(14.0))

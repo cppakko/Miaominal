@@ -1,4 +1,4 @@
-use crate::ui::components::{SectionCard, editor_button, md3_spinner, md3_switch};
+use crate::ui::components::{SectionCard, editor_button, md3_select, md3_spinner, md3_switch};
 use crate::ui::i18n;
 use gpui_component::{
     Size,
@@ -315,7 +315,7 @@ impl AppView {
                 self.panel_forms.forwarding.listen_port_input.clone(),
             ),
         };
-        let profile_select = Select::new(&self.panel_forms.forwarding.profile_select)
+        let profile_select = md3_select(&self.panel_forms.forwarding.profile_select)
             .large()
             .w_full()
             .rounded(px(14.0))

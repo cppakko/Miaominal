@@ -1,5 +1,7 @@
 use super::super::*;
-use crate::ui::components::{editor_button_with_id, icon_button_with_icon_size, md3_switch};
+use crate::ui::components::{
+    editor_button_with_id, icon_button_with_icon_size, md3_select, md3_switch,
+};
 use crate::ui::i18n;
 use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use miaominal_settings::{AppLanguage, TerminalRightClickBehavior, ThemeId};
@@ -539,7 +541,7 @@ fn render_onboarding_welcome_step(
             div().w_full().max_w(px(420.0)).child(onboarding_panel(
                 i18n::string("settings.appearance.language.label"),
                 i18n::string("settings.appearance.language.description"),
-                Select::new(&language_select)
+                md3_select(&language_select)
                     .with_size(gpui_component::Size::Medium)
                     .w_full()
                     .into_any_element(),
@@ -567,7 +569,7 @@ fn render_onboarding_import_step(app: &AppView, entity: Entity<AppView>) -> AnyE
                             i18n::string("settings.connections.import_action.description"),
                         ))
                         .child(
-                            Select::new(&app.panel_forms.settings.profile_import_source_select)
+                            md3_select(&app.panel_forms.settings.profile_import_source_select)
                                 .with_size(gpui_component::Size::Medium)
                                 .w_full(),
                         )
@@ -1052,7 +1054,7 @@ fn onboarding_font_family_control(
     entity: Entity<AppView>,
 ) -> AnyElement {
     setting_field_with_reset_action(
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(gpui_component::Size::Medium)
             .w_full()
             .into_any_element(),
@@ -1108,7 +1110,7 @@ fn onboarding_font_fallbacks_control(
 fn onboarding_right_click_behavior_control(
     select_state: Entity<SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>>,
 ) -> AnyElement {
-    Select::new(&select_state)
+    md3_select(&select_state)
         .with_size(gpui_component::Size::Medium)
         .w_full()
         .into_any_element()

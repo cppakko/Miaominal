@@ -16,6 +16,8 @@ mod icon_button;
 mod icon_tile;
 #[path = "components/list_item_card.rs"]
 mod list_item_card;
+#[path = "components/md3_select.rs"]
+mod md3_select;
 #[path = "components/md3_spinner.rs"]
 mod md3_spinner;
 #[path = "components/md3_switch.rs"]
@@ -45,6 +47,7 @@ pub(crate) use fab_button::{fab_button, fab_icon_button};
 pub(crate) use icon_button::{IconButtonStyle, icon_button, icon_button_with_icon_size};
 pub(crate) use icon_tile::{IconTileTone, icon_tile, page_muted_icon_tile};
 pub(crate) use list_item_card::list_item_card;
+pub(crate) use md3_select::md3_select;
 pub(crate) use md3_spinner::md3_spinner;
 pub(crate) use md3_switch::md3_switch;
 pub(crate) use page_chrome::{

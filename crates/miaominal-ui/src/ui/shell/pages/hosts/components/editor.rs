@@ -276,7 +276,7 @@ impl AppView {
                                 .items_center()
                                 .gap_2()
                                 .child(
-                                    Select::new(&host_editor.group_select)
+                                    md3_select(&host_editor.group_select)
                                         .large()
                                         .w_full()
                                         .rounded(px(14.0))
@@ -387,7 +387,7 @@ impl AppView {
                                         .child(i18n::string("hosts.editor.fields.managed_key_id")),
                                 )
                                 .child(
-                                    Select::new(&host_editor.managed_key_select)
+                                    md3_select(&host_editor.managed_key_select)
                                         .large()
                                         .w_full()
                                         .rounded(px(14.0))
@@ -487,7 +487,7 @@ impl AppView {
                                                         .items_center()
                                                         .gap_2()
                                                         .child(
-                                                            Select::new(&host_editor.proxy_jump_select)
+                                                            md3_select(&host_editor.proxy_jump_select)
                                                                 .large()
                                                                 .w_full()
                                                                 .rounded(px(14.0))
@@ -625,7 +625,7 @@ impl AppView {
                                 .child(i18n::string("hosts.editor.fields.character_set")),
                         )
                         .child(
-                            Select::new(&host_editor.charset_select)
+                            md3_select(&host_editor.charset_select)
                                 .large()
                                 .w_full()
                                 .rounded(px(14.0))

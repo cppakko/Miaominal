@@ -1,6 +1,6 @@
 use super::super::super::*;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::{editor_button_with_id, md3_spinner, md3_switch};
+use crate::ui::components::{editor_button_with_id, md3_select, md3_spinner, md3_switch};
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
 use gpui_component::{
@@ -378,7 +378,7 @@ impl SettingFieldElement for AppLanguageField {
             .language_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -413,7 +413,7 @@ impl SettingFieldElement for MonitorHistoryDurationField {
             .monitor_history_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -448,7 +448,7 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
             .local_vault_auto_lock_duration_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -483,7 +483,7 @@ impl SettingFieldElement for LastTabCloseBehaviorField {
             .last_tab_close_behavior_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -518,7 +518,7 @@ impl SettingFieldElement for ProfileImportSourceField {
             .profile_import_source_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -587,7 +587,7 @@ impl SettingFieldElement for FontFamilyField {
         let entity = self.entity.clone();
 
         setting_field_with_reset_action(
-            Select::new(&select_state)
+            md3_select(&select_state)
                 .with_size(options.size)
                 .w_full()
                 .into_any_element(),
@@ -1095,7 +1095,7 @@ impl SettingFieldElement for TerminalRightClickBehaviorField {
             .terminal_right_click_behavior_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()
@@ -1130,7 +1130,7 @@ impl SettingFieldElement for SyncProviderField {
             .sync_provider_select
             .clone();
 
-        Select::new(&select_state)
+        md3_select(&select_state)
             .with_size(options.size)
             .w_full()
             .into_any_element()

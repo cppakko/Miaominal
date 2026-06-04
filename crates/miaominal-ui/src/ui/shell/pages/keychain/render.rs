@@ -637,7 +637,7 @@ impl AppView {
                 )),
         );
 
-        let deploy_profile_select = Select::new(&forms.deploy_profile_select)
+        let deploy_profile_select = md3_select(&forms.deploy_profile_select)
             .large()
             .w_full()
             .rounded(px(14.0))
