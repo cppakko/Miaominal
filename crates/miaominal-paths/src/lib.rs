@@ -3,8 +3,8 @@ use directories::ProjectDirs;
 use std::path::PathBuf;
 
 const QUALIFIER: &str = "dev";
-const ORGANIZATION: &str = "akko";
-const APPLICATION: &str = "miaominal";
+const ORGANIZATION: &str = "";
+const APPLICATION: &str = "Miaominal";
 
 pub fn project_dirs() -> Result<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
