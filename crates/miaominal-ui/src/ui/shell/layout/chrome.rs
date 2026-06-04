@@ -1,7 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
 use gpui::{StyleRefinement, WindowControlArea, point};
-use gpui_component::StyledExt;
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_TITLE_CHARS: usize = 20;

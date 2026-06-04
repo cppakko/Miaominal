@@ -3023,11 +3023,6 @@ impl AppView {
         } else {
             let mut list = v_flex().gap_2();
             for snippet in visible_snippets {
-                let package = if snippet.package.trim().is_empty() {
-                    None
-                } else {
-                    Some(snippet.package.clone())
-                };
                 let send_entity = entity.clone();
                 let script = snippet.script.clone();
                 let preview_line = snippet
