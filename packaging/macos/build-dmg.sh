@@ -43,6 +43,8 @@ detach_device() {
 app_bundle="$(resolve_path "$1")"
 output_dmg="$(resolve_path "$2")"
 volume_name="$3"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+apply_icon_script="$script_dir/apply-icon-composer.sh"
 app_bundle_name="$(basename "$app_bundle")"
 app_name="${app_bundle_name%.app}"
 output_dir="$(dirname "$output_dmg")"
@@ -67,6 +69,15 @@ fi
 
 mkdir -p "$staging_dir" "$output_dir"
 cp -R "$app_bundle" "$staging_dir/"
+staged_app_bundle="$staging_dir/$app_bundle_name"
+
+if [[ ! -f "$apply_icon_script" ]]; then
+    echo "Icon Composer helper not found: $apply_icon_script" >&2
+    exit 1
+fi
+
+bash "$apply_icon_script" "$staged_app_bundle"
+
 ln -s /Applications "$staging_dir/Applications"
 
 staging_size_kb="$(du -sk "$staging_dir" | awk '{print $1}')"
