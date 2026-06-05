@@ -1,4 +1,4 @@
-use crate::ui::components::editor_button;
+use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button};
 use crate::ui::{components::SectionCard, i18n};
 
 use super::super::super::super::*;
@@ -656,7 +656,7 @@ impl AppView {
             footer_actions.push(
                 icon_button(
                     AppIcon::Trash,
-                    36.0,
+                    EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
                     Some(roles.error_container),
                     Some(roles.on_error_container),
@@ -672,18 +672,26 @@ impl AppView {
             );
         }
         footer_actions.push(
-            icon_button(AppIcon::Close, 36.0, 12.0, None, None, None, {
-                let entity = entity.clone();
-                move |_, cx| {
-                    entity.update(cx, |this, cx| this.close_host_editor(cx));
-                }
-            })
+            icon_button(
+                AppIcon::Close,
+                EDITOR_FOOTER_ACTION_HEIGHT,
+                12.0,
+                None,
+                None,
+                None,
+                {
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| this.close_host_editor(cx));
+                    }
+                },
+            )
             .into_any_element(),
         );
         footer_actions.push(
             icon_button(
                 AppIcon::Check,
-                36.0,
+                EDITOR_FOOTER_ACTION_HEIGHT,
                 12.0,
                 Some(roles.primary),
                 Some(roles.on_primary),

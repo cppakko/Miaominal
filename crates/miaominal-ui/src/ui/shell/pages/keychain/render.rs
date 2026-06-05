@@ -1,6 +1,6 @@
 use super::super::super::*;
 use super::super::empty_state::shell_empty_state;
-use crate::ui::components::editor_button_with_id;
+use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button_with_id};
 use crate::ui::{
     components::{SectionCard, md3_spinner},
     i18n,
@@ -786,7 +786,7 @@ impl AppView {
                 .id("keychain-editor-footer-cancel")
                 .child(icon_button(
                     AppIcon::Close,
-                    36.0,
+                    EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
                     None,
                     None,
@@ -805,7 +805,7 @@ impl AppView {
                 .id("keychain-editor-footer-import")
                 .child(icon_button(
                     AppIcon::Upload,
-                    36.0,
+                    EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
                     Some(if store_available {
                         roles.primary
@@ -871,7 +871,7 @@ impl AppView {
                 .id("keychain-deploy-footer-cancel")
                 .child(icon_button(
                     AppIcon::Close,
-                    36.0,
+                    EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
                     None,
                     None,

@@ -109,7 +109,7 @@ pub fn sync_component_theme(cx: &mut App) {
     ));
     colors.secondary_foreground = hsla(material.roles.on_secondary_container);
     colors.muted = hsla(material.roles.surface_container_low);
-    colors.muted_foreground = hsla(material.roles.on_surface_variant);
+    colors.muted_foreground = hsla(material.roles.on_surface_variant).opacity(0.6);
     colors.popover = hsla(material.roles.surface_container_high);
     colors.popover_foreground = hsla(material.roles.on_surface);
     colors.overlay = hsla(material.roles.scrim);

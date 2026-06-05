@@ -5,6 +5,8 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
 };
 
+use super::editor_footer_actions::EDITOR_FOOTER_ACTION_HEIGHT;
+
 pub(crate) fn editor_button(
     label: impl Into<SharedString>,
     primary: bool,
@@ -55,7 +57,10 @@ pub(crate) fn editor_button_with_id(
         .label(label);
 
     button = if large {
-        button.large().min_w(px(116.0)).min_h(px(32.0))
+        button
+            .large()
+            .min_w(px(116.0))
+            .min_h(px(EDITOR_FOOTER_ACTION_HEIGHT))
     } else {
         button.small()
     };

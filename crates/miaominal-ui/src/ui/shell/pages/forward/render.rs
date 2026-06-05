@@ -131,16 +131,17 @@ fn render_forward_rule_card(
             h_flex()
                 .size_full()
                 .gap_3()
+                .items_center()
                 .child(
                     v_flex()
                         .flex_1()
                         .min_w(px(0.0))
-                        .justify_between()
+                        .justify_center()
                         .gap_3()
                         .child(
                             h_flex()
                                 .w_full()
-                                .items_start()
+                                .items_center()
                                 .gap_3()
                                 .child(page_muted_icon_tile(AppIcon::Forward, 34.0, 10.0))
                                 .child(

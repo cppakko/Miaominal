@@ -42,7 +42,7 @@ pub(crate) use dialog::{
     basic_dialog_panel, bottom_popup_panel,
 };
 pub(crate) use editor_button::{editor_button, editor_button_with_id};
-pub(crate) use editor_footer_actions::editor_footer_actions;
+pub(crate) use editor_footer_actions::{EDITOR_FOOTER_ACTION_HEIGHT, editor_footer_actions};
 pub(crate) use fab_button::{fab_button, fab_icon_button};
 pub(crate) use icon_button::{IconButtonStyle, icon_button, icon_button_with_icon_size};
 pub(crate) use icon_tile::{IconTileTone, icon_tile, page_muted_icon_tile};
