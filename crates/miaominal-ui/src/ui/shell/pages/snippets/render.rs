@@ -1,4 +1,4 @@
-use crate::ui::components::{SectionCard, editor_button, md3_select};
+use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SectionCard, editor_button, md3_select};
 use crate::ui::i18n;
 
 use super::super::super::*;
@@ -506,7 +506,7 @@ impl AppView {
             footer_actions.push(
                 icon_button(
                     AppIcon::Trash,
-                    36.0,
+                    EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
                     Some(roles.error_container),
                     Some(roles.on_error_container),
