@@ -371,6 +371,13 @@ impl AppView {
             window,
             cx,
         );
+        let trusted_filter_input = new_input_state(
+            i18n::string("placeholders.trusted.filter"),
+            "",
+            false,
+            window,
+            cx,
+        );
         let forward_filter_input = new_input_state(
             i18n::string("placeholders.forward.filter"),
             "",
@@ -452,6 +459,14 @@ impl AppView {
         );
         let filter_subscription = cx.subscribe(
             &filter_input,
+            |_: &mut AppView, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        );
+        let trusted_filter_subscription = cx.subscribe(
+            &trusted_filter_input,
             |_: &mut AppView, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -1255,6 +1270,7 @@ impl AppView {
 
         let panel_forms = Self::build_panel_forms(PanelFormsArgs {
             filter_input,
+            trusted_filter_input,
             keychain_filter_input,
             managed_key_name_input,
             managed_key_import_path_input,
@@ -1387,6 +1403,7 @@ impl AppView {
                 sync_provider_select_subscription,
                 keychain_filter_subscription,
                 filter_subscription,
+                trusted_filter_subscription,
                 forward_filter_subscription,
                 snippet_filter_subscription,
                 forward_profile_select_subscription,
@@ -1637,6 +1654,12 @@ impl AppView {
         set_input_placeholder(
             &self.panel_forms.hosts.filter_input,
             i18n::string("placeholders.hosts.filter"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.trusted.filter_input,
+            i18n::string("placeholders.trusted.filter"),
             window,
             cx,
         );

@@ -177,4 +177,33 @@ mod tests {
     fn host_field_defaults_to_ssh_port() {
         assert_eq!(parse_host_field("example.com"), ("example.com".into(), 22));
     }
+
+    #[test]
+    fn comma_separated_host_field_uses_primary_host() {
+        assert_eq!(
+            parse_host_field("example.com,192.0.2.1"),
+            ("example.com".into(), 22)
+        );
+    }
+
+    #[test]
+    fn list_skips_invalid_public_keys() {
+        let path = std::env::temp_dir().join(format!(
+            "miaominal-known-hosts-invalid-{}",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "example.com ssh-ed25519 not-a-public-key\n[valid.example.com]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+        )
+        .expect("write test known_hosts");
+
+        let store = KnownHostsStore::with_path(path.clone());
+        let entries = store.list().expect("list known_hosts");
+
+        let _ = fs::remove_file(path);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].host, "valid.example.com");
+        assert_eq!(entries[0].port, 2222);
+    }
 }

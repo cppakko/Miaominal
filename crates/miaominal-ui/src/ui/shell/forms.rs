@@ -113,6 +113,10 @@ pub(in crate::ui::shell) struct HostsForms {
     pub(in crate::ui::shell) filter_input: Entity<InputState>,
 }
 
+pub(in crate::ui::shell) struct TrustedHostsForms {
+    pub(in crate::ui::shell) filter_input: Entity<InputState>,
+}
+
 pub(in crate::ui::shell) struct KeychainForms {
     pub(in crate::ui::shell) filter_input: Entity<InputState>,
     pub(in crate::ui::shell) name_input: Entity<InputState>,
@@ -236,6 +240,7 @@ impl KeyBindingSlot {
 
 pub(in crate::ui::shell) struct PanelForms {
     pub(in crate::ui::shell) hosts: HostsForms,
+    pub(in crate::ui::shell) trusted: TrustedHostsForms,
     pub(in crate::ui::shell) keychain: KeychainForms,
     pub(in crate::ui::shell) forwarding: PortForwardingForms,
     pub(in crate::ui::shell) snippets: SnippetsForms,

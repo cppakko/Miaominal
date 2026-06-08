@@ -248,6 +248,21 @@ pub(in crate::ui::shell) struct PendingKnownHostDeleteState {
     pub(in crate::ui::shell) port: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum TrustedHostFilter {
+    All,
+    Linked,
+    Orphaned,
+    DefaultPort,
+    CustomPort,
+}
+
+impl Default for TrustedHostFilter {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct PendingSnippetDeleteState {
     pub(in crate::ui::shell) snippet_id: String,
@@ -897,6 +912,7 @@ pub(in crate::ui::shell) struct PanelState {
     pub(in crate::ui::shell) session_monitor_panel_transition: Option<WorkspaceSidePanelTransition>,
     pub(in crate::ui::shell) session_snippets_panel_transition:
         Option<WorkspaceSidePanelTransition>,
+    pub(in crate::ui::shell) selected_known_host: Option<(String, u16, String)>,
 }
 
 pub(in crate::ui::shell) struct WorkspaceState {

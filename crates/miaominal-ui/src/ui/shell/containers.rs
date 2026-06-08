@@ -1,4 +1,4 @@
-use super::{PortForwardKind, ProfileViewMode, SidebarSection};
+use super::{PortForwardKind, ProfileViewMode, SidebarSection, TrustedHostFilter};
 use gpui::Subscription;
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
@@ -48,6 +48,7 @@ pub(in crate::ui::shell) struct PanelViewState {
     pub forward_view_mode: ProfileViewMode,
     pub snippets_view_mode: ProfileViewMode,
     pub hosts_group_filter: Option<String>,
+    pub trusted_host_filter: TrustedHostFilter,
     pub snippets_package_filter: Option<String>,
 }
 
@@ -59,6 +60,7 @@ impl PanelViewState {
             forward_view_mode: ProfileViewMode::Grid,
             snippets_view_mode: ProfileViewMode::Grid,
             hosts_group_filter: None,
+            trusted_host_filter: TrustedHostFilter::All,
             snippets_package_filter: None,
         }
     }
@@ -81,6 +83,7 @@ pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _snippet_package_select_subscription: Subscription,
     pub _keychain_filter_input_subscription: Subscription,
     pub _filter_input_subscription: Subscription,
+    pub _trusted_filter_input_subscription: Subscription,
     pub _forward_filter_input_subscription: Subscription,
     pub _snippet_filter_input_subscription: Subscription,
     pub _forward_profile_select_subscription: Subscription,

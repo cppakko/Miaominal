@@ -73,10 +73,11 @@ mod workspace;
 pub use app_view::AppView;
 
 pub(crate) use crate::ui::components::{
-    BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, IconTileTone,
-    SearchInputStyle, TextInputSurface, badge, basic_dialog_action_button, basic_dialog_panel,
-    bottom_popup_panel, card_surface, editor_footer_actions, fab_button, fab_icon_button,
-    field_label, icon_button, icon_tile, list_item_card, md3_select, page_muted_icon_tile,
+    BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
+    EDITOR_FOOTER_ACTION_HEIGHT, IconTileTone, SearchInputStyle, TextInputSurface, badge,
+    basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
+    editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button, field_label,
+    icon_button, icon_tile, list_item_card, md3_select, page_muted_icon_tile,
     page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item, pill_label,
     search_filter_input, setting_field_with_reset_action, surface_secret_text_input,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
@@ -90,7 +91,8 @@ use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelVi
 use controllers::ControllerSet;
 use forms::{
     HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms, SettingsForms,
-    SftpBrowserForms, SnippetsForms, TerminalSearchForms, WorkspaceForms, WorkspaceSnippetsForms,
+    SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms, WorkspaceForms,
+    WorkspaceSnippetsForms,
 };
 pub(in crate::ui::shell) use forms::{KeyBindingSlot, SelectOption};
 pub(in crate::ui::shell) use metrics::*;
@@ -112,7 +114,7 @@ pub(in crate::ui::shell) use state::{
     SecretVisibilityState, SessionConnectionState, SessionMonitoringState, SessionPurpose,
     SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
     SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
-    SyncPullConfirmReason, SyncUiState, TabKind, TabState, WorkspaceState,
+    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -231,6 +233,7 @@ pub(in crate::ui::shell) enum PageEditorSidebarKind {
     PortForwarding,
     Snippets,
     Keychain,
+    KnownHosts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

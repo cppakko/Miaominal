@@ -35,6 +35,7 @@ struct PrimarySurfaceRenderState {
     show_port_forward_editor_sidebar: bool,
     show_keychain_editor_sidebar: bool,
     show_snippets_editor_sidebar: bool,
+    show_known_hosts_sidebar: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -124,6 +125,10 @@ impl Render for AppView {
             && !has_active_session
             && !has_active_sftp_tab
             && self.panel_view.sidebar_section == SidebarSection::Keychain;
+        let show_known_hosts_sidebar = self.panels.selected_known_host.is_some()
+            && !has_active_session
+            && !has_active_sftp_tab
+            && self.panel_view.sidebar_section == SidebarSection::KnownHosts;
         let page_editor_sidebar = if hosts_to_terminal_transition.is_some()
             || has_active_session
             || has_active_sftp_tab
@@ -137,6 +142,7 @@ impl Render for AppView {
                     show_port_forward_editor_sidebar,
                     show_snippets_editor_sidebar,
                     show_keychain_editor_sidebar,
+                    show_known_hosts_sidebar,
                 ),
                 window,
             )
@@ -156,6 +162,10 @@ impl Render for AppView {
         let show_keychain_editor_sidebar = matches!(
             page_editor_sidebar,
             Some(sidebar) if sidebar.kind == PageEditorSidebarKind::Keychain
+        );
+        let show_known_hosts_sidebar = matches!(
+            page_editor_sidebar,
+            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::KnownHosts
         );
         let shell_body = if let Some(transition) = hosts_to_terminal_transition {
             self.render_hosts_to_terminal_transition(
@@ -186,7 +196,7 @@ impl Render for AppView {
             } else if self.panel_view.sidebar_section == SidebarSection::PortForwarding {
                 self.render_forward_page(entity.clone(), cx)
             } else if self.panel_view.sidebar_section == SidebarSection::KnownHosts {
-                self.render_trusted_page(entity.clone())
+                self.render_trusted_page(entity.clone(), cx)
             } else if self.panel_view.sidebar_section == SidebarSection::Settings {
                 self.render_settings_page(entity.clone())
             } else {
@@ -215,6 +225,7 @@ impl Render for AppView {
                         show_port_forward_editor_sidebar,
                         show_snippets_editor_sidebar,
                         show_keychain_editor_sidebar,
+                        show_known_hosts_sidebar,
                     },
                 },
                 cx,
@@ -623,7 +634,7 @@ impl AppView {
         } else if self.panel_view.sidebar_section == SidebarSection::PortForwarding {
             self.render_forward_page(entity, cx)
         } else if self.panel_view.sidebar_section == SidebarSection::KnownHosts {
-            self.render_trusted_page(entity)
+            self.render_trusted_page(entity, cx)
         } else if self.panel_view.sidebar_section == SidebarSection::Settings {
             self.render_settings_page(entity)
         } else {
@@ -673,6 +684,7 @@ impl AppView {
         show_port_forward_editor_sidebar: bool,
         show_snippets_editor_sidebar: bool,
         show_keychain_editor_sidebar: bool,
+        show_known_hosts_sidebar: bool,
     ) -> Option<PageEditorSidebarKind> {
         if show_host_editor_sidebar {
             Some(PageEditorSidebarKind::Hosts)
@@ -682,6 +694,8 @@ impl AppView {
             Some(PageEditorSidebarKind::Snippets)
         } else if show_keychain_editor_sidebar {
             Some(PageEditorSidebarKind::Keychain)
+        } else if show_known_hosts_sidebar {
+            Some(PageEditorSidebarKind::KnownHosts)
         } else {
             None
         }
@@ -887,6 +901,7 @@ impl AppView {
                         show_port_forward_editor_sidebar: false,
                         show_keychain_editor_sidebar: false,
                         show_snippets_editor_sidebar: false,
+                        show_known_hosts_sidebar: false,
                     },
                 ),
                 self.render_primary_surface_layer(
@@ -903,6 +918,7 @@ impl AppView {
                         show_port_forward_editor_sidebar: false,
                         show_keychain_editor_sidebar: false,
                         show_snippets_editor_sidebar: false,
+                        show_known_hosts_sidebar: false,
                     },
                 ),
                 0.82 + transition.visibility * 0.18,
@@ -929,6 +945,7 @@ impl AppView {
                             show_port_forward_editor_sidebar: false,
                             show_keychain_editor_sidebar: false,
                             show_snippets_editor_sidebar: false,
+                            show_known_hosts_sidebar: false,
                         },
                     ),
                     self.render_primary_surface_layer(
@@ -941,6 +958,7 @@ impl AppView {
                             show_port_forward_editor_sidebar: false,
                             show_keychain_editor_sidebar: false,
                             show_snippets_editor_sidebar: false,
+                            show_known_hosts_sidebar: false,
                         },
                     ),
                     0.82 + transition.visibility * 0.18,
@@ -1020,6 +1038,9 @@ impl AppView {
             PageEditorSidebarKind::Keychain => self
                 .render_keychain_editor_sidebar(entity)
                 .into_any_element(),
+            PageEditorSidebarKind::KnownHosts => self
+                .render_trusted_known_host_sidebar(entity)
+                .into_any_element(),
         }
     }
 
@@ -1085,6 +1106,7 @@ impl AppView {
                 show_port_forward_editor_sidebar: false,
                 show_keychain_editor_sidebar: false,
                 show_snippets_editor_sidebar: false,
+                show_known_hosts_sidebar: false,
             },
         );
         let hosts_layer = div()
@@ -1122,6 +1144,7 @@ impl AppView {
                 show_port_forward_editor_sidebar: false,
                 show_keychain_editor_sidebar: false,
                 show_snippets_editor_sidebar: false,
+                show_known_hosts_sidebar: false,
             },
         );
 
@@ -1190,6 +1213,7 @@ impl AppView {
             show_port_forward_editor_sidebar,
             show_keychain_editor_sidebar,
             show_snippets_editor_sidebar,
+            show_known_hosts_sidebar,
         } = render_state;
 
         let roles = miaominal_settings::current_theme().material.roles;
@@ -1264,6 +1288,21 @@ impl AppView {
                             .right(px(28.0))
                             .bottom(px(28.0))
                             .child(self.render_snippets_fab(entity.clone())),
+                    )
+                },
+            )
+            .when(
+                self.panel_view.sidebar_section == SidebarSection::KnownHosts
+                    && !has_active_session
+                    && !has_active_sftp_tab
+                    && !show_known_hosts_sidebar,
+                |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .right(px(28.0))
+                            .bottom(px(28.0))
+                            .child(self.render_known_hosts_refresh_fab(entity.clone())),
                     )
                 },
             )

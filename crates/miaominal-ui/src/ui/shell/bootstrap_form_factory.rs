@@ -42,6 +42,7 @@ pub(in crate::ui::shell) struct WorkspaceFormsArgs {
 
 pub(in crate::ui::shell) struct PanelFormsArgs {
     pub filter_input: Entity<InputState>,
+    pub trusted_filter_input: Entity<InputState>,
     pub keychain_filter_input: Entity<InputState>,
     pub managed_key_name_input: Entity<InputState>,
     pub managed_key_import_path_input: Entity<InputState>,
@@ -195,6 +196,7 @@ impl AppView {
     pub(in crate::ui::shell) fn build_panel_forms(args: PanelFormsArgs) -> PanelForms {
         let PanelFormsArgs {
             filter_input,
+            trusted_filter_input,
             keychain_filter_input,
             managed_key_name_input,
             managed_key_import_path_input,
@@ -243,6 +245,9 @@ impl AppView {
 
         PanelForms {
             hosts: HostsForms { filter_input },
+            trusted: TrustedHostsForms {
+                filter_input: trusted_filter_input,
+            },
             keychain: KeychainForms {
                 filter_input: keychain_filter_input,
                 name_input: managed_key_name_input,

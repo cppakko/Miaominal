@@ -326,6 +326,9 @@ filter = "Search descriptions, packages, or scripts..."
 [placeholders.hosts]
 filter = "Search connections, groups..."
 
+[placeholders.trusted]
+filter = "Search hosts, fingerprints, algorithms, profiles..."
+
 [placeholders.sftp]
 local_path = "Local path"
 remote_path = "Remote path"
@@ -622,8 +625,12 @@ filtering_by_group = "Filtering hosts by group {group}"
 
 [trusted.page]
 port_badge = "Port {port}"
-empty = "No trusted hosts yet. Trust a server to save it here."
-saved_fingerprints = "Saved fingerprints"
+empty = "No trusted hosts yet."
+empty_detail = "Trusted hosts are saved after you verify an SSH host key. Connect from Hosts once and the accepted fingerprint will appear here."
+trust_center = "Trust Center"
+no_matches = "No trusted hosts match the current filters."
+unlinked = "No linked profile"
+more_profiles = "+{count} more"
 
 [trusted.prompt]
 mismatch_subtitle = "The key offered by {host}:{port} does NOT match the one previously trusted. This may indicate a man-in-the-middle attack."
@@ -631,13 +638,40 @@ verify_subtitle = "First connection to {host}:{port}. Confirm the fingerprint wi
 
 [trusted.details]
 algorithm = "Algorithm"
-fingerprint_sha256 = "Fingerprint (SHA256)"
+fingerprint_sha256 = "SHA256 fingerprint"
 previously_trusted = "Previously trusted"
+file_path = "File"
+linked_profiles = "Linked profiles"
+no_profiles = "No saved Host profile points at this host and port."
 
 [trusted.actions]
 reject = "Reject"
 accept_once = "Accept once"
 trust_and_remember = "Trust & remember"
+copy_fingerprint = "Copy fingerprint"
+copy_address = "Copy host:port"
+
+[trusted.filters]
+all = "All"
+linked = "Linked"
+orphaned = "Unlinked"
+default_port = "Port 22"
+custom_port = "Custom port"
+
+[trusted.stats]
+total = "Total"
+linked = "Linked"
+orphaned = "Unlinked"
+duplicates = "Duplicates"
+
+[trusted.badges]
+duplicates = "{count} entries"
+
+[trusted.messages]
+copied_fingerprint = "Copied fingerprint"
+copied_address = "Copied host:port"
+profile_not_found = "Linked profile no longer exists."
+refreshed = "Known hosts refreshed"
 
 [hosts.editor.titles]
 add = "Add Host"

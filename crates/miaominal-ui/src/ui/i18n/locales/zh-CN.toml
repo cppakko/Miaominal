@@ -331,6 +331,9 @@ local_path = "本地路径"
 remote_path = "远程路径"
 new_name = "新名称"
 
+[placeholders.trusted]
+filter = "搜索主机、指纹、算法、配置..."
+
 [placeholders.workspace]
 tab_name = "标签名"
 search_scrollback = "搜索回滚内容"
@@ -621,15 +624,22 @@ cleared_group_filter = "已清除分组筛选"
 filtering_by_group = "正在按分组 {group} 筛选主机"
 
 [trusted.page]
+empty_detail = "你验证并信任 SSH 主机密钥后，指纹会保存在这里。先从 Hosts 连接一次，接受的指纹就会出现在这里。"
+trust_center = "信任中心"
+no_matches = "当前筛选下没有匹配的可信主机。"
+unlinked = "未关联配置"
+more_profiles = "另有 {count} 个"
 port_badge = "端口 {port}"
 empty = "还没有受信任的主机。信任某台服务器后会保存在这里。"
-saved_fingerprints = "已保存的指纹"
 
 [trusted.prompt]
 mismatch_subtitle = "{host}:{port} 提供的密钥与之前信任的密钥不一致。这可能表示存在中间人攻击。"
 verify_subtitle = "首次连接到 {host}:{port}。请先与服务器管理员确认指纹，再决定是否信任。"
 
 [trusted.details]
+file_path = "文件"
+linked_profiles = "关联配置"
+no_profiles = "没有已保存的 Host 配置指向这个主机和端口。"
 algorithm = "算法"
 fingerprint_sha256 = "指纹（SHA256）"
 previously_trusted = "此前已信任"
@@ -638,6 +648,30 @@ previously_trusted = "此前已信任"
 reject = "拒绝"
 accept_once = "仅接受一次"
 trust_and_remember = "信任并记住"
+copy_fingerprint = "复制指纹"
+copy_address = "复制 host:port"
+
+[trusted.filters]
+all = "全部"
+linked = "有关联"
+orphaned = "未关联"
+default_port = "22 端口"
+custom_port = "自定义端口"
+
+[trusted.stats]
+total = "总数"
+linked = "有关联"
+orphaned = "未关联"
+duplicates = "重复"
+
+[trusted.badges]
+duplicates = "{count} 条记录"
+
+[trusted.messages]
+copied_fingerprint = "已复制指纹"
+copied_address = "已复制 host:port"
+profile_not_found = "关联配置已不存在。"
+refreshed = "known_hosts 已刷新"
 
 [hosts.editor.titles]
 add = "添加主机"
