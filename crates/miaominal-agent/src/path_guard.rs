@@ -5,9 +5,9 @@ pub fn resolve_workspace_path(path: &str) -> AgentResult<String> {
     if trimmed.is_empty() || trimmed == "." {
         return Ok(".".into());
     }
-    if trimmed.starts_with('/') || trimmed.starts_with('~') {
+    if trimmed.starts_with('~') {
         return Err(AgentError::InvalidPath(
-            "absolute paths and home expansion are outside the agent workspace".into(),
+            "home expansion is outside the agent workspace policy".into(),
         ));
     }
     if trimmed.contains('\0') || trimmed.contains('\n') || trimmed.contains('\r') {
@@ -29,10 +29,13 @@ pub fn resolve_workspace_path(path: &str) -> AgentResult<String> {
         }
     }
 
+    let prefix = if trimmed.starts_with('/') { "/" } else { "" };
     if parts.is_empty() {
         Ok(".".into())
-    } else {
+    } else if prefix.is_empty() {
         Ok(parts.join("/"))
+    } else {
+        Ok(format!("/{parts}", parts = parts.join("/")))
     }
 }
 
@@ -54,10 +57,10 @@ mod tests {
     }
 
     #[test]
-    fn parent_and_absolute_paths_are_rejected() {
+    fn parent_paths_are_rejected_but_absolute_paths_normalize() {
         assert!(resolve_workspace_path("../secret").is_err());
         assert!(resolve_workspace_path("src/../../secret").is_err());
-        assert!(resolve_workspace_path("/etc/passwd").is_err());
+        assert_eq!(resolve_workspace_path("/etc//nginx").unwrap(), "/etc/nginx");
         assert!(resolve_workspace_path("~/secret").is_err());
     }
 }

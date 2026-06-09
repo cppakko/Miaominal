@@ -1,3 +1,4 @@
+use super::{TOOL_NAMES, tool_description};
 use crate::channel::{AgentExecChannel, AgentToolCallRequest};
 use crate::error::AgentError;
 use rig_core::completion::ToolDefinition;
@@ -6,23 +7,6 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
-
-pub const TOOL_NAMES: &[&str] = &[
-    "workspace_info",
-    "read",
-    "list",
-    "glob",
-    "grep",
-    "apply_patch",
-    "run_shell",
-    "start_job",
-    "poll_job",
-    "stop_job",
-    "web_search",
-    "web_fetch",
-    "ask_user",
-    "approval",
-];
 
 #[derive(Clone)]
 pub struct AgentToolSet {
@@ -46,11 +30,10 @@ impl AgentToolSet {
     }
 
     pub async fn definitions(&self) -> Vec<ToolDefinition> {
-        let mut definitions = Vec::new();
-        for name in TOOL_NAMES {
-            definitions.push(tool_definition(name));
-        }
-        definitions
+        TOOL_NAMES
+            .iter()
+            .map(|name| tool_definition(name))
+            .collect()
     }
 }
 
@@ -126,26 +109,6 @@ fn tool_definition(name: &str) -> ToolDefinition {
         name: name.to_string(),
         description: tool_description(name).to_string(),
         parameters: json!(schema_for!(JsonAgentToolArgs)),
-    }
-}
-
-fn tool_description(name: &str) -> &'static str {
-    match name {
-        "workspace_info" => "Return profile workspace metadata for the current SSH exec channel.",
-        "read" => "Read a file from the remote profile workspace.",
-        "list" => "List entries in a remote profile workspace directory.",
-        "glob" => "Find paths in the remote profile workspace by pattern.",
-        "grep" => "Search remote workspace files for text.",
-        "apply_patch" => "Apply a unified patch in the remote profile workspace.",
-        "run_shell" => "Run a synchronous shell command in the remote profile workspace.",
-        "start_job" => "Start a background shell job in the remote profile workspace.",
-        "poll_job" => "Poll a background shell job.",
-        "stop_job" => "Stop a background shell job.",
-        "web_search" => "Search the web through the configured provider.",
-        "web_fetch" => "Fetch the text content of a URL.",
-        "ask_user" => "Ask the user for information or approval.",
-        "approval" => "Record a user approval response.",
-        _ => "Miaominal agent tool.",
     }
 }
 
