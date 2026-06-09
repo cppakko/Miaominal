@@ -411,8 +411,6 @@ pub struct SyncedSettings {
     pub remote_sftp_hidden_columns: Vec<usize>,
     #[serde(default = "default_completed_onboarding_version")]
     pub completed_onboarding_version: u32,
-    #[serde(default = "default_local_vault_enabled")]
-    pub local_vault_enabled: bool,
     #[serde(default = "default_local_vault_auto_lock_duration")]
     pub local_vault_auto_lock_duration: LocalVaultAutoLockDuration,
 }
@@ -577,7 +575,6 @@ impl AppSettings {
         self.local_sftp_hidden_columns = synced.local_sftp_hidden_columns.clone();
         self.remote_sftp_hidden_columns = synced.remote_sftp_hidden_columns.clone();
         self.completed_onboarding_version = synced.completed_onboarding_version;
-        self.local_vault_enabled = synced.local_vault_enabled;
         self.local_vault_auto_lock_duration = synced.local_vault_auto_lock_duration;
     }
 }
@@ -596,7 +593,6 @@ impl From<&AppSettings> for SyncedSettings {
             local_sftp_hidden_columns: settings.local_sftp_hidden_columns.clone(),
             remote_sftp_hidden_columns: settings.remote_sftp_hidden_columns.clone(),
             completed_onboarding_version: settings.completed_onboarding_version,
-            local_vault_enabled: settings.local_vault_enabled,
             local_vault_auto_lock_duration: settings.local_vault_auto_lock_duration,
         }
     }
@@ -612,7 +608,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn apply_synced_settings_preserves_appearance() {
+    fn apply_synced_settings_preserves_local_only_settings() {
         let mut local = AppSettings {
             language: AppLanguage::SimplifiedChinese,
             font_family: "JetBrains Mono".into(),
@@ -664,10 +660,23 @@ mod tests {
         );
         assert_eq!(local.local_sftp_hidden_columns, vec![0, 1]);
         assert_eq!(local.remote_sftp_hidden_columns, vec![2, 3]);
-        assert!(local.local_vault_enabled);
+        assert!(!local.local_vault_enabled);
         assert_eq!(
             local.local_vault_auto_lock_duration,
             LocalVaultAutoLockDuration::FiveMinutes
         );
+    }
+
+    #[test]
+    fn synced_settings_omits_local_vault_enabled() {
+        let settings = AppSettings {
+            local_vault_enabled: true,
+            ..AppSettings::default()
+        };
+
+        let serialized =
+            toml::to_string(&settings.synced_settings()).expect("synced settings should serialize");
+
+        assert!(!serialized.contains("local_vault_enabled"));
     }
 }
