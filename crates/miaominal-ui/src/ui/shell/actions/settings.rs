@@ -12,13 +12,41 @@ use miaominal_services::{
     LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService,
 };
 use miaominal_settings::{
-    self, AppLanguage, KeyBinding, LastTabCloseBehavior, LocalVaultAutoLockDuration,
-    MonitorHistoryDuration, TerminalRightClickBehavior, ThemeId,
+    self, AiProviderConfig, AiProviderKind, AppLanguage, KeyBinding, LastTabCloseBehavior,
+    LocalVaultAutoLockDuration, MonitorHistoryDuration, TerminalRightClickBehavior, ThemeId,
 };
 use miaominal_sync::engine::SyncEngine;
 use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus};
 
 const LOCAL_DATA_RESET_CONFIRMATION_TOKEN: &str = "RESET";
+
+pub(in crate::ui::shell) fn ai_provider_kind_label_key(kind: AiProviderKind) -> &'static str {
+    match kind {
+        AiProviderKind::Anthropic => "settings.ai_providers.kinds.anthropic",
+        AiProviderKind::ChatGpt => "settings.ai_providers.kinds.chat_gpt",
+        AiProviderKind::Cohere => "settings.ai_providers.kinds.cohere",
+        AiProviderKind::Copilot => "settings.ai_providers.kinds.copilot",
+        AiProviderKind::DeepSeek => "settings.ai_providers.kinds.deepseek",
+        AiProviderKind::Gemini => "settings.ai_providers.kinds.gemini",
+        AiProviderKind::HuggingFace => "settings.ai_providers.kinds.hugging_face",
+        AiProviderKind::Mistral => "settings.ai_providers.kinds.mistral",
+        AiProviderKind::OpenAi => "settings.ai_providers.kinds.open_ai",
+        AiProviderKind::OpenRouter => "settings.ai_providers.kinds.open_router",
+        AiProviderKind::Together => "settings.ai_providers.kinds.together",
+        AiProviderKind::Xai => "settings.ai_providers.kinds.xai",
+        AiProviderKind::Custom => "settings.ai_providers.kinds.custom",
+    }
+}
+
+pub(in crate::ui::shell) fn ai_provider_select_options(
+    settings: &miaominal_settings::AppSettings,
+) -> Vec<SelectOption<String>> {
+    settings
+        .ai_providers
+        .iter()
+        .map(|provider| SelectOption::new(provider.id.clone(), provider.name.clone()))
+        .collect()
+}
 
 fn normalize_github_gist_id(value: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');
@@ -59,6 +87,7 @@ struct LocalVaultEnableResult {
     sync_secret_inputs: LocalVaultSyncSecretInputs,
     session_ids: Vec<String>,
     managed_key_ids: Vec<String>,
+    ai_provider_ids: Vec<String>,
 }
 
 struct LocalVaultChangePassphraseResult {
@@ -134,8 +163,22 @@ impl SyncPassphraseTaskRequest {
 }
 
 impl AppView {
+    pub(in crate::ui::shell) fn apply_ai_provider_kind_defaults(
+        &mut self,
+        kind: AiProviderKind,
+        cx: &mut Context<Self>,
+    ) {
+        if self.panel_forms.settings.editing_ai_provider_id.is_none() {
+            self.status_message = i18n::string_args(
+                "settings.ai_providers.status.kind_selected",
+                &[("kind", &i18n::string(ai_provider_kind_label_key(kind)))],
+            );
+        }
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn secret_reveal_icon(&self, target: SecretRevealTarget) -> AppIcon {
-        if self.secret_visibility.is_visible(target) {
+        if self.secret_visibility.is_visible(&target) {
             AppIcon::EyeOff
         } else {
             AppIcon::Eye
@@ -169,6 +212,9 @@ impl AppView {
                 .settings
                 .local_vault_passphrase_confirmation_input
                 .clone(),
+            SecretRevealTarget::AiProviderApiKey(_) => {
+                self.panel_forms.settings.ai_provider_api_key_input.clone()
+            }
         }
     }
 
@@ -180,7 +226,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.secret_visibility.set_visible(target, visible);
+        self.secret_visibility.set_visible(target.clone(), visible);
         let input = self.secret_input(target);
         set_input_masked(&input, !visible, focus, window, cx);
         cx.notify();
@@ -207,6 +253,12 @@ impl AppView {
             | SecretRevealTarget::SyncPassphraseConfirmation
             | SecretRevealTarget::LocalVaultPassphrase
             | SecretRevealTarget::LocalVaultPassphraseConfirmation => false,
+            SecretRevealTarget::AiProviderApiKey(provider_id) => self
+                .settings_store
+                .settings()
+                .ai_providers
+                .iter()
+                .any(|provider| provider.id == provider_id && provider.has_api_key),
         }
     }
 
@@ -277,6 +329,20 @@ impl AppView {
             SecretRevealTarget::HostPassword => {
                 self.load_selected_profile_password_input(window, cx)
             }
+            SecretRevealTarget::AiProviderApiKey(provider_id) => {
+                let api_key = self
+                    .services
+                    .secrets
+                    .get(&provider_id, SecretKind::AiProviderApiKey)?
+                    .unwrap_or_default();
+                set_input_value(
+                    &self.panel_forms.settings.ai_provider_api_key_input,
+                    api_key,
+                    window,
+                    cx,
+                );
+                Ok(())
+            }
             SecretRevealTarget::SyncPassphrase
             | SecretRevealTarget::SyncPassphraseConfirmation
             | SecretRevealTarget::LocalVaultPassphrase
@@ -308,7 +374,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Err(error) = self.load_secret_input_for_reveal(target, window, cx) {
+        if let Err(error) = self.load_secret_input_for_reveal(target.clone(), window, cx) {
             self.notify_secret_reveal_failed(window, &error, cx);
             return;
         }
@@ -331,15 +397,17 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.secret_visibility.is_visible(target) {
-            self.set_secret_visibility(target, false, true, window, cx);
+        if self.secret_visibility.is_visible(&target) {
+            self.set_secret_visibility(target.clone(), false, true, window, cx);
             return;
         }
 
-        let input = self.secret_input(target);
+        let input = self.secret_input(target.clone());
         let has_text = !input.read(cx).value().is_empty();
 
-        if has_text || !target.uses_stored_secret() || !self.secret_target_has_stored_value(target)
+        if has_text
+            || !target.uses_stored_secret()
+            || !self.secret_target_has_stored_value(target.clone())
         {
             self.set_secret_visibility(target, true, true, window, cx);
             return;
@@ -502,14 +570,18 @@ impl AppView {
 
         self.local_data_reset_in_progress = true;
         let notification_window = cx.active_window();
-        let (session_ids, managed_key_ids) = self.local_vault_secret_ids();
+        let (session_ids, managed_key_ids, ai_provider_ids) = self.local_vault_secret_ids();
         cx.notify();
 
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("local-data-reset".to_string())
             .spawn(move || {
-                let result = SettingsService::reset_local_data(&session_ids, &managed_key_ids);
+                let result = SettingsService::reset_local_data(
+                    &session_ids,
+                    &managed_key_ids,
+                    &ai_provider_ids,
+                );
                 tx.send(result).ok();
             });
 
@@ -954,6 +1026,418 @@ impl AppView {
         i18n::string("settings.sync.gist.gist_id.label")
     }
 
+    fn ai_provider_ids(&self) -> Vec<String> {
+        self.settings_store
+            .settings()
+            .ai_providers
+            .iter()
+            .map(|provider| provider.id.clone())
+            .collect()
+    }
+
+    pub(in crate::ui::shell) fn current_ai_provider_kind(&self, cx: &App) -> AiProviderKind {
+        self.panel_forms
+            .settings
+            .ai_provider_kind_select
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or(AiProviderKind::OpenAi)
+    }
+
+    pub(in crate::ui::shell) fn selected_ai_provider_id(&self, cx: &App) -> Option<String> {
+        self.panel_forms
+            .settings
+            .ai_provider_select
+            .read(cx)
+            .selected_value()
+            .cloned()
+    }
+
+    fn refresh_ai_provider_select(
+        &self,
+        selected_provider_id: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let options = ai_provider_select_options(self.settings_store.settings());
+        let fallback_id = options.first().map(|option| option.value().clone());
+        let selected_id = selected_provider_id
+            .filter(|id| options.iter().any(|option| option.value().as_str() == *id))
+            .map(ToOwned::to_owned)
+            .or(fallback_id);
+
+        self.panel_forms
+            .settings
+            .ai_provider_select
+            .update(cx, |select, cx| {
+                select.set_items(options, window, cx);
+                if let Some(selected_id) = selected_id.as_ref() {
+                    select.set_selected_value(selected_id, window, cx);
+                } else {
+                    select.set_selected_index(None, window, cx);
+                }
+            });
+    }
+
+    fn open_ai_provider_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let popup = PendingAiProviderPopupState;
+        let stable_key = DialogOverlaySnapshot::AiProviderPopup(popup).stable_key();
+        self.dialogs
+            .exiting_dialogs
+            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
+        self.ai_provider_popup = Some(popup);
+        self.panel_forms
+            .settings
+            .ai_provider_name_input
+            .update(cx, |input, cx| {
+                input.focus(window, cx);
+            });
+        cx.notify();
+    }
+
+    fn dismiss_ai_provider_popup(&mut self, cx: &mut Context<Self>) {
+        if let Some(popup) = self.ai_provider_popup.take() {
+            self.start_dialog_exit(DialogOverlaySnapshot::AiProviderPopup(popup), cx);
+        }
+    }
+
+    pub(in crate::ui::shell) fn close_ai_provider_popup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_api_key_input,
+            "",
+            window,
+            cx,
+        );
+        self.secret_visibility.clear_ai_provider_visibility();
+        self.dismiss_ai_provider_popup(cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn open_selected_ai_provider_popup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider_id) = self.selected_ai_provider_id(cx) else {
+            return;
+        };
+        self.edit_ai_provider(provider_id, window, cx);
+    }
+
+    pub(in crate::ui::shell) fn start_new_ai_provider(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panel_forms.settings.editing_ai_provider_id = None;
+        let kind = AiProviderKind::OpenAi;
+        self.panel_forms
+            .settings
+            .ai_provider_kind_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&kind, window, cx);
+            });
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_name_input,
+            i18n::string(ai_provider_kind_label_key(kind)),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_model_input,
+            kind.default_model(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_base_url_input,
+            "",
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_api_key_input,
+            "",
+            window,
+            cx,
+        );
+        self.secret_visibility.clear_ai_provider_visibility();
+        self.open_ai_provider_popup(window, cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn edit_ai_provider(
+        &mut self,
+        provider_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = self
+            .settings_store
+            .settings()
+            .ai_providers
+            .iter()
+            .find(|provider| provider.id == provider_id)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.panel_forms.settings.editing_ai_provider_id = Some(provider.id.clone());
+        self.panel_forms
+            .settings
+            .ai_provider_kind_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&provider.kind, window, cx);
+            });
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_name_input,
+            provider.name,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_model_input,
+            provider.model,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_base_url_input,
+            provider.base_url,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_api_key_input,
+            "",
+            window,
+            cx,
+        );
+        self.set_secret_visibility(
+            SecretRevealTarget::AiProviderApiKey(provider.id),
+            false,
+            false,
+            window,
+            cx,
+        );
+        self.open_ai_provider_popup(window, cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn submit_ai_provider_save(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = self.current_ai_provider_kind(cx);
+        let editing_id = self.panel_forms.settings.editing_ai_provider_id.clone();
+        let existing = editing_id.as_ref().and_then(|id| {
+            self.settings_store
+                .settings()
+                .ai_providers
+                .iter()
+                .find(|provider| provider.id == *id)
+                .cloned()
+        });
+        let api_key = self
+            .panel_forms
+            .settings
+            .ai_provider_api_key_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let name = self
+            .panel_forms
+            .settings
+            .ai_provider_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("settings.ai_providers.validation.name_required"),
+                cx,
+            );
+            return;
+        }
+        if api_key.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("settings.ai_providers.validation.api_key_required"),
+                cx,
+            );
+            return;
+        }
+        let mut provider = existing.unwrap_or_else(|| AiProviderConfig::new(kind));
+        provider.kind = kind;
+        provider.name = name;
+        provider.model = self
+            .panel_forms
+            .settings
+            .ai_provider_model_input
+            .read(cx)
+            .value()
+            .to_string();
+        provider.base_url = self
+            .panel_forms
+            .settings
+            .ai_provider_base_url_input
+            .read(cx)
+            .value()
+            .to_string();
+        provider.api_key_env.clear();
+        provider.has_api_key = true;
+        provider.sanitize();
+
+        let draft = AiProviderSaveDraft { provider, api_key };
+        if self.local_vault_status == LocalVaultStatus::Locked && !draft.api_key.is_empty() {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::SaveAiProvider(draft),
+                window,
+                cx,
+            );
+            return;
+        }
+
+        self.continue_save_ai_provider_after_unlock(draft, window, cx);
+    }
+
+    fn continue_save_ai_provider_after_unlock(
+        &mut self,
+        draft: AiProviderSaveDraft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let AiProviderSaveDraft {
+            mut provider,
+            api_key,
+        } = draft;
+        if !api_key.is_empty()
+            && let Err(error) =
+                self.services
+                    .secrets
+                    .set(&provider.id, SecretKind::AiProviderApiKey, &api_key)
+        {
+            let error = error.to_string();
+            self.notify_sync_secret_save_failed(
+                window,
+                &i18n::string("settings.ai_providers.api_key.label"),
+                &error,
+                cx,
+            );
+            return;
+        }
+        if !api_key.is_empty() {
+            provider.has_api_key = true;
+        }
+
+        let provider_id = provider.id.clone();
+        let changed = self.settings_store.update(|settings| {
+            if let Some(existing) = settings
+                .ai_providers
+                .iter_mut()
+                .find(|existing| existing.id == provider_id)
+            {
+                *existing = provider.clone();
+            } else {
+                settings.ai_providers.push(provider.clone());
+            }
+        });
+
+        if changed {
+            self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
+            self.refresh_ai_provider_select(Some(&provider_id), window, cx);
+            set_input_value(
+                &self.panel_forms.settings.ai_provider_api_key_input,
+                "",
+                window,
+                cx,
+            );
+            self.set_secret_visibility(
+                SecretRevealTarget::AiProviderApiKey(provider_id),
+                false,
+                false,
+                window,
+                cx,
+            );
+            let message = i18n::string("settings.ai_providers.notifications.saved_message");
+            self.status_message = message.clone();
+            window.push_notification(
+                Self::success_notification(
+                    i18n::string("settings.ai_providers.notifications.saved_title"),
+                    message,
+                ),
+                cx,
+            );
+            self.dismiss_ai_provider_popup(cx);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn delete_ai_provider(
+        &mut self,
+        provider_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("settings.sync.vault.access_required_error.message"),
+                cx,
+            );
+            return;
+        }
+
+        let removed = self.settings_store.update(|settings| {
+            settings
+                .ai_providers
+                .retain(|provider| provider.id != provider_id);
+        });
+        self.services
+            .secrets
+            .delete_ai_provider_api_key(&provider_id);
+        self.secret_visibility.set_visible(
+            SecretRevealTarget::AiProviderApiKey(provider_id.clone()),
+            false,
+        );
+        if self.panel_forms.settings.editing_ai_provider_id.as_deref() == Some(&provider_id) {
+            self.panel_forms.settings.editing_ai_provider_id = None;
+            set_input_value(
+                &self.panel_forms.settings.ai_provider_api_key_input,
+                "",
+                window,
+                cx,
+            );
+            self.dismiss_ai_provider_popup(cx);
+        }
+        self.refresh_ai_provider_select(None, window, cx);
+        if removed {
+            let message = i18n::string("settings.ai_providers.notifications.deleted_message");
+            self.status_message = message.clone();
+            window.push_notification(
+                Self::success_notification(
+                    i18n::string("settings.ai_providers.notifications.deleted_title"),
+                    message,
+                ),
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
     fn run_local_vault_unlock_follow_up(
         &mut self,
         follow_up: PendingLocalVaultUnlockAction,
@@ -990,6 +1474,9 @@ impl AppView {
             }
             PendingLocalVaultUnlockAction::SaveSyncPassphrase(passphrase) => {
                 self.continue_save_sync_passphrase_after_unlock(passphrase, window, cx);
+            }
+            PendingLocalVaultUnlockAction::SaveAiProvider(draft) => {
+                self.continue_save_ai_provider_after_unlock(draft, window, cx);
             }
             PendingLocalVaultUnlockAction::ClearSyncPassphrase => {
                 self.continue_clear_sync_passphrase_after_unlock(window, cx);
@@ -2671,7 +3158,7 @@ impl AppView {
 
         let previous_secrets = self.services.secrets.clone();
         let previous_sync_engine = self.sync.sync_engine.clone();
-        let (session_ids, managed_key_ids) = self.local_vault_secret_ids();
+        let (session_ids, managed_key_ids, ai_provider_ids) = self.local_vault_secret_ids();
 
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
@@ -2682,6 +3169,7 @@ impl AppView {
                     &previous_sync_engine,
                     &session_ids,
                     &managed_key_ids,
+                    &ai_provider_ids,
                 );
                 tx.send(result).ok();
             });
@@ -2781,7 +3269,7 @@ impl AppView {
 
         let previous_secrets = self.services.secrets.clone();
         let previous_sync_engine = self.sync.sync_engine.clone();
-        let (session_ids, managed_key_ids) = self.local_vault_secret_ids();
+        let (session_ids, managed_key_ids, ai_provider_ids) = self.local_vault_secret_ids();
 
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
@@ -2791,6 +3279,7 @@ impl AppView {
                     &passphrase,
                     session_ids.clone(),
                     managed_key_ids.clone(),
+                    ai_provider_ids.clone(),
                     previous_secrets,
                     previous_sync_engine,
                 )
@@ -2803,6 +3292,7 @@ impl AppView {
                         sync_secret_inputs,
                         session_ids,
                         managed_key_ids,
+                        ai_provider_ids,
                     }
                 });
                 tx.send(result).ok();
@@ -2912,6 +3402,7 @@ impl AppView {
                     sync_secret_inputs,
                     session_ids,
                     managed_key_ids,
+                    ai_provider_ids,
                 } = enable_result;
 
                 let previous_secrets = self.services.secrets.clone();
@@ -2932,6 +3423,7 @@ impl AppView {
                         SettingsService::delete_migrated_keyring_secrets(
                             &session_ids,
                             &managed_key_ids,
+                            &ai_provider_ids,
                             &previous_secrets,
                             &previous_sync_engine,
                         );
@@ -2976,6 +3468,7 @@ impl AppView {
                     sync_secret_inputs,
                     session_ids,
                     managed_key_ids,
+                    ai_provider_ids,
                 } = enable_result;
 
                 let previous_secrets = self.services.secrets.clone();
@@ -2994,6 +3487,7 @@ impl AppView {
                         SettingsService::delete_migrated_keyring_secrets(
                             &session_ids,
                             &managed_key_ids,
+                            &ai_provider_ids,
                             &previous_secrets,
                             &previous_sync_engine,
                         );
@@ -3368,7 +3862,7 @@ impl AppView {
         Ok(())
     }
 
-    fn local_vault_secret_ids(&self) -> (Vec<String>, Vec<String>) {
+    fn local_vault_secret_ids(&self) -> (Vec<String>, Vec<String>, Vec<String>) {
         (
             self.data
                 .sessions
@@ -3380,6 +3874,7 @@ impl AppView {
                 .iter()
                 .map(|key| key.id.clone())
                 .collect(),
+            self.ai_provider_ids(),
         )
     }
 

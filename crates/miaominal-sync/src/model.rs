@@ -110,6 +110,8 @@ pub struct PlaintextSecrets {
     pub profile_secrets: Vec<ProfileSecret>,
     #[serde(default)]
     pub key_secrets: Vec<KeySecret>,
+    #[serde(default)]
+    pub ai_provider_secrets: Vec<AiProviderSecret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +127,12 @@ pub struct ProfileSecret {
 pub struct KeySecret {
     pub id: String,
     pub private_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProviderSecret {
+    pub id: String,
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,8 +2,8 @@ use super::*;
 use crate::ui::i18n;
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_settings::{
-    AppLanguage, LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
-    TerminalRightClickBehavior,
+    AiProviderKind, AppLanguage, LastTabCloseBehavior, LocalVaultAutoLockDuration,
+    MonitorHistoryDuration, TerminalRightClickBehavior,
 };
 use miaominal_sync::SyncProvider;
 
@@ -165,6 +165,9 @@ pub(in crate::ui::shell) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<ImportSourceKind>>>>,
     pub(in crate::ui::shell) sync_provider_select:
         Entity<SelectState<Vec<SelectOption<SyncProvider>>>>,
+    pub(in crate::ui::shell) ai_provider_select: Entity<SelectState<Vec<SelectOption<String>>>>,
+    pub(in crate::ui::shell) ai_provider_kind_select:
+        Entity<SelectState<Vec<SelectOption<AiProviderKind>>>>,
     pub(in crate::ui::shell) font_family_select: Entity<SelectState<SearchableVec<String>>>,
     pub(in crate::ui::shell) font_fallbacks_input: Entity<InputState>,
     pub(in crate::ui::shell) seed_color_picker: Entity<ColorPickerState>,
@@ -182,6 +185,11 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) local_data_reset_confirmation_input: Entity<InputState>,
     pub(in crate::ui::shell) local_vault_passphrase_input: Entity<InputState>,
     pub(in crate::ui::shell) local_vault_passphrase_confirmation_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_name_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_model_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_base_url_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_api_key_input: Entity<InputState>,
+    pub(in crate::ui::shell) editing_ai_provider_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

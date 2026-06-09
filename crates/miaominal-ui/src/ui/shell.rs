@@ -86,7 +86,10 @@ pub(crate) use crate::ui::components::{
 pub(crate) use crate::ui::utils::{
     format_byte_size, format_local_timestamp, truncate_with_ellipsis,
 };
-pub(in crate::ui::shell) use actions::{ValidationFailure, ValidationNotificationKind};
+pub(in crate::ui::shell) use actions::{
+    ValidationFailure, ValidationNotificationKind, ai_provider_kind_label_key,
+    ai_provider_select_options,
+};
 use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
 use controllers::ControllerSet;
 use forms::{
@@ -107,14 +110,15 @@ pub(in crate::ui::shell) use sftp_browser::{
 pub(in crate::ui::shell) use state::{
     ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot, DialogState, DraggedTab,
     ExitingDialogState, HostEditorEnvironmentVariableRow, InlineRenameState, LocalSftpEntry,
-    MonitorChartPoint, OnboardingState, PanelState, PendingKnownHostDeleteState,
-    PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
-    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
-    PendingSyncDirectionState, PendingSyncPassphrasePopupState, PendingSyncPullConfirmState,
-    SecretVisibilityState, SessionConnectionState, SessionMonitoringState, SessionPurpose,
-    SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
-    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
-    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
+    MonitorChartPoint, OnboardingState, PanelState, PendingAiProviderPopupState,
+    PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
+    PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
+    PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
+    PendingSyncPullConfirmState, SecretVisibilityState, SessionConnectionState,
+    SessionMonitoringState, SessionPurpose, SessionTabState, SftpEditSession, SftpPromptKind,
+    SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow,
+    SftpTransferStatus, ShellState, SyncPullConfirmReason, SyncUiState, TabKind, TabState,
+    TrustedHostFilter, WorkspaceState,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -295,7 +299,7 @@ pub(in crate::ui::shell) enum LocalVaultPassphrasePopupMode {
     ChangePassphrase,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum SecretRevealTarget {
     SyncGithubToken,
     SyncWebdavPassword,
@@ -304,13 +308,17 @@ pub(in crate::ui::shell) enum SecretRevealTarget {
     SyncPassphraseConfirmation,
     LocalVaultPassphrase,
     LocalVaultPassphraseConfirmation,
+    AiProviderApiKey(String),
 }
 
 impl SecretRevealTarget {
-    pub(in crate::ui::shell) fn uses_stored_secret(self) -> bool {
+    pub(in crate::ui::shell) fn uses_stored_secret(&self) -> bool {
         matches!(
             self,
-            Self::SyncGithubToken | Self::SyncWebdavPassword | Self::HostPassword
+            Self::SyncGithubToken
+                | Self::SyncWebdavPassword
+                | Self::HostPassword
+                | Self::AiProviderApiKey(_)
         )
     }
 }
@@ -327,8 +335,15 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
     SaveSyncGithubToken(String),
     SaveSyncWebdavPassword(String),
     SaveSyncPassphrase(String),
+    SaveAiProvider(AiProviderSaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct AiProviderSaveDraft {
+    pub(in crate::ui::shell) provider: miaominal_settings::AiProviderConfig,
+    pub(in crate::ui::shell) api_key: String,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -1,6 +1,6 @@
 use crate::ui::components::md3_spinner;
-use crate::ui::shell::state::SessionSidePanelView;
 use crate::ui::shell::state::SessionFailureStatus;
+use crate::ui::shell::state::SessionSidePanelView;
 use crate::ui::{
     components::{editor_button, fab_icon_button},
     i18n,

@@ -1,7 +1,7 @@
 use super::encryption::{decrypt_with_aad, derive_key_with_params, encrypt_with_aad};
 use crate::{
-    KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret, SYNC_PAYLOAD_VERSION,
-    SyncKdf, SyncPayload, SyncPlaintextPayload,
+    AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret,
+    SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload,
 };
 use anyhow::{Context, Result};
 use base64::Engine as _;
@@ -37,7 +37,7 @@ pub fn build_payload(
         snippets: snippets.to_vec(),
         managed_keys: managed_keys.to_vec(),
         settings: settings.clone(),
-        secrets: collect_secrets(sessions, managed_keys, secret_store)?,
+        secrets: collect_secrets(sessions, managed_keys, settings, secret_store)?,
     };
 
     let mut payload = SyncPayload {
@@ -81,6 +81,12 @@ pub fn apply_plaintext_payload(
         .transpose()?
         .unwrap_or_default();
     let old_keys = key_store.load()?;
+    let old_ai_provider_ids: Vec<String> = settings_store
+        .settings()
+        .ai_providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect();
 
     for profile_secret in &payload.secrets.profile_secrets {
         if let Some(ref password) = profile_secret.password {
@@ -97,6 +103,13 @@ pub fn apply_plaintext_payload(
             &key_secret.private_key,
         )?;
     }
+    for provider_secret in &payload.secrets.ai_provider_secrets {
+        secret_store.set(
+            &provider_secret.id,
+            SecretKind::AiProviderApiKey,
+            &provider_secret.api_key,
+        )?;
+    }
 
     session_store.save(&payload.sessions)?;
     snippet_store.save(&payload.snippets)?;
@@ -104,7 +117,13 @@ pub fn apply_plaintext_payload(
     let mut merged_settings = settings_store.settings().clone();
     merged_settings.apply_synced_settings(&payload.settings);
     settings_store.replace(merged_settings)?;
-    cleanup_removed_secrets(payload, &old_sessions, &old_keys, secret_store);
+    cleanup_removed_secrets(
+        payload,
+        &old_sessions,
+        &old_keys,
+        &old_ai_provider_ids,
+        secret_store,
+    );
 
     Ok(())
 }
@@ -220,6 +239,7 @@ fn associated_data(payload: &SyncPayload) -> Result<Vec<u8>> {
 fn collect_secrets(
     sessions: &[SessionProfile],
     managed_keys: &[ManagedKeyRecord],
+    settings: &SyncedSettings,
     secret_store: &SecretStore,
 ) -> Result<PlaintextSecrets> {
     let mut profile_secrets = Vec::new();
@@ -245,9 +265,20 @@ fn collect_secrets(
         }
     }
 
+    let mut ai_provider_secrets = Vec::new();
+    for provider in &settings.ai_providers {
+        if let Some(api_key) = secret_store.get(&provider.id, SecretKind::AiProviderApiKey)? {
+            ai_provider_secrets.push(AiProviderSecret {
+                id: provider.id.clone(),
+                api_key,
+            });
+        }
+    }
+
     Ok(PlaintextSecrets {
         profile_secrets,
         key_secrets,
+        ai_provider_secrets,
     })
 }
 
@@ -255,6 +286,7 @@ fn cleanup_removed_secrets(
     payload: &SyncPlaintextPayload,
     old_sessions: &[SessionProfile],
     old_keys: &[ManagedKeyRecord],
+    old_ai_provider_ids: &[String],
     secret_store: &SecretStore,
 ) {
     let profile_ids: HashSet<&str> = payload
@@ -276,6 +308,23 @@ fn cleanup_removed_secrets(
     for key in old_keys {
         if !key_ids.contains(key.id.as_str()) {
             secret_store.delete_managed_key(&key.id);
+        }
+    }
+
+    let provider_ids: HashSet<&str> = payload
+        .settings
+        .ai_providers
+        .iter()
+        .map(|provider| provider.id.as_str())
+        .collect();
+    for provider in &payload.settings.ai_providers {
+        if !provider.has_api_key {
+            secret_store.delete_ai_provider_api_key(&provider.id);
+        }
+    }
+    for old_provider_id in old_ai_provider_ids {
+        if !provider_ids.contains(old_provider_id.as_str()) {
+            secret_store.delete_ai_provider_api_key(old_provider_id);
         }
     }
 }
@@ -339,6 +388,7 @@ mod tests {
                     passphrase: None,
                 }],
                 key_secrets: Vec::new(),
+                ai_provider_secrets: Vec::new(),
             },
         };
 
@@ -354,6 +404,50 @@ mod tests {
             decrypted.secrets.profile_secrets[0].password.as_deref(),
             Some("password")
         );
+    }
+
+    #[test]
+    fn collect_secrets_includes_ai_provider_api_keys() {
+        use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend};
+
+        let provider = miaominal_settings::AiProviderConfig {
+            id: "provider-1".into(),
+            name: "OpenAI".into(),
+            kind: miaominal_settings::AiProviderKind::OpenAi,
+            model: "gpt-4o".into(),
+            base_url: String::new(),
+            api_key_env: String::new(),
+            has_api_key: true,
+            enabled: true,
+        };
+        let settings = AppSettings {
+            ai_providers: vec![provider],
+            ..AppSettings::default()
+        }
+        .synced_settings();
+        let vault_path = std::env::temp_dir().join(format!(
+            "miaominal-payload-provider-secret-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(vault_path.clone(), "provider-secret-test"),
+        );
+        credentials
+            .initialize()
+            .expect("test credential store should initialize");
+        let secret_store = SecretStore::with_credentials(credentials);
+        secret_store
+            .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .expect("provider api key should save");
+
+        let secrets =
+            collect_secrets(&[], &[], &settings, &secret_store).expect("secrets should collect");
+
+        assert_eq!(secrets.ai_provider_secrets.len(), 1);
+        assert_eq!(secrets.ai_provider_secrets[0].id, "provider-1");
+        assert_eq!(secrets.ai_provider_secrets[0].api_key, "sk-test");
+        let _ = std::fs::remove_file(vault_path);
     }
 
     fn encrypted_payload(passphrase: &str, plaintext: &SyncPlaintextPayload) -> SyncPayload {
@@ -408,6 +502,7 @@ mod tests {
                     passphrase: None,
                 }],
                 key_secrets: Vec::new(),
+                ai_provider_secrets: Vec::new(),
             },
         }
     }

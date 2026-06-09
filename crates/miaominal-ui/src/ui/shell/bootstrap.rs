@@ -5,7 +5,7 @@ use crate::ui::shell::bootstrap_loaders::{InitialProfileSelection, LoadedAppData
 use crate::ui::shell::bootstrap_subscriptions::AppViewSubscriptionsArgs;
 use gpui_component::IndexPath;
 use miaominal_core::profile::{DEFAULT_SESSION_CHARSET, ImportSourceKind};
-use miaominal_settings::AppLanguage;
+use miaominal_settings::{AiProviderKind, AppLanguage};
 use miaominal_sync::SyncProvider;
 
 impl AppView {
@@ -608,14 +608,17 @@ impl AppView {
                 && !modifiers.platform
                 && !modifiers.shift
             {
-                let mut submit_local_vault_passphrase = false;
+                let mut submitted_popup = false;
                 view.update(cx, |this, cx| {
                     if let Some(mode) = this.local_vault_passphrase_popup {
                         this.submit_local_vault_passphrase_popup_action(mode, window, cx);
-                        submit_local_vault_passphrase = true;
+                        submitted_popup = true;
+                    } else if this.ai_provider_popup.is_some() {
+                        this.submit_ai_provider_save(window, cx);
+                        submitted_popup = true;
                     }
                 });
-                if submit_local_vault_passphrase {
+                if submitted_popup {
                     cx.stop_propagation();
                     return;
                 }
@@ -885,6 +888,44 @@ impl AppView {
                 cx,
             )
         });
+        let ai_provider_options = ai_provider_select_options(settings_store.settings());
+        let selected_ai_provider_index =
+            (!ai_provider_options.is_empty()).then(|| IndexPath::default().row(0));
+        let ai_provider_select = cx.new(|cx| {
+            SelectState::new(ai_provider_options, selected_ai_provider_index, window, cx)
+        });
+        let ai_provider_select_subscription = cx.subscribe(
+            &ai_provider_select,
+            |_this: &mut AppView, _, _event: &SelectEvent<Vec<SelectOption<String>>>, cx| {
+                cx.notify();
+            },
+        );
+        let ai_provider_kind_options: Vec<SelectOption<AiProviderKind>> = AiProviderKind::all()
+            .iter()
+            .copied()
+            .map(|kind| SelectOption::new(kind, i18n::string(ai_provider_kind_label_key(kind))))
+            .collect();
+        let selected_ai_provider_kind_index = ai_provider_kind_options
+            .iter()
+            .position(|provider| *provider.value() == AiProviderKind::OpenAi)
+            .map(|index| IndexPath::default().row(index));
+        let ai_provider_kind_select = cx.new(|cx| {
+            SelectState::new(
+                ai_provider_kind_options,
+                selected_ai_provider_kind_index,
+                window,
+                cx,
+            )
+        });
+        let ai_provider_kind_select_subscription = cx.subscribe(
+            &ai_provider_kind_select,
+            |this: &mut AppView, _, event: &SelectEvent<Vec<SelectOption<AiProviderKind>>>, cx| {
+                let SelectEvent::Confirm(selected_provider) = event;
+                if let Some(provider) = selected_provider {
+                    this.apply_ai_provider_kind_defaults(*provider, cx);
+                }
+            },
+        );
         let sync_secrets = sync_engine
             .config_store
             .get_secrets()
@@ -1267,6 +1308,34 @@ impl AppView {
             window,
             cx,
         );
+        let ai_provider_name_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.name"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let ai_provider_model_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.model"),
+            AiProviderKind::OpenAi.default_model(),
+            false,
+            window,
+            cx,
+        );
+        let ai_provider_base_url_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.base_url"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let ai_provider_api_key_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.api_key"),
+            "",
+            true,
+            window,
+            cx,
+        );
 
         let panel_forms = Self::build_panel_forms(PanelFormsArgs {
             filter_input,
@@ -1301,6 +1370,8 @@ impl AppView {
             terminal_right_click_behavior_select,
             profile_import_source_select,
             sync_provider_select,
+            ai_provider_select,
+            ai_provider_kind_select,
             font_family_select,
             font_fallbacks_input,
             seed_color_picker,
@@ -1315,6 +1386,10 @@ impl AppView {
             local_data_reset_confirmation_input,
             local_vault_passphrase_input,
             local_vault_passphrase_confirmation_input,
+            ai_provider_name_input,
+            ai_provider_model_input,
+            ai_provider_base_url_input,
+            ai_provider_api_key_input,
         });
 
         let mut view = Self {
@@ -1369,6 +1444,7 @@ impl AppView {
                 LocalVaultStatus::Disabled
             },
             sync_passphrase_popup: None,
+            ai_provider_popup: None,
             local_vault_passphrase_popup: None,
             pending_local_vault_unlock_action: None,
             local_vault_unlock_in_progress: false,
@@ -1401,6 +1477,8 @@ impl AppView {
                 monitor_history_select_subscription,
                 terminal_right_click_behavior_select_subscription,
                 sync_provider_select_subscription,
+                ai_provider_select_subscription,
+                ai_provider_kind_select_subscription,
                 keychain_filter_subscription,
                 filter_subscription,
                 trusted_filter_subscription,
@@ -1585,6 +1663,31 @@ impl AppView {
         set_input_placeholder(
             &self.panel_forms.keychain.deploy_command_input,
             i18n::string("placeholders.keychain.deploy_command"),
+            window,
+            cx,
+        );
+
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_name_input,
+            i18n::string("settings.ai_providers.placeholders.name"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_model_input,
+            i18n::string("settings.ai_providers.placeholders.model"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_base_url_input,
+            i18n::string("settings.ai_providers.placeholders.base_url"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_api_key_input,
+            i18n::string("settings.ai_providers.placeholders.api_key"),
             window,
             cx,
         );

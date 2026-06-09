@@ -3,6 +3,7 @@ pub enum SecretKind {
     Password,
     Passphrase,
     ManagedPrivateKey,
+    AiProviderApiKey,
 }
 
 impl SecretKind {
@@ -11,6 +12,7 @@ impl SecretKind {
             SecretKind::Password => "password",
             SecretKind::Passphrase => "passphrase",
             SecretKind::ManagedPrivateKey => "managed-private-key",
+            SecretKind::AiProviderApiKey => "ai-provider-api-key",
         }
     }
 }

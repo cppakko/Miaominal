@@ -75,6 +75,8 @@ pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _monitor_history_select_subscription: Subscription,
     pub _terminal_right_click_behavior_select_subscription: Subscription,
     pub _sync_provider_select_subscription: Subscription,
+    pub _ai_provider_select_subscription: Subscription,
+    pub _ai_provider_kind_select_subscription: Subscription,
     pub _seed_color_subscription: Subscription,
     pub _group_input_subscription: Subscription,
     pub _group_select_subscription: Subscription,

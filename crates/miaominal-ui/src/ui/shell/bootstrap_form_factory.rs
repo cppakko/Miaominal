@@ -78,6 +78,9 @@ pub(in crate::ui::shell) struct PanelFormsArgs {
         Entity<SelectState<Vec<SelectOption<miaominal_settings::TerminalRightClickBehavior>>>>,
     pub profile_import_source_select: Entity<SelectState<Vec<SelectOption<ImportSourceKind>>>>,
     pub sync_provider_select: Entity<SelectState<Vec<SelectOption<SyncProvider>>>>,
+    pub ai_provider_select: Entity<SelectState<Vec<SelectOption<String>>>>,
+    pub ai_provider_kind_select:
+        Entity<SelectState<Vec<SelectOption<miaominal_settings::AiProviderKind>>>>,
     pub font_family_select: Entity<SelectState<SearchableVec<String>>>,
     pub font_fallbacks_input: Entity<InputState>,
     pub seed_color_picker: Entity<ColorPickerState>,
@@ -92,6 +95,10 @@ pub(in crate::ui::shell) struct PanelFormsArgs {
     pub local_data_reset_confirmation_input: Entity<InputState>,
     pub local_vault_passphrase_input: Entity<InputState>,
     pub local_vault_passphrase_confirmation_input: Entity<InputState>,
+    pub ai_provider_name_input: Entity<InputState>,
+    pub ai_provider_model_input: Entity<InputState>,
+    pub ai_provider_base_url_input: Entity<InputState>,
+    pub ai_provider_api_key_input: Entity<InputState>,
 }
 
 impl AppView {
@@ -227,6 +234,8 @@ impl AppView {
             terminal_right_click_behavior_select,
             profile_import_source_select,
             sync_provider_select,
+            ai_provider_select,
+            ai_provider_kind_select,
             font_family_select,
             font_fallbacks_input,
             seed_color_picker,
@@ -241,6 +250,10 @@ impl AppView {
             local_data_reset_confirmation_input,
             local_vault_passphrase_input,
             local_vault_passphrase_confirmation_input,
+            ai_provider_name_input,
+            ai_provider_model_input,
+            ai_provider_base_url_input,
+            ai_provider_api_key_input,
         } = args;
 
         PanelForms {
@@ -285,6 +298,8 @@ impl AppView {
                 terminal_right_click_behavior_select,
                 profile_import_source_select,
                 sync_provider_select,
+                ai_provider_select,
+                ai_provider_kind_select,
                 font_family_select,
                 font_fallbacks_input,
                 seed_color_picker,
@@ -302,6 +317,11 @@ impl AppView {
                 local_data_reset_confirmation_input,
                 local_vault_passphrase_input,
                 local_vault_passphrase_confirmation_input,
+                ai_provider_name_input,
+                ai_provider_model_input,
+                ai_provider_base_url_input,
+                ai_provider_api_key_input,
+                editing_ai_provider_id: None,
             },
         }
     }
