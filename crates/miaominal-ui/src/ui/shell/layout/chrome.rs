@@ -1222,13 +1222,10 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
         let active_session = self
-            .workspace_state
-            .workspace
-            .active_tab
+            .active_terminal_session_index()
             .and_then(|index| self.workspace_state.tabs.get(index))
             .and_then(|tab| tab.as_session().map(|session| (tab, session)));
-        let panel_session =
-            active_session.filter(|(_, session)| session.purpose == SessionPurpose::Terminal);
+        let panel_session = active_session;
 
         let active_tab = active_session.map(|(tab, _)| tab).or_else(|| {
             self.workspace_state
@@ -1324,13 +1321,12 @@ impl AppView {
                                     Some(roles.outline_variant),
                                     move |_window, cx| {
                                         monitor_toggle_entity.update(cx, |this, cx| {
-                                            this.panels.session_monitor_panel_open =
-                                                !this.panels.session_monitor_panel_open;
+                                            this.toggle_session_side_panel();
                                             cx.notify();
                                         });
                                     },
                                 )
-                                .id("session-snippets-panel-toggle-button")
+                                .id("session-monitor-panel-toggle-button")
                                 .hover(move |this| {
                                     this.bg(rgb(roles.surface_container_highest))
                                         .border_color(rgb(roles.primary))
@@ -1376,8 +1372,7 @@ impl AppView {
                                     Some(roles.outline_variant),
                                     move |_window, cx| {
                                         snippets_toggle_entity.update(cx, |this, cx| {
-                                            this.panels.session_snippets_panel_open =
-                                                !this.panels.session_snippets_panel_open;
+                                            this.toggle_session_snippets_panel();
                                             cx.notify();
                                         });
                                     },

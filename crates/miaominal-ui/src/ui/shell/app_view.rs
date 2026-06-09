@@ -741,6 +741,36 @@ impl AppView {
             .is_some()
     }
 
+    pub(in crate::ui::shell) fn active_terminal_session_index(&self) -> Option<usize> {
+        self.workspace_state
+            .workspace
+            .active_tab
+            .filter(|&index| {
+                self.workspace_state
+                    .tabs
+                    .get(index)
+                    .and_then(TabState::as_session)
+                    .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+            })
+            .or_else(|| {
+                self.workspace_state.active_topbar_tab.filter(|&index| {
+                    self.workspace_state
+                        .tabs
+                        .get(index)
+                        .and_then(TabState::as_session)
+                        .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+                })
+            })
+    }
+
+    pub(in crate::ui::shell) fn toggle_session_side_panel(&mut self) {
+        self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
+    }
+
+    pub(in crate::ui::shell) fn toggle_session_snippets_panel(&mut self) {
+        self.panels.session_snippets_panel_open = !self.panels.session_snippets_panel_open;
+    }
+
     pub(in crate::ui::shell) fn pending_host_key_session_index(&self) -> Option<usize> {
         self.workspace_state
             .workspace

@@ -1,4 +1,5 @@
 use crate::ui::components::md3_spinner;
+use crate::ui::shell::state::SessionSidePanelView;
 use crate::ui::shell::state::SessionFailureStatus;
 use crate::ui::{
     components::{editor_button, fab_icon_button},
@@ -12,6 +13,7 @@ use gpui_component::{
         scale::{Scale, ScaleLinear, ScalePoint},
         shape::Area,
     },
+    tab::{Tab, TabBar},
 };
 use miaominal_settings::TerminalRightClickBehavior;
 
@@ -249,7 +251,6 @@ fn build_terminal_context_menu(
 }
 
 const SESSION_MONITOR_PANEL_WIDTH: f32 = 340.0;
-const SESSION_SNIPPETS_PANEL_WIDTH: f32 = 320.0;
 const SESSION_MONITOR_CHART_HEIGHT: f32 = 60.0;
 const SESSION_MONITOR_SAMPLE_INTERVAL_SECS: usize = 2;
 const SESSION_MONITOR_PERCENT_MIN_Y_MAX: f64 = 2.0;
@@ -1565,18 +1566,12 @@ impl AppView {
         let workspace_body = self.render_pane_layout(&layout, &[], &valid_source_ids, window, cx);
         self.workspace_state.workspace.pane_layout = layout;
 
-        let session_index = self.workspace_state.workspace.active_tab.filter(|&index| {
-            self.workspace_state
-                .tabs
-                .get(index)
-                .and_then(TabState::as_session)
-                .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
-        });
+        let session_index = self.active_terminal_session_index();
 
-        let show_monitor_panel = workspace_side_panel_render_state(
-            self.panels.session_monitor_panel_open && session_index.is_some(),
-            &mut self.panels.visible_session_monitor_panel,
-            &mut self.panels.session_monitor_panel_transition,
+        let show_side_panel = workspace_side_panel_render_state(
+            self.panels.session_side_panel_open && session_index.is_some(),
+            &mut self.panels.visible_session_side_panel,
+            &mut self.panels.session_side_panel_transition,
             window,
         );
         let show_snippets_panel = workspace_side_panel_render_state(
@@ -1585,15 +1580,14 @@ impl AppView {
             &mut self.panels.session_snippets_panel_transition,
             window,
         );
-
         let entity = cx.entity();
-        let monitor_panel = show_monitor_panel.and_then(|visibility| {
+        let side_panel = show_side_panel.and_then(|visibility| {
             session_index
                 .and_then(|index| self.workspace_state.tabs.get(index))
                 .and_then(TabState::as_session)
                 .map(|session| {
                     render_workspace_side_panel(
-                        self.render_session_monitor_panel(entity.clone(), session),
+                        self.render_session_workspace_side_panel(entity.clone(), session, cx),
                         SESSION_MONITOR_PANEL_WIDTH,
                         visibility,
                         WorkspaceSidePanelDock::Left,
@@ -1602,8 +1596,8 @@ impl AppView {
         });
         let snippets_panel = show_snippets_panel.map(|visibility| {
             render_workspace_side_panel(
-                self.render_session_snippets_panel(entity, cx),
-                SESSION_SNIPPETS_PANEL_WIDTH,
+                self.render_session_snippets_sidebar(),
+                SESSION_MONITOR_PANEL_WIDTH,
                 visibility,
                 WorkspaceSidePanelDock::Right,
             )
@@ -1613,7 +1607,7 @@ impl AppView {
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
-            .when_some(monitor_panel, |this, panel| this.child(panel))
+            .when_some(side_panel, |this, panel| this.child(panel))
             .child(
                 div()
                     .id("terminal-workspace-center")
@@ -2520,6 +2514,84 @@ impl AppView {
         }
     }
 
+    fn render_session_workspace_side_panel(
+        &self,
+        entity: Entity<Self>,
+        session: &SessionTabState,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let selected_index = match self.panels.session_side_panel_view {
+            SessionSidePanelView::Monitor => 0,
+            SessionSidePanelView::Snippets => 1,
+        };
+
+        let tabs = TabBar::new("session-side-panel-tabs")
+            .segmented()
+            .selected_index(selected_index)
+            .on_click({
+                let entity = entity.clone();
+                move |index, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        match *index {
+                            0 => {
+                                this.panels.session_side_panel_open = true;
+                                this.panels.session_side_panel_view = SessionSidePanelView::Monitor;
+                            }
+                            _ => {
+                                this.panels.session_side_panel_open = true;
+                                this.panels.session_side_panel_view =
+                                    SessionSidePanelView::Snippets;
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .child(Tab::new().label(i18n::string("workspace.panel.monitor.title")))
+            .child(Tab::new().label(i18n::string("snippets.page.snippets")))
+            .h(px(36.0));
+
+        let content = if selected_index == 0 {
+            self.render_session_monitor_panel(entity, session)
+        } else {
+            self.render_session_snippets_panel(entity, cx)
+        };
+
+        card_surface(roles.surface_container, 16.0)
+            .id("session-workspace-side-panel")
+            .w(px(SESSION_MONITOR_PANEL_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(56.0))
+                            .flex_shrink_0()
+                            .items_center()
+                            .justify_center()
+                            .px_3()
+                            .child(
+                                div()
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(tabs),
+                            ),
+                    )
+                    .child(div().flex_1().min_h(px(0.0)).child(content)),
+            )
+            .into_any_element()
+    }
+
     fn render_session_monitor_panel(
         &self,
         entity: Entity<Self>,
@@ -2535,52 +2607,62 @@ impl AppView {
             self.shared_monitoring_state_for_profile(&session.profile_id, &session.monitoring);
         let monitor_scroll_handle = self.workspace_state.session_monitor_scroll_handle.clone();
 
+        if !monitoring.auto_collect_enabled {
+            return v_flex()
+                .id("session-monitor-panel-content")
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .p_3()
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_center()
+                        .text_color(rgb(roles.on_surface))
+                        .child(i18n::string("workspace.panel.monitor.disabled_title")),
+                )
+                .child(
+                    div()
+                        .max_w(px(280.0))
+                        .text_center()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .text_color(rgb(text_muted))
+                        .child(i18n::string("workspace.panel.monitor.disabled_body")),
+                )
+                .child(editor_button(
+                    i18n::string("workspace.panel.monitor.start_now"),
+                    false,
+                    true,
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.enable_active_session_monitoring(cx);
+                        });
+                    },
+                ))
+                .into_any_element();
+        }
+
+        if let Some(error) = monitoring.last_error.as_ref() {
+            return v_flex()
+                .id("session-monitor-panel-content")
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .p_3()
+                .child(
+                    div()
+                        .text_center()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .text_color(rgb(text_muted))
+                        .child(error.clone()),
+                )
+                .into_any_element();
+        }
+
         let content =
-            if !monitoring.auto_collect_enabled {
-                v_flex()
-                    .size_full()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .text_color(rgb(roles.on_surface))
-                            .child(i18n::string("workspace.panel.monitor.disabled_title")),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(360.0))
-                            .text_center()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(i18n::string("workspace.panel.monitor.disabled_body")),
-                    )
-                    .child(editor_button(
-                        i18n::string("workspace.panel.monitor.start_now"),
-                        false,
-                        true,
-                        move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.enable_active_session_monitoring(cx);
-                            });
-                        },
-                    ))
-                    .into_any_element()
-            } else if let Some(error) = monitoring.last_error.as_ref() {
-                v_flex()
-                    .flex_1()
-                    .justify_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(error.clone()),
-                    )
-                    .into_any_element()
-            } else if let Some(snapshot) = monitoring.last_snapshot.as_ref() {
+            if let Some(snapshot) = monitoring.last_snapshot.as_ref() {
                 let limit = self
                     .settings_store
                     .settings()
@@ -2756,46 +2838,52 @@ impl AppView {
                     )
                     .into_any_element()
             } else {
-                v_flex()
-                    .flex_1()
+                return v_flex()
+                    .id("session-monitor-panel-content")
+                    .size_full()
                     .items_center()
                     .justify_center()
                     .gap_2()
+                    .p_3()
                     .child(md3_spinner(18.0))
                     .child(
                         div()
+                            .text_center()
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(i18n::string("workspace.panel.monitor.loading")),
                     )
-                    .into_any_element()
+                    .into_any_element();
             };
 
+        div()
+            .id("session-monitor-panel-content")
+            .relative()
+            .size_full()
+            .min_h_0()
+            .child(
+                div()
+                    .id("session-monitor-scroll")
+                    .size_full()
+                    .track_scroll(&monitor_scroll_handle)
+                    .overflow_y_scroll()
+                    .child(v_flex().w_full().min_h_full().p_3().child(content)),
+            )
+            .vertical_scrollbar(&monitor_scroll_handle)
+            .into_any_element()
+    }
+
+    fn render_session_snippets_sidebar(&self) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+
         card_surface(roles.surface_container, 16.0)
-            .id("session-monitor-split-panel")
+            .id("session-snippets-split-panel")
             .w(px(SESSION_MONITOR_PANEL_WIDTH))
             .h_full()
             .flex_shrink_0()
             .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_hidden()
-            .child(
-                v_flex().size_full().overflow_hidden().child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .child(
-                            div()
-                                .id("session-monitor-scroll")
-                                .size_full()
-                                .track_scroll(&monitor_scroll_handle)
-                                .overflow_y_scroll()
-                                .child(v_flex().w_full().p_3().child(content)),
-                        )
-                        .vertical_scrollbar(&monitor_scroll_handle),
-                ),
-            )
             .into_any_element()
     }
 
@@ -3145,34 +3233,25 @@ impl AppView {
                 .into_any_element()
         };
 
-        card_surface(roles.surface_container, 16.0)
-            .id("session-snippets-split-panel")
-            .w(px(SESSION_SNIPPETS_PANEL_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
+        v_flex()
+            .id("session-snippets-panel-content")
+            .size_full()
+            .gap_3()
             .overflow_hidden()
+            .p_3()
+            .when(!self.data.snippets.is_empty(), |this| {
+                this.child(search_filter_input(
+                    &self.workspace_forms.snippets_panel.filter_input,
+                    SearchInputStyle::Compact,
+                    None,
+                ))
+            })
             .child(
-                v_flex()
-                    .size_full()
-                    .gap_3()
-                    .overflow_hidden()
-                    .p_3()
-                    .when(!self.data.snippets.is_empty(), |this| {
-                        this.child(search_filter_input(
-                            &self.workspace_forms.snippets_panel.filter_input,
-                            SearchInputStyle::Compact,
-                            None,
-                        ))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .overflow_y_scrollbar()
-                            .child(content),
-                    ),
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scrollbar()
+                    .child(content),
             )
             .into_any_element()
     }

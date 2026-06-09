@@ -903,13 +903,21 @@ impl SecretVisibilityState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::ui::shell) enum SessionSidePanelView {
+    #[default]
+    Monitor,
+    Snippets,
+}
+
 #[derive(Default)]
 pub(in crate::ui::shell) struct PanelState {
-    pub(in crate::ui::shell) session_monitor_panel_open: bool,
+    pub(in crate::ui::shell) session_side_panel_open: bool,
+    pub(in crate::ui::shell) session_side_panel_view: SessionSidePanelView,
     pub(in crate::ui::shell) session_snippets_panel_open: bool,
-    pub(in crate::ui::shell) visible_session_monitor_panel: bool,
+    pub(in crate::ui::shell) visible_session_side_panel: bool,
     pub(in crate::ui::shell) visible_session_snippets_panel: bool,
-    pub(in crate::ui::shell) session_monitor_panel_transition: Option<WorkspaceSidePanelTransition>,
+    pub(in crate::ui::shell) session_side_panel_transition: Option<WorkspaceSidePanelTransition>,
     pub(in crate::ui::shell) session_snippets_panel_transition:
         Option<WorkspaceSidePanelTransition>,
     pub(in crate::ui::shell) selected_known_host: Option<(String, u16, String)>,
