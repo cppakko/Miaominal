@@ -1,21 +1,19 @@
 [package]
-name = "miaominal-services"
+name = "miaominal-agent"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [dependencies]
 anyhow.workspace = true
-log.workspace = true
-miaominal-agent = { path = "../miaominal-agent" }
 miaominal-core = { path = "../miaominal-core" }
-miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
-miaominal-settings = { path = "../miaominal-settings" }
-miaominal-sftp = { path = "../miaominal-sftp" }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }
-miaominal-sync = { path = "../miaominal-sync" }
+reqwest.workspace = true
+rig-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
-toml.workspace = true
 uuid.workspace = true
