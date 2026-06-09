@@ -1,3 +1,5 @@
+#[path = "services/agent_service.rs"]
+mod agent_service;
 #[path = "services/app_services.rs"]
 mod app_services;
 #[path = "services/keychain_service.rs"]
@@ -13,6 +15,7 @@ mod sync_service;
 #[path = "services/terminal_service.rs"]
 mod terminal_service;
 
+pub use agent_service::AgentService;
 pub use app_services::{AppServices, LoadedAppData};
 pub use keychain_service::KeychainService;
 pub use profile_service::{ImportedProfilesResult, ProfileService};
