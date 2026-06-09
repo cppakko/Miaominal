@@ -10,10 +10,11 @@ pub use global::{
     sync_component_theme,
 };
 pub use model::{
-    AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding,
-    LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, LastTabCloseBehavior, LocalVaultAutoLockDuration,
-    MonitorHistoryDuration, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
-    RECENT_CONNECTIONS_COUNT_MIN, STEP, SyncedSettings, TerminalKeyBindings, TerminalPalette,
-    TerminalRightClickBehavior, Theme, ThemeId, available_font_families, changed,
-    default_font_fallbacks, default_font_family,
+    AiProviderConfig, AiProviderKind, AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION,
+    FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
+    LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
+    PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
+    SyncedSettings, TerminalKeyBindings, TerminalPalette, TerminalRightClickBehavior, Theme,
+    ThemeId, ai_provider_kind_label, available_font_families, changed, default_font_fallbacks,
+    default_font_family,
 };

@@ -6,6 +6,7 @@ use miaominal_secrets::{SecretKind, SecretStore};
 pub fn copy_secrets_between_backends<S, K>(
     session_ids: S,
     managed_key_ids: K,
+    ai_provider_ids: &[String],
     source_secrets: &SecretStore,
     source_sync_config: &SyncConfigStore,
     target_secrets: &SecretStore,
@@ -36,6 +37,12 @@ where
         }
     }
 
+    for provider_id in ai_provider_ids {
+        if let Some(api_key) = source_secrets.get(provider_id, SecretKind::AiProviderApiKey)? {
+            target_secrets.set(provider_id, SecretKind::AiProviderApiKey, &api_key)?;
+        }
+    }
+
     let sync_secrets = source_sync_config.get_secrets()?;
 
     if let Some(token) = sync_secrets.github_token {
@@ -54,6 +61,7 @@ where
 pub fn delete_keyring_secrets<S, K>(
     session_ids: S,
     managed_key_ids: K,
+    ai_provider_ids: &[String],
     source_secrets: &SecretStore,
     source_sync_config: &SyncConfigStore,
 ) where
@@ -68,6 +76,10 @@ pub fn delete_keyring_secrets<S, K>(
 
     for key_id in managed_key_ids {
         source_secrets.delete_managed_key(key_id.as_ref());
+    }
+
+    for provider_id in ai_provider_ids {
+        source_secrets.delete_ai_provider_api_key(provider_id);
     }
 
     if let Err(error) = source_sync_config.delete_github_token() {
@@ -187,6 +199,9 @@ mod tests {
         source_secrets
             .set("key-1", SecretKind::ManagedPrivateKey, "private-key-bytes")
             .unwrap();
+        source_secrets
+            .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .unwrap();
         source_sync.set_github_token("gh-token").unwrap();
         source_sync.set_webdav_password("dav-pass").unwrap();
         source_sync.set_passphrase("sync-pp").unwrap();
@@ -194,6 +209,7 @@ mod tests {
         copy_secrets_between_backends(
             ["session-1", "session-2"],
             ["key-1"],
+            &["provider-1".to_string()],
             &source_secrets,
             &source_sync,
             &target_secrets,
@@ -236,6 +252,13 @@ mod tests {
             Some("private-key-bytes"),
         );
         assert_eq!(
+            target_secrets
+                .get("provider-1", SecretKind::AiProviderApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("sk-test"),
+        );
+        assert_eq!(
             target_sync.get_github_token().unwrap().as_deref(),
             Some("gh-token"),
         );
@@ -272,6 +295,7 @@ mod tests {
         copy_secrets_between_backends(
             ["session-no-secrets"],
             std::iter::empty::<&str>(),
+            &[],
             &source_secrets,
             &source_sync,
             &target_secrets,
@@ -314,11 +338,20 @@ mod tests {
         source_secrets
             .set("key-1", SecretKind::ManagedPrivateKey, "key-bytes")
             .unwrap();
+        source_secrets
+            .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .unwrap();
         source_sync.set_github_token("gh").unwrap();
         source_sync.set_webdav_password("dav").unwrap();
         source_sync.set_passphrase("sp").unwrap();
 
-        delete_keyring_secrets(["session-1"], ["key-1"], &source_secrets, &source_sync);
+        delete_keyring_secrets(
+            ["session-1"],
+            ["key-1"],
+            &["provider-1".to_string()],
+            &source_secrets,
+            &source_sync,
+        );
 
         assert_eq!(
             source_secrets
@@ -335,6 +368,12 @@ mod tests {
         assert_eq!(
             source_secrets
                 .get("key-1", SecretKind::ManagedPrivateKey)
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            source_secrets
+                .get("provider-1", SecretKind::AiProviderApiKey)
                 .unwrap(),
             None,
         );

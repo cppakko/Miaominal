@@ -2,6 +2,139 @@ use crate::theme as material_theme;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProviderKind {
+    Anthropic,
+    ChatGpt,
+    Cohere,
+    Copilot,
+    DeepSeek,
+    Gemini,
+    HuggingFace,
+    Mistral,
+    OpenAi,
+    OpenRouter,
+    Together,
+    Xai,
+    Custom,
+}
+
+impl AiProviderKind {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::OpenAi,
+            Self::Anthropic,
+            Self::DeepSeek,
+            Self::Gemini,
+            Self::OpenRouter,
+            Self::Mistral,
+            Self::Cohere,
+            Self::Together,
+            Self::Xai,
+            Self::HuggingFace,
+            Self::ChatGpt,
+            Self::Copilot,
+            Self::Custom,
+        ]
+    }
+
+    pub const fn default_model(self) -> &'static str {
+        match self {
+            Self::Anthropic => "claude-3-5-sonnet-latest",
+            Self::ChatGpt => "gpt-4o",
+            Self::Cohere => "command-r-plus",
+            Self::Copilot => "gpt-4o",
+            Self::DeepSeek => "deepseek-v4-pro",
+            Self::Gemini => "gemini-1.5-pro",
+            Self::HuggingFace => "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            Self::Mistral => "mistral-large-latest",
+            Self::OpenAi => "gpt-4o",
+            Self::OpenRouter => "openai/gpt-4o",
+            Self::Together => "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            Self::Xai => "grok-2-latest",
+            Self::Custom => "",
+        }
+    }
+
+    pub const fn requires_api_key(self) -> bool {
+        !matches!(self, Self::Custom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub kind: AiProviderKind,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl AiProviderConfig {
+    pub fn new(kind: AiProviderKind) -> Self {
+        let mut provider = Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: ai_provider_kind_label(kind).to_string(),
+            kind,
+            model: kind.default_model().to_string(),
+            base_url: String::new(),
+            api_key_env: String::new(),
+            has_api_key: false,
+            enabled: true,
+        };
+        provider.sanitize();
+        provider
+    }
+
+    pub fn sanitize(&mut self) {
+        self.id = self.id.trim().to_string();
+        if self.id.is_empty() {
+            self.id = uuid::Uuid::new_v4().to_string();
+        }
+        self.name = self.name.trim().to_string();
+        if self.name.is_empty() {
+            self.name = ai_provider_kind_label(self.kind).to_string();
+        }
+        self.model = self.model.trim().to_string();
+        if self.model.is_empty() {
+            self.model = self.kind.default_model().to_string();
+        }
+        self.base_url = self.base_url.trim().trim_end_matches('/').to_string();
+        self.api_key_env = self.api_key_env.trim().to_string();
+    }
+}
+
+pub fn ai_provider_kind_label(kind: AiProviderKind) -> &'static str {
+    match kind {
+        AiProviderKind::Anthropic => "Anthropic",
+        AiProviderKind::ChatGpt => "ChatGPT",
+        AiProviderKind::Cohere => "Cohere",
+        AiProviderKind::Copilot => "Copilot",
+        AiProviderKind::DeepSeek => "DeepSeek",
+        AiProviderKind::Gemini => "Gemini",
+        AiProviderKind::HuggingFace => "Hugging Face",
+        AiProviderKind::Mistral => "Mistral",
+        AiProviderKind::OpenAi => "OpenAI",
+        AiProviderKind::OpenRouter => "OpenRouter",
+        AiProviderKind::Together => "Together AI",
+        AiProviderKind::Xai => "xAI",
+        AiProviderKind::Custom => "Custom",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyBinding {
     #[serde(default)]
@@ -387,6 +520,8 @@ pub struct AppSettings {
     pub local_vault_enabled: bool,
     #[serde(default = "default_local_vault_auto_lock_duration")]
     pub local_vault_auto_lock_duration: LocalVaultAutoLockDuration,
+    #[serde(default)]
+    pub ai_providers: Vec<AiProviderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -413,6 +548,8 @@ pub struct SyncedSettings {
     pub completed_onboarding_version: u32,
     #[serde(default = "default_local_vault_auto_lock_duration")]
     pub local_vault_auto_lock_duration: LocalVaultAutoLockDuration,
+    #[serde(default)]
+    pub ai_providers: Vec<AiProviderConfig>,
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -517,6 +654,7 @@ impl Default for AppSettings {
             completed_onboarding_version: default_completed_onboarding_version(),
             local_vault_enabled: default_local_vault_enabled(),
             local_vault_auto_lock_duration: default_local_vault_auto_lock_duration(),
+            ai_providers: Vec::new(),
         }
     }
 }
@@ -537,6 +675,7 @@ impl AppSettings {
             .clamp(RECENT_CONNECTIONS_COUNT_MIN, RECENT_CONNECTIONS_COUNT_MAX);
         sanitize_sftp_browser_hidden_columns(&mut self.local_sftp_hidden_columns);
         sanitize_sftp_browser_hidden_columns(&mut self.remote_sftp_hidden_columns);
+        sanitize_ai_providers(&mut self.ai_providers);
     }
 
     pub fn effective_font_family(&self) -> &str {
@@ -576,6 +715,8 @@ impl AppSettings {
         self.remote_sftp_hidden_columns = synced.remote_sftp_hidden_columns.clone();
         self.completed_onboarding_version = synced.completed_onboarding_version;
         self.local_vault_auto_lock_duration = synced.local_vault_auto_lock_duration;
+        self.ai_providers = synced.ai_providers.clone();
+        sanitize_ai_providers(&mut self.ai_providers);
     }
 }
 
@@ -594,6 +735,23 @@ impl From<&AppSettings> for SyncedSettings {
             remote_sftp_hidden_columns: settings.remote_sftp_hidden_columns.clone(),
             completed_onboarding_version: settings.completed_onboarding_version,
             local_vault_auto_lock_duration: settings.local_vault_auto_lock_duration,
+            ai_providers: settings.ai_providers.clone(),
+        }
+    }
+}
+
+fn sanitize_ai_providers(providers: &mut Vec<AiProviderConfig>) {
+    for provider in providers.iter_mut() {
+        provider.sanitize();
+    }
+
+    providers.retain(|provider| !provider.id.trim().is_empty());
+    providers.sort_by_cached_key(|provider| provider.name.to_ascii_lowercase());
+
+    let mut seen = std::collections::HashSet::new();
+    for provider in providers.iter_mut() {
+        while !seen.insert(provider.id.clone()) {
+            provider.id = uuid::Uuid::new_v4().to_string();
         }
     }
 }
@@ -636,6 +794,16 @@ mod tests {
             remote_sftp_hidden_columns: vec![2, 3],
             local_vault_enabled: true,
             local_vault_auto_lock_duration: LocalVaultAutoLockDuration::FiveMinutes,
+            ai_providers: vec![AiProviderConfig {
+                id: "provider-1".into(),
+                name: "OpenAI prod".into(),
+                kind: AiProviderKind::OpenAi,
+                model: "gpt-4o".into(),
+                base_url: String::new(),
+                api_key_env: String::new(),
+                has_api_key: true,
+                enabled: true,
+            }],
             ..AppSettings::default()
         };
 
@@ -665,6 +833,37 @@ mod tests {
             local.local_vault_auto_lock_duration,
             LocalVaultAutoLockDuration::FiveMinutes
         );
+        assert_eq!(local.ai_providers.len(), 1);
+        assert_eq!(local.ai_providers[0].name, "OpenAI prod");
+        assert!(local.ai_providers[0].has_api_key);
+    }
+
+    #[test]
+    fn ai_provider_sanitize_fills_required_fields() {
+        let mut settings = AppSettings {
+            ai_providers: vec![AiProviderConfig {
+                id: String::new(),
+                name: String::new(),
+                kind: AiProviderKind::Anthropic,
+                model: String::new(),
+                base_url: " https://api.example.com/ ".into(),
+                api_key_env: " ANTHROPIC_API_KEY ".into(),
+                has_api_key: false,
+                enabled: true,
+            }],
+            ..AppSettings::default()
+        };
+
+        settings.sanitize();
+
+        assert!(!settings.ai_providers[0].id.is_empty());
+        assert_eq!(settings.ai_providers[0].name, "Anthropic");
+        assert_eq!(
+            settings.ai_providers[0].model,
+            AiProviderKind::Anthropic.default_model()
+        );
+        assert_eq!(settings.ai_providers[0].base_url, "https://api.example.com");
+        assert_eq!(settings.ai_providers[0].api_key_env, "ANTHROPIC_API_KEY");
     }
 
     #[test]

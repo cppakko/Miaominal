@@ -1,6 +1,7 @@
 use super::state::{
-    PendingLocalDataResetConfirmState, PendingLocalDataResetConfirmationPopupState,
-    PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
+    PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
+    PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
+    PendingSyncPassphrasePopupState,
 };
 use super::*;
 use crate::ui::i18n;
@@ -91,6 +92,7 @@ impl Render for AppView {
         let pending_sync_passphrase_clear_confirm_popup =
             self.pending_sync_passphrase_clear_confirm_popup();
         let pending_sync_passphrase_popup = self.pending_sync_passphrase_popup();
+        let pending_ai_provider_popup = self.pending_ai_provider_popup();
         let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup();
         let pending_sftp_prompt = self.pending_sftp_prompt();
         let exiting_dialogs = self.active_exiting_dialogs(window);
@@ -328,6 +330,14 @@ impl Render for AppView {
                 this.child(self.render_sync_passphrase_popup(
                     entity.clone(),
                     prompt,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
+            })
+            .when_some(pending_ai_provider_popup, |this, popup| {
+                this.child(self.render_ai_provider_popup(
+                    entity.clone(),
+                    popup,
                     None,
                     bottom_popup_viewport_height,
                 ))
@@ -2226,6 +2236,168 @@ impl AppView {
         )
     }
 
+    fn render_ai_provider_popup(
+        &self,
+        entity: Entity<AppView>,
+        _popup: PendingAiProviderPopupState,
+        exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let kind_select = self.panel_forms.settings.ai_provider_kind_select.clone();
+        let name_input = self.panel_forms.settings.ai_provider_name_input.clone();
+        let model_input = self.panel_forms.settings.ai_provider_model_input.clone();
+        let base_url_input = self.panel_forms.settings.ai_provider_base_url_input.clone();
+        let api_key_input = self.panel_forms.settings.ai_provider_api_key_input.clone();
+        let provider_id = self
+            .panel_forms
+            .settings
+            .editing_ai_provider_id
+            .clone()
+            .unwrap_or_default();
+        let editing_provider_id = self.panel_forms.settings.editing_ai_provider_id.clone();
+        let target = SecretRevealTarget::AiProviderApiKey(provider_id);
+        let reveal_icon = self.secret_reveal_icon(target.clone());
+        let entity_cancel = entity.clone();
+        let entity_submit = entity.clone();
+
+        let popup_body = v_flex()
+            .w_full()
+            .gap_5()
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(field_label(
+                        i18n::string("settings.ai_providers.kind.label"),
+                        true,
+                    ))
+                    .child(
+                        div().w_full().min_w(px(320.0)).child(
+                            md3_select(&kind_select)
+                                .large()
+                                .w_full()
+                                .bg(rgb(roles.surface_container_low)),
+                        ),
+                    ),
+            )
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.name.label"),
+                name_input,
+                TextInputSurface::Low,
+                true,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.model.label"),
+                model_input,
+                TextInputSurface::Low,
+                false,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.base_url.label"),
+                base_url_input,
+                TextInputSurface::Low,
+                false,
+            ))
+            .child(surface_secret_text_input_stack(
+                i18n::string("settings.ai_providers.api_key.label"),
+                api_key_input,
+                crate::ui::components::SecretTextInputStackOptions {
+                    surface: TextInputSurface::Low,
+                    size: gpui_component::Size::Large,
+                    required: true,
+                    disabled: false,
+                    reveal_icon,
+                },
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        let target = target.clone();
+                        entity.update(cx, |this, cx| {
+                            this.toggle_secret_visibility(target, window, cx);
+                        });
+                    }
+                },
+            ))
+            .into_any_element();
+
+        let actions = h_flex()
+            .w_full()
+            .justify_between()
+            .gap_3()
+            .child(if let Some(provider_id) = editing_provider_id {
+                let entity_delete = entity.clone();
+                Button::new("ai-provider-popup-delete")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .text_color(rgb(roles.error))
+                    .label(i18n::string("settings.ai_providers.actions.delete"))
+                    .on_click(move |_, window, cx| {
+                        let provider_id = provider_id.clone();
+                        entity_delete.update(cx, |this, cx| {
+                            this.delete_ai_provider(provider_id, window, cx);
+                        });
+                    })
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            })
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(
+                        Button::new("ai-provider-popup-cancel")
+                            .ghost()
+                            .border_0()
+                            .rounded(px(20.0))
+                            .large()
+                            .text_color(rgb(roles.on_surface_variant))
+                            .label(i18n::string("dialogs.common.cancel"))
+                            .on_click(move |_, window, cx| {
+                                entity_cancel.update(cx, |this, cx| {
+                                    this.close_ai_provider_popup(window, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("ai-provider-popup-submit")
+                            .ghost()
+                            .border_0()
+                            .rounded(px(20.0))
+                            .large()
+                            .text_color(rgb(roles.primary))
+                            .label(i18n::string("settings.ai_providers.actions.save"))
+                            .on_click(move |_, window, cx| {
+                                entity_submit.update(cx, |this, cx| {
+                                    this.submit_ai_provider_save(window, cx);
+                                });
+                            }),
+                    ),
+            )
+            .into_any_element();
+
+        render_bottom_popup(
+            bottom_popup_panel(
+                i18n::string("settings.ai_providers.editor_group.title"),
+                Some(i18n::string(
+                    "settings.ai_providers.editor_group.description",
+                )),
+                Some(popup_body),
+                actions,
+                bottom_popup_viewport_height,
+            ),
+            "ai-provider",
+            exit_progress,
+            move |window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.close_ai_provider_popup(window, cx);
+                });
+            },
+        )
+    }
+
     fn render_sync_passphrase_clear_confirm_popup(
         &self,
         entity: Entity<AppView>,
@@ -2479,6 +2651,12 @@ impl AppView {
                     bottom_popup_viewport_height,
                 ),
             DialogOverlaySnapshot::SyncPassphrasePopup(popup) => self.render_sync_passphrase_popup(
+                entity,
+                popup,
+                Some(exit_progress),
+                bottom_popup_viewport_height,
+            ),
+            DialogOverlaySnapshot::AiProviderPopup(popup) => self.render_ai_provider_popup(
                 entity,
                 popup,
                 Some(exit_progress),

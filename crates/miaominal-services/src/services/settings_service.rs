@@ -108,6 +108,7 @@ impl SettingsService {
         passphrase: &str,
         session_ids: Vec<String>,
         managed_key_ids: Vec<String>,
+        ai_provider_ids: Vec<String>,
         source_secrets: SecretStore,
         source_sync_engine: SyncEngine,
     ) -> Result<(SecretStore, SyncEngine)> {
@@ -117,6 +118,7 @@ impl SettingsService {
         let copy_result = Self::copy_secrets_between_backends(
             &session_ids,
             &managed_key_ids,
+            &ai_provider_ids,
             &source_secrets,
             &source_sync_engine,
             &vault_secrets,
@@ -214,6 +216,7 @@ impl SettingsService {
         previous_sync_engine: &SyncEngine,
         session_ids: &[String],
         managed_key_ids: &[String],
+        ai_provider_ids: &[String],
     ) -> Result<LocalVaultTransition> {
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
@@ -221,6 +224,7 @@ impl SettingsService {
         Self::copy_secrets_between_backends(
             session_ids,
             managed_key_ids,
+            ai_provider_ids,
             previous_secrets,
             previous_sync_engine,
             &keyring_secrets,
@@ -246,12 +250,14 @@ impl SettingsService {
     pub fn delete_migrated_keyring_secrets(
         session_ids: &[String],
         managed_key_ids: &[String],
+        ai_provider_ids: &[String],
         source_secrets: &SecretStore,
         source_sync_engine: &SyncEngine,
     ) {
         credential_migration::delete_keyring_secrets(
             session_ids.iter().map(String::as_str),
             managed_key_ids.iter().map(String::as_str),
+            ai_provider_ids,
             source_secrets,
             &source_sync_engine.config_store,
         );
@@ -261,7 +267,11 @@ impl SettingsService {
         VaultCredentialBackend::erase_default_store_file()
     }
 
-    pub fn reset_local_data(session_ids: &[String], managed_key_ids: &[String]) -> Result<()> {
+    pub fn reset_local_data(
+        session_ids: &[String],
+        managed_key_ids: &[String],
+        ai_provider_ids: &[String],
+    ) -> Result<()> {
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
         let config_dir = paths::project_dirs()?.config_dir().to_path_buf();
@@ -272,12 +282,14 @@ impl SettingsService {
             &keyring_sync_engine,
             session_ids,
             managed_key_ids,
+            ai_provider_ids,
         )
     }
 
     fn copy_secrets_between_backends(
         session_ids: &[String],
         managed_key_ids: &[String],
+        ai_provider_ids: &[String],
         source_secrets: &SecretStore,
         source_sync_engine: &SyncEngine,
         target_secrets: &SecretStore,
@@ -286,6 +298,7 @@ impl SettingsService {
         credential_migration::copy_secrets_between_backends(
             session_ids.iter().map(String::as_str),
             managed_key_ids.iter().map(String::as_str),
+            ai_provider_ids,
             source_secrets,
             &source_sync_engine.config_store,
             target_secrets,
@@ -317,10 +330,12 @@ impl SettingsService {
         keyring_sync_engine: &SyncEngine,
         session_ids: &[String],
         managed_key_ids: &[String],
+        ai_provider_ids: &[String],
     ) -> Result<()> {
         Self::delete_migrated_keyring_secrets(
             session_ids,
             managed_key_ids,
+            ai_provider_ids,
             keyring_secrets,
             keyring_sync_engine,
         );
@@ -570,6 +585,9 @@ mod tests {
                 "private-key",
             )
             .expect("managed key should save");
+        keyring_secrets
+            .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .expect("AI provider key should save");
         keyring_sync_engine
             .config_store
             .set_github_token("gh-token")
@@ -589,6 +607,7 @@ mod tests {
             &keyring_sync_engine,
             &["session-1".to_string()],
             &["managed-key-1".to_string()],
+            &["provider-1".to_string()],
         )
         .expect("local data reset should succeed");
 
@@ -609,6 +628,12 @@ mod tests {
             keyring_secrets
                 .get("managed-key-1", SecretKind::ManagedPrivateKey)
                 .expect("managed key should be readable after reset"),
+            None
+        );
+        assert_eq!(
+            keyring_secrets
+                .get("provider-1", SecretKind::AiProviderApiKey)
+                .expect("AI provider key should be readable after reset"),
             None
         );
         assert_eq!(

@@ -4778,6 +4778,7 @@ dependencies = [
  "serde",
  "sys-locale",
  "toml 0.8.23",
+ "uuid",
 ]
 
 [[package]]

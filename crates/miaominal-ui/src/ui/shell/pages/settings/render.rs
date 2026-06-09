@@ -34,6 +34,7 @@ fn setting_pages(entity: Entity<AppView>) -> Vec<SettingPage> {
         appearance_page(entity.clone()),
         connections_page(entity.clone()),
         key_bindings_page(entity.clone()),
+        ai_providers_page(entity.clone()),
         sync_page(entity.clone()),
         vault_page(entity.clone()),
         about_page(entity),
@@ -971,6 +972,104 @@ fn theme_swatch(label_key: &'static str, color: u32) -> impl IntoElement {
                 .text_color(rgb(roles.on_surface_variant))
                 .child(i18n::string(label_key)),
         )
+}
+
+fn ai_providers_page(entity: Entity<AppView>) -> SettingPage {
+    SettingPage::new(i18n::string("settings.pages.ai_providers.title"))
+        .description(i18n::string("settings.pages.ai_providers.description"))
+        .resettable(false)
+        .groups(vec![
+            SettingGroup::new()
+                .title(i18n::string("settings.ai_providers.providers_group.title"))
+                .description(i18n::string(
+                    "settings.ai_providers.providers_group.description",
+                ))
+                .item(
+                    SettingItem::new(
+                        i18n::string("settings.ai_providers.saved.label"),
+                        SettingField::render({
+                            let entity = entity.clone();
+                            move |options, _, cx| {
+                                render_ai_provider_selector(entity.clone(), options.size, cx)
+                            }
+                        }),
+                    )
+                    .layout(Axis::Vertical)
+                    .description(i18n::string("settings.ai_providers.saved.description")),
+                ),
+        ])
+}
+
+fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) -> AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let select = entity
+        .read(cx)
+        .panel_forms
+        .settings
+        .ai_provider_select
+        .clone();
+    let selected_provider_id = entity.read(cx).selected_ai_provider_id(cx);
+    let entity_new = entity.clone();
+    let entity_edit = entity.clone();
+
+    v_flex()
+        .w_full()
+        .gap_3()
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(260.0))
+                        .child(md3_select(&select).with_size(size).w_full()),
+                )
+                .child(icon_button(
+                    AppIcon::Plus,
+                    34.0,
+                    12.0,
+                    None,
+                    None,
+                    Some(roles.outline_variant),
+                    move |window, cx| {
+                        entity_new.update(cx, |this, cx| {
+                            this.start_new_ai_provider(window, cx);
+                        });
+                    },
+                ))
+                .child(if selected_provider_id.is_some() {
+                    icon_button(
+                        AppIcon::Edit,
+                        34.0,
+                        12.0,
+                        None,
+                        None,
+                        Some(roles.outline_variant),
+                        move |window, cx| {
+                            entity_edit.update(cx, |this, cx| {
+                                this.open_selected_ai_provider_popup(window, cx);
+                            });
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    div()
+                        .size(px(34.0))
+                        .rounded(px(12.0))
+                        .bg(rgb(roles.surface_container_low))
+                        .border_color(rgb(roles.outline_variant))
+                        .opacity(0.45)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(Icon::new(AppIcon::Edit).small())
+                        .into_any_element()
+                }),
+        )
+        .into_any_element()
 }
 
 fn key_bindings_page(entity: Entity<AppView>) -> SettingPage {

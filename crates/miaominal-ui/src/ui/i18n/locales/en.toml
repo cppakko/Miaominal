@@ -10,6 +10,10 @@ description = "Behavior settings for the Hosts page and connection history."
 title = "Key Bindings"
 description = "Customize shortcuts for workspace navigation and terminal actions. Click Change, then press a key combo (requires Ctrl or Alt)."
 
+[settings.pages.ai_providers]
+title = "AI Providers"
+description = "Configure Rig-backed model providers for the agent tool layer. API keys are stored in the OS keychain by default, or in the local vault when enabled."
+
 [settings.pages.sync]
 title = "Sync"
 description = "Sync your sessions, snippets, managed keys, and non-appearance settings such as shortcuts and connection preferences across devices via GitHub Gist or WebDAV. Passwords and private keys are encrypted with your passphrase before upload."
@@ -264,6 +268,73 @@ description = "Split the active pane downward."
 [settings.key_bindings.slots.close_pane]
 label = "Close pane"
 description = "Close the active terminal pane."
+
+[settings.ai_providers.providers_group]
+title = "Configured providers"
+description = "Rig provider entries available to future agent orchestration."
+
+[settings.ai_providers.saved]
+label = "Providers"
+description = "Select a provider to edit it. Delete removes its saved API key as well."
+
+[settings.ai_providers.editor_group]
+title = "Provider editor"
+description = "Add or update the provider metadata used by the agent runtime."
+
+[settings.ai_providers.kind]
+label = "Provider"
+
+[settings.ai_providers.name]
+label = "Display name"
+
+[settings.ai_providers.model]
+label = "Default model"
+
+[settings.ai_providers.base_url]
+label = "Base URL"
+
+[settings.ai_providers.api_key]
+label = "API key"
+
+[settings.ai_providers.actions]
+new = "New"
+save = "Save provider"
+edit = "Edit"
+delete = "Delete"
+
+[settings.ai_providers.kinds]
+anthropic = "Anthropic"
+chat_gpt = "ChatGPT"
+cohere = "Cohere"
+copilot = "Copilot"
+deepseek = "DeepSeek"
+gemini = "Gemini"
+hugging_face = "Hugging Face"
+mistral = "Mistral"
+open_ai = "OpenAI"
+open_router = "OpenRouter"
+together = "Together AI"
+xai = "xAI"
+custom = "Custom"
+
+[settings.ai_providers.placeholders]
+name = "Provider name"
+model = "Default model"
+base_url = "https://api.example.com/v1"
+api_key = "API key"
+
+[settings.ai_providers.status]
+kind_selected = "Provider kind: {kind}"
+
+[settings.ai_providers.notifications]
+saved_title = "AI provider saved"
+saved_message = "Saved AI provider."
+deleted_title = "AI provider deleted"
+deleted_message = "Deleted AI provider and cleared its saved API key."
+
+[settings.ai_providers.validation]
+name_required = "Display name is required."
+api_key_required = "API key is required."
 
 [settings.values]
 off = "Off"

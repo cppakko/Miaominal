@@ -306,6 +306,9 @@ pub(in crate::ui::shell) struct PendingSyncPassphraseClearConfirmPopupState;
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingSyncPassphrasePopupState;
 
+#[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct PendingAiProviderPopupState;
+
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     HostKey(HostKeyPrompt),
@@ -322,6 +325,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     LocalDataResetConfirmationPopup(PendingLocalDataResetConfirmationPopupState),
     SyncPassphraseClearConfirmPopup(PendingSyncPassphraseClearConfirmPopupState),
     SyncPassphrasePopup(PendingSyncPassphrasePopupState),
+    AiProviderPopup(PendingAiProviderPopupState),
     LocalVaultPassphrasePopup(LocalVaultPassphrasePopupMode),
     SftpPrompt {
         tab_id: usize,
@@ -346,6 +350,7 @@ impl DialogOverlaySnapshot {
             Self::LocalDataResetConfirmationPopup(_) => "local-data-reset-confirmation".to_string(),
             Self::SyncPassphraseClearConfirmPopup(_) => "sync-passphrase-clear-confirm".to_string(),
             Self::SyncPassphrasePopup(_) => "sync-passphrase".to_string(),
+            Self::AiProviderPopup(_) => "ai-provider".to_string(),
             Self::LocalVaultPassphrasePopup(_) => "local-vault-passphrase".to_string(),
             Self::SftpPrompt { tab_id, .. } => format!("sftp-prompt-{tab_id}"),
         }
@@ -869,10 +874,11 @@ pub(in crate::ui::shell) struct SecretVisibilityState {
     sync_passphrase_confirmation: bool,
     local_vault_passphrase: bool,
     local_vault_passphrase_confirmation: bool,
+    ai_provider_api_keys: std::collections::HashSet<String>,
 }
 
 impl SecretVisibilityState {
-    pub(in crate::ui::shell) fn is_visible(&self, target: SecretRevealTarget) -> bool {
+    pub(in crate::ui::shell) fn is_visible(&self, target: &SecretRevealTarget) -> bool {
         match target {
             SecretRevealTarget::SyncGithubToken => self.sync_github_token,
             SecretRevealTarget::SyncWebdavPassword => self.sync_webdav_password,
@@ -882,6 +888,9 @@ impl SecretVisibilityState {
             SecretRevealTarget::LocalVaultPassphrase => self.local_vault_passphrase,
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
                 self.local_vault_passphrase_confirmation
+            }
+            SecretRevealTarget::AiProviderApiKey(provider_id) => {
+                self.ai_provider_api_keys.contains(provider_id)
             }
         }
     }
@@ -899,7 +908,18 @@ impl SecretVisibilityState {
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
                 self.local_vault_passphrase_confirmation = visible;
             }
+            SecretRevealTarget::AiProviderApiKey(provider_id) => {
+                if visible {
+                    self.ai_provider_api_keys.insert(provider_id);
+                } else {
+                    self.ai_provider_api_keys.remove(&provider_id);
+                }
+            }
         }
+    }
+
+    pub(in crate::ui::shell) fn clear_ai_provider_visibility(&mut self) {
+        self.ai_provider_api_keys.clear();
     }
 }
 

@@ -95,6 +95,12 @@ impl SecretStore {
         }
     }
 
+    pub fn delete_ai_provider_api_key(&self, provider_id: &str) {
+        if let Err(error) = self.delete(provider_id, SecretKind::AiProviderApiKey) {
+            log::warn!("{error:?}");
+        }
+    }
+
     pub fn is_locked_error(error: &anyhow::Error) -> bool {
         error
             .chain()
