@@ -119,6 +119,7 @@ pub(crate) fn surface_secret_text_input(
     surface: TextInputSurface,
     size: impl Into<Size>,
     disabled: bool,
+    trailing: Option<AnyElement>,
     reveal_icon: AppIcon,
     on_toggle: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -135,11 +136,13 @@ pub(crate) fn surface_secret_text_input(
                     .disabled(disabled),
             ),
         )
-        .child(div().flex_shrink_0().child(render_secret_toggle_button(
-            reveal_icon,
-            disabled,
-            on_toggle,
-        )))
+        .child(
+            div().flex_shrink_0().child(
+                trailing.unwrap_or_else(|| {
+                    render_secret_toggle_button(reveal_icon, disabled, on_toggle)
+                }),
+            ),
+        )
 }
 
 pub(crate) struct SecretTextInputStackOptions {
@@ -147,6 +150,7 @@ pub(crate) struct SecretTextInputStackOptions {
     pub size: Size,
     pub required: bool,
     pub disabled: bool,
+    pub trailing: Option<AnyElement>,
     pub reveal_icon: AppIcon,
 }
 
@@ -164,6 +168,7 @@ pub(crate) fn surface_secret_text_input_stack(
             options.surface,
             options.size,
             options.disabled,
+            options.trailing,
             options.reveal_icon,
             on_toggle,
         ),

@@ -335,6 +335,7 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
     SaveSyncGithubToken(String),
     SaveSyncWebdavPassword(String),
     SaveSyncPassphrase(String),
+    OpenAiProvider(String),
     SaveAiProvider(AiProviderSaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),
