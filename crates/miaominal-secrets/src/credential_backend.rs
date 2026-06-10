@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const APP_CREDENTIAL_SERVICE: &str = "dev.akko.miaominal";
 
@@ -53,9 +53,14 @@ pub struct CredentialStore {
 
 impl CredentialStore {
     pub fn new_keyring(service: impl Into<Arc<str>>) -> Self {
+        #[cfg(target_os = "macos")]
+        let backend: Arc<dyn CredentialBackend> = Arc::new(BlobKeyringCredentialBackend);
+        #[cfg(not(target_os = "macos"))]
+        let backend: Arc<dyn CredentialBackend> = Arc::new(KeyringCredentialBackend);
+
         Self {
             service: service.into(),
-            backend: Arc::new(KeyringCredentialBackend),
+            backend,
         }
     }
 
@@ -100,10 +105,10 @@ impl std::fmt::Debug for CredentialStore {
 }
 
 #[derive(Debug, Default)]
-pub struct KeyringCredentialBackend;
+pub struct LockedCredentialBackend;
 
 #[derive(Debug, Default)]
-pub struct LockedCredentialBackend;
+pub struct KeyringCredentialBackend;
 
 impl KeyringCredentialBackend {
     fn entry(service: &str, account: &str) -> Result<Entry> {
@@ -140,6 +145,145 @@ impl CredentialBackend for KeyringCredentialBackend {
                 format!("failed to delete keyring secret for {service}/{account}")
             }),
         }
+    }
+}
+
+// Process-wide lock to serialise read-modify-write operations on any blob entry.
+// All CredentialStore instances share this lock regardless of which service they use.
+fn blob_io_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+const BLOB_ACCOUNT: &str = "__blob__";
+
+#[derive(Debug, Default)]
+pub struct BlobKeyringCredentialBackend;
+
+impl BlobKeyringCredentialBackend {
+    fn load_blob(service: &str) -> Result<BTreeMap<String, String>> {
+        let entry = Entry::new(service, BLOB_ACCOUNT)
+            .with_context(|| format!("failed to access keyring blob for {service}"))?;
+        match entry.get_password() {
+            Ok(json) => serde_json::from_str(&json).context("failed to parse keyring blob"),
+            Err(keyring::Error::NoEntry) => Ok(BTreeMap::new()),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to read keyring blob for {service}"))
+            }
+        }
+    }
+
+    fn save_blob(service: &str, blob: &BTreeMap<String, String>) -> Result<()> {
+        let entry = Entry::new(service, BLOB_ACCOUNT)
+            .with_context(|| format!("failed to access keyring blob for {service}"))?;
+        let json = serde_json::to_string(blob).context("failed to serialize keyring blob")?;
+        entry
+            .set_password(&json)
+            .with_context(|| format!("failed to write keyring blob for {service}"))
+    }
+
+    fn load_legacy(service: &str, account: &str) -> Result<Option<String>> {
+        match Entry::new(service, account).and_then(|e| e.get_password()) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error).with_context(|| {
+                format!("failed to read legacy keyring entry {service}/{account}")
+            }),
+        }
+    }
+
+    fn delete_legacy(service: &str, account: &str) -> Result<()> {
+        let entry = Entry::new(service, account).with_context(|| {
+            format!("failed to access legacy keyring entry {service}/{account}")
+        })?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error).with_context(|| {
+                format!("failed to delete legacy keyring entry {service}/{account}")
+            }),
+        }
+    }
+
+    fn cleanup_legacy(service: &str, account: &str) {
+        if let Err(error) = Self::delete_legacy(service, account) {
+            log::warn!("{error:?}");
+        }
+    }
+}
+
+impl CredentialBackend for BlobKeyringCredentialBackend {
+    fn name(&self) -> &'static str {
+        "keyring-blob"
+    }
+
+    fn get(&self, service: &str, account: &str) -> Result<Option<String>> {
+        let _lock = blob_io_lock()
+            .lock()
+            .map_err(|_| anyhow!("keyring blob lock poisoned"))?;
+        let mut blob = Self::load_blob(service)?;
+        if let Some(value) = blob.get(account) {
+            return Ok(Some(value.clone()));
+        }
+        // Lazy migration from legacy individual keychain entry.
+        if let Some(secret) = Self::load_legacy(service, account)? {
+            blob.insert(account.to_string(), secret.clone());
+            Self::save_blob(service, &blob)?;
+            Self::cleanup_legacy(service, account);
+            return Ok(Some(secret));
+        }
+        Ok(None)
+    }
+
+    fn get_many(&self, service: &str, accounts: &[&str]) -> Result<Vec<Option<String>>> {
+        let _lock = blob_io_lock()
+            .lock()
+            .map_err(|_| anyhow!("keyring blob lock poisoned"))?;
+        let mut blob = Self::load_blob(service)?;
+        let mut dirty = false;
+        let mut results = Vec::with_capacity(accounts.len());
+        for account in accounts {
+            if let Some(value) = blob.get(*account) {
+                results.push(Some(value.clone()));
+                continue;
+            }
+            if let Some(secret) = Self::load_legacy(service, account)? {
+                dirty = true;
+                blob.insert((*account).to_string(), secret.clone());
+                results.push(Some(secret));
+            } else {
+                results.push(None);
+            }
+        }
+        if dirty {
+            Self::save_blob(service, &blob)?;
+            for account in accounts {
+                if blob.contains_key(*account) {
+                    Self::cleanup_legacy(service, account);
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    fn set(&self, service: &str, account: &str, value: &str) -> Result<()> {
+        let _lock = blob_io_lock()
+            .lock()
+            .map_err(|_| anyhow!("keyring blob lock poisoned"))?;
+        let mut blob = Self::load_blob(service)?;
+        blob.insert(account.to_string(), value.to_string());
+        Self::save_blob(service, &blob)
+    }
+
+    fn delete(&self, service: &str, account: &str) -> Result<()> {
+        let _lock = blob_io_lock()
+            .lock()
+            .map_err(|_| anyhow!("keyring blob lock poisoned"))?;
+        let mut blob = Self::load_blob(service)?;
+        if blob.remove(account).is_some() {
+            Self::save_blob(service, &blob)?;
+        }
+        // Also clean up any legacy individual entry.
+        Self::delete_legacy(service, account)
     }
 }
 
