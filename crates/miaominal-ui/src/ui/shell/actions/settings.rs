@@ -1535,33 +1535,33 @@ impl AppView {
         let provider_id = task_result.provider.id.clone();
         let changed = self.upsert_ai_provider(task_result.provider);
 
+        self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
         if changed {
-            self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
             self.refresh_ai_provider_select(Some(&provider_id), window, cx);
-            set_input_value(
-                &self.panel_forms.settings.ai_provider_api_key_input,
-                "",
-                window,
-                cx,
-            );
-            self.set_secret_visibility(
-                SecretRevealTarget::AiProviderApiKey(provider_id),
-                false,
-                false,
-                window,
-                cx,
-            );
-            let message = i18n::string("settings.ai_providers.notifications.saved_message");
-            self.status_message = message.clone();
-            window.push_notification(
-                Self::success_notification(
-                    i18n::string("settings.ai_providers.notifications.saved_title"),
-                    message,
-                ),
-                cx,
-            );
-            self.dismiss_ai_provider_popup(cx);
         }
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_api_key_input,
+            "",
+            window,
+            cx,
+        );
+        self.set_secret_visibility(
+            SecretRevealTarget::AiProviderApiKey(provider_id),
+            false,
+            false,
+            window,
+            cx,
+        );
+        let message = i18n::string("settings.ai_providers.notifications.saved_message");
+        self.status_message = message.clone();
+        window.push_notification(
+            Self::success_notification(
+                i18n::string("settings.ai_providers.notifications.saved_title"),
+                message,
+            ),
+            cx,
+        );
+        self.dismiss_ai_provider_popup(cx);
         cx.notify();
     }
 
@@ -1600,14 +1600,13 @@ impl AppView {
         match result {
             Ok(task_result) => {
                 let provider_id = task_result.provider.id.clone();
-                if self.upsert_ai_provider(task_result.provider) {
-                    self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
-                    self.secret_visibility
-                        .set_visible(SecretRevealTarget::AiProviderApiKey(provider_id), false);
-                    self.status_message =
-                        i18n::string("settings.ai_providers.notifications.saved_message");
-                    self.dismiss_ai_provider_popup(cx);
-                }
+                self.upsert_ai_provider(task_result.provider);
+                self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
+                self.secret_visibility
+                    .set_visible(SecretRevealTarget::AiProviderApiKey(provider_id), false);
+                self.status_message =
+                    i18n::string("settings.ai_providers.notifications.saved_message");
+                self.dismiss_ai_provider_popup(cx);
             }
             Err(error) => {
                 self.status_message = i18n::string_args(
