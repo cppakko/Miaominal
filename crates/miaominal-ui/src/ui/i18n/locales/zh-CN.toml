@@ -1448,5 +1448,5 @@ name_required = "请填写显示名称。"
 api_key_required = "请填写 API key。"
 
 [settings.pages.ai_providers]
-title = "AI Providers"
+title = "AI提供商"
 description = "Configure Rig-backed model providers for the agent tool layer. API keys are stored in the OS keychain by default, or in the local vault when enabled."
