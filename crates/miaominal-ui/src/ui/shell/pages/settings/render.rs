@@ -1842,6 +1842,7 @@ fn sync_gist_group(entity: Entity<AppView>) -> SettingGroup {
                                 TextInputSurface::Highest,
                                 options.size,
                                 save_in_progress,
+                                None,
                                 reveal_icon,
                                 {
                                     let entity = entity.clone();
@@ -2093,6 +2094,7 @@ fn sync_webdav_group(entity: Entity<AppView>) -> SettingGroup {
                                 TextInputSurface::Highest,
                                 options.size,
                                 save_in_progress,
+                                None,
                                 reveal_icon,
                                 {
                                     let entity = entity.clone();

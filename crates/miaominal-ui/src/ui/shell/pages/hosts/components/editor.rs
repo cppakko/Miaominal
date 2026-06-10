@@ -357,6 +357,7 @@ impl AppView {
                             size: Size::Large,
                             required: false,
                             disabled: false,
+                            trailing: None,
                             reveal_icon: self.secret_reveal_icon(SecretRevealTarget::HostPassword),
                         },
                         {

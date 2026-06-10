@@ -1451,6 +1451,7 @@ impl AppView {
             local_vault_disable_in_progress: false,
             local_data_reset_in_progress: false,
             ai_provider_save_in_progress: false,
+            ai_provider_api_key_load_in_progress: None,
             local_vault_session_passphrase: None,
             local_vault_auto_lock_task: None,
             sync: SyncUiState {

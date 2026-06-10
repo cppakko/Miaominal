@@ -143,6 +143,11 @@ struct AiProviderSaveTaskResult {
     provider: AiProviderConfig,
 }
 
+struct AiProviderApiKeyLoadTaskResult {
+    provider_id: String,
+    api_key: Result<Option<String>>,
+}
+
 impl SyncPassphraseTaskRequest {
     fn operation(&self) -> SyncPassphraseOperation {
         match self {
@@ -1009,6 +1014,13 @@ impl AppView {
         self.ai_provider_save_in_progress
     }
 
+    pub(in crate::ui::shell) fn ai_provider_api_key_load_in_progress_for(
+        &self,
+        provider_id: &str,
+    ) -> bool {
+        self.ai_provider_api_key_load_in_progress.as_deref() == Some(provider_id)
+    }
+
     pub(in crate::ui::shell) fn sync_github_token_save_in_progress(&self) -> bool {
         self.sync.sync_secret_save_operation == Some(SyncSecretSaveOperation::GithubToken)
     }
@@ -1196,6 +1208,15 @@ impl AppView {
             return;
         };
 
+        if self.local_vault_status == LocalVaultStatus::Locked && provider.has_api_key {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::OpenAiProvider(provider.id),
+                window,
+                cx,
+            );
+            return;
+        }
+
         self.panel_forms.settings.editing_ai_provider_id = Some(provider.id.clone());
         self.panel_forms
             .settings
@@ -1205,19 +1226,19 @@ impl AppView {
             });
         set_input_value(
             &self.panel_forms.settings.ai_provider_name_input,
-            provider.name,
+            provider.name.clone(),
             window,
             cx,
         );
         set_input_value(
             &self.panel_forms.settings.ai_provider_model_input,
-            provider.model,
+            provider.model.clone(),
             window,
             cx,
         );
         set_input_value(
             &self.panel_forms.settings.ai_provider_base_url_input,
-            provider.base_url,
+            provider.base_url.clone(),
             window,
             cx,
         );
@@ -1228,14 +1249,172 @@ impl AppView {
             cx,
         );
         self.set_secret_visibility(
-            SecretRevealTarget::AiProviderApiKey(provider.id),
+            SecretRevealTarget::AiProviderApiKey(provider.id.clone()),
             false,
             false,
             window,
             cx,
         );
         self.open_ai_provider_popup(window, cx);
+        if provider.has_api_key {
+            self.spawn_ai_provider_api_key_load(provider.id.clone(), cx);
+        } else {
+            self.ai_provider_api_key_load_in_progress = None;
+        }
         cx.notify();
+    }
+
+    fn spawn_ai_provider_api_key_load(&mut self, provider_id: String, cx: &mut Context<Self>) {
+        let notification_window = cx.active_window();
+        let secrets = self.services.secrets.clone();
+        let provider_id_for_worker = provider_id.clone();
+        let provider_id_for_cancel = provider_id.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+
+        self.ai_provider_api_key_load_in_progress = Some(provider_id.clone());
+        cx.notify();
+
+        let spawn_result = std::thread::Builder::new()
+            .name("ai-provider-api-key-load".to_string())
+            .spawn(move || {
+                let result = AiProviderApiKeyLoadTaskResult {
+                    api_key: secrets.get(&provider_id_for_worker, SecretKind::AiProviderApiKey),
+                    provider_id: provider_id_for_worker,
+                };
+                tx.send(result).ok();
+            });
+
+        if let Err(error) = spawn_result {
+            self.finish_ai_provider_api_key_load(
+                AiProviderApiKeyLoadTaskResult {
+                    provider_id,
+                    api_key: Err(
+                        anyhow::anyhow!(error).context("failed to spawn AI provider key loader")
+                    ),
+                },
+                cx,
+            );
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    rx.recv()
+                        .unwrap_or_else(|_| AiProviderApiKeyLoadTaskResult {
+                            provider_id: provider_id_for_cancel,
+                            api_key: Err(anyhow::anyhow!("AI provider key load task cancelled")),
+                        })
+                })
+                .await;
+
+            if let Some(window_handle) = notification_window {
+                let result = std::rc::Rc::new(std::cell::RefCell::new(Some(result)));
+                let result_for_window = result.clone();
+                let this_for_window = this.clone();
+                let update_result = window_handle.update(cx, move |_, window, cx| {
+                    let Some(result) = result_for_window.borrow_mut().take() else {
+                        return;
+                    };
+
+                    if let Err(error) = this_for_window.update(cx, move |this, cx| {
+                        this.finish_ai_provider_api_key_load_in_window(result, window, cx);
+                    }) {
+                        log::debug!(
+                            "failed to apply AI provider key load result in window: {error:?}"
+                        );
+                    }
+                });
+
+                if let Err(error) = update_result {
+                    log::debug!(
+                        "failed to access active window for AI provider key load: {error:?}"
+                    );
+                    if let Some(result) = result.borrow_mut().take()
+                        && let Err(error) = this.update(cx, move |this, cx| {
+                            this.finish_ai_provider_api_key_load(result, cx);
+                        })
+                    {
+                        log::debug!(
+                            "failed to apply AI provider key load result without window: {error:?}"
+                        );
+                    }
+                }
+            } else if let Err(error) = this.update(cx, move |this, cx| {
+                this.finish_ai_provider_api_key_load(result, cx);
+            }) {
+                log::debug!(
+                    "failed to apply AI provider key load result without active window: {error:?}"
+                );
+            }
+        })
+        .detach();
+    }
+
+    fn finish_ai_provider_api_key_load_in_window(
+        &mut self,
+        result: AiProviderApiKeyLoadTaskResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let provider_id = result.provider_id;
+        if !self.ai_provider_api_key_load_matches_current_editor(&provider_id) {
+            return;
+        }
+
+        self.ai_provider_api_key_load_in_progress = None;
+        match result.api_key {
+            Ok(Some(api_key)) => {
+                set_input_value(
+                    &self.panel_forms.settings.ai_provider_api_key_input,
+                    api_key,
+                    window,
+                    cx,
+                );
+            }
+            Ok(None) => {
+                set_input_value(
+                    &self.panel_forms.settings.ai_provider_api_key_input,
+                    "",
+                    window,
+                    cx,
+                );
+            }
+            Err(error) => {
+                set_input_value(
+                    &self.panel_forms.settings.ai_provider_api_key_input,
+                    "",
+                    window,
+                    cx,
+                );
+                self.notify_secret_reveal_failed(window, &error, cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn finish_ai_provider_api_key_load(
+        &mut self,
+        result: AiProviderApiKeyLoadTaskResult,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.ai_provider_api_key_load_matches_current_editor(&result.provider_id) {
+            return;
+        }
+
+        self.ai_provider_api_key_load_in_progress = None;
+        if let Err(error) = result.api_key {
+            self.status_message = error.to_string();
+        }
+        cx.notify();
+    }
+
+    fn ai_provider_api_key_load_matches_current_editor(&self, provider_id: &str) -> bool {
+        self.ai_provider_popup.is_some()
+            && self.panel_forms.settings.editing_ai_provider_id.as_deref() == Some(provider_id)
+            && self.ai_provider_api_key_load_in_progress.as_deref() == Some(provider_id)
     }
 
     pub(in crate::ui::shell) fn submit_ai_provider_save(
@@ -1641,6 +1820,9 @@ impl AppView {
             }
             PendingLocalVaultUnlockAction::SaveSyncPassphrase(passphrase) => {
                 self.continue_save_sync_passphrase_after_unlock(passphrase, window, cx);
+            }
+            PendingLocalVaultUnlockAction::OpenAiProvider(provider_id) => {
+                self.edit_ai_provider(provider_id, window, cx);
             }
             PendingLocalVaultUnlockAction::SaveAiProvider(draft) => {
                 self.continue_save_ai_provider_after_unlock(draft, window, cx);

@@ -1960,6 +1960,7 @@ impl AppView {
                     size: gpui_component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
+                    trailing: None,
                     reveal_icon: self.secret_reveal_icon(SecretRevealTarget::LocalVaultPassphrase),
                 },
                 {
@@ -1984,6 +1985,7 @@ impl AppView {
                         size: gpui_component::Size::Large,
                         required: true,
                         disabled: operation_in_progress,
+                        trailing: None,
                         reveal_icon: self.secret_reveal_icon(
                             SecretRevealTarget::LocalVaultPassphraseConfirmation,
                         ),
@@ -2130,6 +2132,7 @@ impl AppView {
                     size: gpui_component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
+                    trailing: None,
                     reveal_icon: self.secret_reveal_icon(SecretRevealTarget::SyncPassphrase),
                 },
                 {
@@ -2153,6 +2156,7 @@ impl AppView {
                     size: gpui_component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
+                    trailing: None,
                     reveal_icon: self
                         .secret_reveal_icon(SecretRevealTarget::SyncPassphraseConfirmation),
                 },
@@ -2257,6 +2261,8 @@ impl AppView {
             .unwrap_or_default();
         let editing_provider_id = self.panel_forms.settings.editing_ai_provider_id.clone();
         let save_in_progress = self.ai_provider_save_in_progress();
+        let api_key_load_in_progress = self.ai_provider_api_key_load_in_progress_for(&provider_id);
+        let operation_in_progress = save_in_progress || api_key_load_in_progress;
         let target = SecretRevealTarget::AiProviderApiKey(provider_id);
         let reveal_icon = self.secret_reveal_icon(target.clone());
         let entity_cancel = entity.clone();
@@ -2307,7 +2313,19 @@ impl AppView {
                     surface: TextInputSurface::Low,
                     size: gpui_component::Size::Large,
                     required: true,
-                    disabled: save_in_progress,
+                    disabled: operation_in_progress,
+                    trailing: api_key_load_in_progress.then(|| {
+                        div()
+                            .id("ai-provider-api-key-load-spinner")
+                            .size(px(30.0))
+                            .rounded(px(10.0))
+                            .bg(rgb(roles.surface_container_highest))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::ui::components::md3_spinner(16.0))
+                            .into_any_element()
+                    }),
                     reveal_icon,
                 },
                 {
@@ -2333,7 +2351,7 @@ impl AppView {
                     .border_0()
                     .rounded(px(20.0))
                     .large()
-                    .disabled(save_in_progress)
+                    .disabled(operation_in_progress)
                     .text_color(rgb(roles.error))
                     .label(i18n::string("settings.ai_providers.actions.delete"))
                     .on_click(move |_, window, cx| {
@@ -2380,6 +2398,7 @@ impl AppView {
                             .border_0()
                             .rounded(px(20.0))
                             .large()
+                            .disabled(operation_in_progress)
                             .text_color(rgb(roles.primary))
                             .label(i18n::string("settings.ai_providers.actions.save"))
                             .on_click(move |_, window, cx| {
