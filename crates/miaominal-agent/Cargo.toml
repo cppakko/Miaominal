@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-ssh = { path = "../miaominal-ssh" }

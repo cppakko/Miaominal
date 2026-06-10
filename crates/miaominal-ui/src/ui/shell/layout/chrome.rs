@@ -1278,7 +1278,7 @@ impl AppView {
             )
         });
         let monitor_toggle_entity = entity.clone();
-        let snippets_toggle_entity = entity.clone();
+        let agent_toggle_entity = entity.clone();
 
         div()
             .h(px(STATUS_BAR_HEIGHT))
@@ -1362,22 +1362,22 @@ impl AppView {
                     })
                     .when(panel_session.is_some(), |this| {
                         this.child(
-                            div().id("session-snippets-panel-toggle").child(
+                            div().id("session-agent-panel-toggle").child(
                                 icon_button(
-                                    AppIcon::Notebook,
+                                    AppIcon::Sparkles,
                                     24.0,
                                     8.0,
                                     Some(roles.surface_container),
                                     Some(text_muted),
                                     Some(roles.outline_variant),
                                     move |_window, cx| {
-                                        snippets_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_session_snippets_panel();
+                                        agent_toggle_entity.update(cx, |this, cx| {
+                                            this.toggle_session_agent_panel();
                                             cx.notify();
                                         });
                                     },
                                 )
-                                .id("session-snippets-panel-toggle-button")
+                                .id("session-agent-panel-toggle-button")
                                 .hover(move |this| {
                                     this.bg(rgb(roles.surface_container_highest))
                                         .border_color(rgb(roles.primary))

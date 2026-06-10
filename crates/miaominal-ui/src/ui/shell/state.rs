@@ -78,6 +78,231 @@ impl SessionMonitoringState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum SessionAgentMessageRole {
+    User,
+    Assistant,
+    Thinking,
+    ToolCall,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(in crate::ui::shell) enum SessionAgentToolStatus {
+    Pending,
+    WaitingForConfirmation,
+    InProgress,
+    Completed,
+    Failed,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell) struct SessionAgentToolCall {
+    pub(in crate::ui::shell) id: String,
+    pub(in crate::ui::shell) name: String,
+    pub(in crate::ui::shell) summary: String,
+    pub(in crate::ui::shell) status: SessionAgentToolStatus,
+    pub(in crate::ui::shell) requires_confirmation: bool,
+    pub(in crate::ui::shell) confirmation_note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell) struct SessionAgentMessage {
+    pub(in crate::ui::shell) role: SessionAgentMessageRole,
+    pub(in crate::ui::shell) content: String,
+    pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
+}
+
+impl SessionAgentMessage {
+    pub(in crate::ui::shell) fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: SessionAgentMessageRole::User,
+            content: content.into(),
+            tool_call: None,
+        }
+    }
+
+    pub(in crate::ui::shell) fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: SessionAgentMessageRole::Assistant,
+            content: content.into(),
+            tool_call: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::ui::shell) fn thinking(content: impl Into<String>) -> Self {
+        Self {
+            role: SessionAgentMessageRole::Thinking,
+            content: content.into(),
+            tool_call: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::ui::shell) fn tool_call(tool_call: SessionAgentToolCall) -> Self {
+        Self {
+            role: SessionAgentMessageRole::ToolCall,
+            content: tool_call.summary.clone(),
+            tool_call: Some(tool_call),
+        }
+    }
+
+    pub(in crate::ui::shell) fn error(content: impl Into<String>) -> Self {
+        Self {
+            role: SessionAgentMessageRole::Error,
+            content: content.into(),
+            tool_call: None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(in crate::ui::shell) struct SessionAgentState {
+    pub(in crate::ui::shell) messages: Vec<SessionAgentMessage>,
+    pub(in crate::ui::shell) pending_task: Option<gpui::Task<()>>,
+    pub(in crate::ui::shell) active_request_id: u64,
+    pub(in crate::ui::shell) request_counter: u64,
+    pub(in crate::ui::shell) last_error: Option<String>,
+}
+
+impl SessionAgentState {
+    pub(in crate::ui::shell) fn is_waiting(&self) -> bool {
+        self.pending_task.is_some()
+    }
+
+    pub(in crate::ui::shell) fn next_request_id(&mut self) -> u64 {
+        self.request_counter = self.request_counter.wrapping_add(1).max(1);
+        self.request_counter
+    }
+
+    pub(in crate::ui::shell) fn append_assistant_delta(&mut self, delta: impl AsRef<str>) {
+        let delta = delta.as_ref();
+        if delta.is_empty() {
+            return;
+        }
+
+        if let Some(message) = self.messages.last_mut()
+            && message.role == SessionAgentMessageRole::Assistant
+        {
+            message.content.push_str(delta);
+            return;
+        }
+
+        self.messages.push(SessionAgentMessage::assistant(delta));
+    }
+
+    pub(in crate::ui::shell) fn append_thinking_delta(&mut self, delta: impl AsRef<str>) {
+        let delta = delta.as_ref();
+        if delta.is_empty() {
+            return;
+        }
+
+        if let Some(message) = self.messages.last_mut()
+            && message.role == SessionAgentMessageRole::Thinking
+        {
+            message.content.push_str(delta);
+            return;
+        }
+
+        self.messages.push(SessionAgentMessage::thinking(delta));
+    }
+
+    pub(in crate::ui::shell) fn push_tool_call(
+        &mut self,
+        id: String,
+        name: String,
+        arguments: String,
+        status: SessionAgentToolStatus,
+    ) {
+        let summary = if arguments.trim().is_empty() || arguments.trim() == "null" {
+            "No arguments".to_string()
+        } else {
+            arguments
+        };
+        self.messages
+            .push(SessionAgentMessage::tool_call(SessionAgentToolCall {
+                id,
+                name,
+                summary,
+                status,
+                requires_confirmation: false,
+                confirmation_note: None,
+            }));
+    }
+
+    pub(in crate::ui::shell) fn append_tool_call_delta(&mut self, id: &str, delta: String) {
+        if delta.trim().is_empty() {
+            return;
+        }
+
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            if tool_call.summary == "No arguments" {
+                tool_call.summary.clear();
+            }
+            tool_call.summary.push_str(&delta);
+        }
+    }
+
+    pub(in crate::ui::shell) fn complete_tool_call(&mut self, id: &str, result: String) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            if result.contains("requires user approval") {
+                tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
+                tool_call.requires_confirmation = true;
+                tool_call.confirmation_note = Some(result);
+            } else {
+                tool_call.status = SessionAgentToolStatus::Completed;
+                if !result.trim().is_empty() {
+                    tool_call.confirmation_note = Some(result);
+                }
+            }
+        }
+    }
+
+    pub(in crate::ui::shell) fn finish_assistant_reply(&mut self, reply: String) {
+        let reply = reply.trim().to_string();
+        if reply.is_empty() {
+            return;
+        }
+
+        if let Some(message) = self.messages.last_mut()
+            && message.role == SessionAgentMessageRole::Assistant
+        {
+            message.content = reply;
+            return;
+        }
+
+        if self
+            .messages
+            .iter()
+            .rev()
+            .take_while(|message| message.role != SessionAgentMessageRole::User)
+            .any(|message| {
+                message.role == SessionAgentMessageRole::Assistant
+                    && message.content.trim() == reply.trim()
+            })
+        {
+            return;
+        }
+
+        self.messages.push(SessionAgentMessage::assistant(reply));
+    }
+}
+
 pub(in crate::ui::shell) struct TabState {
     pub(in crate::ui::shell) id: usize,
     pub(in crate::ui::shell) title: String,
@@ -934,12 +1159,11 @@ pub(in crate::ui::shell) enum SessionSidePanelView {
 pub(in crate::ui::shell) struct PanelState {
     pub(in crate::ui::shell) session_side_panel_open: bool,
     pub(in crate::ui::shell) session_side_panel_view: SessionSidePanelView,
-    pub(in crate::ui::shell) session_snippets_panel_open: bool,
+    pub(in crate::ui::shell) session_agent_panel_open: bool,
     pub(in crate::ui::shell) visible_session_side_panel: bool,
-    pub(in crate::ui::shell) visible_session_snippets_panel: bool,
+    pub(in crate::ui::shell) visible_session_agent_panel: bool,
     pub(in crate::ui::shell) session_side_panel_transition: Option<WorkspaceSidePanelTransition>,
-    pub(in crate::ui::shell) session_snippets_panel_transition:
-        Option<WorkspaceSidePanelTransition>,
+    pub(in crate::ui::shell) session_agent_panel_transition: Option<WorkspaceSidePanelTransition>,
     pub(in crate::ui::shell) selected_known_host: Option<(String, u16, String)>,
 }
 

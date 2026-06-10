@@ -20,6 +20,8 @@ mod profile_proxy_env;
 mod search;
 #[path = "actions/session.rs"]
 mod session;
+#[path = "actions/session_agent.rs"]
+mod session_agent;
 #[path = "actions/session_sftp.rs"]
 mod session_sftp;
 #[path = "actions/session_sftp_edit.rs"]

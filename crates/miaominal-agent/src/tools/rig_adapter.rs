@@ -2,7 +2,7 @@ use super::{TOOL_NAMES, tool_description};
 use crate::channel::{AgentExecChannel, AgentToolCallRequest};
 use crate::error::AgentError;
 use rig_core::completion::ToolDefinition;
-use rig_core::tool::{Tool, ToolSet};
+use rig_core::tool::{Tool, ToolDyn, ToolSet};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -27,6 +27,18 @@ impl AgentToolSet {
             });
         }
         toolset
+    }
+
+    pub fn into_rig_tools(self) -> Vec<Box<dyn ToolDyn>> {
+        TOOL_NAMES
+            .iter()
+            .map(|name| {
+                Box::new(JsonAgentTool {
+                    name: (*name).to_string(),
+                    channel: self.channel.clone(),
+                }) as Box<dyn ToolDyn>
+            })
+            .collect()
     }
 
     pub async fn definitions(&self) -> Vec<ToolDefinition> {

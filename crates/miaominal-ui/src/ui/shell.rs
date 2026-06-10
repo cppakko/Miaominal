@@ -94,8 +94,8 @@ use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelVi
 use controllers::ControllerSet;
 use forms::{
     HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms, SettingsForms,
-    SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms, WorkspaceForms,
-    WorkspaceSnippetsForms,
+    SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms, WorkspaceAgentForms,
+    WorkspaceForms, WorkspaceSnippetsForms,
 };
 pub(in crate::ui::shell) use forms::{KeyBindingSlot, SelectOption};
 pub(in crate::ui::shell) use metrics::*;
@@ -114,7 +114,8 @@ pub(in crate::ui::shell) use state::{
     PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
     PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
     PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
-    PendingSyncPullConfirmState, SecretVisibilityState, SessionConnectionState,
+    PendingSyncPullConfirmState, SecretVisibilityState, SessionAgentMessage,
+    SessionAgentMessageRole, SessionAgentState, SessionAgentToolStatus, SessionConnectionState,
     SessionMonitoringState, SessionPurpose, SessionTabState, SftpEditSession, SftpPromptKind,
     SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow,
     SftpTransferStatus, ShellState, SyncPullConfirmReason, SyncUiState, TabKind, TabState,

@@ -48,6 +48,12 @@ pub enum AppIcon {
     Check,
     Next,
     Vault,
+    Search,
+    Filter,
+    PanelRight,
+    MoreHorizontal,
+    Sliders,
+    Send,
 }
 
 impl IconNamed for AppIcon {
@@ -89,6 +95,12 @@ impl IconNamed for AppIcon {
             Self::EyeOff => "icons/eye-off.svg",
             Self::Check => "icons/check.svg",
             Self::Next => "icons/chevron-right.svg",
+            Self::Search => "icons/search.svg",
+            Self::Filter => "icons/funnel.svg",
+            Self::PanelRight => "icons/panel-right.svg",
+            Self::MoreHorizontal => "icons/ellipsis.svg",
+            Self::Sliders => "icons/sliders-horizontal.svg",
+            Self::Send => "icons/send.svg",
         }
         .into()
     }
