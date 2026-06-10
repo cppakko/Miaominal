@@ -2256,6 +2256,7 @@ impl AppView {
             .clone()
             .unwrap_or_default();
         let editing_provider_id = self.panel_forms.settings.editing_ai_provider_id.clone();
+        let save_in_progress = self.ai_provider_save_in_progress();
         let target = SecretRevealTarget::AiProviderApiKey(provider_id);
         let reveal_icon = self.secret_reveal_icon(target.clone());
         let entity_cancel = entity.clone();
@@ -2306,7 +2307,7 @@ impl AppView {
                     surface: TextInputSurface::Low,
                     size: gpui_component::Size::Large,
                     required: true,
-                    disabled: false,
+                    disabled: save_in_progress,
                     reveal_icon,
                 },
                 {
@@ -2332,6 +2333,7 @@ impl AppView {
                     .border_0()
                     .rounded(px(20.0))
                     .large()
+                    .disabled(save_in_progress)
                     .text_color(rgb(roles.error))
                     .label(i18n::string("settings.ai_providers.actions.delete"))
                     .on_click(move |_, window, cx| {
@@ -2353,6 +2355,7 @@ impl AppView {
                             .border_0()
                             .rounded(px(20.0))
                             .large()
+                            .disabled(save_in_progress)
                             .text_color(rgb(roles.on_surface_variant))
                             .label(i18n::string("dialogs.common.cancel"))
                             .on_click(move |_, window, cx| {
@@ -2361,7 +2364,17 @@ impl AppView {
                                 });
                             }),
                     )
-                    .child(
+                    .child(if save_in_progress {
+                        div()
+                            .id("ai-provider-popup-submit-spinner")
+                            .min_w(px(116.0))
+                            .min_h(px(32.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::ui::components::md3_spinner(18.0))
+                            .into_any_element()
+                    } else {
                         Button::new("ai-provider-popup-submit")
                             .ghost()
                             .border_0()
@@ -2373,8 +2386,9 @@ impl AppView {
                                 entity_submit.update(cx, |this, cx| {
                                     this.submit_ai_provider_save(window, cx);
                                 });
-                            }),
-                    ),
+                            })
+                            .into_any_element()
+                    }),
             )
             .into_any_element();
 

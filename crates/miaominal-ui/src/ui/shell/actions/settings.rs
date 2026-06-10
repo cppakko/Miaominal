@@ -139,6 +139,10 @@ struct SyncPassphraseTaskResult {
     updated_config: SyncConfig,
 }
 
+struct AiProviderSaveTaskResult {
+    provider: AiProviderConfig,
+}
+
 impl SyncPassphraseTaskRequest {
     fn operation(&self) -> SyncPassphraseOperation {
         match self {
@@ -1001,6 +1005,10 @@ impl AppView {
         self.sync.sync_secret_save_operation.is_some()
     }
 
+    pub(in crate::ui::shell) fn ai_provider_save_in_progress(&self) -> bool {
+        self.ai_provider_save_in_progress
+    }
+
     pub(in crate::ui::shell) fn sync_github_token_save_in_progress(&self) -> bool {
         self.sync.sync_secret_save_operation == Some(SyncSecretSaveOperation::GithubToken)
     }
@@ -1235,6 +1243,10 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai_provider_save_in_progress() {
+            return;
+        }
+
         let kind = self.current_ai_provider_kind(cx);
         let editing_id = self.panel_forms.settings.editing_ai_provider_id.clone();
         let existing = editing_id.as_ref().and_then(|id| {
@@ -1319,41 +1331,30 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let AiProviderSaveDraft {
-            mut provider,
-            api_key,
-        } = draft;
-        if !api_key.is_empty()
-            && let Err(error) =
-                self.services
-                    .secrets
-                    .set(&provider.id, SecretKind::AiProviderApiKey, &api_key)
-        {
-            let error = error.to_string();
-            self.notify_sync_secret_save_failed(
+        if self.ai_provider_save_in_progress() {
+            return;
+        }
+
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::SaveAiProvider(draft),
                 window,
-                &i18n::string("settings.ai_providers.api_key.label"),
-                &error,
                 cx,
             );
             return;
         }
-        if !api_key.is_empty() {
-            provider.has_api_key = true;
-        }
 
-        let provider_id = provider.id.clone();
-        let changed = self.settings_store.update(|settings| {
-            if let Some(existing) = settings
-                .ai_providers
-                .iter_mut()
-                .find(|existing| existing.id == provider_id)
-            {
-                *existing = provider.clone();
-            } else {
-                settings.ai_providers.push(provider.clone());
-            }
-        });
+        self.spawn_ai_provider_save_operation(draft, cx);
+    }
+
+    fn apply_ai_provider_save_result(
+        &mut self,
+        task_result: AiProviderSaveTaskResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let provider_id = task_result.provider.id.clone();
+        let changed = self.upsert_ai_provider(task_result.provider);
 
         if changed {
             self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
@@ -1383,6 +1384,172 @@ impl AppView {
             self.dismiss_ai_provider_popup(cx);
         }
         cx.notify();
+    }
+
+    fn finish_ai_provider_save_operation(
+        &mut self,
+        result: Result<AiProviderSaveTaskResult>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_provider_save_in_progress = false;
+
+        match result {
+            Ok(task_result) => {
+                self.apply_ai_provider_save_result(task_result, window, cx);
+            }
+            Err(error) => {
+                self.notify_sync_secret_save_failed(
+                    window,
+                    &i18n::string("settings.ai_providers.api_key.label"),
+                    &error.to_string(),
+                    cx,
+                );
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn finish_ai_provider_save_operation_without_window(
+        &mut self,
+        result: Result<AiProviderSaveTaskResult>,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_provider_save_in_progress = false;
+
+        match result {
+            Ok(task_result) => {
+                let provider_id = task_result.provider.id.clone();
+                if self.upsert_ai_provider(task_result.provider) {
+                    self.panel_forms.settings.editing_ai_provider_id = Some(provider_id.clone());
+                    self.secret_visibility
+                        .set_visible(SecretRevealTarget::AiProviderApiKey(provider_id), false);
+                    self.status_message =
+                        i18n::string("settings.ai_providers.notifications.saved_message");
+                    self.dismiss_ai_provider_popup(cx);
+                }
+            }
+            Err(error) => {
+                self.status_message = i18n::string_args(
+                    "settings.sync.save_feedback.failed_message",
+                    &[
+                        (
+                            "field",
+                            &i18n::string("settings.ai_providers.api_key.label"),
+                        ),
+                        ("error", &error.to_string()),
+                    ],
+                );
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn upsert_ai_provider(&mut self, provider: AiProviderConfig) -> bool {
+        let provider_id = provider.id.clone();
+        self.settings_store.update(|settings| {
+            if let Some(existing) = settings
+                .ai_providers
+                .iter_mut()
+                .find(|existing| existing.id == provider_id)
+            {
+                *existing = provider;
+            } else {
+                settings.ai_providers.push(provider);
+            }
+        })
+    }
+
+    fn spawn_ai_provider_save_operation(
+        &mut self,
+        draft: AiProviderSaveDraft,
+        cx: &mut Context<Self>,
+    ) {
+        let notification_window = cx.active_window();
+        self.ai_provider_save_in_progress = true;
+        cx.notify();
+
+        let secrets = self.services.secrets.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let spawn_result = std::thread::Builder::new()
+            .name("ai-provider-save".to_string())
+            .spawn(move || {
+                let AiProviderSaveDraft {
+                    mut provider,
+                    api_key,
+                } = draft;
+
+                let result = if api_key.is_empty() {
+                    Ok(AiProviderSaveTaskResult { provider })
+                } else {
+                    secrets
+                        .set(&provider.id, SecretKind::AiProviderApiKey, &api_key)
+                        .map(|()| {
+                            provider.has_api_key = true;
+                            AiProviderSaveTaskResult { provider }
+                        })
+                };
+
+                tx.send(result).ok();
+            });
+
+        if let Err(error) = spawn_result {
+            self.ai_provider_save_in_progress = true;
+            self.finish_ai_provider_save_operation_without_window(
+                Err(anyhow::anyhow!(error).context("failed to spawn AI provider save worker")),
+                cx,
+            );
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    rx.recv()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("AI provider save task cancelled")))
+                })
+                .await;
+
+            if let Some(window_handle) = notification_window {
+                let result = std::rc::Rc::new(std::cell::RefCell::new(Some(result)));
+                let result_for_window = result.clone();
+                let this_for_window = this.clone();
+                let update_result = window_handle.update(cx, move |_, window, cx| {
+                    let Some(result) = result_for_window.borrow_mut().take() else {
+                        return;
+                    };
+
+                    if let Err(error) = this_for_window.update(cx, move |this, cx| {
+                        this.finish_ai_provider_save_operation(result, window, cx);
+                    }) {
+                        log::debug!("failed to apply AI provider save result in window: {error:?}");
+                    }
+                });
+
+                if let Err(error) = update_result {
+                    log::debug!("failed to access active window for AI provider save: {error:?}");
+                    if let Some(result) = result.borrow_mut().take()
+                        && let Err(error) = this.update(cx, move |this, cx| {
+                            this.finish_ai_provider_save_operation_without_window(result, cx);
+                        })
+                    {
+                        log::debug!(
+                            "failed to apply AI provider save result without window: {error:?}"
+                        );
+                    }
+                }
+            } else if let Err(error) = this.update(cx, move |this, cx| {
+                this.finish_ai_provider_save_operation_without_window(result, cx);
+            }) {
+                log::debug!(
+                    "failed to apply AI provider save result without active window: {error:?}"
+                );
+            }
+        })
+        .detach();
     }
 
     pub(in crate::ui::shell) fn delete_ai_provider(

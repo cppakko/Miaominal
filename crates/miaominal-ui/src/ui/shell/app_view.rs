@@ -36,6 +36,7 @@ pub struct AppView {
     pub(in crate::ui::shell) local_vault_unlock_in_progress: bool,
     pub(in crate::ui::shell) local_vault_disable_in_progress: bool,
     pub(in crate::ui::shell) local_data_reset_in_progress: bool,
+    pub(in crate::ui::shell) ai_provider_save_in_progress: bool,
     pub(in crate::ui::shell) local_vault_session_passphrase: Option<String>,
     pub(in crate::ui::shell) local_vault_auto_lock_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) sync: SyncUiState,
