@@ -1549,8 +1549,8 @@ impl AppView {
             })
             .child(
                 div()
-                    .flex_grow()
-                    .flex_shrink()
+                    .flex_grow(1.0)
+                    .flex_shrink(1.0)
                     .flex_basis(gpui::relative(local_panel_flex))
                     .h_full()
                     .min_w(px(0.0))
@@ -1587,8 +1587,8 @@ impl AppView {
             ))
             .child(
                 div()
-                    .flex_grow()
-                    .flex_shrink()
+                    .flex_grow(1.0)
+                    .flex_shrink(1.0)
                     .flex_basis(gpui::relative(1.0 - local_panel_flex))
                     .h_full()
                     .min_w(px(0.0))
@@ -1690,8 +1690,8 @@ impl AppView {
                             .min_h(px(0.0))
                             .child(
                                 div()
-                                    .flex_grow()
-                                    .flex_shrink()
+                                    .flex_grow(1.0)
+                                    .flex_shrink(1.0)
                                     .flex_basis(gpui::relative(browser_area_flex))
                                     .min_w(px(0.0))
                                     .min_h(px(0.0))
@@ -1708,8 +1708,8 @@ impl AppView {
                             ))
                             .child(
                                 div()
-                                    .flex_grow()
-                                    .flex_shrink()
+                                    .flex_grow(1.0)
+                                    .flex_shrink(1.0)
                                     .flex_basis(gpui::relative(1.0 - browser_area_flex))
                                     .min_w(px(0.0))
                                     .min_h(px(0.0))

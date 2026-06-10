@@ -12,6 +12,7 @@ gpui.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
 log.workspace = true
+miaominal-agent = { path = "../miaominal-agent" }
 miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-services = { path = "../miaominal-services" }

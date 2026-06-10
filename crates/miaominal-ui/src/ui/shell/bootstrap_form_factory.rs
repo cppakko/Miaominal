@@ -31,6 +31,7 @@ pub(in crate::ui::shell) struct HostEditorFormsArgs {
 pub(in crate::ui::shell) struct WorkspaceFormsArgs {
     pub rename_input: Entity<InputState>,
     pub search_input: Entity<InputState>,
+    pub agent_prompt_input: Entity<InputState>,
     pub session_snippets_filter_input: Entity<InputState>,
     pub local_path_input: Entity<InputState>,
     pub remote_path_input: Entity<InputState>,
@@ -161,6 +162,7 @@ impl AppView {
         let WorkspaceFormsArgs {
             rename_input,
             search_input,
+            agent_prompt_input,
             session_snippets_filter_input,
             local_path_input,
             remote_path_input,
@@ -181,6 +183,9 @@ impl AppView {
                 total: 0,
                 current: None,
                 status: None,
+            },
+            agent: WorkspaceAgentForms {
+                prompt_input: agent_prompt_input,
             },
             snippets_panel: WorkspaceSnippetsForms {
                 filter_input: session_snippets_filter_input,

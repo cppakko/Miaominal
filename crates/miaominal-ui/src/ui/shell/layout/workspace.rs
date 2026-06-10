@@ -82,7 +82,10 @@ fn pane_drop_zone_style(
     refined
 }
 
-fn session_summary(tab: &TabState, sessions: &[SessionProfile]) -> String {
+pub(in crate::ui::shell::layout) fn session_summary(
+    tab: &TabState,
+    sessions: &[SessionProfile],
+) -> String {
     let Some(session) = tab.as_session() else {
         return String::new();
     };
@@ -250,7 +253,7 @@ fn build_terminal_context_menu(
     )
 }
 
-const SESSION_MONITOR_PANEL_WIDTH: f32 = 340.0;
+pub(in crate::ui::shell::layout) const SESSION_MONITOR_PANEL_WIDTH: f32 = 356.0;
 const SESSION_MONITOR_CHART_HEIGHT: f32 = 60.0;
 const SESSION_MONITOR_SAMPLE_INTERVAL_SECS: usize = 2;
 const SESSION_MONITOR_PERCENT_MIN_Y_MAX: f64 = 2.0;
@@ -1574,10 +1577,10 @@ impl AppView {
             &mut self.panels.session_side_panel_transition,
             window,
         );
-        let show_snippets_panel = workspace_side_panel_render_state(
-            self.panels.session_snippets_panel_open && session_index.is_some(),
-            &mut self.panels.visible_session_snippets_panel,
-            &mut self.panels.session_snippets_panel_transition,
+        let show_agent_panel = workspace_side_panel_render_state(
+            self.panels.session_agent_panel_open && session_index.is_some(),
+            &mut self.panels.visible_session_agent_panel,
+            &mut self.panels.session_agent_panel_transition,
             window,
         );
         let entity = cx.entity();
@@ -1594,13 +1597,18 @@ impl AppView {
                     )
                 })
         });
-        let snippets_panel = show_snippets_panel.map(|visibility| {
-            render_workspace_side_panel(
-                self.render_session_snippets_sidebar(),
-                SESSION_MONITOR_PANEL_WIDTH,
-                visibility,
-                WorkspaceSidePanelDock::Right,
-            )
+        let agent_panel = show_agent_panel.and_then(|visibility| {
+            session_index
+                .and_then(|index| self.workspace_state.tabs.get(index))
+                .and_then(TabState::as_session)
+                .map(|session| {
+                    render_workspace_side_panel(
+                        self.render_session_agent_sidebar(entity.clone(), session, window, cx),
+                        SESSION_MONITOR_PANEL_WIDTH,
+                        visibility,
+                        WorkspaceSidePanelDock::Right,
+                    )
+                })
         });
 
         h_flex()
@@ -1617,7 +1625,7 @@ impl AppView {
                     .min_h(px(0.0))
                     .child(workspace_body),
             )
-            .when_some(snippets_panel, |this, panel| this.child(panel))
+            .when_some(agent_panel, |this, panel| this.child(panel))
             .into_any_element()
     }
 
@@ -1661,8 +1669,8 @@ impl AppView {
                         .child(header)
                         .child(
                             div()
-                                .flex_grow()
-                                .flex_shrink()
+                                .flex_grow(1.0)
+                                .flex_shrink(1.0)
                                 .flex_basis(gpui::relative(1.0))
                                 .min_w(px(0.0))
                                 .min_h(px(0.0))
@@ -1691,8 +1699,8 @@ impl AppView {
                     let child_element =
                         self.render_pane_layout(child, &child_path, valid_source_ids, window, cx);
                     let wrapped = div()
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .flex_basis(gpui::relative(flex))
                         .h_full()
                         .min_w(px(0.0))
@@ -2552,10 +2560,13 @@ impl AppView {
             .child(Tab::new().label(i18n::string("snippets.page.snippets")))
             .h(px(36.0));
 
-        let content = if selected_index == 0 {
-            self.render_session_monitor_panel(entity, session)
-        } else {
-            self.render_session_snippets_panel(entity, cx)
+        let content = match self.panels.session_side_panel_view {
+            SessionSidePanelView::Monitor => {
+                self.render_session_monitor_panel(entity.clone(), session)
+            }
+            SessionSidePanelView::Snippets => {
+                self.render_session_snippets_panel(entity.clone(), cx)
+            }
         };
 
         card_surface(roles.surface_container, 16.0)
@@ -2870,20 +2881,6 @@ impl AppView {
                     .child(v_flex().w_full().min_h_full().p_3().child(content)),
             )
             .vertical_scrollbar(&monitor_scroll_handle)
-            .into_any_element()
-    }
-
-    fn render_session_snippets_sidebar(&self) -> gpui::AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
-
-        card_surface(roles.surface_container, 16.0)
-            .id("session-snippets-split-panel")
-            .w(px(SESSION_MONITOR_PANEL_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .overflow_hidden()
             .into_any_element()
     }
 

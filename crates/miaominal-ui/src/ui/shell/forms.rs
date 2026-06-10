@@ -26,7 +26,7 @@ impl<T> SelectOption<T> {
     }
 }
 
-impl<T: Clone> SelectItem for SelectOption<T> {
+impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
     type Value = T;
 
     fn title(&self) -> SharedString {
@@ -72,8 +72,13 @@ pub(in crate::ui::shell) struct SftpBrowserForms {
 pub(in crate::ui::shell) struct WorkspaceForms {
     pub(in crate::ui::shell) rename_input: Entity<InputState>,
     pub(in crate::ui::shell) search: TerminalSearchForms,
+    pub(in crate::ui::shell) agent: WorkspaceAgentForms,
     pub(in crate::ui::shell) snippets_panel: WorkspaceSnippetsForms,
     pub(in crate::ui::shell) sftp_browser: SftpBrowserForms,
+}
+
+pub(in crate::ui::shell) struct WorkspaceAgentForms {
+    pub(in crate::ui::shell) prompt_input: Entity<InputState>,
 }
 
 pub(in crate::ui::shell) struct WorkspaceSnippetsForms {

@@ -297,9 +297,7 @@ label = "Base URL"
 label = "API key"
 
 [settings.ai_providers.actions]
-new = "New"
 save = "Save provider"
-edit = "Edit"
 delete = "Delete"
 
 [settings.ai_providers.kinds]
@@ -523,6 +521,24 @@ window_minutes = "{minutes}m"
 axis_now = "Now"
 axis_seconds_ago = "-{seconds}s"
 axis_minutes_ago = "-{minutes}m"
+
+[workspace.panel.agent]
+sidebar_title = "Chat"
+chat = "Conversations"
+empty = "Start a conversation from the composer below."
+placeholder = "Describe what you want to build"
+send_pending = "Agent is thinking..."
+thinking = "Thinking..."
+reply_ready = "Agent reply ready."
+new_chat_started = "Started a new chat."
+empty_prompt = "Type a message before sending."
+empty_reply = "The provider returned an empty reply."
+no_provider_configured = "Add an AI provider in Settings before using chat."
+provider_missing = "Selected AI provider was not found."
+api_key_missing = "{provider} is missing an API key."
+you = "You"
+assistant = "Assistant"
+error = "Error"
 
 [workspace.panel.snippets]
 empty = "No snippets saved yet."

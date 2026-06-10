@@ -364,6 +364,12 @@ impl AppView {
             window,
             cx,
         );
+        let agent_prompt_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .auto_grow(3, 8)
+                .placeholder(i18n::string("workspace.panel.agent.placeholder"))
+        });
         let filter_input = new_input_state(
             i18n::string("placeholders.hosts.filter"),
             "",
@@ -1028,7 +1034,7 @@ impl AppView {
                     let value = input.read(cx).value().to_string();
                     this.update_terminal_search(value, cx);
                 }
-                InputEvent::PressEnter { secondary } => {
+                InputEvent::PressEnter { secondary, shift } => {
                     if *secondary {
                         this.terminal_search_prev(cx);
                     } else {
@@ -1224,6 +1230,7 @@ impl AppView {
         let workspace_forms = Self::build_workspace_forms(WorkspaceFormsArgs {
             rename_input,
             search_input,
+            agent_prompt_input,
             session_snippets_filter_input,
             local_path_input: local_sftp_path_input,
             remote_path_input: remote_sftp_path_input,
@@ -1428,6 +1435,7 @@ impl AppView {
             editors: EditorOverlayState::new(),
             shell_state: ShellState::default(),
             panels: PanelState::default(),
+            session_agent: SessionAgentState::default(),
             kbi_inputs: Vec::new(),
             dialogs: DialogState::default(),
             onboarding: OnboardingState {
@@ -1778,6 +1786,12 @@ impl AppView {
         set_input_placeholder(
             &self.workspace_forms.search.input,
             i18n::string("placeholders.workspace.search_scrollback"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.workspace_forms.agent.prompt_input,
+            i18n::string("workspace.panel.agent.placeholder"),
             window,
             cx,
         );

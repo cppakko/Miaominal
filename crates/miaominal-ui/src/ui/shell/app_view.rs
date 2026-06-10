@@ -22,6 +22,7 @@ pub struct AppView {
     pub(in crate::ui::shell) editors: EditorOverlayState,
     pub(in crate::ui::shell) shell_state: ShellState,
     pub(in crate::ui::shell) panels: PanelState,
+    pub(in crate::ui::shell) session_agent: SessionAgentState,
     pub(in crate::ui::shell) kbi_inputs: Vec<Entity<InputState>>,
     pub(in crate::ui::shell) dialogs: DialogState,
     pub(in crate::ui::shell) onboarding: OnboardingState,
@@ -770,8 +771,8 @@ impl AppView {
         self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
     }
 
-    pub(in crate::ui::shell) fn toggle_session_snippets_panel(&mut self) {
-        self.panels.session_snippets_panel_open = !self.panels.session_snippets_panel_open;
+    pub(in crate::ui::shell) fn toggle_session_agent_panel(&mut self) {
+        self.panels.session_agent_panel_open = !self.panels.session_agent_panel_open;
     }
 
     pub(in crate::ui::shell) fn pending_host_key_session_index(&self) -> Option<usize> {
