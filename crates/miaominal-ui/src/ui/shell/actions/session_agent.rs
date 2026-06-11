@@ -672,9 +672,14 @@ impl AppView {
             })
             .map(AgentChatMessage::from)
             .collect::<Vec<_>>();
+        let tool_guidance = if message.contains("UnknownToolCall") {
+            "\nTool correction: use only the listed Miaominal tools. There is no `write`, `edit`, or `replace` tool. For file creation or modification, use `apply_patch` with a unified patch."
+        } else {
+            ""
+        };
         let prompt = format!(
             "The previous agent step failed before producing a final answer.\n\
-             Error:\n{message}\n\n\
+             Error:\n{message}\n{tool_guidance}\n\n\
              Continue the conversation in plain text. Explain what happened and choose the next safe step. Do not call tools in this recovery response."
         );
         let request_id = self.session_agent.next_request_id();

@@ -54,7 +54,9 @@ pub fn tool_description(name: &str) -> &'static str {
         "list" => "List entries in a remote profile workspace directory.",
         "glob" => "Find remote workspace paths by glob-style pattern under an explicit root.",
         "grep" => "Search remote workspace files with rg when available and grep/find fallback.",
-        "apply_patch" => "Apply an approved unified patch in the remote profile workspace.",
+        "apply_patch" => {
+            "Create, edit, or delete files by applying an approved unified diff patch in the remote profile workspace. This is the only file-writing/editing tool; do not call `write`, `edit`, or `replace`."
+        }
         "run_shell" => {
             "Run an approved non-interactive shell command in the remote profile workspace."
         }
