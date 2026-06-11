@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui_component::text::{TextView, TextViewStyle};
+use zed_markdown::{Markdown, MarkdownElement, MarkdownStyle};
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
 const SESSION_AGENT_MESSAGE_COLUMN_WIDTH: f32 =
@@ -150,7 +150,11 @@ impl AppView {
                                 .overflow_x_hidden()
                                 .overflow_y_scrollbar()
                                 .pb_2()
-                                .child(self.render_session_agent_messages(window, cx)),
+                                .child(self.render_session_agent_messages(
+                                    entity.clone(),
+                                    window,
+                                    cx,
+                                )),
                         ),
                     ),
             )
@@ -212,16 +216,20 @@ impl AppView {
                                 ))
                                 .child(div().flex_1())
                                 .child(icon_button(
-                                    AppIcon::ChevronUp,
+                                    if waiting {
+                                        AppIcon::Pause
+                                    } else {
+                                        AppIcon::ChevronUp
+                                    },
                                     26.0,
                                     8.0,
                                     Some(if waiting {
-                                        roles.surface_container_highest
+                                        roles.error_container
                                     } else {
                                         roles.primary
                                     }),
                                     Some(if waiting {
-                                        text_muted
+                                        roles.on_error_container
                                     } else {
                                         roles.on_primary
                                     }),
@@ -229,7 +237,11 @@ impl AppView {
                                     move |window, cx| {
                                         let entity = send_entity.clone();
                                         entity.update(cx, |this, cx| {
-                                            this.submit_session_agent_prompt(window, cx);
+                                            if this.session_agent.is_waiting() {
+                                                this.stop_session_agent_stream(cx);
+                                            } else {
+                                                this.submit_session_agent_prompt(window, cx);
+                                            }
                                         });
                                     },
                                 )),
@@ -241,6 +253,7 @@ impl AppView {
 
     fn render_session_agent_messages(
         &self,
+        entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -278,8 +291,14 @@ impl AppView {
                     .iter()
                     .enumerate()
                     .map(|(index, message)| {
-                        self.render_session_agent_message(index, message, window, cx)
-                            .into_any_element()
+                        self.render_session_agent_message(
+                            index,
+                            message,
+                            entity.clone(),
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
             )
             .when(self.session_agent.is_waiting(), |this| {
@@ -303,41 +322,202 @@ impl AppView {
     fn render_session_agent_markdown(
         &self,
         id: impl Into<ElementId>,
+        message_index: usize,
         content: String,
         color: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        self.render_session_agent_markdown_with_mode(
+            id,
+            message_index,
+            content,
+            color,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn render_session_agent_text(
+        &self,
+        id: impl Into<ElementId>,
+        message_index: usize,
+        content: String,
+        color: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        self.render_session_agent_markdown_with_mode(
+            id,
+            message_index,
+            content,
+            color,
+            true,
+            window,
+            cx,
+        )
+    }
+
+    fn render_session_agent_markdown_with_mode(
+        &self,
+        id: impl Into<ElementId>,
+        message_index: usize,
+        content: String,
+        color: u32,
+        text_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
 
-        let _ = (window, cx);
+        let text_color = gpui::Hsla::from(rgb(color));
+        let muted_color = gpui::Hsla::from(rgb(crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 70 } else { 45 },
+        )));
+        let link_color = gpui::Hsla::from(rgb(roles.primary));
+        let code_background = gpui::Hsla::from(rgb(roles.surface_container_high));
+        let border_color = gpui::Hsla::from(rgb(roles.outline_variant));
 
-        TextView::markdown(id, content)
-            .selectable(true)
-            .style(
-                TextViewStyle::default()
-                    .paragraph_gap(gpui::rems(0.45))
-                    .heading_font_size(|level, base| match level {
-                        1 => base * 1.35,
-                        2 => base * 1.2,
-                        3 => base * 1.1,
-                        _ => base,
-                    })
-                    .code_block(
-                        gpui::StyleRefinement::default()
-                            .bg(rgb(roles.surface_container_high))
-                            .rounded(px(6.0))
-                            .p_2()
-                            .text_size(miaominal_settings::FontSize::Body.scaled()),
-                    ),
-            )
+        let mut base_text_style = window.text_style();
+        base_text_style.refine(&gpui::TextStyleRefinement {
+            font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
+            line_height: Some(miaominal_settings::scaled_line_height(21.0).into()),
+            color: Some(text_color),
+            ..Default::default()
+        });
+
+        let cache_key = (message_index, text_only);
+        let cached = self
+            .session_agent
+            .markdown_cache
+            .borrow()
+            .get(&cache_key)
+            .cloned();
+        let markdown = match cached {
+            Some((ref cached_content, ref entity)) if cached_content == &content => entity.clone(),
+            Some((_, entity)) => {
+                entity.update(cx, |md, cx| md.reset(content.clone().into(), cx));
+                self.session_agent
+                    .markdown_cache
+                    .borrow_mut()
+                    .insert(cache_key, (content.clone(), entity.clone()));
+                entity
+            }
+            None => {
+                let entity = cx.new(|cx| {
+                    if text_only {
+                        Markdown::new_text(content.clone().into(), cx)
+                    } else {
+                        Markdown::new(content.clone().into(), None, None, cx)
+                    }
+                });
+                self.session_agent
+                    .markdown_cache
+                    .borrow_mut()
+                    .insert(cache_key, (content.clone(), entity.clone()));
+                entity
+            }
+        };
+        let style = MarkdownStyle {
+            base_text_style,
+            selection_background_color: gpui::Hsla::from(rgb(roles.primary)).opacity(0.28),
+            rule_color: border_color,
+            block_quote_border_color: border_color,
+            code_block_overflow_x_scroll: true,
+            code_block: gpui::StyleRefinement {
+                padding: gpui::EdgesRefinement {
+                    top: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(px(8.0)),
+                    )),
+                    left: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(px(10.0)),
+                    )),
+                    right: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(px(10.0)),
+                    )),
+                    bottom: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(px(8.0)),
+                    )),
+                },
+                margin: gpui::EdgesRefinement {
+                    top: Some(gpui::Length::Definite(px(6.0).into())),
+                    left: Some(gpui::Length::Definite(px(0.0).into())),
+                    right: Some(gpui::Length::Definite(px(0.0).into())),
+                    bottom: Some(gpui::Length::Definite(px(8.0).into())),
+                },
+                border_style: Some(gpui::BorderStyle::Solid),
+                border_widths: gpui::EdgesRefinement {
+                    top: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
+                    left: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
+                    right: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
+                    bottom: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
+                },
+                border_color: Some(border_color),
+                background: Some(code_background.into()),
+                text: gpui::TextStyleRefinement {
+                    font_size: Some(miaominal_settings::FontSize::Body.scaled().into()),
+                    color: Some(text_color),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            inline_code: gpui::TextStyleRefinement {
+                font_size: Some(miaominal_settings::FontSize::Body.scaled().into()),
+                background_color: Some(code_background),
+                color: Some(text_color),
+                ..Default::default()
+            },
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(muted_color),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(link_color),
+                underline: Some(gpui::UnderlineStyle {
+                    color: Some(link_color.opacity(0.65)),
+                    thickness: px(1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            heading_level_styles: Some(zed_markdown::HeadingLevelStyles {
+                h1: Some(gpui::TextStyleRefinement {
+                    font_size: Some(miaominal_settings::FontSize::Subheading.scaled().into()),
+                    font_weight: Some(FontWeight::SEMIBOLD),
+                    ..Default::default()
+                }),
+                h2: Some(gpui::TextStyleRefinement {
+                    font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
+                    font_weight: Some(FontWeight::SEMIBOLD),
+                    ..Default::default()
+                }),
+                h3: Some(gpui::TextStyleRefinement {
+                    font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
+                    font_weight: Some(FontWeight::SEMIBOLD),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            heading_border_color: Some(border_color),
+            ..Default::default()
+        };
+
+        div()
+            .id(id)
             .w_full()
             .min_w_0()
+            .min_h(px(20.0))
             .overflow_x_hidden()
-            .text_size(miaominal_settings::FontSize::Input.scaled())
-            .line_height(miaominal_settings::scaled_line_height(20.0))
-            .text_color(rgb(color))
+            .child(
+                MarkdownElement::new(markdown, style)
+                    .w_full()
+                    .min_w_0()
+                    .min_h(px(20.0))
+                    .overflow_x_hidden(),
+            )
             .into_any_element()
     }
 
@@ -345,6 +525,7 @@ impl AppView {
         &self,
         index: usize,
         message: &SessionAgentMessage,
+        entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -353,13 +534,16 @@ impl AppView {
         let is_user = message.role == SessionAgentMessageRole::User;
         let is_error = message.role == SessionAgentMessageRole::Error;
         if message.role == SessionAgentMessageRole::Thinking {
+            if message.content.trim().is_empty() {
+                return div().into_any_element();
+            }
             return self
                 .render_session_agent_thinking(index, message, window, cx)
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::ToolCall {
             return self
-                .render_session_agent_tool_call(index, message)
+                .render_session_agent_tool_call(index, message, entity)
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::Assistant {
@@ -373,6 +557,7 @@ impl AppView {
                 .py_1()
                 .child(self.render_session_agent_markdown(
                     SharedString::from(format!("session-agent-message-{index}-assistant")),
+                    index,
                     message.content.clone(),
                     roles.on_surface,
                     window,
@@ -429,17 +614,15 @@ impl AppView {
                                 .child(label),
                         )
                     })
-                    .child(self.render_session_agent_markdown(
-                        SharedString::from(format!("session-agent-message-{index}-bubble")),
-                        if is_user {
-                            escape_markdown_text(&message.content)
-                        } else {
-                            message.content.clone()
-                        },
-                        fg,
-                        window,
-                        cx,
-                    )),
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
+                            .line_height(miaominal_settings::scaled_line_height(21.0))
+                            .text_color(rgb(fg))
+                            .child(message.content.clone()),
+                    ),
             )
             .into_any_element()
     }
@@ -478,8 +661,9 @@ impl AppView {
                             .text_color(rgb(text_muted))
                             .child("Thinking"),
                     )
-                    .child(self.render_session_agent_markdown(
+                    .child(self.render_session_agent_text(
                         SharedString::from(format!("session-agent-message-{index}-thinking")),
+                        index,
                         message.content.clone(),
                         text_muted,
                         window,
@@ -493,6 +677,7 @@ impl AppView {
         &self,
         index: usize,
         message: &SessionAgentMessage,
+        entity: Entity<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -516,6 +701,16 @@ impl AppView {
             tool_call.status,
             SessionAgentToolStatus::WaitingForConfirmation
         );
+        let expanded = tool_call.expanded;
+        let tool_id = tool_call.id.clone();
+        let allow_tool_id = tool_call.id.clone();
+        let deny_tool_id = tool_call.id.clone();
+        let allow_entity = entity.clone();
+        let deny_entity = entity.clone();
+        let copy_args_entity = entity.clone();
+        let copy_result_entity = entity.clone();
+        let copy_arguments = tool_call.arguments.clone();
+        let copy_result = tool_call.confirmation_note.clone();
 
         v_flex()
             .id(("session-agent-tool-call", index))
@@ -534,6 +729,7 @@ impl AppView {
             .bg(rgb(roles.surface_container_high))
             .child(
                 h_flex()
+                    .id(("session-agent-tool-call-header", index))
                     .w_full()
                     .items_center()
                     .gap_2()
@@ -541,6 +737,20 @@ impl AppView {
                     .py_2()
                     .border_b_1()
                     .border_color(rgb(roles.outline_variant))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        cx.stop_propagation();
+                        entity.update(cx, |this, cx| {
+                            this.session_agent.toggle_tool_call_expanded(&tool_id);
+                            cx.notify();
+                        });
+                    })
+                    .child(
+                        div()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(text_muted))
+                            .child(if expanded { "v" } else { ">" }),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -555,28 +765,79 @@ impl AppView {
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .child(status_label),
-                    ),
+                    )
+                    .child(
+                        div()
+                            .cursor_pointer()
+                            .rounded(px(6.0))
+                            .px_2()
+                            .py_1()
+                            .bg(rgb(roles.surface_container_highest))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(roles.on_surface))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                cx.stop_propagation();
+                                let text = copy_arguments.clone();
+                                copy_args_entity.update(cx, |this, cx| {
+                                    this.copy_session_agent_text("tool arguments", text, cx);
+                                });
+                            })
+                            .child("Copy args"),
+                    )
+                    .when_some(copy_result, |this, result| {
+                        this.child(
+                            div()
+                                .cursor_pointer()
+                                .rounded(px(6.0))
+                                .px_2()
+                                .py_1()
+                                .bg(rgb(roles.surface_container_highest))
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .text_color(rgb(roles.on_surface))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let text = result.clone();
+                                    copy_result_entity.update(cx, |this, cx| {
+                                        this.copy_session_agent_text("tool result", text, cx);
+                                    });
+                                })
+                                .child("Copy result"),
+                        )
+                    }),
             )
             .child(
                 div()
                     .px_3()
                     .py_2()
-                    .text_size(miaominal_settings::FontSize::Input.scaled())
-                    .line_height(miaominal_settings::scaled_line_height(20.0))
-                    .text_color(rgb(roles.on_surface))
-                    .child(tool_call.summary.clone()),
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .line_height(miaominal_settings::scaled_line_height(18.0))
+                    .text_color(rgb(if expanded {
+                        roles.on_surface
+                    } else {
+                        text_muted
+                    }))
+                    .when(!expanded, |this| {
+                        this.overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(tool_call.summary.clone())
+                    })
+                    .when(expanded, |this| this.child(tool_call.summary.clone())),
             )
-            .when_some(tool_call.confirmation_note.clone(), |this, note| {
-                this.child(
-                    div()
-                        .px_3()
-                        .pb_2()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(note),
-                )
+            .when(expanded, |this| {
+                this.when_some(tool_call.confirmation_note.clone(), |this, note| {
+                    this.child(
+                        div()
+                            .px_3()
+                            .pb_2()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .line_height(miaominal_settings::scaled_line_height(18.0))
+                            .text_color(rgb(text_muted))
+                            .child(note),
+                    )
+                })
             })
-            .when(needs_confirmation, |this| {
+            .when(needs_confirmation && expanded, |this| {
                 this.child(
                     h_flex()
                         .w_full()
@@ -585,41 +846,42 @@ impl AppView {
                         .pb_3()
                         .child(
                             div()
+                                .cursor_pointer()
                                 .rounded(px(6.0))
                                 .px_3()
                                 .py_1()
                                 .bg(rgb(roles.primary))
                                 .text_color(rgb(roles.on_primary))
                                 .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let tool_id = allow_tool_id.clone();
+                                    allow_entity.update(cx, |this, cx| {
+                                        this.approve_session_agent_tool_call(tool_id, cx);
+                                    });
+                                })
                                 .child("Allow"),
                         )
                         .child(
                             div()
+                                .cursor_pointer()
                                 .rounded(px(6.0))
                                 .px_3()
                                 .py_1()
                                 .bg(rgb(roles.surface_container_highest))
                                 .text_color(rgb(roles.on_surface))
                                 .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let tool_id = deny_tool_id.clone();
+                                    deny_entity.update(cx, |this, cx| {
+                                        this.deny_session_agent_tool_call(tool_id, cx);
+                                    });
+                                })
                                 .child("Deny"),
                         ),
                 )
             })
             .into_any_element()
     }
-}
-
-fn escape_markdown_text(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.'
-            | '!' | '|' | '>' | '~' => {
-                escaped.push('\\');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
 }

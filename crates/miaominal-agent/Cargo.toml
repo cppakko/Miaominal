@@ -11,6 +11,7 @@ miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }
+log.workspace = true
 reqwest.workspace = true
 rig-core.workspace = true
 schemars.workspace = true

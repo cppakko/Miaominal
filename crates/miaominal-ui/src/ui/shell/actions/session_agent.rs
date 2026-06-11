@@ -2,10 +2,12 @@ use super::super::*;
 use crate::ui::i18n;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentToolSet,
+    AgentChatRole, AgentChatToolEvent, AgentToolCallRequest, AgentToolResultContinuationRequest,
+    AgentToolSet,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
+use serde_json::Value;
 
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
@@ -47,6 +49,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.session_agent.messages.clear();
+        self.session_agent.clear_markdown_cache();
         self.session_agent.last_error = None;
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.pending_task = None;
@@ -152,14 +155,16 @@ impl AppView {
                 })
                 .await
                 .unwrap_or_else(|error| {
-                    Err(anyhow::anyhow!("session agent stream task cancelled: {error}"))
+                    Err(anyhow::anyhow!(
+                        "session agent stream task cancelled: {error}"
+                    ))
                 });
 
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
-                        this.fail_session_agent_stream(request_id, error, cx);
+                        this.handle_session_agent_stream_error(request_id, error, cx);
                     });
                     return;
                 }
@@ -180,16 +185,17 @@ impl AppView {
                         }
                     }
                     Err(error) => {
-                        let _ = this.update(cx, move |this, cx| {
-                            this.fail_session_agent_stream(
-                                request_id,
-                                anyhow::Error::from(error),
-                                cx,
-                            );
-                        })
-                        .map_err(|error| {
-                            log::debug!("failed to apply session agent chat error: {error:?}");
-                        });
+                        let _ = this
+                            .update(cx, move |this, cx| {
+                                this.handle_session_agent_stream_error(
+                                    request_id,
+                                    anyhow::Error::from(error),
+                                    cx,
+                                );
+                            })
+                            .map_err(|error| {
+                                log::debug!("failed to apply session agent chat error: {error:?}");
+                            });
                         return;
                     }
                 }
@@ -200,6 +206,291 @@ impl AppView {
             });
         });
         self.session_agent.pending_task = Some(task);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
+        if self.session_agent.pending_task.take().is_none() {
+            return;
+        }
+
+        self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
+        self.status_message = "Agent stopped.".into();
+        self.session_agent.last_error = None;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn approve_session_agent_tool_call(
+        &mut self,
+        tool_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tool_call) = self.session_agent.tool_call(&tool_id) else {
+            self.status_message = "Tool call was not found.".into();
+            cx.notify();
+            return;
+        };
+        let Some(profile) = self.active_profile().cloned() else {
+            self.status_message = "No active session for tool approval.".into();
+            cx.notify();
+            return;
+        };
+
+        let arguments = parse_tool_arguments(&tool_call.arguments);
+        let reasoning = self.session_agent.reasoning_before_tool_call(&tool_id);
+        self.session_agent.approve_tool_call(&tool_id);
+        self.status_message = "Tool approved. Running...".into();
+
+        let sessions = self.data.sessions.clone();
+        let secrets = self.services.secrets.clone();
+        let known_hosts = self.services.known_hosts.clone();
+        let tool_name = tool_call.name.clone();
+        let tool_arguments = tool_call.arguments.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let worker_tool_name = tool_name.clone();
+            let spawn_result = std::thread::Builder::new()
+                .name(format!("session-agent-approved-tool-{worker_tool_name}"))
+                .spawn(move || {
+                    let result = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| anyhow::anyhow!(error))
+                        .and_then(|runtime| {
+                            runtime.block_on(async move {
+                                let channel = miaominal_agent::AgentExecChannel::for_profile(
+                                    profile,
+                                    sessions,
+                                    secrets,
+                                    known_hosts,
+                                );
+                                channel
+                                    .call_tool(AgentToolCallRequest {
+                                        tool_name: worker_tool_name,
+                                        arguments,
+                                        approved: true,
+                                        route: None,
+                                    })
+                                    .await
+                                    .map_err(anyhow::Error::from)
+                                    .and_then(|response| {
+                                        serde_json::to_string(&response)
+                                            .map_err(|error| anyhow::anyhow!(error))
+                                    })
+                            })
+                        });
+                    let _ = sender.send(result);
+                });
+
+            let result = match spawn_result {
+                Ok(_) => receiver.await.unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(
+                        "approved tool worker stopped before returning a result"
+                    ))
+                }),
+                Err(error) => Err(anyhow::anyhow!(error)),
+            };
+
+            let _ = this.update(cx, move |this, cx| {
+                let (tool_result, failed) = match result {
+                    Ok(result) => {
+                        this.session_agent
+                            .complete_tool_call(&tool_id, result.clone());
+                        this.status_message = "Approved tool finished. Continuing...".into();
+                        (result, false)
+                    }
+                    Err(error) => {
+                        let result = format!("tool failed after approval: {error}");
+                        this.session_agent.fail_tool_call(&tool_id, result.clone());
+                        this.status_message = "Approved tool failed. Continuing...".into();
+                        (result, true)
+                    }
+                };
+                this.continue_session_agent_after_tool_result(
+                    AgentChatToolEvent {
+                        id: tool_id,
+                        name: tool_name,
+                        arguments: tool_arguments,
+                    },
+                    reasoning,
+                    tool_result,
+                    failed,
+                    cx,
+                );
+                cx.notify();
+            });
+        });
+        task.detach();
+        cx.notify();
+    }
+
+    fn continue_session_agent_after_tool_result(
+        &mut self,
+        tool_call: AgentChatToolEvent,
+        reasoning: Option<String>,
+        result: String,
+        failed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent.is_waiting() {
+            self.session_agent
+                .messages
+                .push(SessionAgentMessage::error(
+                    "Agent is already processing another response; approved tool result was not sent to the model.",
+                ));
+            self.status_message = "Agent is already processing.".into();
+            return;
+        }
+
+        let Some(provider_id) = self.selected_ai_provider_id(cx) else {
+            let message = i18n::string("workspace.panel.agent.no_provider_configured");
+            self.session_agent.last_error = Some(message.clone());
+            self.session_agent
+                .messages
+                .push(SessionAgentMessage::error(message.clone()));
+            self.status_message = message;
+            return;
+        };
+
+        let provider = match self.build_session_agent_provider(&provider_id) {
+            Ok(provider) => provider,
+            Err(error) => {
+                let message = error.to_string();
+                self.session_agent.last_error = Some(message.clone());
+                self.session_agent
+                    .messages
+                    .push(SessionAgentMessage::error(message.clone()));
+                self.status_message = message;
+                return;
+            }
+        };
+
+        let tools = self.active_profile().cloned().map(|profile| {
+            AgentToolSet::for_channel(miaominal_agent::AgentExecChannel::for_profile(
+                profile,
+                self.data.sessions.clone(),
+                self.services.secrets.clone(),
+                self.services.known_hosts.clone(),
+            ))
+        });
+        let request_id = self.session_agent.next_request_id();
+        let history = self
+            .session_agent
+            .messages
+            .iter()
+            .filter(|message| {
+                matches!(
+                    message.role,
+                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
+                )
+            })
+            .map(AgentChatMessage::from)
+            .collect::<Vec<_>>();
+
+        self.session_agent.active_request_id = request_id;
+        self.session_agent.last_error = None;
+        self.session_agent.start_assistant_reply();
+        self.status_message = i18n::string("workspace.panel.agent.thinking");
+
+        let runtime = self.services.runtime.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let stream_result = runtime
+                .spawn(async move {
+                    let result = if failed {
+                        format!("ERROR: {result}")
+                    } else {
+                        result
+                    };
+                    miaominal_agent::stream_chat_after_tool_result(
+                        AgentToolResultContinuationRequest {
+                            provider,
+                            messages: history,
+                            tool_call,
+                            reasoning,
+                            result,
+                            tools,
+                        },
+                    )
+                    .await
+                    .map_err(anyhow::Error::from)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(anyhow::anyhow!(
+                        "session agent continuation task cancelled: {error}"
+                    ))
+                });
+
+            let mut receiver = match stream_result {
+                Ok(receiver) => receiver,
+                Err(error) => {
+                    let _ = this.update(cx, move |this, cx| {
+                        this.handle_session_agent_stream_error(request_id, error, cx);
+                    });
+                    return;
+                }
+            };
+
+            while let Some(event) = receiver.recv().await {
+                match event {
+                    Ok(event) => {
+                        let done = matches!(event, AgentChatEvent::Finished(_));
+                        if let Err(error) = this.update(cx, move |this, cx| {
+                            this.apply_session_agent_event(request_id, event, cx);
+                        }) {
+                            log::debug!(
+                                "failed to apply session agent continuation event: {error:?}"
+                            );
+                            break;
+                        }
+                        if done {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = this
+                            .update(cx, move |this, cx| {
+                                this.handle_session_agent_stream_error(
+                                    request_id,
+                                    anyhow::Error::from(error),
+                                    cx,
+                                );
+                            })
+                            .map_err(|error| {
+                                log::debug!(
+                                    "failed to apply session agent continuation error: {error:?}"
+                                );
+                            });
+                        return;
+                    }
+                }
+            }
+
+            let _ = this.update(cx, move |this, cx| {
+                this.finish_session_agent_stream(request_id, cx);
+            });
+        });
+        self.session_agent.pending_task = Some(task);
+    }
+
+    pub(in crate::ui::shell) fn deny_session_agent_tool_call(
+        &mut self,
+        tool_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent.reject_tool_call(&tool_id);
+        self.status_message = "Tool denied.".into();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn copy_session_agent_text(
+        &mut self,
+        label: &str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.status_message = format!("Copied {label}.");
         cx.notify();
     }
 
@@ -236,6 +527,11 @@ impl AppView {
             AgentChatEvent::ToolCallCompleted { id, result } => {
                 self.session_agent.complete_tool_call(&id, result);
             }
+            AgentChatEvent::ToolCallApprovalRequired { id, message } => {
+                self.session_agent
+                    .require_tool_call_confirmation(&id, message);
+                self.finish_session_agent_stream(request_id, cx);
+            }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);
                 self.finish_session_agent_stream(request_id, cx);
@@ -259,12 +555,9 @@ impl AppView {
             .rev()
             .take_while(|message| message.role != SessionAgentMessageRole::User)
             .any(|message| {
-                matches!(
-                    message.role,
-                    SessionAgentMessageRole::Assistant
-                        | SessionAgentMessageRole::Thinking
-                        | SessionAgentMessageRole::ToolCall
-                )
+                matches!(message.role, SessionAgentMessageRole::ToolCall)
+                    || (message.role == SessionAgentMessageRole::Assistant
+                        && !message.content.trim().is_empty())
             });
         if !turn_has_output {
             self.session_agent
@@ -274,7 +567,22 @@ impl AppView {
                 )));
         }
         self.session_agent.last_error = None;
-        self.status_message = i18n::string("workspace.panel.agent.reply_ready");
+        let waiting_for_confirmation = self
+            .session_agent
+            .messages
+            .iter()
+            .rev()
+            .take_while(|message| message.role != SessionAgentMessageRole::User)
+            .any(|message| {
+                message.tool_call.as_ref().is_some_and(|tool_call| {
+                    tool_call.status == SessionAgentToolStatus::WaitingForConfirmation
+                })
+            });
+        self.status_message = if waiting_for_confirmation {
+            "Waiting for tool approval.".into()
+        } else {
+            i18n::string("workspace.panel.agent.reply_ready")
+        };
 
         cx.notify();
     }
@@ -297,6 +605,151 @@ impl AppView {
             .messages
             .push(SessionAgentMessage::error(message.clone()));
         self.status_message = message;
+        cx.notify();
+    }
+
+    fn handle_session_agent_stream_error(
+        &mut self,
+        request_id: u64,
+        error: anyhow::Error,
+        cx: &mut Context<Self>,
+    ) {
+        let message = error.to_string();
+        if is_recoverable_session_agent_prompt_error(&message) {
+            self.recover_session_agent_prompt_error(request_id, message, cx);
+        } else {
+            self.fail_session_agent_stream(request_id, error, cx);
+        }
+    }
+
+    fn recover_session_agent_prompt_error(
+        &mut self,
+        request_id: u64,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent.active_request_id != request_id {
+            return;
+        }
+
+        self.session_agent.pending_task = None;
+        self.session_agent.active_request_id = 0;
+        self.session_agent.last_error = None;
+        self.session_agent
+            .messages
+            .push(SessionAgentMessage::error(format!(
+                "Agent tool-loop error returned to model: {message}"
+            )));
+        self.status_message = "Agent tool-loop error returned to model.".into();
+
+        let Some(provider_id) = self.selected_ai_provider_id(cx) else {
+            self.session_agent.last_error = Some(message.clone());
+            self.status_message = message;
+            cx.notify();
+            return;
+        };
+
+        let provider = match self.build_session_agent_provider(&provider_id) {
+            Ok(provider) => provider,
+            Err(error) => {
+                let message = error.to_string();
+                self.session_agent.last_error = Some(message.clone());
+                self.status_message = message;
+                cx.notify();
+                return;
+            }
+        };
+
+        let history = self
+            .session_agent
+            .messages
+            .iter()
+            .filter(|message| {
+                matches!(
+                    message.role,
+                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
+                )
+            })
+            .map(AgentChatMessage::from)
+            .collect::<Vec<_>>();
+        let prompt = format!(
+            "The previous agent step failed before producing a final answer.\n\
+             Error:\n{message}\n\n\
+             Continue the conversation in plain text. Explain what happened and choose the next safe step. Do not call tools in this recovery response."
+        );
+        let request_id = self.session_agent.next_request_id();
+        self.session_agent.active_request_id = request_id;
+        self.session_agent.start_assistant_reply();
+        self.status_message = i18n::string("workspace.panel.agent.thinking");
+
+        let runtime = self.services.runtime.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let stream_result = runtime
+                .spawn(async move {
+                    miaominal_agent::stream_chat(AgentChatRequest {
+                        provider,
+                        messages: history,
+                        prompt,
+                        tools: None,
+                    })
+                    .await
+                    .map_err(anyhow::Error::from)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(anyhow::anyhow!(
+                        "session agent recovery task cancelled: {error}"
+                    ))
+                });
+
+            let mut receiver = match stream_result {
+                Ok(receiver) => receiver,
+                Err(error) => {
+                    let _ = this.update(cx, move |this, cx| {
+                        this.fail_session_agent_stream(request_id, error, cx);
+                    });
+                    return;
+                }
+            };
+
+            while let Some(event) = receiver.recv().await {
+                match event {
+                    Ok(event) => {
+                        let done = matches!(event, AgentChatEvent::Finished(_));
+                        if let Err(error) = this.update(cx, move |this, cx| {
+                            this.apply_session_agent_event(request_id, event, cx);
+                        }) {
+                            log::debug!("failed to apply session agent recovery event: {error:?}");
+                            break;
+                        }
+                        if done {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = this
+                            .update(cx, move |this, cx| {
+                                this.fail_session_agent_stream(
+                                    request_id,
+                                    anyhow::Error::from(error),
+                                    cx,
+                                );
+                            })
+                            .map_err(|error| {
+                                log::debug!(
+                                    "failed to apply session agent recovery error: {error:?}"
+                                );
+                            });
+                        return;
+                    }
+                }
+            }
+
+            let _ = this.update(cx, move |this, cx| {
+                this.finish_session_agent_stream(request_id, cx);
+            });
+        });
+        self.session_agent.pending_task = Some(task);
         cx.notify();
     }
 
@@ -345,4 +798,23 @@ impl AppView {
 
         Ok(api_key)
     }
+}
+
+fn parse_tool_arguments(arguments: &str) -> Value {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() || trimmed == "No arguments" || trimmed == "null" {
+        Value::Null
+    } else {
+        let value =
+            serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(arguments.to_string()));
+        value.get("arguments").cloned().unwrap_or(value)
+    }
+}
+
+fn is_recoverable_session_agent_prompt_error(message: &str) -> bool {
+    message.contains("PromptError")
+        || message.contains("UnknownToolCall")
+        || message.contains("ToolCallError")
+        || message.contains("ToolServerError")
+        || message.contains("MaxTurnError")
 }
