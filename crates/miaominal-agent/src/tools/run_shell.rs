@@ -17,7 +17,7 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
     let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
     channel
         .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, false)?;
+        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, true)?;
     if matches!(
         channel.policy().decide_command(&args.command, true),
         crate::policy::AgentPolicyDecision::Deny { .. }
@@ -38,8 +38,8 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8; ",
             "out=$(mktemp) && err=$(mktemp) && ",
             "timeout {timeout_secs} sh -lc {user_command} >\"$out\" 2>\"$err\"; ",
-            "status=$?; ",
-            "printf 'MIAOMINAL_STATUS=%s\\n' \"$status\"; ",
+            "miaominal_status=$?; ",
+            "printf 'MIAOMINAL_STATUS=%s\\n' \"$miaominal_status\"; ",
             "printf 'MIAOMINAL_STDOUT_BEGIN\\n'; head -c {max} \"$out\"; ",
             "printf '\\nMIAOMINAL_STDOUT_END\\n'; ",
             "printf 'MIAOMINAL_STDERR_BEGIN\\n'; head -c {max} \"$err\"; ",

@@ -46,6 +46,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 image = { version = "0.25", default-features = false }
+zed-markdown = { package = "markdown", git = "https://github.com/zed-industries/zed" }
 keyring = { version = "3", features = [
     "apple-native",
     "windows-native",
@@ -62,6 +63,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 rig-core = "0.38.1"
 schemars = "1"
+settings = { git = "https://github.com/zed-industries/zed" }
+theme = { git = "https://github.com/zed-industries/zed" }
+theme_settings = { git = "https://github.com/zed-industries/zed" }
 resvg = "0.45.1"
 rfd = "0.15"
 roxmltree = "0.20"

@@ -102,10 +102,12 @@ pub(in crate::ui::shell) enum SessionAgentToolStatus {
 pub(in crate::ui::shell) struct SessionAgentToolCall {
     pub(in crate::ui::shell) id: String,
     pub(in crate::ui::shell) name: String,
+    pub(in crate::ui::shell) arguments: String,
     pub(in crate::ui::shell) summary: String,
     pub(in crate::ui::shell) status: SessionAgentToolStatus,
     pub(in crate::ui::shell) requires_confirmation: bool,
     pub(in crate::ui::shell) confirmation_note: Option<String>,
+    pub(in crate::ui::shell) expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,11 +168,20 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) active_request_id: u64,
     pub(in crate::ui::shell) request_counter: u64,
     pub(in crate::ui::shell) last_error: Option<String>,
+    /// Cache keyed by (message_index, text_only) → (cached_content, entity).
+    /// Persists Entity<Markdown> across renders so async background parsing can complete.
+    pub(in crate::ui::shell) markdown_cache: std::cell::RefCell<
+        std::collections::HashMap<(usize, bool), (String, gpui::Entity<zed_markdown::Markdown>)>,
+    >,
 }
 
 impl SessionAgentState {
     pub(in crate::ui::shell) fn is_waiting(&self) -> bool {
         self.pending_task.is_some()
+    }
+
+    pub(in crate::ui::shell) fn clear_markdown_cache(&self) {
+        self.markdown_cache.borrow_mut().clear();
     }
 
     pub(in crate::ui::shell) fn next_request_id(&mut self) -> u64 {
@@ -180,7 +191,7 @@ impl SessionAgentState {
 
     pub(in crate::ui::shell) fn append_assistant_delta(&mut self, delta: impl AsRef<str>) {
         let delta = delta.as_ref();
-        if delta.is_empty() {
+        if delta.trim().is_empty() {
             return;
         }
 
@@ -194,9 +205,17 @@ impl SessionAgentState {
         self.messages.push(SessionAgentMessage::assistant(delta));
     }
 
+    pub(in crate::ui::shell) fn start_assistant_reply(&mut self) {
+        if !self.messages.last().is_some_and(|message| {
+            message.role == SessionAgentMessageRole::Assistant && message.content.is_empty()
+        }) {
+            self.messages.push(SessionAgentMessage::assistant(""));
+        }
+    }
+
     pub(in crate::ui::shell) fn append_thinking_delta(&mut self, delta: impl AsRef<str>) {
         let delta = delta.as_ref();
-        if delta.is_empty() {
+        if delta.trim().is_empty() {
             return;
         }
 
@@ -226,10 +245,12 @@ impl SessionAgentState {
             .push(SessionAgentMessage::tool_call(SessionAgentToolCall {
                 id,
                 name,
+                arguments: summary.clone(),
                 summary,
                 status,
                 requires_confirmation: false,
                 confirmation_note: None,
+                expanded: false,
             }));
     }
 
@@ -247,8 +268,10 @@ impl SessionAgentState {
         {
             if tool_call.summary == "No arguments" {
                 tool_call.summary.clear();
+                tool_call.arguments.clear();
             }
             tool_call.summary.push_str(&delta);
+            tool_call.arguments.push_str(&delta);
         }
     }
 
@@ -264,12 +287,115 @@ impl SessionAgentState {
                 tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
                 tool_call.requires_confirmation = true;
                 tool_call.confirmation_note = Some(result);
+                tool_call.expanded = true;
             } else {
                 tool_call.status = SessionAgentToolStatus::Completed;
                 if !result.trim().is_empty() {
                     tool_call.confirmation_note = Some(result);
+                    tool_call.expanded = true;
                 }
             }
+        }
+    }
+
+    pub(in crate::ui::shell) fn fail_tool_call(&mut self, id: &str, result: String) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            tool_call.status = SessionAgentToolStatus::Failed;
+            tool_call.requires_confirmation = false;
+            tool_call.confirmation_note = Some(result);
+            tool_call.expanded = true;
+        }
+    }
+
+    pub(in crate::ui::shell) fn approve_tool_call(&mut self, id: &str) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            tool_call.status = SessionAgentToolStatus::InProgress;
+            tool_call.requires_confirmation = false;
+            tool_call.confirmation_note = Some("Approved. Running tool...".into());
+            tool_call.expanded = true;
+        }
+    }
+
+    pub(in crate::ui::shell) fn reject_tool_call(&mut self, id: &str) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            tool_call.status = SessionAgentToolStatus::Rejected;
+            tool_call.requires_confirmation = false;
+            tool_call.confirmation_note = Some("Denied by user.".into());
+            tool_call.expanded = true;
+        }
+    }
+
+    pub(in crate::ui::shell) fn tool_call(&self, id: &str) -> Option<SessionAgentToolCall> {
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|message| message.tool_call.as_ref())
+            .find(|tool_call| tool_call.id == id)
+            .cloned()
+    }
+
+    pub(in crate::ui::shell) fn reasoning_before_tool_call(&self, id: &str) -> Option<String> {
+        let tool_index = self.messages.iter().position(|message| {
+            message
+                .tool_call
+                .as_ref()
+                .is_some_and(|tool_call| tool_call.id == id)
+        })?;
+
+        self.messages[..tool_index]
+            .iter()
+            .rev()
+            .take_while(|message| message.role != SessionAgentMessageRole::User)
+            .find(|message| message.role == SessionAgentMessageRole::Thinking)
+            .map(|message| message.content.clone())
+            .filter(|content| !content.trim().is_empty())
+    }
+
+    pub(in crate::ui::shell) fn require_tool_call_confirmation(
+        &mut self,
+        id: &str,
+        message: String,
+    ) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
+            tool_call.requires_confirmation = true;
+            tool_call.confirmation_note = Some(message);
+            tool_call.expanded = true;
+        }
+    }
+
+    pub(in crate::ui::shell) fn toggle_tool_call_expanded(&mut self, id: &str) {
+        if let Some(tool_call) = self
+            .messages
+            .iter_mut()
+            .filter_map(|message| message.tool_call.as_mut())
+            .find(|tool_call| tool_call.id == id)
+        {
+            tool_call.expanded = !tool_call.expanded;
         }
     }
 

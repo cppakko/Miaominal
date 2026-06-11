@@ -186,6 +186,12 @@ impl AgentExecChannel {
         &self,
         request: AgentToolCallRequest,
     ) -> AgentResult<AgentToolCallResponse> {
+        log::info!(
+            "agent tool call requested: tool={} approved={} arguments={}",
+            request.tool_name,
+            request.approved,
+            request.arguments
+        );
         self.policy.enforce(&request.tool_name, request.approved)?;
         self.enforce_context_policy(&request)?;
         let route = request.route.unwrap_or(BackendRoute::SshExec);

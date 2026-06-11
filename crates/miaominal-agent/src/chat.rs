@@ -2,9 +2,10 @@ use crate::error::{AgentError, AgentResult};
 use crate::tools::AgentToolSet;
 use anyhow::Context as _;
 use futures::StreamExt as _;
+use rig_core::OneOrMany;
 use rig_core::agent::{Agent, AgentBuilder, MultiTurnStreamItem, StreamingError};
 use rig_core::client::CompletionClient;
-use rig_core::completion::{CompletionModel, GetTokenUsage, Message};
+use rig_core::completion::{AssistantContent, CompletionModel, GetTokenUsage, Message};
 use rig_core::message::{ReasoningContent, ToolResultContent};
 use rig_core::providers::{
     anthropic, cohere, deepseek, gemini, huggingface, mistral, openai, openrouter, together, xai,
@@ -59,6 +60,16 @@ pub struct AgentChatRequest {
     pub tools: Option<AgentToolSet>,
 }
 
+#[derive(Clone)]
+pub struct AgentToolResultContinuationRequest {
+    pub provider: AgentChatProvider,
+    pub messages: Vec<AgentChatMessage>,
+    pub tool_call: AgentChatToolEvent,
+    pub reasoning: Option<String>,
+    pub result: String,
+    pub tools: Option<AgentToolSet>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentChatToolEvent {
     pub id: String,
@@ -71,18 +82,14 @@ pub enum AgentChatEvent {
     TextDelta(String),
     ThinkingDelta(String),
     ToolCallStarted(AgentChatToolEvent),
-    ToolCallDelta {
-        id: String,
-        delta: String,
-    },
-    ToolCallCompleted {
-        id: String,
-        result: String,
-    },
+    ToolCallDelta { id: String, delta: String },
+    ToolCallCompleted { id: String, result: String },
+    ToolCallApprovalRequired { id: String, message: String },
     Finished(String),
 }
 
 const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.";
+const SESSION_AGENT_MAX_TURNS: usize = 40;
 
 fn chat_history(messages: Vec<AgentChatMessage>) -> Vec<Message> {
     messages
@@ -109,7 +116,8 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
             AgentChatEvent::ThinkingDelta(_)
             | AgentChatEvent::ToolCallStarted(_)
             | AgentChatEvent::ToolCallDelta { .. }
-            | AgentChatEvent::ToolCallCompleted { .. } => {}
+            | AgentChatEvent::ToolCallCompleted { .. }
+            | AgentChatEvent::ToolCallApprovalRequired { .. } => {}
         }
     }
     Ok(reply)
@@ -118,10 +126,48 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
 pub async fn stream_chat(
     request: AgentChatRequest,
 ) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
+    stream_chat_with_history(
+        request.provider,
+        chat_history(request.messages),
+        Message::user(request.prompt),
+        request.tools,
+    )
+    .await
+}
+
+pub async fn stream_chat_after_tool_result(
+    request: AgentToolResultContinuationRequest,
+) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
     let provider = request.provider;
-    let history = chat_history(request.messages);
-    let prompt = request.prompt;
-    let tools = request.tools;
+    let mut history = chat_history(request.messages);
+    let tool_arguments = serde_json::from_str(&request.tool_call.arguments)
+        .unwrap_or_else(|_| serde_json::Value::String(request.tool_call.arguments.clone()));
+    let tool_call_content = AssistantContent::tool_call(
+        request.tool_call.id.clone(),
+        request.tool_call.name,
+        tool_arguments,
+    );
+    let content = if let Some(reasoning) = request
+        .reasoning
+        .filter(|reasoning| !reasoning.trim().is_empty())
+    {
+        let mut content = OneOrMany::one(AssistantContent::reasoning(reasoning));
+        content.push(tool_call_content);
+        content
+    } else {
+        OneOrMany::one(tool_call_content)
+    };
+    history.push(Message::Assistant { id: None, content });
+    let prompt = Message::tool_result(request.tool_call.id, request.result);
+    stream_chat_with_history(provider, history, prompt, request.tools).await
+}
+
+async fn stream_chat_with_history(
+    provider: AgentChatProvider,
+    history: Vec<Message>,
+    prompt: Message,
+    tools: Option<AgentToolSet>,
+) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
     let (sender, receiver) = mpsc::channel(64);
 
     match provider.kind {
@@ -135,7 +181,7 @@ pub async fn stream_chat(
                 .context("failed to build OpenAI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -157,7 +203,7 @@ pub async fn stream_chat(
                 .context("failed to build Anthropic chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -179,7 +225,7 @@ pub async fn stream_chat(
                 .context("failed to build DeepSeek chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -201,7 +247,7 @@ pub async fn stream_chat(
                 .context("failed to build Gemini chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -223,7 +269,7 @@ pub async fn stream_chat(
                 .context("failed to build OpenRouter chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -245,7 +291,7 @@ pub async fn stream_chat(
                 .context("failed to build Mistral chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -267,7 +313,7 @@ pub async fn stream_chat(
                 .context("failed to build Cohere chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -289,7 +335,7 @@ pub async fn stream_chat(
                 .context("failed to build Together AI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -309,7 +355,7 @@ pub async fn stream_chat(
             let client = builder.build().context("failed to build xAI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -331,7 +377,7 @@ pub async fn stream_chat(
                 .context("failed to build Hugging Face chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(SESSION_AGENT_PREAMBLE)
-                .default_max_turns(4);
+                .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -358,7 +404,7 @@ pub async fn stream_chat(
 
 fn spawn_stream_chat<M>(
     agent: Agent<M>,
-    prompt: String,
+    prompt: Message,
     history: Vec<Message>,
     sender: mpsc::Sender<AgentResult<AgentChatEvent>>,
 ) where
@@ -377,20 +423,39 @@ fn spawn_stream_chat<M>(
                 Ok(MultiTurnStreamItem::StreamUserItem(content)) => {
                     chat_event_from_user_content(content)
                 }
-                Ok(MultiTurnStreamItem::CompletionCall(_)) => None,
+                Ok(MultiTurnStreamItem::CompletionCall(_)) => {
+                    log::info!("agent llm completion call boundary");
+                    None
+                }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
-                    Some(Ok(AgentChatEvent::Finished(response.response().to_string())))
+                    let response = response.response().to_string();
+                    log::info!("agent llm final response: {:?}", response);
+                    Some(Ok(AgentChatEvent::Finished(response)))
                 }
                 Ok(_) => None,
-                Err(error) => Some(Err(streaming_error(error))),
+                Err(error) => {
+                    log::info!("agent llm stream error: {error:?}");
+                    Some(Err(streaming_error(error)))
+                }
             };
 
+            let approval_required = matches!(
+                event.as_ref(),
+                Some(Ok(AgentChatEvent::ToolCallApprovalRequired { .. }))
+            );
             if let Some(event) = event
                 && sender.send(event).await.is_err()
             {
                 break;
             }
+            if approval_required {
+                break;
+            }
         }
+        log::info!(
+            "agent llm stream ended; accumulated_text_delta={:?}",
+            final_reply
+        );
     });
 }
 
@@ -403,6 +468,7 @@ where
 {
     match content {
         StreamedAssistantContent::Text(text) => {
+            log::info!("agent llm text delta: {:?}", text.text);
             final_reply.push_str(&text.text);
             Some(Ok(AgentChatEvent::TextDelta(text.text)))
         }
@@ -412,19 +478,29 @@ where
                 .iter()
                 .map(reasoning_content_text)
                 .collect::<String>();
+            log::info!("agent llm reasoning block: {:?}", text);
             (!text.is_empty()).then_some(Ok(AgentChatEvent::ThinkingDelta(text)))
         }
         StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+            log::info!("agent llm reasoning delta: {:?}", reasoning);
             (!reasoning.is_empty()).then_some(Ok(AgentChatEvent::ThinkingDelta(reasoning)))
         }
         StreamedAssistantContent::ToolCall {
             tool_call,
             internal_call_id,
-        } => Some(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
-            id: internal_call_id,
-            name: tool_call.function.name,
-            arguments: tool_call.function.arguments.to_string(),
-        }))),
+        } => {
+            log::info!(
+                "agent llm tool call: id={} name={} arguments={}",
+                internal_call_id,
+                tool_call.function.name,
+                tool_call.function.arguments
+            );
+            Some(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                id: internal_call_id,
+                name: tool_call.function.name,
+                arguments: tool_call.function.arguments.to_string(),
+            })))
+        }
         StreamedAssistantContent::ToolCallDelta {
             internal_call_id,
             content,
@@ -434,12 +510,20 @@ where
                 rig_core::streaming::ToolCallDeltaContent::Name(name) => name,
                 rig_core::streaming::ToolCallDeltaContent::Delta(delta) => delta,
             };
+            log::info!(
+                "agent llm tool call delta: id={} delta={:?}",
+                internal_call_id,
+                delta
+            );
             Some(Ok(AgentChatEvent::ToolCallDelta {
                 id: internal_call_id,
                 delta,
             }))
         }
-        StreamedAssistantContent::Final(_) => None,
+        StreamedAssistantContent::Final(_) => {
+            log::info!("agent llm assistant final marker");
+            None
+        }
     }
 }
 
@@ -450,10 +534,25 @@ fn chat_event_from_user_content(
         StreamedUserContent::ToolResult {
             tool_result,
             internal_call_id,
-        } => Some(Ok(AgentChatEvent::ToolCallCompleted {
-            id: internal_call_id,
-            result: tool_result_content_text(&tool_result.content),
-        })),
+        } => {
+            let result = tool_result_content_text(&tool_result.content);
+            log::info!(
+                "agent llm tool result returned to model: id={} result={:?}",
+                internal_call_id,
+                result
+            );
+            if result.contains("requires user approval") {
+                Some(Ok(AgentChatEvent::ToolCallApprovalRequired {
+                    id: internal_call_id,
+                    message: result,
+                }))
+            } else {
+                Some(Ok(AgentChatEvent::ToolCallCompleted {
+                    id: internal_call_id,
+                    result,
+                }))
+            }
+        }
     }
 }
 

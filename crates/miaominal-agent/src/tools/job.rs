@@ -24,7 +24,7 @@ pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentR
     let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
     channel
         .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, false)?;
+        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, true)?;
     if matches!(
         channel.policy().decide_command(&args.command, true),
         crate::policy::AgentPolicyDecision::Deny { .. }
