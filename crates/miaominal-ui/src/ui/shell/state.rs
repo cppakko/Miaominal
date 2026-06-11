@@ -111,10 +111,18 @@ pub(in crate::ui::shell) struct SessionAgentToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell) struct SessionAgentThinking {
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) elapsed_ms: Option<u128>,
+    pub(in crate::ui::shell) expanded: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) role: SessionAgentMessageRole,
     pub(in crate::ui::shell) content: String,
     pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
+    pub(in crate::ui::shell) thinking: Option<SessionAgentThinking>,
 }
 
 impl SessionAgentMessage {
@@ -123,6 +131,7 @@ impl SessionAgentMessage {
             role: SessionAgentMessageRole::User,
             content: content.into(),
             tool_call: None,
+            thinking: None,
         }
     }
 
@@ -131,6 +140,7 @@ impl SessionAgentMessage {
             role: SessionAgentMessageRole::Assistant,
             content: content.into(),
             tool_call: None,
+            thinking: None,
         }
     }
 
@@ -140,6 +150,11 @@ impl SessionAgentMessage {
             role: SessionAgentMessageRole::Thinking,
             content: content.into(),
             tool_call: None,
+            thinking: Some(SessionAgentThinking {
+                started_at: Instant::now(),
+                elapsed_ms: None,
+                expanded: false,
+            }),
         }
     }
 
@@ -149,6 +164,7 @@ impl SessionAgentMessage {
             role: SessionAgentMessageRole::ToolCall,
             content: tool_call.summary.clone(),
             tool_call: Some(tool_call),
+            thinking: None,
         }
     }
 
@@ -157,6 +173,7 @@ impl SessionAgentMessage {
             role: SessionAgentMessageRole::Error,
             content: content.into(),
             tool_call: None,
+            thinking: None,
         }
     }
 }
@@ -190,6 +207,7 @@ impl SessionAgentState {
     }
 
     pub(in crate::ui::shell) fn append_assistant_delta(&mut self, delta: impl AsRef<str>) {
+        self.finish_active_thinking();
         let delta = delta.as_ref();
         if delta.trim().is_empty() {
             return;
@@ -206,6 +224,7 @@ impl SessionAgentState {
     }
 
     pub(in crate::ui::shell) fn start_assistant_reply(&mut self) {
+        self.finish_active_thinking();
         if !self.messages.last().is_some_and(|message| {
             message.role == SessionAgentMessageRole::Assistant && message.content.is_empty()
         }) {
@@ -236,6 +255,7 @@ impl SessionAgentState {
         arguments: String,
         status: SessionAgentToolStatus,
     ) {
+        self.finish_active_thinking();
         let summary = if arguments.trim().is_empty() || arguments.trim() == "null" {
             "No arguments".to_string()
         } else {
@@ -287,12 +307,10 @@ impl SessionAgentState {
                 tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
                 tool_call.requires_confirmation = true;
                 tool_call.confirmation_note = Some(result);
-                tool_call.expanded = true;
             } else {
                 tool_call.status = SessionAgentToolStatus::Completed;
                 if !result.trim().is_empty() {
                     tool_call.confirmation_note = Some(result);
-                    tool_call.expanded = true;
                 }
             }
         }
@@ -309,7 +327,6 @@ impl SessionAgentState {
             tool_call.status = SessionAgentToolStatus::Failed;
             tool_call.requires_confirmation = false;
             tool_call.confirmation_note = Some(result);
-            tool_call.expanded = true;
         }
     }
 
@@ -324,7 +341,6 @@ impl SessionAgentState {
             tool_call.status = SessionAgentToolStatus::InProgress;
             tool_call.requires_confirmation = false;
             tool_call.confirmation_note = Some("Approved. Running tool...".into());
-            tool_call.expanded = true;
         }
     }
 
@@ -339,7 +355,6 @@ impl SessionAgentState {
             tool_call.status = SessionAgentToolStatus::Rejected;
             tool_call.requires_confirmation = false;
             tool_call.confirmation_note = Some("Denied by user.".into());
-            tool_call.expanded = true;
         }
     }
 
@@ -384,7 +399,14 @@ impl SessionAgentState {
             tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
             tool_call.requires_confirmation = true;
             tool_call.confirmation_note = Some(message);
-            tool_call.expanded = true;
+        }
+    }
+
+    pub(in crate::ui::shell) fn toggle_thinking_expanded(&mut self, index: usize) {
+        if let Some(message) = self.messages.get_mut(index)
+            && let Some(thinking) = message.thinking.as_mut()
+        {
+            thinking.expanded = !thinking.expanded;
         }
     }
 
@@ -400,6 +422,7 @@ impl SessionAgentState {
     }
 
     pub(in crate::ui::shell) fn finish_assistant_reply(&mut self, reply: String) {
+        self.finish_active_thinking();
         let reply = reply.trim().to_string();
         if reply.is_empty() {
             return;
@@ -426,6 +449,16 @@ impl SessionAgentState {
         }
 
         self.messages.push(SessionAgentMessage::assistant(reply));
+    }
+
+    fn finish_active_thinking(&mut self) {
+        if let Some(message) = self.messages.last_mut()
+            && message.role == SessionAgentMessageRole::Thinking
+            && let Some(thinking) = message.thinking.as_mut()
+            && thinking.elapsed_ms.is_none()
+        {
+            thinking.elapsed_ms = Some(thinking.started_at.elapsed().as_millis());
+        }
     }
 }
 

@@ -538,7 +538,7 @@ impl AppView {
                 return div().into_any_element();
             }
             return self
-                .render_session_agent_thinking(index, message, window, cx)
+                .render_session_agent_thinking(index, message, entity, window, cx)
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::ToolCall {
@@ -631,6 +631,7 @@ impl AppView {
         &self,
         index: usize,
         message: &SessionAgentMessage,
+        entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -640,6 +641,23 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
+        let expanded = message
+            .thinking
+            .as_ref()
+            .is_some_and(|thinking| thinking.expanded);
+        let elapsed_ms = message
+            .thinking
+            .as_ref()
+            .and_then(|thinking| thinking.elapsed_ms)
+            .unwrap_or_else(|| {
+                message
+                    .thinking
+                    .as_ref()
+                    .map(|thinking| thinking.started_at.elapsed().as_millis())
+                    .unwrap_or(0)
+            });
+        let token_count = estimate_session_agent_tokens(&message.content);
+        let toggle_entity = entity.clone();
 
         div()
             .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
@@ -655,20 +673,44 @@ impl AppView {
                     .border_color(rgb(roles.outline_variant))
                     .child(
                         h_flex()
+                            .id(("session-agent-thinking-header", index))
                             .gap_2()
                             .items_center()
+                            .cursor_pointer()
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
-                            .child("Thinking"),
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                cx.stop_propagation();
+                                toggle_entity.update(cx, |this, cx| {
+                                    this.session_agent.toggle_thinking_expanded(index);
+                                    cx.notify();
+                                });
+                            })
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .child(if expanded { "v" } else { ">" }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Thinking"),
+                            )
+                            .child(format_duration_ms(elapsed_ms))
+                            .child(format!("~{token_count} tok")),
                     )
-                    .child(self.render_session_agent_text(
-                        SharedString::from(format!("session-agent-message-{index}-thinking")),
-                        index,
-                        message.content.clone(),
-                        text_muted,
-                        window,
-                        cx,
-                    )),
+                    .when(expanded, |this| {
+                        this.child(self.render_session_agent_text(
+                            SharedString::from(format!("session-agent-message-{index}-thinking")),
+                            index,
+                            message.content.clone(),
+                            text_muted,
+                            window,
+                            cx,
+                        ))
+                    }),
             )
             .into_any_element()
     }
@@ -707,10 +749,8 @@ impl AppView {
         let deny_tool_id = tool_call.id.clone();
         let allow_entity = entity.clone();
         let deny_entity = entity.clone();
-        let copy_args_entity = entity.clone();
-        let copy_result_entity = entity.clone();
-        let copy_arguments = tool_call.arguments.clone();
-        let copy_result = tool_call.confirmation_note.clone();
+        let copy_all_entity = entity.clone();
+        let copy_all_text = format_tool_call_copy_text(tool_call);
 
         v_flex()
             .id(("session-agent-tool-call", index))
@@ -777,33 +817,13 @@ impl AppView {
                             .text_color(rgb(roles.on_surface))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 cx.stop_propagation();
-                                let text = copy_arguments.clone();
-                                copy_args_entity.update(cx, |this, cx| {
-                                    this.copy_session_agent_text("tool arguments", text, cx);
+                                let text = copy_all_text.clone();
+                                copy_all_entity.update(cx, |this, cx| {
+                                    this.copy_session_agent_text("tool call", text, cx);
                                 });
                             })
-                            .child("Copy args"),
-                    )
-                    .when_some(copy_result, |this, result| {
-                        this.child(
-                            div()
-                                .cursor_pointer()
-                                .rounded(px(6.0))
-                                .px_2()
-                                .py_1()
-                                .bg(rgb(roles.surface_container_highest))
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(roles.on_surface))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    let text = result.clone();
-                                    copy_result_entity.update(cx, |this, cx| {
-                                        this.copy_session_agent_text("tool result", text, cx);
-                                    });
-                                })
-                                .child("Copy result"),
-                        )
-                    }),
+                            .child("Copy all"),
+                    ),
             )
             .child(
                 div()
@@ -884,4 +904,30 @@ impl AppView {
             })
             .into_any_element()
     }
+}
+
+fn estimate_session_agent_tokens(text: &str) -> usize {
+    let chars = text.chars().count();
+    chars.saturating_add(3) / 4
+}
+
+fn format_duration_ms(ms: u128) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else {
+        let seconds = ms as f64 / 1_000.0;
+        format!("{seconds:.1}s")
+    }
+}
+
+fn format_tool_call_copy_text(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> String {
+    let mut text = format!(
+        "Tool: {}\nStatus: {:?}\nArguments:\n{}",
+        tool_call.name, tool_call.status, tool_call.arguments
+    );
+    if let Some(result) = tool_call.confirmation_note.as_ref() {
+        text.push_str("\n\nResult:\n");
+        text.push_str(result);
+    }
+    text
 }
