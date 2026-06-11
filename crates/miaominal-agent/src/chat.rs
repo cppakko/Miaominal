@@ -10,7 +10,10 @@ use rig_core::message::{ReasoningContent, ToolResultContent};
 use rig_core::providers::{
     anthropic, cohere, deepseek, gemini, huggingface, mistral, openai, openrouter, together, xai,
 };
-use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat};
+use rig_core::streaming::{
+    StreamedAssistantContent, StreamedUserContent, ToolCallDeltaContent, StreamingChat,
+};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,12 +418,46 @@ fn spawn_stream_chat<M>(
         let mut stream = agent.stream_chat(prompt, history).await;
         let mut final_reply = String::new();
 
+        // Track streamed tool calls to work around a rig_core bug where
+        // tool calls delivered only as ToolCallDelta (no complete ToolCall)
+        // are buffered internally but never executed, so the agent emits
+        // FinalResponse without running them.
+        let mut pending_streamed_tools: HashMap<String, PendingStreamedTool> = HashMap::new();
+
         while let Some(item) = stream.next().await {
             let event = match item {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(content)) => {
+                    // Track streamed tool call deltas for the workaround above.
+                    match &content {
+                        StreamedAssistantContent::ToolCallDelta {
+                            internal_call_id,
+                            content,
+                            ..
+                        } => {
+                            let entry = pending_streamed_tools
+                                .entry(internal_call_id.clone())
+                                .or_insert_with(|| PendingStreamedTool::new(internal_call_id.clone()));
+                            match content {
+                                ToolCallDeltaContent::Name(name) => {
+                                    entry.name = name.clone();
+                                }
+                                ToolCallDeltaContent::Delta(delta) => {
+                                    entry.arguments.push_str(delta);
+                                }
+                            }
+                        }
+                        // Non-streamed tool calls will be executed normally by rig_core.
+                        StreamedAssistantContent::ToolCall { internal_call_id, .. } => {
+                            pending_streamed_tools.remove(internal_call_id);
+                        }
+                        _ => {}
+                    }
                     chat_event_from_assistant_content(content, &mut final_reply)
                 }
                 Ok(MultiTurnStreamItem::StreamUserItem(content)) => {
+                    // Tool was executed by rig_core; remove from our tracking.
+                    let StreamedUserContent::ToolResult { internal_call_id, .. } = &content;
+                    pending_streamed_tools.remove(internal_call_id);
                     chat_event_from_user_content(content)
                 }
                 Ok(MultiTurnStreamItem::CompletionCall(_)) => {
@@ -428,6 +465,36 @@ fn spawn_stream_chat<M>(
                     None
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
+                    if !pending_streamed_tools.is_empty() {
+                        log::warn!(
+                            "rig_core did not execute {} streamed tool call(s); forwarding for approval",
+                            pending_streamed_tools.len()
+                        );
+                        for (_cid, tool) in pending_streamed_tools.drain() {
+                            if sender
+                                .send(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                                    id: tool.internal_call_id.clone(),
+                                    name: tool.name.clone(),
+                                    arguments: tool.arguments,
+                                })))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            if sender
+                                .send(Ok(AgentChatEvent::ToolCallApprovalRequired {
+                                    id: tool.internal_call_id,
+                                    message: format!("tool `{}` requires user approval", tool.name),
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        continue; // skip Finished, let the loop drain the stream
+                    }
                     let response = response.response().to_string();
                     log::info!("agent llm final response: {:?}", response);
                     Some(Ok(AgentChatEvent::Finished(response)))
@@ -452,11 +519,52 @@ fn spawn_stream_chat<M>(
                 break;
             }
         }
+
+        // If there are still unexecuted tool calls after the loop (e.g.,
+        // FinalResponse was handled without us intercepting it), send approval.
+        if !pending_streamed_tools.is_empty() {
+            log::warn!(
+                "rig_core stream ended with {} unexecuted tool call(s); forwarding for approval",
+                pending_streamed_tools.len()
+            );
+            for (_cid, tool) in pending_streamed_tools.drain() {
+                let _ = sender
+                    .send(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                        id: tool.internal_call_id.clone(),
+                        name: tool.name.clone(),
+                        arguments: tool.arguments,
+                    })))
+                    .await;
+                let _ = sender
+                    .send(Ok(AgentChatEvent::ToolCallApprovalRequired {
+                        id: tool.internal_call_id,
+                        message: format!("tool `{}` requires user approval", tool.name),
+                    }))
+                    .await;
+            }
+        }
+
         log::info!(
             "agent llm stream ended; accumulated_text_delta={:?}",
             final_reply
         );
     });
+}
+
+struct PendingStreamedTool {
+    internal_call_id: String,
+    name: String,
+    arguments: String,
+}
+
+impl PendingStreamedTool {
+    fn new(internal_call_id: String) -> Self {
+        Self {
+            internal_call_id,
+            name: String::new(),
+            arguments: String::new(),
+        }
+    }
 }
 
 fn chat_event_from_assistant_content<R>(
