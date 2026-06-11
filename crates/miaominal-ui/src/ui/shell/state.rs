@@ -193,8 +193,24 @@ pub(in crate::ui::shell) struct SessionAgentState {
 }
 
 impl SessionAgentState {
-    pub(in crate::ui::shell) fn is_waiting(&self) -> bool {
+    pub(in crate::ui::shell) fn has_pending_task(&self) -> bool {
         self.pending_task.is_some()
+    }
+
+    pub(in crate::ui::shell) fn is_busy(&self) -> bool {
+        self.has_pending_task() || self.has_active_tool_call()
+    }
+
+    pub(in crate::ui::shell) fn has_active_tool_call(&self) -> bool {
+        self.messages.iter().rev().any(|message| {
+            message.tool_call.as_ref().is_some_and(|tool_call| {
+                matches!(
+                    tool_call.status,
+                    SessionAgentToolStatus::WaitingForConfirmation
+                        | SessionAgentToolStatus::InProgress
+                )
+            })
+        })
     }
 
     pub(in crate::ui::shell) fn clear_markdown_cache(&self) {
@@ -307,6 +323,7 @@ impl SessionAgentState {
                 tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
                 tool_call.requires_confirmation = true;
                 tool_call.confirmation_note = Some(result);
+                tool_call.expanded = true;
             } else {
                 tool_call.status = SessionAgentToolStatus::Completed;
                 if !result.trim().is_empty() {
@@ -358,6 +375,26 @@ impl SessionAgentState {
         }
     }
 
+    pub(in crate::ui::shell) fn reject_active_tool_calls(&mut self, message: &str) -> bool {
+        let mut rejected = false;
+        for tool_call in self
+            .messages
+            .iter_mut()
+            .filter_map(|message| message.tool_call.as_mut())
+        {
+            if matches!(
+                tool_call.status,
+                SessionAgentToolStatus::WaitingForConfirmation | SessionAgentToolStatus::InProgress
+            ) {
+                tool_call.status = SessionAgentToolStatus::Rejected;
+                tool_call.requires_confirmation = false;
+                tool_call.confirmation_note = Some(message.into());
+                rejected = true;
+            }
+        }
+        rejected
+    }
+
     pub(in crate::ui::shell) fn tool_call(&self, id: &str) -> Option<SessionAgentToolCall> {
         self.messages
             .iter()
@@ -399,6 +436,7 @@ impl SessionAgentState {
             tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
             tool_call.requires_confirmation = true;
             tool_call.confirmation_note = Some(message);
+            tool_call.expanded = true;
         }
     }
 
@@ -1333,6 +1371,7 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) active_topbar_tab: Option<usize>,
     pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_monitor_scroll_handle: ScrollHandle,
+    pub(in crate::ui::shell) session_agent_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
     pub(in crate::ui::shell) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
     pub(in crate::ui::shell) topbar_exiting_tabs: Vec<TopbarTabExitTransition>,

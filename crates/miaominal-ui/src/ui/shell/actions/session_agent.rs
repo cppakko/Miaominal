@@ -43,6 +43,35 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
 }
 
 impl AppView {
+    fn session_agent_is_scrolled_to_bottom(&self) -> bool {
+        let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
+        let offset = scroll_handle.offset();
+        let max_offset = scroll_handle.max_offset();
+        (offset.y + max_offset.y).abs() <= px(2.0)
+    }
+
+    fn scroll_session_agent_to_bottom_if_new_block(
+        &self,
+        previous_message_count: usize,
+        was_scrolled_to_bottom: bool,
+    ) {
+        if was_scrolled_to_bottom && self.session_agent.messages.len() > previous_message_count {
+            self.workspace_state
+                .session_agent_scroll_handle
+                .scroll_to_bottom();
+        }
+    }
+
+    fn push_session_agent_message(&mut self, message: SessionAgentMessage) {
+        let previous_message_count = self.session_agent.messages.len();
+        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
+        self.session_agent.messages.push(message);
+        self.scroll_session_agent_to_bottom_if_new_block(
+            previous_message_count,
+            was_scrolled_to_bottom,
+        );
+    }
+
     pub(in crate::ui::shell) fn reset_session_agent_chat(
         &mut self,
         window: &mut Window,
@@ -68,7 +97,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session_agent.is_waiting() {
+        if self.session_agent.is_busy() {
             return;
         }
 
@@ -127,9 +156,7 @@ impl AppView {
             .map(AgentChatMessage::from)
             .collect::<Vec<_>>();
 
-        self.session_agent
-            .messages
-            .push(SessionAgentMessage::user(prompt.clone()));
+        self.push_session_agent_message(SessionAgentMessage::user(prompt.clone()));
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
         self.status_message = i18n::string("workspace.panel.agent.send_pending");
@@ -210,7 +237,11 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
-        if self.session_agent.pending_task.take().is_none() {
+        let had_pending_task = self.session_agent.pending_task.take().is_some();
+        let had_active_tool = self
+            .session_agent
+            .reject_active_tool_calls("Stopped by user.");
+        if !had_pending_task && !had_active_tool {
             return;
         }
 
@@ -294,12 +325,28 @@ impl AppView {
             let _ = this.update(cx, move |this, cx| {
                 let (tool_result, failed) = match result {
                     Ok(result) => {
+                        if !matches!(
+                            this.session_agent.tool_call(&tool_id).map(|tool_call| tool_call.status),
+                            Some(SessionAgentToolStatus::InProgress)
+                        ) {
+                            this.status_message = "Agent stopped.".into();
+                            cx.notify();
+                            return;
+                        }
                         this.session_agent
                             .complete_tool_call(&tool_id, result.clone());
                         this.status_message = "Approved tool finished. Continuing...".into();
                         (result, false)
                     }
                     Err(error) => {
+                        if !matches!(
+                            this.session_agent.tool_call(&tool_id).map(|tool_call| tool_call.status),
+                            Some(SessionAgentToolStatus::InProgress)
+                        ) {
+                            this.status_message = "Agent stopped.".into();
+                            cx.notify();
+                            return;
+                        }
                         let result = format!("tool failed after approval: {error}");
                         this.session_agent.fail_tool_call(&tool_id, result.clone());
                         this.status_message = "Approved tool failed. Continuing...".into();
@@ -332,12 +379,10 @@ impl AppView {
         failed: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.session_agent.is_waiting() {
-            self.session_agent
-                .messages
-                .push(SessionAgentMessage::error(
-                    "Agent is already processing another response; approved tool result was not sent to the model.",
-                ));
+        if self.session_agent.has_pending_task() {
+            self.push_session_agent_message(SessionAgentMessage::error(
+                "Agent is already processing another response; approved tool result was not sent to the model.",
+            ));
             self.status_message = "Agent is already processing.".into();
             return;
         }
@@ -345,9 +390,7 @@ impl AppView {
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {
             let message = i18n::string("workspace.panel.agent.no_provider_configured");
             self.session_agent.last_error = Some(message.clone());
-            self.session_agent
-                .messages
-                .push(SessionAgentMessage::error(message.clone()));
+            self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
             self.status_message = message;
             return;
         };
@@ -357,9 +400,7 @@ impl AppView {
             Err(error) => {
                 let message = error.to_string();
                 self.session_agent.last_error = Some(message.clone());
-                self.session_agent
-                    .messages
-                    .push(SessionAgentMessage::error(message.clone()));
+                self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
                 self.status_message = message;
                 return;
             }
@@ -389,7 +430,13 @@ impl AppView {
 
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
+        let previous_message_count = self.session_agent.messages.len();
+        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.start_assistant_reply();
+        self.scroll_session_agent_to_bottom_if_new_block(
+            previous_message_count,
+            was_scrolled_to_bottom,
+        );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
         let runtime = self.services.runtime.clone();
@@ -504,6 +551,8 @@ impl AppView {
             return;
         }
 
+        let previous_message_count = self.session_agent.messages.len();
+        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         match event {
             AgentChatEvent::TextDelta(delta) => {
                 self.session_agent.append_assistant_delta(delta);
@@ -537,6 +586,10 @@ impl AppView {
                 self.finish_session_agent_stream(request_id, cx);
             }
         }
+        self.scroll_session_agent_to_bottom_if_new_block(
+            previous_message_count,
+            was_scrolled_to_bottom,
+        );
 
         cx.notify();
     }
@@ -560,11 +613,9 @@ impl AppView {
                         && !message.content.trim().is_empty())
             });
         if !turn_has_output {
-            self.session_agent
-                .messages
-                .push(SessionAgentMessage::assistant(i18n::string(
-                    "workspace.panel.agent.empty_reply",
-                )));
+            self.push_session_agent_message(SessionAgentMessage::assistant(i18n::string(
+                "workspace.panel.agent.empty_reply",
+            )));
         }
         self.session_agent.last_error = None;
         let waiting_for_confirmation = self
@@ -601,9 +652,7 @@ impl AppView {
         self.session_agent.active_request_id = 0;
         let message = error.to_string();
         self.session_agent.last_error = Some(message.clone());
-        self.session_agent
-            .messages
-            .push(SessionAgentMessage::error(message.clone()));
+        self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
         self.status_message = message;
         cx.notify();
     }
@@ -635,11 +684,9 @@ impl AppView {
         self.session_agent.pending_task = None;
         self.session_agent.active_request_id = 0;
         self.session_agent.last_error = None;
-        self.session_agent
-            .messages
-            .push(SessionAgentMessage::error(format!(
-                "Agent tool-loop error returned to model: {message}"
-            )));
+        self.push_session_agent_message(SessionAgentMessage::error(format!(
+            "Agent tool-loop error returned to model: {message}"
+        )));
         self.status_message = "Agent tool-loop error returned to model.".into();
 
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {
@@ -684,7 +731,13 @@ impl AppView {
         );
         let request_id = self.session_agent.next_request_id();
         self.session_agent.active_request_id = request_id;
+        let previous_message_count = self.session_agent.messages.len();
+        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.start_assistant_reply();
+        self.scroll_session_agent_to_bottom_if_new_block(
+            previous_message_count,
+            was_scrolled_to_bottom,
+        );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
         let runtime = self.services.runtime.clone();

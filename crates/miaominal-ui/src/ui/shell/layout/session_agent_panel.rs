@@ -119,7 +119,8 @@ impl AppView {
         let provider_select = self.panel_forms.settings.ai_provider_select.clone();
         let prompt_input = self.workspace_forms.agent.prompt_input.clone();
         let send_entity = entity.clone();
-        let waiting = self.session_agent.is_waiting();
+        let waiting = self.session_agent.is_busy();
+        let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
 
         v_flex()
             .id("session-agent-panel-content")
@@ -146,15 +147,18 @@ impl AppView {
                     .child(
                         div().flex_1().min_h_0().child(
                             div()
+                                .id("session-agent-scroll")
                                 .size_full()
                                 .overflow_x_hidden()
-                                .overflow_y_scrollbar()
+                                .track_scroll(&agent_scroll_handle)
+                                .overflow_y_scroll()
                                 .pb_2()
                                 .child(self.render_session_agent_messages(
                                     entity.clone(),
                                     window,
                                     cx,
-                                )),
+                                ))
+                                .vertical_scrollbar(&agent_scroll_handle),
                         ),
                     ),
             )
@@ -237,7 +241,7 @@ impl AppView {
                                     move |window, cx| {
                                         let entity = send_entity.clone();
                                         entity.update(cx, |this, cx| {
-                                            if this.session_agent.is_waiting() {
+                                            if this.session_agent.is_busy() {
                                                 this.stop_session_agent_stream(cx);
                                             } else {
                                                 this.submit_session_agent_prompt(window, cx);
@@ -264,7 +268,7 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
 
-        if self.session_agent.messages.is_empty() && !self.session_agent.is_waiting() {
+        if self.session_agent.messages.is_empty() && !self.session_agent.is_busy() {
             return div()
                 .flex_1()
                 .min_h(px(180.0))
@@ -301,7 +305,7 @@ impl AppView {
                         .into_any_element()
                     }),
             )
-            .when(self.session_agent.is_waiting(), |this| {
+            .when(self.session_agent.has_pending_task(), |this| {
                 this.child(
                     div()
                         .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
