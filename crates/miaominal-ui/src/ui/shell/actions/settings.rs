@@ -1931,7 +1931,6 @@ impl AppView {
         config.endpoint = endpoint;
         config.max_results = max_results;
         config.api_key_env.clear();
-        config.enabled = self.settings_store.settings().web_search.enabled;
         config.has_api_key = config.has_api_key || !api_key.is_empty();
         config.sanitize();
 
@@ -1944,6 +1943,7 @@ impl AppView {
             );
             return;
         }
+        config.enabled = true;
 
         let draft = WebSearchSaveDraft { config, api_key };
         if self.local_vault_status == LocalVaultStatus::Locked && !draft.api_key.is_empty() {

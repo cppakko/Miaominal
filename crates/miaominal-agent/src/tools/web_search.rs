@@ -1,6 +1,5 @@
 use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::AgentResult;
-use crate::web::WebSearchProvider;
 use serde::Deserialize;
 use serde_json::json;
 

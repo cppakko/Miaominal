@@ -5,7 +5,9 @@ use crate::jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult};
 use crate::path_guard::resolve_workspace_path;
 use crate::policy::{AgentPathAccess, AgentPolicy};
 use crate::tools::{self, ListEntry};
-use crate::web::{DisabledWebSearchProvider, WebFetchConfig};
+use crate::web::{
+    ConfiguredWebSearchProvider, DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider,
+};
 use anyhow::anyhow;
 use miaominal_core::profile::{AuthMethod, SessionProfile, ShellType};
 use miaominal_secrets::SecretStore;
@@ -114,7 +116,8 @@ pub struct AgentExecChannel {
     policy: AgentPolicy,
     backend_router: BackendRouter,
     jobs: AgentJobRegistry,
-    web_search: Arc<DisabledWebSearchProvider>,
+    web_search: Arc<dyn WebSearchProvider>,
+    web_search_configured: bool,
     web_fetch: WebFetchConfig,
 }
 
@@ -150,6 +153,7 @@ impl AgentExecChannel {
             backend_router: BackendRouter::new(),
             jobs,
             web_search: Arc::new(DisabledWebSearchProvider),
+            web_search_configured: false,
             web_fetch: WebFetchConfig::default(),
         }
     }
@@ -179,12 +183,26 @@ impl AgentExecChannel {
         }
     }
 
-    pub fn web_search(&self) -> &DisabledWebSearchProvider {
-        &self.web_search
+    pub fn web_search(&self) -> &dyn WebSearchProvider {
+        self.web_search.as_ref()
+    }
+
+    pub fn web_search_enabled(&self) -> bool {
+        self.web_search_configured
     }
 
     pub fn web_fetch_config(&self) -> &WebFetchConfig {
         &self.web_fetch
+    }
+
+    pub fn with_web_search_config(
+        mut self,
+        config: miaominal_settings::WebSearchConfig,
+        api_key: Option<String>,
+    ) -> Self {
+        self.web_search = Arc::new(ConfiguredWebSearchProvider::new(config, api_key));
+        self.web_search_configured = true;
+        self
     }
 
     pub async fn call_tool(

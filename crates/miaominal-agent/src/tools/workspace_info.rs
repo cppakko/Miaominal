@@ -28,7 +28,9 @@ pub async fn workspace_info(channel: &AgentExecChannel) -> AgentResult<ToolOutpu
         route: probe.route,
         supported_tools: super::TOOL_NAMES
             .iter()
-            .map(|tool| (*tool).to_string())
+            .copied()
+            .filter(|tool| *tool != "web_search" || channel.web_search_enabled())
+            .map(str::to_string)
             .collect(),
     })
 }

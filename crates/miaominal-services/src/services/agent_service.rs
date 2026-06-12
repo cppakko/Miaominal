@@ -3,7 +3,9 @@ use miaominal_agent::{
     AgentExecChannel, AgentJobRegistry, AgentToolCallRequest, AgentToolCallResponse,
 };
 use miaominal_core::profile::{SessionProfile, ShellType};
+use miaominal_secrets::SecretKind;
 use miaominal_secrets::SecretStore;
+use miaominal_settings::WebSearchConfig;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use tokio::runtime::Handle as TokioHandle;
 
@@ -13,6 +15,7 @@ pub struct AgentService {
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     jobs: AgentJobRegistry,
+    web_search: WebSearchConfig,
 }
 
 impl AgentService {
@@ -22,7 +25,13 @@ impl AgentService {
             secrets,
             known_hosts,
             jobs: AgentJobRegistry::new(),
+            web_search: WebSearchConfig::default(),
         }
+    }
+
+    pub fn with_web_search(mut self, web_search: WebSearchConfig) -> Self {
+        self.web_search = web_search;
+        self
     }
 
     pub fn channel_for_profile(
@@ -42,13 +51,25 @@ impl AgentService {
             ));
         }
 
-        Ok(AgentExecChannel::for_profile_with_jobs(
+        let mut channel = AgentExecChannel::for_profile_with_jobs(
             profile,
             sessions.to_vec(),
             self.secrets.clone(),
             self.known_hosts.clone(),
             self.jobs.clone(),
-        ))
+        );
+        if self.web_search.enabled {
+            let web_search_api_key = self
+                .secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .unwrap_or_else(|error| {
+                    log::warn!("failed to load web search API key: {error:?}");
+                    None
+                });
+            channel = channel.with_web_search_config(self.web_search.clone(), web_search_api_key);
+        }
+
+        Ok(channel)
     }
 
     pub fn call_tool(

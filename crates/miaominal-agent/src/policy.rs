@@ -28,10 +28,11 @@ pub struct AgentPolicy;
 impl AgentPolicy {
     pub fn decide(&self, tool_name: &str, approved: bool) -> AgentPolicyDecision {
         match tool_name {
-            "workspace_info" | "read" | "list" | "glob" | "grep" => AgentPolicyDecision::Allow,
+            "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch" => {
+                AgentPolicyDecision::Allow
+            }
             "run_shell" | "start_job" => AgentPolicyDecision::Allow,
-            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "web_search" | "web_fetch"
-            | "ask_user" | "approval" => {
+            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "ask_user" | "approval" => {
                 if approved {
                     AgentPolicyDecision::Allow
                 } else {
@@ -271,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn mutation_job_web_and_approval_tools_need_approval() {
+    fn mutation_job_and_approval_tools_need_approval() {
         let policy = AgentPolicy;
 
         for tool in [
@@ -279,8 +280,6 @@ mod tests {
             "list_jobs",
             "poll_job",
             "stop_job",
-            "web_search",
-            "web_fetch",
             "ask_user",
             "approval",
         ] {
@@ -290,6 +289,20 @@ mod tests {
             ));
             assert_eq!(policy.decide(tool, true), AgentPolicyDecision::Allow);
         }
+    }
+
+    #[test]
+    fn web_tools_are_allowed_for_rig_auto_execution() {
+        let policy = AgentPolicy;
+
+        assert_eq!(
+            policy.decide("web_search", false),
+            AgentPolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.decide("web_fetch", false),
+            AgentPolicyDecision::Allow
+        );
     }
 
     #[test]
