@@ -253,7 +253,6 @@ fn build_terminal_context_menu(
     )
 }
 
-pub(in crate::ui::shell::layout) const SESSION_MONITOR_PANEL_WIDTH: f32 = 356.0;
 const SESSION_MONITOR_CHART_HEIGHT: f32 = 60.0;
 const SESSION_MONITOR_SAMPLE_INTERVAL_SECS: usize = 2;
 const SESSION_MONITOR_PERCENT_MIN_Y_MAX: f64 = 2.0;
@@ -1583,6 +1582,11 @@ impl AppView {
             &mut self.panels.session_agent_panel_transition,
             window,
         );
+        self.workspace_state.session_agent_panel_width =
+            super::session_agent_panel::clamp_session_agent_panel_width(
+                self.workspace_state.session_agent_panel_width,
+            );
+        let agent_panel_width = self.workspace_state.session_agent_panel_width;
         let entity = cx.entity();
         let side_panel = show_side_panel.and_then(|visibility| {
             session_index
@@ -1604,7 +1608,7 @@ impl AppView {
                 .map(|session| {
                     render_workspace_side_panel(
                         self.render_session_agent_sidebar(entity.clone(), session, window, cx),
-                        SESSION_MONITOR_PANEL_WIDTH,
+                        agent_panel_width,
                         visibility,
                         WorkspaceSidePanelDock::Right,
                     )
@@ -1615,6 +1619,43 @@ impl AppView {
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
+            .on_mouse_move(
+                cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
+                    let Some(drag) = this.workspace_state.session_agent_panel_drag.clone() else {
+                        return;
+                    };
+
+                    let pointer = f32::from(event.position.x);
+                    let delta = pointer - drag.initial_pointer;
+                    let next_width = super::session_agent_panel::clamp_session_agent_panel_width(
+                        drag.initial_width - delta,
+                    );
+                    if (this.workspace_state.session_agent_panel_width - next_width).abs()
+                        > f32::EPSILON
+                    {
+                        this.workspace_state.session_agent_panel_width = next_width;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }),
+            )
+            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+                if event.button != MouseButton::Left {
+                    return;
+                }
+                if this
+                    .workspace_state
+                    .session_agent_panel_drag
+                    .take()
+                    .is_some()
+                {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .when_some(side_panel, |this, panel| this.child(panel))
             .child(
                 div()

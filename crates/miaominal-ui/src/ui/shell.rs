@@ -115,11 +115,11 @@ pub(in crate::ui::shell) use state::{
     PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
     PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
     PendingSyncPullConfirmState, SecretVisibilityState, SessionAgentMessage,
-    SessionAgentMessageRole, SessionAgentState, SessionAgentToolStatus, SessionConnectionState,
-    SessionMonitoringState, SessionPurpose, SessionTabState, SftpEditSession, SftpPromptKind,
-    SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow,
-    SftpTransferStatus, ShellState, SyncPullConfirmReason, SyncUiState, TabKind, TabState,
-    TrustedHostFilter, WorkspaceState,
+    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentState, SessionAgentToolStatus,
+    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
+    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
+    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
+    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -140,6 +140,7 @@ pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgb
 }
 
 const APP_TITLE: &str = "Miaominal";
+pub(in crate::ui::shell) const SESSION_MONITOR_PANEL_WIDTH: f32 = 356.0;
 pub(in crate::ui::shell) const TERMINAL_SCROLLBAR_IDLE_HIDE_DELAY: Duration =
     Duration::from_millis(1200);
 pub(in crate::ui::shell) const KEYCHAIN_DEPLOY_DEFAULT_LOCATION: &str = ".ssh";
