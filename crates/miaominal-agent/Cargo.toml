@@ -9,6 +9,7 @@ anyhow.workspace = true
 futures.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
+miaominal-settings = { path = "../miaominal-settings" }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }
 log.workspace = true

@@ -23,4 +23,6 @@ pub use error::{AgentError, AgentResult};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
 pub use tools::{AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
-pub use web::{DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider};
+pub use web::{
+    ConfiguredWebSearchProvider, DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider,
+};

@@ -6092,6 +6092,7 @@ dependencies = [
  "log",
  "miaominal-core",
  "miaominal-secrets",
+ "miaominal-settings",
  "miaominal-ssh",
  "miaominal-storage",
  "reqwest 0.12.28",

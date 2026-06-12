@@ -2,8 +2,8 @@ use super::super::*;
 use crate::ui::i18n;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentToolCallRequest, AgentToolResultContinuationRequest,
-    AgentToolSet,
+    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentToolCallRequest,
+    AgentToolResultContinuationRequest, AgentToolSet,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
@@ -138,14 +138,10 @@ impl AppView {
             }
         };
 
-        let tools = self.active_profile().cloned().map(|profile| {
-            AgentToolSet::for_channel(miaominal_agent::AgentExecChannel::for_profile(
-                profile,
-                self.data.sessions.clone(),
-                self.services.secrets.clone(),
-                self.services.known_hosts.clone(),
-            ))
-        });
+        let tools = self
+            .active_profile()
+            .cloned()
+            .map(|profile| AgentToolSet::for_channel(self.agent_exec_channel_for_profile(profile)));
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -282,6 +278,7 @@ impl AppView {
         let sessions = self.data.sessions.clone();
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
+        let web_search_config = self.settings_store.settings().web_search.clone();
         let tool_name = tool_call.name.clone();
         let tool_arguments = tool_call.arguments.clone();
         let task = cx.spawn(async move |this, cx| {
@@ -296,12 +293,21 @@ impl AppView {
                         .map_err(|error| anyhow::anyhow!(error))
                         .and_then(|runtime| {
                             runtime.block_on(async move {
-                                let channel = miaominal_agent::AgentExecChannel::for_profile(
+                                let mut channel = AgentExecChannel::for_profile(
                                     profile,
                                     sessions,
-                                    secrets,
+                                    secrets.clone(),
                                     known_hosts,
                                 );
+                                if web_search_config.enabled {
+                                    let web_search_api_key = secrets
+                                        .get("web_search", SecretKind::WebSearchApiKey)
+                                        .map_err(anyhow::Error::from)?;
+                                    channel = channel.with_web_search_config(
+                                        web_search_config,
+                                        web_search_api_key,
+                                    );
+                                }
                                 channel
                                     .call_tool(AgentToolCallRequest {
                                         tool_name: worker_tool_name,
@@ -424,14 +430,10 @@ impl AppView {
             }
         };
 
-        let tools = self.active_profile().cloned().map(|profile| {
-            AgentToolSet::for_channel(miaominal_agent::AgentExecChannel::for_profile(
-                profile,
-                self.data.sessions.clone(),
-                self.services.secrets.clone(),
-                self.services.known_hosts.clone(),
-            ))
-        });
+        let tools = self
+            .active_profile()
+            .cloned()
+            .map(|profile| AgentToolSet::for_channel(self.agent_exec_channel_for_profile(profile)));
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -879,6 +881,28 @@ impl AppView {
             base_url: provider.base_url,
             api_key,
         })
+    }
+
+    fn agent_exec_channel_for_profile(&self, profile: SessionProfile) -> AgentExecChannel {
+        let mut channel = AgentExecChannel::for_profile(
+            profile,
+            self.data.sessions.clone(),
+            self.services.secrets.clone(),
+            self.services.known_hosts.clone(),
+        );
+        let web_search_config = self.settings_store.settings().web_search.clone();
+        if web_search_config.enabled {
+            let web_search_api_key = self
+                .services
+                .secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .unwrap_or_else(|error| {
+                    log::warn!("failed to load web search API key: {error:?}");
+                    None
+                });
+            channel = channel.with_web_search_config(web_search_config, web_search_api_key);
+        }
+        channel
     }
 
     fn resolve_ai_provider_api_key(&self, provider: &AiProviderConfig) -> anyhow::Result<String> {
