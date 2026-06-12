@@ -6,12 +6,12 @@ mod shell;
 pub(crate) mod theme;
 pub(crate) mod utils;
 
+use ::theme::ActiveTheme as _;
 use gpui::{App, FontStyle, FontWeight, Global, HighlightStyle, Hsla};
 use language::LanguageRegistry;
 use settings::Settings as _;
-use std::sync::Arc;
-use ::theme::ActiveTheme as _;
 pub use shell::AppView;
+use std::sync::Arc;
 
 struct MarkdownLanguageRegistry(Arc<LanguageRegistry>);
 
@@ -27,7 +27,7 @@ pub fn init_zed_markdown(cx: &mut App) {
     if !cx.has_global::<::theme::GlobalTheme>() {
         theme_settings::init(::theme::LoadThemes::JustBase, cx);
     }
-    install_markdown_syntax_theme(cx);
+    sync_markdown_theme(cx);
 
     if !cx.has_global::<MarkdownLanguageRegistry>() {
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
@@ -43,9 +43,22 @@ pub(crate) fn markdown_language_registry(cx: &mut App) -> Arc<LanguageRegistry> 
     registry
 }
 
-fn install_markdown_syntax_theme(cx: &mut App) {
+/// Sync the zed GlobalTheme colors to match the current miaominal material theme.
+/// Must be called after any miaominal theme change so the markdown renderer picks up
+/// the correct text, border, and surface colors.
+pub fn sync_markdown_theme(cx: &mut App) {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let to_hsla = |color: u32| -> Hsla { gpui::rgb(color).into() };
+
     let mut theme = (**cx.theme()).clone();
     theme.styles.syntax = markdown_syntax_theme();
+    theme.styles.colors.text = to_hsla(roles.on_surface);
+    theme.styles.colors.text_muted = to_hsla(roles.on_surface_variant);
+    theme.styles.colors.border = to_hsla(roles.outline);
+    theme.styles.colors.border_variant = to_hsla(roles.outline_variant);
+    theme.styles.colors.title_bar_background = to_hsla(roles.surface_container);
+    theme.styles.colors.panel_background = to_hsla(roles.surface_container_low);
+    theme.styles.colors.editor_background = to_hsla(roles.surface_container_low);
     ::theme::GlobalTheme::update_theme(cx, Arc::new(theme));
 }
 

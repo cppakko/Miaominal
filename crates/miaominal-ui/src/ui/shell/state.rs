@@ -281,15 +281,22 @@ impl SessionAgentState {
     ) {
         self.finish_active_thinking();
         let delta = delta.as_ref();
-        if delta.trim().is_empty() {
-            return;
-        }
 
         if let Some(message) = self.messages.last_mut()
             && message.role == SessionAgentMessageRole::Assistant
         {
+            // Always append to an existing assistant message, including
+            // whitespace-only deltas (newlines are structurally significant
+            // for markdown headings and tables).
+            if delta.is_empty() {
+                return;
+            }
             message.content.push_str(delta);
         } else {
+            // Don't create a new assistant message for whitespace-only content.
+            if delta.trim().is_empty() {
+                return;
+            }
             self.messages
                 .push(SessionAgentMessage::assistant_raw(delta));
         }

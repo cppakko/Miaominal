@@ -401,6 +401,7 @@ impl AppView {
             Ok(store) => {
                 self.settings_store = store;
                 miaominal_settings::sync_component_theme(cx);
+                crate::ui::sync_markdown_theme(cx);
             }
             Err(e) => {
                 log::warn!("failed to reload settings after sync: {e:?}");
