@@ -192,6 +192,7 @@ impl AppView {
         let provider_select = self.panel_forms.settings.ai_provider_select.clone();
         let prompt_input = self.workspace_forms.agent.prompt_input.clone();
         let prompt_menu_input = prompt_input.clone();
+        let pty_toggle_entity = entity.clone();
         let send_entity = entity.clone();
         let waiting = self.session_agent.is_busy();
         let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
@@ -323,6 +324,30 @@ impl AppView {
                                     Some(text_muted),
                                     None,
                                     |_window, _cx| {},
+                                ))
+                                .child(icon_button(
+                                    AppIcon::LaptopMinimal,
+                                    24.0,
+                                    8.0,
+                                    Some(if self.session_agent.exec_mode.is_pty() {
+                                        roles.secondary_container
+                                    } else {
+                                        roles.surface_container_high
+                                    }),
+                                    Some(if self.session_agent.exec_mode.is_pty() {
+                                        roles.on_secondary_container
+                                    } else {
+                                        text_muted
+                                    }),
+                                    None,
+                                    move |_window, cx| {
+                                        let entity = pty_toggle_entity.clone();
+                                        entity.update(cx, |this, cx| {
+                                            this.session_agent.exec_mode =
+                                                this.session_agent.exec_mode.toggle();
+                                            cx.notify();
+                                        });
+                                    },
                                 ))
                                 .child(div().flex_1())
                                 .child(icon_button(

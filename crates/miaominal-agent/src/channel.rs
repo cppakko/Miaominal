@@ -2,7 +2,7 @@ use crate::backend::{BackendRoute, BackendRouter, SshExecRequest};
 use crate::capabilities::RemoteCapabilities;
 use crate::error::{AgentError, AgentResult};
 use crate::jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult};
-use crate::path_guard::resolve_workspace_path;
+use crate::path_guard::{resolve_workspace_path, shell_quote};
 use crate::policy::{AgentPathAccess, AgentPolicy};
 use crate::tools::{self, ListEntry};
 use crate::web::{
@@ -15,6 +15,8 @@ use miaominal_storage::known_hosts_store::KnownHostsStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Mutex, mpsc};
 
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
@@ -108,6 +110,12 @@ pub struct ShellCommandResult {
 }
 
 #[derive(Clone)]
+pub struct AgentPtyHandle {
+    pub command_sender: miaominal_ssh::SessionCommandSender,
+    pub output_tap: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>>,
+}
+
+#[derive(Clone)]
 pub struct AgentExecChannel {
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
@@ -119,6 +127,7 @@ pub struct AgentExecChannel {
     web_search: Arc<dyn WebSearchProvider>,
     web_search_configured: bool,
     web_fetch: WebFetchConfig,
+    pty: Option<AgentPtyHandle>,
 }
 
 impl AgentExecChannel {
@@ -155,6 +164,7 @@ impl AgentExecChannel {
             web_search: Arc::new(DisabledWebSearchProvider),
             web_search_configured: false,
             web_fetch: WebFetchConfig::default(),
+            pty: None,
         }
     }
 
@@ -203,6 +213,15 @@ impl AgentExecChannel {
         self.web_search = Arc::new(ConfiguredWebSearchProvider::new(config, api_key));
         self.web_search_configured = true;
         self
+    }
+
+    pub fn with_pty_handle(mut self, handle: AgentPtyHandle) -> Self {
+        self.pty = Some(handle);
+        self
+    }
+
+    pub fn has_pty_handle(&self) -> bool {
+        self.pty.is_some()
     }
 
     pub async fn call_tool(
@@ -311,6 +330,72 @@ impl AgentExecChannel {
         self.exec_via(BackendRoute::SshExec, command).await
     }
 
+    pub async fn exec_pty(
+        &self,
+        command: impl Into<String>,
+        wait_timeout_seconds: u64,
+    ) -> AgentResult<String> {
+        let pty = self
+            .pty
+            .as_ref()
+            .ok_or_else(|| AgentError::Backend(anyhow!("PTY execution is not available")))?;
+        let command = command.into();
+        let uuid = uuid::Uuid::new_v4().simple().to_string();
+        let output_path = format!("/tmp/.mm_{uuid}");
+        let status_path = format!("/tmp/.mm_{uuid}.status");
+        let sentinel_prefix = format!("__MM_DONE_{uuid}_");
+        let wrapped = format!(
+            "{{ ( {command} ); printf '%s' $? > {status}; }} 2>&1 | tee {output}; \
+             _mm_e=$(cat {status} 2>/dev/null || printf 1); rm -f {status}; \
+             printf '\\n{sentinel_prefix}'\"$_mm_e\"'__\\n'",
+            status = shell_quote(&status_path),
+            output = shell_quote(&output_path),
+        );
+        pty.command_sender
+            .send_bytes(format!("{wrapped}\r").into_bytes())
+            .map_err(AgentError::from)?;
+
+        let wait_timeout_seconds = wait_timeout_seconds.max(1);
+        let sentinel_seen = {
+            let mut guard = pty.output_tap.lock().await;
+            let receiver = guard
+                .as_mut()
+                .ok_or_else(|| AgentError::Backend(anyhow!("PTY output tap is closed")))?;
+            let mut cleaned_output = String::new();
+            tokio::time::timeout(Duration::from_secs(wait_timeout_seconds), async {
+                while let Some(chunk) = receiver.recv().await {
+                    cleaned_output.push_str(&strip_ansi_text(&String::from_utf8_lossy(&chunk)));
+                    if has_done_sentinel(&cleaned_output, &sentinel_prefix) {
+                        return true;
+                    }
+                    if cleaned_output.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
+                        let drain_to = cleaned_output.len() - DEFAULT_MAX_OUTPUT_BYTES * 2;
+                        cleaned_output.drain(..drain_to);
+                    }
+                }
+                false
+            })
+            .await
+            .unwrap_or(false)
+        };
+        if !sentinel_seen {
+            let _ = self
+                .exec(format!("rm -f {}", shell_quote(&output_path)))
+                .await;
+            return Err(AgentError::Backend(anyhow!(
+                "timed out waiting for PTY command completion"
+            )));
+        }
+
+        let output = self
+            .exec(format!(
+                "cat {output}; rm -f {output}",
+                output = shell_quote(&output_path)
+            ))
+            .await?;
+        Ok(output)
+    }
+
     pub async fn exec_via(
         &self,
         route: BackendRoute,
@@ -329,6 +414,50 @@ impl AgentExecChannel {
             )
             .await
     }
+}
+
+fn has_done_sentinel(output: &str, sentinel_prefix: &str) -> bool {
+    output.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix(sentinel_prefix)
+            .and_then(|rest| rest.strip_suffix("__"))
+            .is_some_and(|exit| exit.parse::<i32>().is_ok())
+    })
+}
+
+fn strip_ansi_text(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' {
+                            break;
+                        }
+                        if next == '\x1b' && chars.peek().copied() == Some('\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if ch != '\r' {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 fn string_arg<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
