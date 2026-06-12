@@ -864,7 +864,9 @@ fn render_structured_tool_body(
         "glob" => render_glob_tool_body(tool_call, colors),
         "grep" => render_grep_tool_body(tool_call, colors),
         "start_job" => render_start_job_tool_body(tool_call, colors),
-        "poll_job" | "stop_job" => render_job_tool_body(tool_call, colors),
+        "list_jobs" => render_list_jobs_tool_body(tool_call, colors),
+        "poll_job" => render_poll_job_tool_body(tool_call, colors),
+        "stop_job" => render_job_tool_body(tool_call, colors),
         "web_search" => render_web_search_tool_body(tool_call, colors),
         "web_fetch" => render_web_fetch_tool_body(tool_call, colors),
         "workspace_info" => render_workspace_info_tool_body(tool_call, colors),
@@ -1169,6 +1171,75 @@ fn render_job_tool_body(
         ))
         .when_some(content, |this, content| {
             this.child(render_tool_terminal_block("Result", content, colors, false))
+        })
+        .into_any_element()
+}
+
+fn render_list_jobs_tool_body(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    colors: ToolTerminalColors,
+) -> gpui::AnyElement {
+    let output = tool_output_value(tool_call);
+    let content = output
+        .as_ref()
+        .and_then(|value| value.get("jobs"))
+        .map(display_json_value)
+        .or_else(|| tool_display_result(tool_call));
+
+    v_flex()
+        .w_full()
+        .gap_2()
+        .p_2()
+        .when_some(content, |this, content| {
+            this.child(render_tool_terminal_block("Jobs", content, colors, false))
+        })
+        .into_any_element()
+}
+
+fn render_poll_job_tool_body(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    colors: ToolTerminalColors,
+) -> gpui::AnyElement {
+    let args = tool_arguments_value(&tool_call.arguments);
+    let output = tool_output_value(tool_call);
+    let result = output.as_ref().and_then(|value| value.get("result"));
+    let job_id = args
+        .as_ref()
+        .and_then(|value| value.get("job_id"))
+        .or_else(|| result.and_then(|value| value.get("job_id")))
+        .map(display_json_value)
+        .unwrap_or_else(|| "(job)".to_string());
+    let mut fields = vec![("Job".to_string(), job_id)];
+    if let Some(status) = result.and_then(|value| string_field(Some(value), "status")) {
+        fields.push(("Status".to_string(), status));
+    }
+    if let Some(exit_status) = result
+        .and_then(|value| value.get("exit_status"))
+        .filter(|value| !value.is_null())
+        .map(display_json_value)
+    {
+        fields.push(("Exit".to_string(), exit_status));
+    }
+    let stdout = result.and_then(|value| string_field(Some(value), "stdout"));
+    let stderr = result.and_then(|value| string_field(Some(value), "stderr"));
+
+    v_flex()
+        .w_full()
+        .gap_2()
+        .p_2()
+        .child(render_tool_field_grid(fields, colors))
+        .when_some(
+            stdout.filter(|text| !text.trim().is_empty()),
+            |this, stdout| this.child(render_tool_terminal_block("Stdout", stdout, colors, false)),
+        )
+        .when_some(
+            stderr.filter(|text| !text.trim().is_empty()),
+            |this, stderr| this.child(render_tool_terminal_block("Stderr", stderr, colors, true)),
+        )
+        .when(result.is_none(), |this| {
+            this.when_some(tool_display_result(tool_call), |this, content| {
+                this.child(render_tool_terminal_block("Result", content, colors, false))
+            })
         })
         .into_any_element()
 }

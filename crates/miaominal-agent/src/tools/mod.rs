@@ -15,7 +15,7 @@ pub use apply_patch::apply_patch;
 pub use approval::approval;
 pub use glob::glob;
 pub use grep::grep;
-pub use job::{poll_job, start_job, stop_job};
+pub use job::{list_jobs, poll_job, start_job, stop_job};
 pub use list::list;
 pub use read::read;
 pub use rig_adapter::AgentToolSet;
@@ -35,6 +35,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "run_shell",
     "start_job",
+    "list_jobs",
     "poll_job",
     "stop_job",
     "web_search",
@@ -58,10 +59,15 @@ pub fn tool_description(name: &str) -> &'static str {
             "Create, edit, or delete files by applying an approved unified diff patch in the remote profile workspace. This is the only file-writing/editing tool; do not call `write`, `edit`, or `replace`."
         }
         "run_shell" => {
-            "Run an approved non-interactive shell command in the remote profile workspace."
+            "Run an approved non-interactive shell command in the remote profile workspace. Prefer this for commands expected to finish quickly."
         }
-        "start_job" => "Start an approved long-running remote shell job.",
-        "poll_job" => "Poll a remote shell job.",
+        "start_job" => {
+            "Start an approved long-running remote shell job. Use only for commands that may block, stream, watch, serve, deploy, or run longer than a normal run_shell call; poll the returned job_id until completion."
+        }
+        "list_jobs" => "List known background jobs when a job_id was forgotten or before polling.",
+        "poll_job" => {
+            "Poll a remote background job by job_id and return structured status, exit code, stdout, and stderr."
+        }
         "stop_job" => "Stop a remote shell job.",
         "web_search" => "Search the web through the configured local provider.",
         "web_fetch" => "Fetch URL text locally with byte caps.",

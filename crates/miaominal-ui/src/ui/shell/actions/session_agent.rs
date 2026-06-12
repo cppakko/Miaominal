@@ -159,6 +159,9 @@ impl AppView {
             .collect::<Vec<_>>();
 
         self.push_session_agent_message(SessionAgentMessage::user(prompt.clone()));
+        self.workspace_state
+            .session_agent_scroll_handle
+            .scroll_to_bottom();
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
         self.status_message = i18n::string("workspace.panel.agent.send_pending");
