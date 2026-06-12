@@ -47,8 +47,7 @@ fn render_session_agent_resize_handle(
                 .top(px(12.0))
                 .bottom(px(12.0))
                 .w(px(1.0))
-                .rounded(px(999.0))
-                
+                .rounded(px(999.0)),
         )
         .on_mouse_down(
             MouseButton::Left,
@@ -192,6 +191,7 @@ impl AppView {
         );
         let provider_select = self.panel_forms.settings.ai_provider_select.clone();
         let prompt_input = self.workspace_forms.agent.prompt_input.clone();
+        let prompt_menu_input = prompt_input.clone();
         let send_entity = entity.clone();
         let waiting = self.session_agent.is_busy();
         let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
@@ -254,13 +254,42 @@ impl AppView {
                                 .max_h(px(190.0))
                                 .rounded(px(6.0))
                                 .overflow_hidden()
+                                .id("session-agent-prompt-input-menu")
                                 .child(
                                     Input::new(&prompt_input)
                                         .w_full()
                                         .appearance(false)
                                         .focus_bordered(false)
                                         .p_1(),
-                                ),
+                                )
+                                .context_menu(move |menu, _window, cx| {
+                                    let state = prompt_menu_input.read(cx);
+                                    let has_selection = !state.selected_range().is_empty();
+                                    let has_text = !state.value().is_empty();
+                                    let focus = state.focus_handle(cx);
+                                    menu.action_context(focus)
+                                        .menu_with_disabled(
+                                            "Cut",
+                                            Box::new(gpui_component::input::Cut),
+                                            !has_selection,
+                                        )
+                                        .menu_with_disabled(
+                                            i18n::string("workspace.menu.copy"),
+                                            Box::new(gpui_component::input::Copy),
+                                            !has_selection,
+                                        )
+                                        .menu_with_disabled(
+                                            i18n::string("workspace.menu.paste"),
+                                            Box::new(gpui_component::input::Paste),
+                                            cx.read_from_clipboard().is_none(),
+                                        )
+                                        .item(PopupMenuItem::separator())
+                                        .menu_with_disabled(
+                                            "Select All",
+                                            Box::new(gpui_component::input::SelectAll),
+                                            !has_text,
+                                        )
+                                }),
                         )
                         .child(
                             h_flex()
@@ -560,6 +589,9 @@ impl AppView {
         let roles = material.roles;
         let is_user = message.role == SessionAgentMessageRole::User;
         let is_error = message.role == SessionAgentMessageRole::Error;
+        let context_menu_entity = entity.clone();
+        let context_menu_markdown = message.markdown_entity.clone();
+        let context_menu_text = message.content.clone();
         if message.role == SessionAgentMessageRole::Thinking {
             if message.content.trim().is_empty() {
                 return div().into_any_element();
@@ -582,6 +614,9 @@ impl AppView {
         }
         if message.role == SessionAgentMessageRole::Assistant {
             return div()
+                .id(SharedString::from(format!(
+                    "session-agent-message-menu-{index}-assistant"
+                )))
                 .w(px(message_column_width))
                 .max_w(px(message_column_width))
                 .min_w_0()
@@ -596,6 +631,23 @@ impl AppView {
                     window,
                     cx,
                 ))
+                .context_menu(move |menu, _window, cx| {
+                    let selected_text = context_menu_markdown
+                        .as_ref()
+                        .and_then(|markdown| markdown.read(cx).selected_text());
+                    let text = selected_text.unwrap_or_else(|| context_menu_text.clone());
+                    let entity = context_menu_entity.clone();
+                    menu.item(
+                        PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
+                            move |_, _window, cx| {
+                                let text = text.clone();
+                                entity.update(cx, |this, cx| {
+                                    this.copy_session_agent_text("message", text, cx);
+                                });
+                            },
+                        ),
+                    )
+                })
                 .into_any_element();
         }
 
@@ -622,6 +674,9 @@ impl AppView {
         };
 
         h_flex()
+            .id(SharedString::from(format!(
+                "session-agent-message-menu-{index}-plain"
+            )))
             .w(px(message_column_width))
             .max_w(px(message_column_width))
             .min_w_0()
@@ -656,9 +711,32 @@ impl AppView {
                             .text_size(miaominal_settings::FontSize::Input.scaled())
                             .line_height(miaominal_settings::scaled_line_height(21.0))
                             .text_color(rgb(fg))
-                            .child(message.content.clone()),
+                            .child(self.render_session_agent_markdown(
+                                SharedString::from(format!("session-agent-message-{index}-plain")),
+                                message,
+                                fg,
+                                window,
+                                cx,
+                            )),
                     ),
             )
+            .context_menu(move |menu, _window, cx| {
+                let selected_text = context_menu_markdown
+                    .as_ref()
+                    .and_then(|markdown| markdown.read(cx).selected_text());
+                let text = selected_text.unwrap_or_else(|| context_menu_text.clone());
+                let entity = context_menu_entity.clone();
+                menu.item(
+                    PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
+                        move |_, _window, cx| {
+                            let text = text.clone();
+                            entity.update(cx, |this, cx| {
+                                this.copy_session_agent_text("message", text, cx);
+                            });
+                        },
+                    ),
+                )
+            })
             .into_any_element()
     }
 
