@@ -334,6 +334,64 @@ deleted_message = "Deleted AI provider and cleared its saved API key."
 name_required = "Display name is required."
 api_key_required = "API key is required."
 
+[settings.web_search.group]
+title = "Web Search"
+description = "Configure the search backend used by agent tools."
+
+[settings.web_search.enabled]
+label = "Enable web search"
+description = "Allow agent workflows to call the configured web search provider."
+
+[settings.web_search.kind]
+label = "Provider"
+description = "Choose the search service used for web results."
+
+[settings.web_search.api_key]
+label = "API key"
+description = "Stored in the local secret store. Optional for SearXNG."
+
+[settings.web_search.endpoint]
+label = "Endpoint"
+description = "Override the provider endpoint. Required for SearXNG."
+
+[settings.web_search.max_results]
+label = "Max results"
+description = "Return between {min} and {max} search results."
+
+[settings.web_search.actions]
+save = "Save web search"
+description = "Persist the web search provider settings."
+
+[settings.web_search.kinds]
+tavily = "Tavily"
+exa = "Exa"
+bocha = "Bocha"
+zhipu = "Zhipu"
+sear_xng = "SearXNG"
+
+[settings.web_search.placeholders]
+api_key = "API key"
+endpoint_tavily = "https://api.tavily.com"
+endpoint_exa = "https://api.exa.ai"
+endpoint_bocha = "https://api.bochaai.com"
+endpoint_zhipu = "https://open.bigmodel.cn"
+endpoint_sear_xng = "https://search.example.com"
+max_results = "10"
+
+[settings.web_search.status]
+enabled = "Web search enabled."
+disabled = "Web search disabled."
+kind_selected = "Web search provider: {kind}"
+
+[settings.web_search.notifications]
+saved_title = "Web search saved"
+saved_message = "Saved web search settings."
+
+[settings.web_search.validation]
+api_key_required = "API key is required for this provider."
+endpoint_required = "Endpoint is required for SearXNG."
+max_results_range = "Max results must be between {min} and {max}."
+
 [settings.values]
 off = "Off"
 on = "On"

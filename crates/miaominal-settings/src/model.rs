@@ -6,6 +6,7 @@ pub use crate::data::{
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
     PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
     SyncedSettings, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
+    WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
     ai_provider_kind_label, available_font_families, default_font_fallbacks, default_font_family,
 };
 pub(crate) use crate::data::{DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE};
@@ -109,6 +110,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.local_vault_enabled != b.local_vault_enabled
         || a.local_vault_auto_lock_duration != b.local_vault_auto_lock_duration
         || a.ai_providers != b.ai_providers
+        || a.web_search != b.web_search
 }
 
 #[cfg(test)]

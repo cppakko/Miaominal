@@ -1,7 +1,7 @@
 use super::encryption::{decrypt_with_aad, derive_key_with_params, encrypt_with_aad};
 use crate::{
     AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret,
-    SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload,
+    SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload, WebSearchSecret,
 };
 use anyhow::{Context, Result};
 use base64::Engine as _;
@@ -108,6 +108,13 @@ pub fn apply_plaintext_payload(
             &provider_secret.id,
             SecretKind::AiProviderApiKey,
             &provider_secret.api_key,
+        )?;
+    }
+    if let Some(web_search_secret) = &payload.secrets.web_search_secret {
+        secret_store.set(
+            "web_search",
+            SecretKind::WebSearchApiKey,
+            &web_search_secret.api_key,
         )?;
     }
 
@@ -275,10 +282,19 @@ fn collect_secrets(
         }
     }
 
+    let web_search_secret = if settings.web_search.has_api_key {
+        secret_store
+            .get("web_search", SecretKind::WebSearchApiKey)?
+            .map(|api_key| WebSearchSecret { api_key })
+    } else {
+        None
+    };
+
     Ok(PlaintextSecrets {
         profile_secrets,
         key_secrets,
         ai_provider_secrets,
+        web_search_secret,
     })
 }
 
@@ -326,6 +342,10 @@ fn cleanup_removed_secrets(
         if !provider_ids.contains(old_provider_id.as_str()) {
             secret_store.delete_ai_provider_api_key(old_provider_id);
         }
+    }
+
+    if !payload.settings.web_search.has_api_key {
+        secret_store.delete_web_search_api_key();
     }
 }
 
@@ -389,6 +409,7 @@ mod tests {
                 }],
                 key_secrets: Vec::new(),
                 ai_provider_secrets: Vec::new(),
+                web_search_secret: None,
             },
         };
 
@@ -503,6 +524,7 @@ mod tests {
                 }],
                 key_secrets: Vec::new(),
                 ai_provider_secrets: Vec::new(),
+                web_search_secret: None,
             },
         }
     }

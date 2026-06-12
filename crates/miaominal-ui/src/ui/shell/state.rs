@@ -1403,6 +1403,7 @@ pub(in crate::ui::shell) struct SecretVisibilityState {
     sync_passphrase_confirmation: bool,
     local_vault_passphrase: bool,
     local_vault_passphrase_confirmation: bool,
+    web_search_api_key: bool,
     ai_provider_api_keys: std::collections::HashSet<String>,
 }
 
@@ -1418,6 +1419,7 @@ impl SecretVisibilityState {
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
                 self.local_vault_passphrase_confirmation
             }
+            SecretRevealTarget::WebSearchApiKey => self.web_search_api_key,
             SecretRevealTarget::AiProviderApiKey(provider_id) => {
                 self.ai_provider_api_keys.contains(provider_id)
             }
@@ -1437,6 +1439,7 @@ impl SecretVisibilityState {
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
                 self.local_vault_passphrase_confirmation = visible;
             }
+            SecretRevealTarget::WebSearchApiKey => self.web_search_api_key = visible,
             SecretRevealTarget::AiProviderApiKey(provider_id) => {
                 if visible {
                     self.ai_provider_api_keys.insert(provider_id);

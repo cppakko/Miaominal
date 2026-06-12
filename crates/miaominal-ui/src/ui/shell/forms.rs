@@ -3,7 +3,7 @@ use crate::ui::i18n;
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_settings::{
     AiProviderKind, AppLanguage, LastTabCloseBehavior, LocalVaultAutoLockDuration,
-    MonitorHistoryDuration, TerminalRightClickBehavior,
+    MonitorHistoryDuration, TerminalRightClickBehavior, WebSearchProviderKind,
 };
 use miaominal_sync::SyncProvider;
 
@@ -173,6 +173,8 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) ai_provider_select: Entity<SelectState<Vec<SelectOption<String>>>>,
     pub(in crate::ui::shell) ai_provider_kind_select:
         Entity<SelectState<Vec<SelectOption<AiProviderKind>>>>,
+    pub(in crate::ui::shell) web_search_kind_select:
+        Entity<SelectState<Vec<SelectOption<WebSearchProviderKind>>>>,
     pub(in crate::ui::shell) font_family_select: Entity<SelectState<SearchableVec<String>>>,
     pub(in crate::ui::shell) font_fallbacks_input: Entity<InputState>,
     pub(in crate::ui::shell) seed_color_picker: Entity<ColorPickerState>,
@@ -194,6 +196,9 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) ai_provider_model_input: Entity<InputState>,
     pub(in crate::ui::shell) ai_provider_base_url_input: Entity<InputState>,
     pub(in crate::ui::shell) ai_provider_api_key_input: Entity<InputState>,
+    pub(in crate::ui::shell) web_search_api_key_input: Entity<InputState>,
+    pub(in crate::ui::shell) web_search_endpoint_input: Entity<InputState>,
+    pub(in crate::ui::shell) web_search_max_results_input: Entity<InputState>,
     pub(in crate::ui::shell) editing_ai_provider_id: Option<String>,
 }
 

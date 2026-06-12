@@ -82,6 +82,8 @@ pub(in crate::ui::shell) struct PanelFormsArgs {
     pub ai_provider_select: Entity<SelectState<Vec<SelectOption<String>>>>,
     pub ai_provider_kind_select:
         Entity<SelectState<Vec<SelectOption<miaominal_settings::AiProviderKind>>>>,
+    pub web_search_kind_select:
+        Entity<SelectState<Vec<SelectOption<miaominal_settings::WebSearchProviderKind>>>>,
     pub font_family_select: Entity<SelectState<SearchableVec<String>>>,
     pub font_fallbacks_input: Entity<InputState>,
     pub seed_color_picker: Entity<ColorPickerState>,
@@ -100,6 +102,9 @@ pub(in crate::ui::shell) struct PanelFormsArgs {
     pub ai_provider_model_input: Entity<InputState>,
     pub ai_provider_base_url_input: Entity<InputState>,
     pub ai_provider_api_key_input: Entity<InputState>,
+    pub web_search_api_key_input: Entity<InputState>,
+    pub web_search_endpoint_input: Entity<InputState>,
+    pub web_search_max_results_input: Entity<InputState>,
 }
 
 impl AppView {
@@ -241,6 +246,7 @@ impl AppView {
             sync_provider_select,
             ai_provider_select,
             ai_provider_kind_select,
+            web_search_kind_select,
             font_family_select,
             font_fallbacks_input,
             seed_color_picker,
@@ -259,6 +265,9 @@ impl AppView {
             ai_provider_model_input,
             ai_provider_base_url_input,
             ai_provider_api_key_input,
+            web_search_api_key_input,
+            web_search_endpoint_input,
+            web_search_max_results_input,
         } = args;
 
         PanelForms {
@@ -305,6 +314,7 @@ impl AppView {
                 sync_provider_select,
                 ai_provider_select,
                 ai_provider_kind_select,
+                web_search_kind_select,
                 font_family_select,
                 font_fallbacks_input,
                 seed_color_picker,
@@ -326,6 +336,9 @@ impl AppView {
                 ai_provider_model_input,
                 ai_provider_base_url_input,
                 ai_provider_api_key_input,
+                web_search_api_key_input,
+                web_search_endpoint_input,
+                web_search_max_results_input,
                 editing_ai_provider_id: None,
             },
         }
