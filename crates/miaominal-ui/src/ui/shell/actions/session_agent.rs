@@ -609,6 +609,17 @@ impl AppView {
             }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);
+                // Sync the markdown entity with the final authoritative content.
+                // finish_assistant_reply overwrites message.content but does not
+                // update markdown_entity, so we need to do it here.
+                let last_assistant_idx = self
+                    .session_agent
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == SessionAgentMessageRole::Assistant);
+                if let Some(idx) = last_assistant_idx {
+                    self.session_agent.ensure_assistant_markdown(idx, cx);
+                }
                 self.finish_session_agent_stream(request_id, cx);
             }
         }

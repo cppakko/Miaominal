@@ -44,6 +44,7 @@ impl AppView {
         };
         crate::ui::i18n::set_language(settings_store.settings().language);
         miaominal_settings::sync_component_theme(cx);
+        crate::ui::sync_markdown_theme(cx);
         let local_vault_enabled = settings_store.settings().local_vault_enabled;
         let LoadedAppData {
             services,
