@@ -30,8 +30,8 @@ impl AgentPolicy {
         match tool_name {
             "workspace_info" | "read" | "list" | "glob" | "grep" => AgentPolicyDecision::Allow,
             "run_shell" | "start_job" => AgentPolicyDecision::Allow,
-            "apply_patch" | "poll_job" | "stop_job" | "web_search" | "web_fetch" | "ask_user"
-            | "approval" => {
+            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "web_search" | "web_fetch"
+            | "ask_user" | "approval" => {
                 if approved {
                     AgentPolicyDecision::Allow
                 } else {
@@ -276,6 +276,7 @@ mod tests {
 
         for tool in [
             "apply_patch",
+            "list_jobs",
             "poll_job",
             "stop_job",
             "web_search",

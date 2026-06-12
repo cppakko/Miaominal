@@ -20,7 +20,7 @@ pub use chat::{
     stream_chat_after_tool_result,
 };
 pub use error::{AgentError, AgentResult};
-pub use jobs::{AgentJobId, AgentJobRegistry, JobPollResult, JobStatus};
+pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
 pub use tools::{AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
 pub use web::{DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider};

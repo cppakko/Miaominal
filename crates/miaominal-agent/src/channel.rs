@@ -1,7 +1,7 @@
 use crate::backend::{BackendRoute, BackendRouter, SshExecRequest};
 use crate::capabilities::RemoteCapabilities;
 use crate::error::{AgentError, AgentResult};
-use crate::jobs::{AgentJobId, AgentJobRegistry, JobPollResult};
+use crate::jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult};
 use crate::path_guard::resolve_workspace_path;
 use crate::policy::{AgentPathAccess, AgentPolicy};
 use crate::tools::{self, ListEntry};
@@ -69,6 +69,11 @@ pub enum ToolOutput {
     },
     JobStarted {
         job_id: AgentJobId,
+        poll_after_ms: u64,
+        next_action: String,
+    },
+    JobList {
+        jobs: Vec<AgentJobSummary>,
     },
     JobPoll {
         result: JobPollResult,
@@ -207,6 +212,7 @@ impl AgentExecChannel {
             "apply_patch" => tools::apply_patch(self, parse_args(request.arguments)?).await?,
             "run_shell" => tools::run_shell(self, parse_args(request.arguments)?).await?,
             "start_job" => tools::start_job(self, parse_args(request.arguments)?).await?,
+            "list_jobs" => tools::list_jobs(self).await?,
             "poll_job" => tools::poll_job(self, parse_args(request.arguments)?).await?,
             "stop_job" => tools::stop_job(self, parse_args(request.arguments)?).await?,
             "web_search" => tools::web_search(self, parse_args(request.arguments)?).await?,

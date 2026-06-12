@@ -11,7 +11,7 @@ use rig_core::providers::{
     anthropic, cohere, deepseek, gemini, huggingface, mistral, openai, openrouter, together, xai,
 };
 use rig_core::streaming::{
-    StreamedAssistantContent, StreamedUserContent, ToolCallDeltaContent, StreamingChat,
+    StreamedAssistantContent, StreamedUserContent, StreamingChat, ToolCallDeltaContent,
 };
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -91,7 +91,7 @@ pub enum AgentChatEvent {
     Finished(String),
 }
 
-const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
+const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
 const SESSION_AGENT_MAX_TURNS: usize = 40;
 
 fn chat_history(messages: Vec<AgentChatMessage>) -> Vec<Message> {
@@ -436,7 +436,9 @@ fn spawn_stream_chat<M>(
                         } => {
                             let entry = pending_streamed_tools
                                 .entry(internal_call_id.clone())
-                                .or_insert_with(|| PendingStreamedTool::new(internal_call_id.clone()));
+                                .or_insert_with(|| {
+                                    PendingStreamedTool::new(internal_call_id.clone())
+                                });
                             match content {
                                 ToolCallDeltaContent::Name(name) => {
                                     entry.name = name.clone();
@@ -447,7 +449,9 @@ fn spawn_stream_chat<M>(
                             }
                         }
                         // Non-streamed tool calls will be executed normally by rig_core.
-                        StreamedAssistantContent::ToolCall { internal_call_id, .. } => {
+                        StreamedAssistantContent::ToolCall {
+                            internal_call_id, ..
+                        } => {
                             pending_streamed_tools.remove(internal_call_id);
                         }
                         _ => {}
@@ -456,7 +460,9 @@ fn spawn_stream_chat<M>(
                 }
                 Ok(MultiTurnStreamItem::StreamUserItem(content)) => {
                     // Tool was executed by rig_core; remove from our tracking.
-                    let StreamedUserContent::ToolResult { internal_call_id, .. } = &content;
+                    let StreamedUserContent::ToolResult {
+                        internal_call_id, ..
+                    } = &content;
                     pending_streamed_tools.remove(internal_call_id);
                     chat_event_from_user_content(content)
                 }
