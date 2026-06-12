@@ -12,7 +12,8 @@ mod web;
 pub use backend::{BackendRoute, BackendRouter, SshExecBackend, SshExecRequest};
 pub use capabilities::{CapabilityProbe, CapabilityProbeResult, RemoteCapabilities};
 pub use channel::{
-    AgentExecChannel, AgentToolCallRequest, AgentToolCallResponse, ShellCommandResult, ToolOutput,
+    AgentExecChannel, AgentPtyHandle, AgentToolCallRequest, AgentToolCallResponse,
+    ShellCommandResult, ToolOutput,
 };
 pub use chat::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,

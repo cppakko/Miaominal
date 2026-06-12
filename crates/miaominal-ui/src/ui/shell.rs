@@ -108,9 +108,9 @@ pub(in crate::ui::shell) use sftp_browser::{
     SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
 };
 pub(in crate::ui::shell) use state::{
-    ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot, DialogState, DraggedTab,
-    ExitingDialogState, HostEditorEnvironmentVariableRow, InlineRenameState, LocalSftpEntry,
-    MonitorChartPoint, OnboardingState, PanelState, PendingAiProviderPopupState,
+    AgentExecMode, ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot, DialogState,
+    DraggedTab, ExitingDialogState, HostEditorEnvironmentVariableRow, InlineRenameState,
+    LocalSftpEntry, MonitorChartPoint, OnboardingState, PanelState, PendingAiProviderPopupState,
     PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
     PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
     PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,

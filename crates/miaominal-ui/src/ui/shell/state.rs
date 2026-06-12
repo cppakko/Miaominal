@@ -1,6 +1,7 @@
 use super::*;
 use crate::ui::i18n;
 use std::time::Instant;
+use tokio::sync::mpsc;
 use zed_markdown::Markdown;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
@@ -186,6 +187,26 @@ impl SessionAgentMessage {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::ui::shell) enum AgentExecMode {
+    #[default]
+    ExecChannel,
+    Pty,
+}
+
+impl AgentExecMode {
+    pub(in crate::ui::shell) fn toggle(self) -> Self {
+        match self {
+            Self::ExecChannel => Self::Pty,
+            Self::Pty => Self::ExecChannel,
+        }
+    }
+
+    pub(in crate::ui::shell) fn is_pty(self) -> bool {
+        matches!(self, Self::Pty)
+    }
+}
+
 #[derive(Default)]
 pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) messages: Vec<SessionAgentMessage>,
@@ -193,6 +214,7 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) active_request_id: u64,
     pub(in crate::ui::shell) request_counter: u64,
     pub(in crate::ui::shell) last_error: Option<String>,
+    pub(in crate::ui::shell) exec_mode: AgentExecMode,
 }
 
 impl SessionAgentState {
@@ -624,6 +646,7 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) preserved_history_popup_hidden: bool,
     pub(in crate::ui::shell) pending_profile: Option<SessionProfile>,
     pub(in crate::ui::shell) commands: Option<SessionCommandSender>,
+    pub(in crate::ui::shell) pty_output_tap: Option<mpsc::UnboundedSender<Vec<u8>>>,
     pub(in crate::ui::shell) bytes_in: u64,
     pub(in crate::ui::shell) bytes_out: u64,
     pub(in crate::ui::shell) pending_host_key: Option<HostKeyPrompt>,
@@ -1106,6 +1129,7 @@ impl TabState {
                 preserved_history_popup_hidden: false,
                 pending_profile: Some(profile),
                 commands: None,
+                pty_output_tap: None,
                 bytes_in: 0,
                 bytes_out: 0,
                 pending_host_key: None,
@@ -1164,6 +1188,7 @@ impl TabState {
                 preserved_history_popup_hidden: false,
                 pending_profile: None,
                 commands: Some(commands),
+                pty_output_tap: None,
                 bytes_in: 0,
                 bytes_out: 0,
                 pending_host_key: None,
@@ -1204,6 +1229,7 @@ impl TabState {
                 preserved_history_popup_hidden: false,
                 pending_profile: None,
                 commands: Some(commands),
+                pty_output_tap: None,
                 bytes_in: 0,
                 bytes_out: 0,
                 pending_host_key: None,
@@ -1528,6 +1554,7 @@ mod tests {
             preserved_history_popup_hidden: false,
             pending_profile: None,
             commands: None,
+            pty_output_tap: None,
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,

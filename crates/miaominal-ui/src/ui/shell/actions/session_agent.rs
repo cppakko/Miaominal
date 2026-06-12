@@ -2,12 +2,14 @@ use super::super::*;
 use crate::ui::i18n;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentToolCallRequest,
+    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentPtyHandle, AgentToolCallRequest,
     AgentToolResultContinuationRequest, AgentToolSet,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::{Mutex, mpsc};
 
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
@@ -138,10 +140,9 @@ impl AppView {
             }
         };
 
-        let tools = self
-            .active_profile()
-            .cloned()
-            .map(|profile| AgentToolSet::for_channel(self.agent_exec_channel_for_profile(profile)));
+        let Some((tools, pty_tap_active)) = self.build_session_agent_tools(cx) else {
+            return;
+        };
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -195,6 +196,9 @@ impl AppView {
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
                         this.handle_session_agent_stream_error(request_id, error, cx);
+                        if pty_tap_active {
+                            this.set_active_session_pty_tap(None);
+                        }
                     });
                     return;
                 }
@@ -233,10 +237,60 @@ impl AppView {
 
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream(request_id, cx);
+                if pty_tap_active {
+                    this.set_active_session_pty_tap(None);
+                }
             });
         });
         self.session_agent.pending_task = Some(task);
         cx.notify();
+    }
+
+    fn build_session_agent_tools(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Option<AgentToolSet>, bool)> {
+        let active_pty_commands = if self.session_agent.exec_mode == AgentExecMode::Pty {
+            let Some(index) = self.active_terminal_session_index() else {
+                let message = "PTY mode requires an active terminal session.".to_string();
+                self.session_agent.last_error = Some(message.clone());
+                self.status_message = message;
+                cx.notify();
+                return None;
+            };
+            let Some(commands) = self
+                .workspace_state
+                .tabs
+                .get(index)
+                .and_then(TabState::as_session)
+                .and_then(|session| session.commands.clone())
+            else {
+                let message = "PTY mode requires a connected terminal session.".to_string();
+                self.session_agent.last_error = Some(message.clone());
+                self.status_message = message;
+                cx.notify();
+                return None;
+            };
+            Some(commands)
+        } else {
+            None
+        };
+
+        let pty_tap_active = active_pty_commands.is_some();
+        let tools = self.active_profile().cloned().map(|profile| {
+            let mut channel = self.agent_exec_channel_for_profile(profile);
+            if let Some(command_sender) = active_pty_commands.clone() {
+                let (sender, receiver) = mpsc::unbounded_channel();
+                self.set_active_session_pty_tap(Some(sender));
+                channel = channel.with_pty_handle(AgentPtyHandle {
+                    command_sender,
+                    output_tap: Arc::new(Mutex::new(Some(receiver))),
+                });
+            }
+            AgentToolSet::for_channel(channel)
+        });
+
+        Some((tools, pty_tap_active))
     }
 
     pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
@@ -249,6 +303,7 @@ impl AppView {
         }
 
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
+        self.set_active_session_pty_tap(None);
         self.status_message = "Agent stopped.".into();
         self.session_agent.last_error = None;
         cx.notify();
@@ -275,6 +330,37 @@ impl AppView {
         self.session_agent.approve_tool_call(&tool_id);
         self.status_message = "Tool approved. Running...".into();
 
+        let pty_handle = if self.session_agent.exec_mode == AgentExecMode::Pty {
+            let Some(index) = self.active_terminal_session_index() else {
+                let message = "PTY mode requires an active terminal session.".to_string();
+                self.session_agent.fail_tool_call(&tool_id, message.clone());
+                self.status_message = message;
+                cx.notify();
+                return;
+            };
+            let Some(command_sender) = self
+                .workspace_state
+                .tabs
+                .get(index)
+                .and_then(TabState::as_session)
+                .and_then(|session| session.commands.clone())
+            else {
+                let message = "PTY mode requires a connected terminal session.".to_string();
+                self.session_agent.fail_tool_call(&tool_id, message.clone());
+                self.status_message = message;
+                cx.notify();
+                return;
+            };
+            let (sender, receiver) = mpsc::unbounded_channel();
+            self.set_active_session_pty_tap(Some(sender));
+            Some(AgentPtyHandle {
+                command_sender,
+                output_tap: Arc::new(Mutex::new(Some(receiver))),
+            })
+        } else {
+            None
+        };
+        let pty_tap_active = pty_handle.is_some();
         let sessions = self.data.sessions.clone();
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
@@ -308,6 +394,9 @@ impl AppView {
                                         web_search_api_key,
                                     );
                                 }
+                                if let Some(pty_handle) = pty_handle {
+                                    channel = channel.with_pty_handle(pty_handle);
+                                }
                                 channel
                                     .call_tool(AgentToolCallRequest {
                                         tool_name: worker_tool_name,
@@ -336,6 +425,9 @@ impl AppView {
             };
 
             let _ = this.update(cx, move |this, cx| {
+                if pty_tap_active {
+                    this.set_active_session_pty_tap(None);
+                }
                 let previous_message_count = this.session_agent.messages.len();
                 let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
                 let (tool_result, failed) = match result {
@@ -430,10 +522,9 @@ impl AppView {
             }
         };
 
-        let tools = self
-            .active_profile()
-            .cloned()
-            .map(|profile| AgentToolSet::for_channel(self.agent_exec_channel_for_profile(profile)));
+        let Some((tools, pty_tap_active)) = self.build_session_agent_tools(cx) else {
+            return;
+        };
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -494,6 +585,9 @@ impl AppView {
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
                         this.handle_session_agent_stream_error(request_id, error, cx);
+                        if pty_tap_active {
+                            this.set_active_session_pty_tap(None);
+                        }
                     });
                     return;
                 }
@@ -536,6 +630,9 @@ impl AppView {
 
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream(request_id, cx);
+                if pty_tap_active {
+                    this.set_active_session_pty_tap(None);
+                }
             });
         });
         self.session_agent.pending_task = Some(task);

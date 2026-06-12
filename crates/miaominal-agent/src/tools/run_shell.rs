@@ -55,7 +55,11 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
         user_command = shell_quote(&args.command),
         max = max_bytes,
     );
-    let output = channel.exec(command).await?;
+    let output = if channel.has_pty_handle() {
+        channel.exec_pty(command, timeout_secs + 5).await?
+    } else {
+        channel.exec(command).await?
+    };
     let result = parse_shell_result(&output)?;
     Ok(ToolOutput::Shell { result })
 }

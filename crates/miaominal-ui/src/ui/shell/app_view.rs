@@ -768,6 +768,24 @@ impl AppView {
             })
     }
 
+    pub(in crate::ui::shell) fn set_active_session_pty_tap(
+        &mut self,
+        tap: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    ) {
+        let Some(index) = self.active_terminal_session_index() else {
+            return;
+        };
+        let Some(session) = self
+            .workspace_state
+            .tabs
+            .get_mut(index)
+            .and_then(TabState::as_session_mut)
+        else {
+            return;
+        };
+        session.pty_output_tap = tap;
+    }
+
     pub(in crate::ui::shell) fn toggle_session_side_panel(&mut self) {
         self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
     }
