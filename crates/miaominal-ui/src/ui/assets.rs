@@ -54,6 +54,7 @@ pub enum AppIcon {
     MoreHorizontal,
     Sliders,
     Send,
+    Copy,
 }
 
 impl IconNamed for AppIcon {
@@ -101,6 +102,7 @@ impl IconNamed for AppIcon {
             Self::MoreHorizontal => "icons/ellipsis.svg",
             Self::Sliders => "icons/sliders-horizontal.svg",
             Self::Send => "icons/send.svg",
+            Self::Copy => "icons/copy.svg",
         }
         .into()
     }
