@@ -47,6 +47,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 image = { version = "0.25", default-features = false }
 zed-markdown = { package = "markdown", git = "https://github.com/zed-industries/zed" }
+language = { git = "https://github.com/zed-industries/zed" }
 keyring = { version = "3", features = [
     "apple-native",
     "windows-native",
@@ -86,6 +87,13 @@ tokio = { version = "1", features = [
     "time",
 ] }
 toml = "0.8"
+tree-sitter = "0.26.9"
+tree-sitter-bash = "0.25.1"
+tree-sitter-css = "0.23.2"
+tree-sitter-json = "0.24.8"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" }
 unicode-segmentation = "1"
 usvg = "0.45.1"
 uuid = { version = "1", features = ["v4"] }

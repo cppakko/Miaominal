@@ -50,12 +50,14 @@ impl AppView {
         (offset.y + max_offset.y).abs() <= px(2.0)
     }
 
-    fn scroll_session_agent_to_bottom_if_new_block(
+    fn scroll_session_agent_to_bottom_if_following(
         &self,
         previous_message_count: usize,
         was_scrolled_to_bottom: bool,
+        content_may_have_grown: bool,
     ) {
-        if was_scrolled_to_bottom && self.session_agent.messages.len() > previous_message_count {
+        let new_block_added = self.session_agent.messages.len() > previous_message_count;
+        if was_scrolled_to_bottom && (new_block_added || content_may_have_grown) {
             self.workspace_state
                 .session_agent_scroll_handle
                 .scroll_to_bottom();
@@ -66,9 +68,10 @@ impl AppView {
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.messages.push(message);
-        self.scroll_session_agent_to_bottom_if_new_block(
+        self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
+            false,
         );
     }
 
@@ -78,7 +81,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.session_agent.messages.clear();
-        self.session_agent.clear_markdown_cache();
         self.session_agent.last_error = None;
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.pending_task = None;
@@ -323,10 +325,14 @@ impl AppView {
             };
 
             let _ = this.update(cx, move |this, cx| {
+                let previous_message_count = this.session_agent.messages.len();
+                let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
                 let (tool_result, failed) = match result {
                     Ok(result) => {
                         if !matches!(
-                            this.session_agent.tool_call(&tool_id).map(|tool_call| tool_call.status),
+                            this.session_agent
+                                .tool_call(&tool_id)
+                                .map(|tool_call| tool_call.status),
                             Some(SessionAgentToolStatus::InProgress)
                         ) {
                             this.status_message = "Agent stopped.".into();
@@ -340,7 +346,9 @@ impl AppView {
                     }
                     Err(error) => {
                         if !matches!(
-                            this.session_agent.tool_call(&tool_id).map(|tool_call| tool_call.status),
+                            this.session_agent
+                                .tool_call(&tool_id)
+                                .map(|tool_call| tool_call.status),
                             Some(SessionAgentToolStatus::InProgress)
                         ) {
                             this.status_message = "Agent stopped.".into();
@@ -353,6 +361,11 @@ impl AppView {
                         (result, true)
                     }
                 };
+                this.scroll_session_agent_to_bottom_if_following(
+                    previous_message_count,
+                    was_scrolled_to_bottom,
+                    true,
+                );
                 this.continue_session_agent_after_tool_result(
                     AgentChatToolEvent {
                         id: tool_id,
@@ -432,10 +445,11 @@ impl AppView {
         self.session_agent.last_error = None;
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply();
-        self.scroll_session_agent_to_bottom_if_new_block(
+        self.session_agent.start_assistant_reply(cx);
+        self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
+            false,
         );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
@@ -553,13 +567,22 @@ impl AppView {
 
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
+        let content_may_have_grown = matches!(
+            event,
+            AgentChatEvent::TextDelta(_)
+                | AgentChatEvent::ThinkingDelta(_)
+                | AgentChatEvent::ToolCallDelta { .. }
+                | AgentChatEvent::ToolCallCompleted { .. }
+                | AgentChatEvent::ToolCallApprovalRequired { .. }
+                | AgentChatEvent::Finished(_)
+        );
         match event {
             AgentChatEvent::TextDelta(delta) => {
-                self.session_agent.append_assistant_delta(delta);
+                self.session_agent.append_assistant_delta(delta, cx);
                 self.session_agent.last_error = None;
             }
             AgentChatEvent::ThinkingDelta(delta) => {
-                self.session_agent.append_thinking_delta(delta);
+                self.session_agent.append_thinking_delta(delta, cx);
                 self.status_message = i18n::string("workspace.panel.agent.thinking");
             }
             AgentChatEvent::ToolCallStarted(tool) => {
@@ -586,9 +609,10 @@ impl AppView {
                 self.finish_session_agent_stream(request_id, cx);
             }
         }
-        self.scroll_session_agent_to_bottom_if_new_block(
+        self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
+            content_may_have_grown,
         );
 
         cx.notify();
@@ -613,7 +637,7 @@ impl AppView {
                         && !message.content.trim().is_empty())
             });
         if !turn_has_output {
-            self.push_session_agent_message(SessionAgentMessage::assistant(i18n::string(
+            self.push_session_agent_message(SessionAgentMessage::assistant_raw(i18n::string(
                 "workspace.panel.agent.empty_reply",
             )));
         }
@@ -733,10 +757,11 @@ impl AppView {
         self.session_agent.active_request_id = request_id;
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply();
-        self.scroll_session_agent_to_bottom_if_new_block(
+        self.session_agent.start_assistant_reply(cx);
+        self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
+            false,
         );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
