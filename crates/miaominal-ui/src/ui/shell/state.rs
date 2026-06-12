@@ -1456,6 +1456,14 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) hosts_to_terminal_transition: Option<HostsToTerminalTransition>,
     pub(in crate::ui::shell) terminal_view_transition: Option<TerminalViewTransition>,
     pub(in crate::ui::shell) visible_terminal_view_tab_id: Option<usize>,
+    pub(in crate::ui::shell) session_agent_panel_width: f32,
+    pub(in crate::ui::shell) session_agent_panel_drag: Option<SessionAgentPanelDragState>,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct SessionAgentPanelDragState {
+    pub(in crate::ui::shell) initial_pointer: f32,
+    pub(in crate::ui::shell) initial_width: f32,
 }
 
 #[derive(Default)]

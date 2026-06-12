@@ -4,8 +4,76 @@ use theme::ActiveTheme as _;
 use zed_markdown::{MarkdownElement, MarkdownStyle};
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
-const SESSION_AGENT_MESSAGE_COLUMN_WIDTH: f32 =
-    super::workspace::SESSION_MONITOR_PANEL_WIDTH - SESSION_AGENT_PANEL_HORIZONTAL_PADDING;
+const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
+const SESSION_AGENT_PANEL_MAX_WIDTH: f32 = 720.0;
+const SESSION_AGENT_PANEL_RESIZE_HANDLE_WIDTH: f32 = 8.0;
+const SESSION_AGENT_USER_BUBBLE_MAX_WIDTH: f32 = 420.0;
+
+#[derive(Clone, Copy)]
+struct SessionAgentPanelResizeMarker;
+
+impl Render for SessionAgentPanelResizeMarker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(1.0)).h(px(1.0))
+    }
+}
+
+pub(in crate::ui::shell::layout) fn clamp_session_agent_panel_width(width: f32) -> f32 {
+    width.clamp(SESSION_AGENT_PANEL_MIN_WIDTH, SESSION_AGENT_PANEL_MAX_WIDTH)
+}
+
+fn session_agent_message_column_width(panel_width: f32) -> f32 {
+    (panel_width - SESSION_AGENT_PANEL_HORIZONTAL_PADDING)
+        .max(SESSION_AGENT_PANEL_MIN_WIDTH - SESSION_AGENT_PANEL_HORIZONTAL_PADDING)
+}
+
+fn render_session_agent_resize_handle(
+    is_dragging: bool,
+    cx: &mut Context<AppView>,
+) -> gpui::AnyElement {
+    div()
+        .id("session-agent-sidebar-resize-handle")
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .bottom(px(0.0))
+        .w(px(SESSION_AGENT_PANEL_RESIZE_HANDLE_WIDTH))
+        .cursor_col_resize()
+        .occlude()
+        .child(
+            div()
+                .absolute()
+                .left(px(3.0))
+                .top(px(12.0))
+                .bottom(px(12.0))
+                .w(px(1.0))
+                .rounded(px(999.0))
+                
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                this.workspace_state.session_agent_panel_drag = Some(SessionAgentPanelDragState {
+                    initial_pointer: f32::from(event.position.x),
+                    initial_width: this.workspace_state.session_agent_panel_width,
+                });
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+        .hover(move |this| {
+            if is_dragging {
+                this
+            } else {
+                this.cursor_col_resize()
+            }
+        })
+        .on_drag(
+            SessionAgentPanelResizeMarker,
+            |marker, _offset, _window, cx| cx.new(|_| *marker),
+        )
+        .into_any_element()
+}
 
 impl AppView {
     fn render_session_agent_sidebar_toolbar(&self, entity: Entity<Self>) -> gpui::AnyElement {
@@ -73,15 +141,20 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
+        let panel_width =
+            clamp_session_agent_panel_width(self.workspace_state.session_agent_panel_width);
+        let is_dragging = self.workspace_state.session_agent_panel_drag.is_some();
 
         card_surface(roles.surface_container, 16.0)
             .id("session-agent-sidebar")
-            .w(px(super::workspace::SESSION_MONITOR_PANEL_WIDTH))
+            .relative()
+            .w(px(panel_width))
             .h_full()
             .flex_shrink_0()
             .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_hidden()
+            .child(render_session_agent_resize_handle(is_dragging, cx))
             .child(
                 v_flex()
                     .size_full()
@@ -122,6 +195,8 @@ impl AppView {
         let send_entity = entity.clone();
         let waiting = self.session_agent.is_busy();
         let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
+        let message_column_width =
+            session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
 
         v_flex()
             .id("session-agent-panel-content")
@@ -155,6 +230,7 @@ impl AppView {
                                 .overflow_y_scroll()
                                 .pb_2()
                                 .child(self.render_session_agent_messages(
+                                    message_column_width,
                                     entity.clone(),
                                     window,
                                     cx,
@@ -258,6 +334,7 @@ impl AppView {
 
     fn render_session_agent_messages(
         &self,
+        message_column_width: f32,
         entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -285,8 +362,8 @@ impl AppView {
         }
 
         v_flex()
-            .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-            .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+            .w(px(message_column_width))
+            .max_w(px(message_column_width))
             .min_w_0()
             .overflow_x_hidden()
             .gap_2()
@@ -297,6 +374,7 @@ impl AppView {
                     .enumerate()
                     .map(|(index, message)| {
                         self.render_session_agent_message(
+                            message_column_width,
                             index,
                             message,
                             entity.clone(),
@@ -309,8 +387,8 @@ impl AppView {
             .when(self.session_agent.has_pending_task(), |this| {
                 this.child(
                     div()
-                        .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-                        .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+                        .w(px(message_column_width))
+                        .max_w(px(message_column_width))
                         .flex_shrink_0()
                         .pl_3()
                         .py_1()
@@ -471,6 +549,7 @@ impl AppView {
 
     fn render_session_agent_message(
         &self,
+        message_column_width: f32,
         index: usize,
         message: &SessionAgentMessage,
         entity: Entity<Self>,
@@ -486,18 +565,25 @@ impl AppView {
                 return div().into_any_element();
             }
             return self
-                .render_session_agent_thinking(index, message, entity, window, cx)
+                .render_session_agent_thinking(
+                    message_column_width,
+                    index,
+                    message,
+                    entity,
+                    window,
+                    cx,
+                )
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::ToolCall {
             return self
-                .render_session_agent_tool_call(index, message, entity, cx)
+                .render_session_agent_tool_call(message_column_width, index, message, entity, cx)
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::Assistant {
             return div()
-                .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-                .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+                .w(px(message_column_width))
+                .max_w(px(message_column_width))
                 .min_w_0()
                 .flex_shrink_0()
                 .overflow_x_hidden()
@@ -536,8 +622,8 @@ impl AppView {
         };
 
         h_flex()
-            .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-            .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+            .w(px(message_column_width))
+            .max_w(px(message_column_width))
             .min_w_0()
             .flex_shrink_0()
             .overflow_x_hidden()
@@ -545,7 +631,9 @@ impl AppView {
             .child(
                 v_flex()
                     .w_full()
-                    .max_w(px(292.0))
+                    .max_w(px(
+                        message_column_width.min(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH)
+                    ))
                     .min_w(px(0.0))
                     .gap_1()
                     .rounded(px(8.0))
@@ -576,6 +664,7 @@ impl AppView {
 
     fn render_session_agent_thinking(
         &self,
+        message_column_width: f32,
         index: usize,
         message: &SessionAgentMessage,
         entity: Entity<Self>,
@@ -607,8 +696,8 @@ impl AppView {
         let toggle_entity = entity.clone();
 
         div()
-            .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-            .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+            .w(px(message_column_width))
+            .max_w(px(message_column_width))
             .min_w_0()
             .flex_shrink_0()
             .overflow_x_hidden()
@@ -663,6 +752,7 @@ impl AppView {
 
     fn render_session_agent_tool_call(
         &self,
+        message_column_width: f32,
         index: usize,
         message: &SessionAgentMessage,
         entity: Entity<Self>,
@@ -711,8 +801,8 @@ impl AppView {
 
         v_flex()
             .id(("session-agent-tool-call", index))
-            .w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
-            .max_w(px(SESSION_AGENT_MESSAGE_COLUMN_WIDTH))
+            .w(px(message_column_width))
+            .max_w(px(message_column_width))
             .min_w_0()
             .flex_shrink_0()
             .overflow_hidden()

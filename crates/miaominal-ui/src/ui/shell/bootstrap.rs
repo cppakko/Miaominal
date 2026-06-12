@@ -1431,6 +1431,8 @@ impl AppView {
                 hosts_to_terminal_transition: None,
                 terminal_view_transition: None,
                 visible_terminal_view_tab_id: None,
+                session_agent_panel_width: SESSION_MONITOR_PANEL_WIDTH,
+                session_agent_panel_drag: None,
             },
             panel_view: PanelViewState::new(),
             editors: EditorOverlayState::new(),
