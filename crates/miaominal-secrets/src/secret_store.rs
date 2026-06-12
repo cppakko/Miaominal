@@ -101,6 +101,12 @@ impl SecretStore {
         }
     }
 
+    pub fn delete_web_search_api_key(&self) {
+        if let Err(error) = self.delete("web_search", SecretKind::WebSearchApiKey) {
+            log::warn!("{error:?}");
+        }
+    }
+
     pub fn is_locked_error(error: &anyhow::Error) -> bool {
         error
             .chain()

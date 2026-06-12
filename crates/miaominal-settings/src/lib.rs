@@ -15,6 +15,7 @@ pub use model::{
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
     PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
     SyncedSettings, TerminalKeyBindings, TerminalPalette, TerminalRightClickBehavior, Theme,
-    ThemeId, ai_provider_kind_label, available_font_families, changed, default_font_fallbacks,
-    default_font_family,
+    ThemeId, WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig,
+    WebSearchProviderKind, ai_provider_kind_label, available_font_families, changed,
+    default_font_fallbacks, default_font_family,
 };

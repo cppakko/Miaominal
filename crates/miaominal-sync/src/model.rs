@@ -112,6 +112,8 @@ pub struct PlaintextSecrets {
     pub key_secrets: Vec<KeySecret>,
     #[serde(default)]
     pub ai_provider_secrets: Vec<AiProviderSecret>,
+    #[serde(default)]
+    pub web_search_secret: Option<WebSearchSecret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +134,11 @@ pub struct KeySecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiProviderSecret {
     pub id: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchSecret {
     pub api_key: String,
 }
 

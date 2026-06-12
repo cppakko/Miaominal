@@ -1466,3 +1466,61 @@ api_key_required = "请填写 API key。"
 [settings.pages.ai_providers]
 title = "AI提供商"
 description = "Configure Rig-backed model providers for the agent tool layer. API keys are stored in the OS keychain by default, or in the local vault when enabled."
+
+[settings.web_search.group]
+title = "Web Search"
+description = "配置 agent 工具使用的联网搜索服务。"
+
+[settings.web_search.enabled]
+label = "启用 Web Search"
+description = "允许 agent 工作流调用已配置的联网搜索服务。"
+
+[settings.web_search.kind]
+label = "服务商"
+description = "选择用于返回网页搜索结果的服务。"
+
+[settings.web_search.api_key]
+label = "API Key"
+description = "保存在本地密钥存储中；SearXNG 可不填写。"
+
+[settings.web_search.endpoint]
+label = "Endpoint"
+description = "覆盖服务商默认端点；SearXNG 必填。"
+
+[settings.web_search.max_results]
+label = "最大结果数"
+description = "返回 {min} 到 {max} 条搜索结果。"
+
+[settings.web_search.actions]
+save = "保存 Web Search"
+description = "保存 Web Search 服务商设置。"
+
+[settings.web_search.kinds]
+tavily = "Tavily"
+exa = "Exa"
+bocha = "Bocha"
+zhipu = "智谱"
+sear_xng = "SearXNG"
+
+[settings.web_search.placeholders]
+api_key = "API Key"
+endpoint_tavily = "https://api.tavily.com"
+endpoint_exa = "https://api.exa.ai"
+endpoint_bocha = "https://api.bochaai.com"
+endpoint_zhipu = "https://open.bigmodel.cn"
+endpoint_sear_xng = "https://search.example.com"
+max_results = "10"
+
+[settings.web_search.status]
+enabled = "Web Search 已启用。"
+disabled = "Web Search 已关闭。"
+kind_selected = "Web Search 服务商：{kind}"
+
+[settings.web_search.notifications]
+saved_title = "Web Search 已保存"
+saved_message = "已保存 Web Search 设置。"
+
+[settings.web_search.validation]
+api_key_required = "当前服务商需要 API Key。"
+endpoint_required = "SearXNG 需要填写 Endpoint。"
+max_results_range = "最大结果数必须在 {min} 到 {max} 之间。"

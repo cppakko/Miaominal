@@ -311,6 +311,7 @@ pub(in crate::ui::shell) enum SecretRevealTarget {
     LocalVaultPassphrase,
     LocalVaultPassphraseConfirmation,
     AiProviderApiKey(String),
+    WebSearchApiKey,
 }
 
 impl SecretRevealTarget {
@@ -321,6 +322,7 @@ impl SecretRevealTarget {
                 | Self::SyncWebdavPassword
                 | Self::HostPassword
                 | Self::AiProviderApiKey(_)
+                | Self::WebSearchApiKey
         )
     }
 }
@@ -339,6 +341,7 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
     SaveSyncPassphrase(String),
     OpenAiProvider(String),
     SaveAiProvider(AiProviderSaveDraft),
+    SaveWebSearch(WebSearchSaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),
 }
@@ -346,6 +349,12 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) struct AiProviderSaveDraft {
     pub(in crate::ui::shell) provider: miaominal_settings::AiProviderConfig,
+    pub(in crate::ui::shell) api_key: String,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct WebSearchSaveDraft {
+    pub(in crate::ui::shell) config: miaominal_settings::WebSearchConfig,
     pub(in crate::ui::shell) api_key: String,
 }
 

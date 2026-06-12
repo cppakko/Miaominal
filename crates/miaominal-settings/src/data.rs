@@ -135,6 +135,92 @@ pub fn ai_provider_kind_label(kind: AiProviderKind) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSearchProviderKind {
+    Tavily,
+    Exa,
+    Bocha,
+    Zhipu,
+    SearXng,
+}
+
+impl WebSearchProviderKind {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Tavily,
+            Self::Exa,
+            Self::Bocha,
+            Self::Zhipu,
+            Self::SearXng,
+        ]
+    }
+
+    pub const fn requires_api_key(self) -> bool {
+        !matches!(self, Self::SearXng)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tavily => "Tavily",
+            Self::Exa => "Exa",
+            Self::Bocha => "Bocha",
+            Self::Zhipu => "Zhipu",
+            Self::SearXng => "SearXNG",
+        }
+    }
+}
+
+fn default_web_search_provider_kind() -> WebSearchProviderKind {
+    WebSearchProviderKind::Tavily
+}
+
+fn default_web_search_max_results() -> u32 {
+    DEFAULT_WEB_SEARCH_MAX_RESULTS
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_web_search_provider_kind")]
+    pub kind: WebSearchProviderKind,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_web_search_max_results")]
+    pub max_results: u32,
+}
+
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kind: default_web_search_provider_kind(),
+            api_key_env: String::new(),
+            has_api_key: false,
+            endpoint: String::new(),
+            max_results: DEFAULT_WEB_SEARCH_MAX_RESULTS,
+        }
+    }
+}
+
+impl WebSearchConfig {
+    pub fn sanitize(&mut self) {
+        self.api_key_env = self.api_key_env.trim().to_string();
+        self.endpoint = self.endpoint.trim().trim_end_matches('/').to_string();
+        self.max_results = self
+            .max_results
+            .clamp(WEB_SEARCH_MAX_RESULTS_MIN, WEB_SEARCH_MAX_RESULTS_MAX);
+        if !self.kind.requires_api_key() && self.api_key_env.is_empty() {
+            self.has_api_key = false;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyBinding {
     #[serde(default)]
@@ -414,7 +500,10 @@ pub const LINE_HEIGHT_MAX: f32 = 40.0;
 pub const STEP: f32 = 0.5;
 pub const RECENT_CONNECTIONS_COUNT_MIN: u8 = 0;
 pub const RECENT_CONNECTIONS_COUNT_MAX: u8 = 20;
+pub const WEB_SEARCH_MAX_RESULTS_MIN: u32 = 1;
+pub const WEB_SEARCH_MAX_RESULTS_MAX: u32 = 50;
 pub(crate) const DEFAULT_RECENT_CONNECTIONS_COUNT: u8 = 5;
+pub(crate) const DEFAULT_WEB_SEARCH_MAX_RESULTS: u32 = 10;
 const SFTP_BROWSER_COLUMN_COUNT: usize = 6;
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 14.0;
 pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 18.0;
@@ -522,6 +611,8 @@ pub struct AppSettings {
     pub local_vault_auto_lock_duration: LocalVaultAutoLockDuration,
     #[serde(default)]
     pub ai_providers: Vec<AiProviderConfig>,
+    #[serde(default)]
+    pub web_search: WebSearchConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -550,6 +641,8 @@ pub struct SyncedSettings {
     pub local_vault_auto_lock_duration: LocalVaultAutoLockDuration,
     #[serde(default)]
     pub ai_providers: Vec<AiProviderConfig>,
+    #[serde(default)]
+    pub web_search: WebSearchConfig,
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -655,6 +748,7 @@ impl Default for AppSettings {
             local_vault_enabled: default_local_vault_enabled(),
             local_vault_auto_lock_duration: default_local_vault_auto_lock_duration(),
             ai_providers: Vec::new(),
+            web_search: WebSearchConfig::default(),
         }
     }
 }
@@ -676,6 +770,7 @@ impl AppSettings {
         sanitize_sftp_browser_hidden_columns(&mut self.local_sftp_hidden_columns);
         sanitize_sftp_browser_hidden_columns(&mut self.remote_sftp_hidden_columns);
         sanitize_ai_providers(&mut self.ai_providers);
+        self.web_search.sanitize();
     }
 
     pub fn effective_font_family(&self) -> &str {
@@ -717,6 +812,8 @@ impl AppSettings {
         self.local_vault_auto_lock_duration = synced.local_vault_auto_lock_duration;
         self.ai_providers = synced.ai_providers.clone();
         sanitize_ai_providers(&mut self.ai_providers);
+        self.web_search = synced.web_search.clone();
+        self.web_search.sanitize();
     }
 }
 
@@ -736,6 +833,7 @@ impl From<&AppSettings> for SyncedSettings {
             completed_onboarding_version: settings.completed_onboarding_version,
             local_vault_auto_lock_duration: settings.local_vault_auto_lock_duration,
             ai_providers: settings.ai_providers.clone(),
+            web_search: settings.web_search.clone(),
         }
     }
 }

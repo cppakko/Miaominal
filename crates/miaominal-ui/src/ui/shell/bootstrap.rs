@@ -1,3 +1,4 @@
+use super::actions::{web_search_endpoint_placeholder, web_search_provider_kind_label_key};
 use super::bootstrap_form_factory::{HostEditorFormsArgs, PanelFormsArgs, WorkspaceFormsArgs};
 use super::*;
 use crate::ui::i18n;
@@ -5,7 +6,7 @@ use crate::ui::shell::bootstrap_loaders::{InitialProfileSelection, LoadedAppData
 use crate::ui::shell::bootstrap_subscriptions::AppViewSubscriptionsArgs;
 use gpui_component::IndexPath;
 use miaominal_core::profile::{DEFAULT_SESSION_CHARSET, ImportSourceKind};
-use miaominal_settings::{AiProviderKind, AppLanguage};
+use miaominal_settings::{AiProviderKind, AppLanguage, WebSearchProviderKind};
 use miaominal_sync::SyncProvider;
 
 impl AppView {
@@ -934,6 +935,38 @@ impl AppView {
                 }
             },
         );
+        let web_search_kind_options: Vec<SelectOption<WebSearchProviderKind>> =
+            WebSearchProviderKind::all()
+                .iter()
+                .copied()
+                .map(|kind| {
+                    SelectOption::new(kind, i18n::string(web_search_provider_kind_label_key(kind)))
+                })
+                .collect();
+        let selected_web_search_kind_index = web_search_kind_options
+            .iter()
+            .position(|provider| *provider.value() == settings_store.settings().web_search.kind)
+            .map(|index| IndexPath::default().row(index));
+        let web_search_kind_select = cx.new(|cx| {
+            SelectState::new(
+                web_search_kind_options,
+                selected_web_search_kind_index,
+                window,
+                cx,
+            )
+        });
+        let web_search_kind_select_subscription = cx.subscribe(
+            &web_search_kind_select,
+            |this: &mut AppView,
+             _,
+             event: &SelectEvent<Vec<SelectOption<WebSearchProviderKind>>>,
+             cx| {
+                let SelectEvent::Confirm(selected_provider) = event;
+                if let Some(provider) = selected_provider {
+                    this.on_web_search_kind_changed(*provider, cx);
+                }
+            },
+        );
         let sync_secrets = sync_engine
             .config_store
             .get_secrets()
@@ -1036,7 +1069,10 @@ impl AppView {
                     let value = input.read(cx).value().to_string();
                     this.update_terminal_search(value, cx);
                 }
-                InputEvent::PressEnter { secondary, shift } => {
+                InputEvent::PressEnter {
+                    secondary,
+                    shift: _,
+                } => {
                     if *secondary {
                         this.terminal_search_prev(cx);
                     } else {
@@ -1345,6 +1381,31 @@ impl AppView {
             window,
             cx,
         );
+        let web_search_config = &settings_store.settings().web_search;
+        let web_search_api_key_input = new_input_state(
+            Self::localized_secret_placeholder(
+                web_search_config.has_api_key,
+                "settings.web_search.placeholders.api_key",
+            ),
+            "",
+            true,
+            window,
+            cx,
+        );
+        let web_search_endpoint_input = new_input_state(
+            web_search_endpoint_placeholder(web_search_config.kind),
+            web_search_config.endpoint.clone(),
+            false,
+            window,
+            cx,
+        );
+        let web_search_max_results_input = new_input_state(
+            i18n::string("settings.web_search.placeholders.max_results"),
+            web_search_config.max_results.to_string(),
+            false,
+            window,
+            cx,
+        );
 
         let panel_forms = Self::build_panel_forms(PanelFormsArgs {
             filter_input,
@@ -1381,6 +1442,7 @@ impl AppView {
             sync_provider_select,
             ai_provider_select,
             ai_provider_kind_select,
+            web_search_kind_select,
             font_family_select,
             font_fallbacks_input,
             seed_color_picker,
@@ -1399,6 +1461,9 @@ impl AppView {
             ai_provider_model_input,
             ai_provider_base_url_input,
             ai_provider_api_key_input,
+            web_search_api_key_input,
+            web_search_endpoint_input,
+            web_search_max_results_input,
         });
 
         let mut view = Self {
@@ -1464,6 +1529,7 @@ impl AppView {
             local_vault_disable_in_progress: false,
             local_data_reset_in_progress: false,
             ai_provider_save_in_progress: false,
+            web_search_save_in_progress: false,
             ai_provider_api_key_load_in_progress: None,
             local_vault_session_passphrase: None,
             local_vault_auto_lock_task: None,
@@ -1494,6 +1560,7 @@ impl AppView {
                 sync_provider_select_subscription,
                 ai_provider_select_subscription,
                 ai_provider_kind_select_subscription,
+                web_search_kind_select_subscription,
                 keychain_filter_subscription,
                 filter_subscription,
                 trusted_filter_subscription,
