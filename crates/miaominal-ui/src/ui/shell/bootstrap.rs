@@ -369,6 +369,7 @@ impl AppView {
             InputState::new(window, cx)
                 .multi_line(true)
                 .auto_grow(3, 8)
+                .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
         let filter_input = new_input_state(

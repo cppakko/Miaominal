@@ -221,6 +221,35 @@ impl SessionAgentState {
         self.request_counter
     }
 
+    /// Create or update the `Entity<Markdown>` for a user/error message at `index`.
+    /// Must be called from a state-mutation context (event handler), never from render.
+    pub(in crate::ui::shell) fn ensure_plain_markdown(
+        &mut self,
+        index: usize,
+        cx: &mut gpui::Context<super::app_view::AppView>,
+    ) {
+        let Some(message) = self.messages.get_mut(index) else {
+            return;
+        };
+        if !matches!(
+            message.role,
+            SessionAgentMessageRole::User | SessionAgentMessageRole::Error
+        ) {
+            return;
+        }
+        let content: gpui::SharedString = Markdown::escape(&message.content).into_owned().into();
+        match message.markdown_entity.as_ref() {
+            Some(entity) => {
+                let entity = entity.clone();
+                entity.update(cx, |md, cx| md.reset(content, cx));
+            }
+            None => {
+                let entity = cx.new(|cx| Markdown::new_text(content, cx));
+                message.markdown_entity = Some(entity);
+            }
+        }
+    }
+
     /// Create or update the `Entity<Markdown>` for an assistant message at `index`.
     /// Must be called from a state-mutation context (event handler), never from render.
     pub(in crate::ui::shell) fn ensure_assistant_markdown(

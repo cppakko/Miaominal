@@ -64,10 +64,12 @@ impl AppView {
         }
     }
 
-    fn push_session_agent_message(&mut self, message: SessionAgentMessage) {
+    fn push_session_agent_message(&mut self, message: SessionAgentMessage, cx: &mut Context<Self>) {
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.messages.push(message);
+        let index = self.session_agent.messages.len() - 1;
+        self.session_agent.ensure_plain_markdown(index, cx);
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -158,7 +160,7 @@ impl AppView {
             .map(AgentChatMessage::from)
             .collect::<Vec<_>>();
 
-        self.push_session_agent_message(SessionAgentMessage::user(prompt.clone()));
+        self.push_session_agent_message(SessionAgentMessage::user(prompt.clone()), cx);
         self.workspace_state
             .session_agent_scroll_handle
             .scroll_to_bottom();
@@ -398,7 +400,7 @@ impl AppView {
         if self.session_agent.has_pending_task() {
             self.push_session_agent_message(SessionAgentMessage::error(
                 "Agent is already processing another response; approved tool result was not sent to the model.",
-            ));
+            ), cx);
             self.status_message = "Agent is already processing.".into();
             return;
         }
@@ -406,7 +408,7 @@ impl AppView {
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {
             let message = i18n::string("workspace.panel.agent.no_provider_configured");
             self.session_agent.last_error = Some(message.clone());
-            self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
+            self.push_session_agent_message(SessionAgentMessage::error(message.clone()), cx);
             self.status_message = message;
             return;
         };
@@ -416,7 +418,7 @@ impl AppView {
             Err(error) => {
                 let message = error.to_string();
                 self.session_agent.last_error = Some(message.clone());
-                self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
+                self.push_session_agent_message(SessionAgentMessage::error(message.clone()), cx);
                 self.status_message = message;
                 return;
             }
@@ -651,9 +653,12 @@ impl AppView {
                         && !message.content.trim().is_empty())
             });
         if !turn_has_output {
-            self.push_session_agent_message(SessionAgentMessage::assistant_raw(i18n::string(
-                "workspace.panel.agent.empty_reply",
-            )));
+            self.push_session_agent_message(
+                SessionAgentMessage::assistant_raw(i18n::string(
+                    "workspace.panel.agent.empty_reply",
+                )),
+                cx,
+            );
         }
         self.session_agent.last_error = None;
         let waiting_for_confirmation = self
@@ -690,7 +695,7 @@ impl AppView {
         self.session_agent.active_request_id = 0;
         let message = error.to_string();
         self.session_agent.last_error = Some(message.clone());
-        self.push_session_agent_message(SessionAgentMessage::error(message.clone()));
+        self.push_session_agent_message(SessionAgentMessage::error(message.clone()), cx);
         self.status_message = message;
         cx.notify();
     }
@@ -722,9 +727,12 @@ impl AppView {
         self.session_agent.pending_task = None;
         self.session_agent.active_request_id = 0;
         self.session_agent.last_error = None;
-        self.push_session_agent_message(SessionAgentMessage::error(format!(
-            "Agent tool-loop error returned to model: {message}"
-        )));
+        self.push_session_agent_message(
+            SessionAgentMessage::error(format!(
+                "Agent tool-loop error returned to model: {message}"
+            )),
+            cx,
+        );
         self.status_message = "Agent tool-loop error returned to model.".into();
 
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {

@@ -7,7 +7,7 @@ pub(crate) mod theme;
 pub(crate) mod utils;
 
 use ::theme::ActiveTheme as _;
-use gpui::{App, FontStyle, FontWeight, Global, HighlightStyle, Hsla};
+use gpui::{App, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyBinding};
 use language::LanguageRegistry;
 use settings::Settings as _;
 pub use shell::AppView;
@@ -28,6 +28,10 @@ pub fn init_zed_markdown(cx: &mut App) {
         theme_settings::init(::theme::LoadThemes::JustBase, cx);
     }
     sync_markdown_theme(cx);
+    cx.bind_keys([
+        KeyBinding::new("ctrl-c", zed_markdown::Copy, Some("Markdown")),
+        KeyBinding::new("cmd-c", zed_markdown::Copy, Some("Markdown")),
+    ]);
 
     if !cx.has_global::<MarkdownLanguageRegistry>() {
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
