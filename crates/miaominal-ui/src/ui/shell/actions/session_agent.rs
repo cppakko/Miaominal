@@ -197,6 +197,7 @@ impl AppView {
         self.session_agent.pending_task = None;
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
+        self.session_agent.title = None;
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
@@ -952,6 +953,71 @@ impl AppView {
         } else {
             i18n::string("workspace.panel.agent.reply_ready")
         };
+
+        // --- title generation ---
+        if self.session_agent.title.is_none() && !waiting_for_confirmation {
+            let user_count = self
+                .session_agent
+                .messages
+                .iter()
+                .filter(|m| m.role == SessionAgentMessageRole::User)
+                .count();
+            if user_count == 1 {
+                let first_user = self
+                    .session_agent
+                    .messages
+                    .iter()
+                    .find(|m| m.role == SessionAgentMessageRole::User)
+                    .map(|m| m.content.clone());
+                let first_assistant = self
+                    .session_agent
+                    .messages
+                    .iter()
+                    .filter(|m| m.role == SessionAgentMessageRole::Assistant)
+                    .find(|m| !m.content.trim().is_empty())
+                    .map(|m| m.content.clone());
+                if let (Some(user_msg), Some(assistant_msg)) = (first_user, first_assistant) {
+                    let provider_id = self.selected_ai_provider_id(cx);
+                    let provider = match provider_id.as_ref() {
+                        Some(id) => match self.build_session_agent_provider(id) {
+                            Ok(p) => Some(p),
+                            Err(e) => {
+                                log::info!("skip title generation: {e:?}");
+                                None
+                            }
+                        },
+                        None => None,
+                    };
+                    if let Some(provider) = provider {
+                        let runtime = self.services.runtime.clone();
+                        let task = cx.spawn(async move |this, cx| {
+                            let title = runtime
+                                .spawn(async move {
+                                    miaominal_agent::generate_title(
+                                        provider,
+                                        &user_msg,
+                                        &assistant_msg,
+                                    )
+                                    .await
+                                })
+                                .await
+                                .unwrap_or_else(|error| {
+                                    log::info!("title generation task cancelled: {error:?}");
+                                    None
+                                });
+                            if let Some(title) = title {
+                                let _ = this.update(cx, move |this, cx| {
+                                    this.session_agent.title = Some(title);
+                                    cx.notify();
+                                });
+                            }
+                        });
+                        task.detach();
+                    }
+                }
+            }
+        }
+        // --- end title generation ---
 
         cx.notify();
     }

@@ -107,6 +107,35 @@ fn chat_history(messages: Vec<AgentChatMessage>) -> Vec<Message> {
         .collect::<Vec<_>>()
 }
 
+/// Generate a concise title (3-8 words) from the first user-assistant exchange.
+/// Returns None on any failure — callers should silently keep the title empty.
+pub async fn generate_title(
+    provider: AgentChatProvider,
+    user_message: &str,
+    assistant_reply: &str,
+) -> Option<String> {
+    let prompt = format!(
+        "Generate a concise title (3-8 words) for the following conversation. The title must be in the same language as the user's message. Output only the title, no quotes, punctuation, or extra text.\n\nUser: {user_message}\nAssistant: {assistant_reply}"
+    );
+    let request = AgentChatRequest {
+        provider,
+        messages: Vec::new(),
+        prompt,
+        tools: None,
+        target_guidance: None,
+    };
+    match send_chat(request).await {
+        Ok(reply) => {
+            let title = reply.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '。' || c == '.' || c == '，' || c == ',' || c == '！' || c == '!' || c == '？' || c == '?').to_string();
+            if title.is_empty() { None } else { Some(title) }
+        }
+        Err(error) => {
+            log::info!("title generation failed: {error:?}");
+            None
+        }
+    }
+}
+
 pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
     let mut receiver = stream_chat(request).await?;
     let mut reply = String::new();

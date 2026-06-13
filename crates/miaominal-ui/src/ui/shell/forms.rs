@@ -79,6 +79,8 @@ pub(in crate::ui::shell) struct WorkspaceForms {
 
 pub(in crate::ui::shell) struct WorkspaceAgentForms {
     pub(in crate::ui::shell) prompt_input: Entity<InputState>,
+    pub(in crate::ui::shell) title_input: Entity<InputState>,
+    pub(in crate::ui::shell) editing_title: bool,
 }
 
 pub(in crate::ui::shell) struct WorkspaceSnippetsForms {

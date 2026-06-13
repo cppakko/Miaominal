@@ -219,6 +219,7 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) at_mention_anchor: usize,
     pub(in crate::ui::shell) selected_at_targets: Vec<String>,
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
+    pub(in crate::ui::shell) title: Option<String>,
 }
 
 impl SessionAgentState {

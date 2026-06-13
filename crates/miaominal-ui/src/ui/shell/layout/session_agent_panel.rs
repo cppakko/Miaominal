@@ -75,7 +75,12 @@ fn render_session_agent_resize_handle(
 }
 
 impl AppView {
-    fn render_session_agent_sidebar_toolbar(&self, entity: Entity<Self>) -> gpui::AnyElement {
+    fn render_session_agent_sidebar_toolbar(
+        &self,
+        entity: Entity<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -84,6 +89,14 @@ impl AppView {
         );
         let icon_bg = roles.surface_container;
         let close_entity = entity.clone();
+        let edit_entity = entity.clone();
+        let editing = self.workspace_forms.agent.editing_title;
+        let title_input = self.workspace_forms.agent.title_input.clone();
+        let display_text = self
+            .session_agent
+            .title
+            .clone()
+            .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"));
 
         h_flex()
             .w_full()
@@ -112,7 +125,42 @@ impl AppView {
                     .text_size(miaominal_settings::FontSize::Input.scaled())
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(roles.on_surface))
-                    .child(i18n::string("workspace.panel.agent.sidebar_title")),
+                    .when(editing, move |this| {
+                        this.child(
+                            div()
+                                .flex_1()
+                                .child(Input::new(&title_input).appearance(false).w_full()),
+                        )
+                    })
+                    .when(!editing, move |this| {
+                        let click_entity = edit_entity.clone();
+                        let text = display_text.clone();
+                        this.child(
+                            div()
+                                .id("session-agent-title")
+                                .overflow_x_hidden()
+                                .text_ellipsis()
+                                .cursor_text()
+                                .on_click(move |_click, window, cx| {
+                                    click_entity.update(cx, |this, cx| {
+                                        let current_title = this
+                                            .session_agent
+                                            .title
+                                            .clone()
+                                            .unwrap_or_default();
+                                        set_input_value(
+                                            &this.workspace_forms.agent.title_input,
+                                            current_title,
+                                            window,
+                                            cx,
+                                        );
+                                        this.workspace_forms.agent.editing_title = true;
+                                        cx.notify();
+                                    });
+                                })
+                                .child(text.clone()),
+                        )
+                    }),
             )
             .child(div().id("session-agent-close").child(icon_button(
                 AppIcon::PanelRight,
@@ -165,7 +213,7 @@ impl AppView {
                             .flex_shrink_0()
                             .items_center()
                             .px_2()
-                            .child(self.render_session_agent_sidebar_toolbar(entity.clone())),
+                            .child(self.render_session_agent_sidebar_toolbar(entity.clone(), window, cx)),
                     )
                     .child(
                         div()
@@ -224,7 +272,48 @@ impl AppView {
                                         )
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(rgb(roles.on_surface))
-                                        .child(i18n::string("workspace.panel.agent.chat")),
+                                        .when(self.workspace_forms.agent.editing_title, move |this| {
+                                            this.child(
+                                                div()
+                                                    .flex_1()
+                                                    .child(Input::new(&self.workspace_forms.agent.title_input.clone()).appearance(false).w_full()),
+                                            )
+                                        })
+                                        .when(!self.workspace_forms.agent.editing_title, {
+                                            let click_entity = entity.clone();
+                                            let display_text = self
+                                                .session_agent
+                                                .title
+                                                .clone()
+                                                .unwrap_or_else(|| i18n::string("workspace.panel.agent.chat"));
+                                            move |this: Div| {
+                                                this.child(
+                                                    div()
+                                                        .id("session-agent-conversations-title")
+                                                        .overflow_x_hidden()
+                                                        .text_ellipsis()
+                                                        .cursor_text()
+                                                        .on_click(move |_click, window, cx| {
+                                                            click_entity.update(cx, |this, cx| {
+                                                                let current_title = this
+                                                                    .session_agent
+                                                                    .title
+                                                                    .clone()
+                                                                    .unwrap_or_default();
+                                                                set_input_value(
+                                                                    &this.workspace_forms.agent.title_input,
+                                                                    current_title,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                                this.workspace_forms.agent.editing_title = true;
+                                                                cx.notify();
+                                                            });
+                                                        })
+                                                        .child(display_text),
+                                                )
+                                            }
+                                        }),
                                 ),
                             )
                             .child(

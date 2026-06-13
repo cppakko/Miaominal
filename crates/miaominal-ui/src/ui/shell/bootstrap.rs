@@ -373,6 +373,13 @@ impl AppView {
                 .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
+        let agent_title_input = new_input_state(
+            "Chat",
+            "",
+            false,
+            window,
+            cx,
+        );
         let filter_input = new_input_state(
             i18n::string("placeholders.hosts.filter"),
             "",
@@ -512,6 +519,22 @@ impl AppView {
                 if matches!(event, InputEvent::Change) {
                     this.update_session_agent_at_mention_state(cx);
                 }
+            },
+        );
+        let session_agent_title_subscription = cx.subscribe(
+            &agent_title_input,
+            |this: &mut AppView, _, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let value = this.workspace_forms.agent.title_input.read(cx).value().trim().to_string();
+                    this.session_agent.title = if value.is_empty() { None } else { Some(value) };
+                    this.workspace_forms.agent.editing_title = false;
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    this.workspace_forms.agent.editing_title = false;
+                    cx.notify();
+                }
+                _ => {}
             },
         );
         let keychain_filter_subscription = cx.subscribe(
@@ -1300,6 +1323,7 @@ impl AppView {
             rename_input,
             search_input,
             agent_prompt_input,
+            agent_title_input,
             session_snippets_filter_input,
             local_path_input: local_sftp_path_input,
             remote_path_input: remote_sftp_path_input,
@@ -1608,6 +1632,7 @@ impl AppView {
                 search_subscription,
                 session_snippets_filter_subscription,
                 session_agent_prompt_subscription,
+                session_agent_title_subscription,
                 terminal_focus_in_subscription,
                 terminal_focus_out_subscription,
                 window_activation_subscription,
