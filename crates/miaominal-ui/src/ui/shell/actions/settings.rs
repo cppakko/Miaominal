@@ -45,6 +45,7 @@ pub(in crate::ui::shell) fn ai_provider_select_options(
     settings
         .ai_providers
         .iter()
+        .filter(|provider| provider.enabled)
         .map(|provider| SelectOption::new(provider.id.clone(), provider.name.clone()))
         .collect()
 }
@@ -1532,6 +1533,7 @@ impl AppView {
             );
             return;
         }
+        let existing_has_api_key = existing.as_ref().is_some_and(|p| p.has_api_key);
         let mut provider = existing.unwrap_or_else(|| AiProviderConfig::new(kind));
         provider.kind = kind;
         provider.name = name;
@@ -1549,8 +1551,11 @@ impl AppView {
             .read(cx)
             .value()
             .to_string();
-        provider.api_key_env.clear();
-        provider.has_api_key = true;
+        if api_key.is_empty() && !existing_has_api_key {
+            // Not an existing provider with a stored key and no new key → keep env var fallback when set
+            provider.api_key_env = provider.api_key_env.trim().to_string();
+        }
+        provider.has_api_key = !api_key.is_empty() || existing_has_api_key;
         provider.sanitize();
 
         let draft = AiProviderSaveDraft { provider, api_key };

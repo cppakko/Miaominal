@@ -274,11 +274,13 @@ fn collect_secrets(
 
     let mut ai_provider_secrets = Vec::new();
     for provider in &settings.ai_providers {
-        if let Some(api_key) = secret_store.get(&provider.id, SecretKind::AiProviderApiKey)? {
-            ai_provider_secrets.push(AiProviderSecret {
-                id: provider.id.clone(),
-                api_key,
-            });
+        if provider.has_api_key {
+            if let Some(api_key) = secret_store.get(&provider.id, SecretKind::AiProviderApiKey)? {
+                ai_provider_secrets.push(AiProviderSecret {
+                    id: provider.id.clone(),
+                    api_key,
+                });
+            }
         }
     }
 
