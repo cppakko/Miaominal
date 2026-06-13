@@ -14,6 +14,7 @@ use miaominal_secrets::SecretStore;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
@@ -128,6 +129,7 @@ pub struct AgentExecChannel {
     web_search_configured: bool,
     web_fetch: WebFetchConfig,
     pty: Option<AgentPtyHandle>,
+    aux_channels: HashMap<String, AgentExecChannel>,
 }
 
 impl AgentExecChannel {
@@ -165,6 +167,7 @@ impl AgentExecChannel {
             web_search_configured: false,
             web_fetch: WebFetchConfig::default(),
             pty: None,
+            aux_channels: HashMap::new(),
         }
     }
 
@@ -220,6 +223,11 @@ impl AgentExecChannel {
         self
     }
 
+    pub fn with_aux_channels(mut self, channels: HashMap<String, AgentExecChannel>) -> Self {
+        self.aux_channels = channels;
+        self
+    }
+
     pub fn has_pty_handle(&self) -> bool {
         self.pty.is_some()
     }
@@ -228,6 +236,14 @@ impl AgentExecChannel {
         &self,
         request: AgentToolCallRequest,
     ) -> AgentResult<AgentToolCallResponse> {
+        if let Some(target) = string_arg(&request.arguments, "target").map(str::to_string)
+            && let Some(channel) = self.aux_channels.get(&target)
+        {
+            let mut routed_request = request;
+            remove_arg(&mut routed_request.arguments, "target");
+            return Box::pin(channel.call_tool(routed_request)).await;
+        }
+
         log::info!(
             "agent tool call requested: tool={} approved={} arguments={}",
             request.tool_name,
@@ -462,6 +478,12 @@ fn strip_ansi_text(input: &str) -> String {
 
 fn string_arg<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
     arguments.get(key).and_then(Value::as_str)
+}
+
+fn remove_arg(arguments: &mut Value, key: &str) {
+    if let Some(object) = arguments.as_object_mut() {
+        object.remove(key);
+    }
 }
 
 fn parse_args<T>(arguments: Value) -> AgentResult<T>

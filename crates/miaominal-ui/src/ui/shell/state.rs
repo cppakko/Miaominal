@@ -215,6 +215,10 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) request_counter: u64,
     pub(in crate::ui::shell) last_error: Option<String>,
     pub(in crate::ui::shell) exec_mode: AgentExecMode,
+    pub(in crate::ui::shell) at_mention_query: Option<String>,
+    pub(in crate::ui::shell) at_mention_anchor: usize,
+    pub(in crate::ui::shell) selected_at_targets: Vec<String>,
+    pub(in crate::ui::shell) active_at_targets: Vec<String>,
 }
 
 impl SessionAgentState {
@@ -626,6 +630,29 @@ impl SessionAgentState {
         {
             thinking.elapsed_ms = Some(thinking.started_at.elapsed().as_millis());
         }
+    }
+}
+
+pub(in crate::ui::shell) fn trailing_at_mention_query(value: &str) -> Option<(usize, String)> {
+    let mut start = None;
+    for (index, ch) in value.char_indices().rev() {
+        if ch == '@' {
+            start = Some(index);
+            break;
+        }
+        if ch.is_whitespace() || matches!(ch, ',' | ';' | ':' | '"' | '\'' | '(' | ')') {
+            return None;
+        }
+    }
+    let start = start?;
+    let query = &value[start + 1..];
+    if query
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+    {
+        Some((start, query.to_string()))
+    } else {
+        None
     }
 }
 

@@ -8,6 +8,7 @@ use miaominal_agent::{
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
@@ -45,6 +46,112 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
 }
 
 impl AppView {
+    pub(in crate::ui::shell) fn update_session_agent_at_mention_state(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self
+            .workspace_forms
+            .agent
+            .prompt_input
+            .read(cx)
+            .value()
+            .to_string();
+        if let Some((anchor, query)) = trailing_at_mention_query(&value) {
+            self.session_agent.at_mention_anchor = anchor;
+            self.session_agent.at_mention_query = Some(query);
+        } else {
+            self.session_agent.at_mention_query = None;
+            self.session_agent.at_mention_anchor = 0;
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn insert_session_agent_at_mention(
+        &mut self,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self
+            .workspace_forms
+            .agent
+            .prompt_input
+            .read(cx)
+            .value()
+            .to_string();
+        let anchor = self.session_agent.at_mention_anchor.min(value.len());
+        let replacement_end = value.len();
+        let mut next = String::new();
+        next.push_str(&value[..anchor]);
+        next.push_str(&value[replacement_end..]);
+        set_input_value(&self.workspace_forms.agent.prompt_input, next, window, cx);
+        if !self
+            .session_agent
+            .selected_at_targets
+            .iter()
+            .any(|target| target == &name)
+        {
+            self.session_agent.selected_at_targets.push(name);
+        }
+        self.session_agent.at_mention_query = None;
+        self.session_agent.at_mention_anchor = 0;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn remove_session_agent_at_target(
+        &mut self,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent
+            .selected_at_targets
+            .retain(|target| target != &name);
+        self.session_agent
+            .active_at_targets
+            .retain(|target| target != &name);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn session_agent_target_candidates(
+        &self,
+    ) -> Vec<SessionAgentTargetCandidate> {
+        match self.session_agent.exec_mode {
+            AgentExecMode::ExecChannel => self
+                .data
+                .sessions
+                .iter()
+                .map(|profile| SessionAgentTargetCandidate {
+                    name: profile.name.clone(),
+                    detail: format!("{}@{}", profile.username, profile.host),
+                    resolved: true,
+                })
+                .collect(),
+            AgentExecMode::Pty => self
+                .workspace_state
+                .tabs
+                .iter()
+                .filter_map(|tab| {
+                    let session = tab.as_session()?;
+                    (session.purpose == SessionPurpose::Terminal).then(|| {
+                        let detail = self
+                            .data
+                            .sessions
+                            .iter()
+                            .find(|profile| profile.id == session.profile_id)
+                            .map(|profile| format!("{}@{}", profile.username, profile.host))
+                            .unwrap_or_else(|| "terminal session".to_string());
+                        SessionAgentTargetCandidate {
+                            name: tab.title.clone(),
+                            detail,
+                            resolved: session.commands.is_some(),
+                        }
+                    })
+                })
+                .collect(),
+        }
+    }
+
     fn session_agent_is_scrolled_to_bottom(&self) -> bool {
         let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
         let offset = scroll_handle.offset();
@@ -88,12 +195,16 @@ impl AppView {
         self.session_agent.last_error = None;
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.pending_task = None;
+        self.session_agent.selected_at_targets.clear();
+        self.session_agent.active_at_targets.clear();
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
             window,
             cx,
         );
+        self.session_agent.at_mention_query = None;
+        self.session_agent.at_mention_anchor = 0;
         self.status_message = i18n::string("workspace.panel.agent.new_chat_started");
         cx.notify();
     }
@@ -140,9 +251,46 @@ impl AppView {
             }
         };
 
-        let Some((tools, pty_tap_active)) = self.build_session_agent_tools(cx) else {
+        let target_names = self.session_agent.selected_at_targets.clone();
+        let mentions = self.resolve_session_agent_mentions(&target_names);
+        if !mentions.unresolved.is_empty() {
+            self.clear_session_pty_taps_by_tab_id(&mentions.pty_tap_tab_ids);
+            let message = format!(
+                "Unknown @ target: {}",
+                mentions
+                    .unresolved
+                    .iter()
+                    .map(|name| format!("@{name}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            self.session_agent.last_error = Some(message.clone());
+            self.status_message = message;
+            cx.notify();
+            return;
+        }
+
+        let pty_target_tap_tab_ids = mentions.pty_tap_tab_ids.clone();
+        let Some((tools, pty_tap_active)) =
+            self.build_session_agent_tools(mentions.aux_channels, cx)
+        else {
             return;
         };
+        let target_guidance = mentions.guidance;
+        self.session_agent.active_at_targets = target_names.clone();
+        let target_prefix = if target_names.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "Targets: {}\n\n",
+                target_names
+                    .iter()
+                    .map(|name| format!("@{name}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let model_prompt = format!("{target_prefix}{prompt}");
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -157,7 +305,7 @@ impl AppView {
             .map(AgentChatMessage::from)
             .collect::<Vec<_>>();
 
-        self.push_session_agent_message(SessionAgentMessage::user(prompt.clone()), cx);
+        self.push_session_agent_message(SessionAgentMessage::user(model_prompt.clone()), cx);
         self.workspace_state
             .session_agent_scroll_handle
             .scroll_to_bottom();
@@ -170,6 +318,9 @@ impl AppView {
             window,
             cx,
         );
+        self.session_agent.at_mention_query = None;
+        self.session_agent.at_mention_anchor = 0;
+        self.session_agent.selected_at_targets.clear();
 
         let runtime = self.services.runtime.clone();
         let task = cx.spawn(async move |this, cx| {
@@ -178,8 +329,9 @@ impl AppView {
                     miaominal_agent::stream_chat(AgentChatRequest {
                         provider,
                         messages: history,
-                        prompt,
+                        prompt: model_prompt,
                         tools,
+                        target_guidance,
                     })
                     .await
                     .map_err(anyhow::Error::from)
@@ -199,6 +351,7 @@ impl AppView {
                         if pty_tap_active {
                             this.set_active_session_pty_tap(None);
                         }
+                        this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
                     });
                     return;
                 }
@@ -226,6 +379,7 @@ impl AppView {
                                     anyhow::Error::from(error),
                                     cx,
                                 );
+                                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
                             })
                             .map_err(|error| {
                                 log::debug!("failed to apply session agent chat error: {error:?}");
@@ -240,6 +394,7 @@ impl AppView {
                 if pty_tap_active {
                     this.set_active_session_pty_tap(None);
                 }
+                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
             });
         });
         self.session_agent.pending_task = Some(task);
@@ -248,6 +403,7 @@ impl AppView {
 
     fn build_session_agent_tools(
         &mut self,
+        aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
     ) -> Option<(Option<AgentToolSet>, bool)> {
         let active_pty_commands = if self.session_agent.exec_mode == AgentExecMode::Pty {
@@ -287,6 +443,7 @@ impl AppView {
                     output_tap: Arc::new(Mutex::new(Some(receiver))),
                 });
             }
+            channel = channel.with_aux_channels(aux_channels);
             AgentToolSet::for_channel(channel)
         });
 
@@ -304,6 +461,11 @@ impl AppView {
 
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.set_active_session_pty_tap(None);
+        for tab in &mut self.workspace_state.tabs {
+            if let Some(session) = tab.as_session_mut() {
+                session.pty_output_tap = None;
+            }
+        }
         self.status_message = "Agent stopped.".into();
         self.session_agent.last_error = None;
         cx.notify();
@@ -361,6 +523,8 @@ impl AppView {
             None
         };
         let pty_tap_active = pty_handle.is_some();
+        let approval_mentions = self.resolve_mentions_from_tool_arguments(&arguments);
+        let approval_pty_target_tap_tab_ids = approval_mentions.pty_tap_tab_ids.clone();
         let sessions = self.data.sessions.clone();
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
@@ -397,6 +561,7 @@ impl AppView {
                                 if let Some(pty_handle) = pty_handle {
                                     channel = channel.with_pty_handle(pty_handle);
                                 }
+                                channel = channel.with_aux_channels(approval_mentions.aux_channels);
                                 channel
                                     .call_tool(AgentToolCallRequest {
                                         tool_name: worker_tool_name,
@@ -428,6 +593,7 @@ impl AppView {
                 if pty_tap_active {
                     this.set_active_session_pty_tap(None);
                 }
+                this.clear_session_pty_taps_by_tab_id(&approval_pty_target_tap_tab_ids);
                 let previous_message_count = this.session_agent.messages.len();
                 let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
                 let (tool_result, failed) = match result {
@@ -522,7 +688,13 @@ impl AppView {
             }
         };
 
-        let Some((tools, pty_tap_active)) = self.build_session_agent_tools(cx) else {
+        let active_targets = self.session_agent.active_at_targets.clone();
+        let mentions = self.resolve_session_agent_mentions(&active_targets);
+        let pty_target_tap_tab_ids = mentions.pty_tap_tab_ids.clone();
+        let target_guidance = mentions.guidance;
+        let Some((tools, pty_tap_active)) =
+            self.build_session_agent_tools(mentions.aux_channels, cx)
+        else {
             return;
         };
         let request_id = self.session_agent.next_request_id();
@@ -568,6 +740,7 @@ impl AppView {
                             reasoning,
                             result,
                             tools,
+                            target_guidance,
                         },
                     )
                     .await
@@ -588,6 +761,7 @@ impl AppView {
                         if pty_tap_active {
                             this.set_active_session_pty_tap(None);
                         }
+                        this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
                     });
                     return;
                 }
@@ -617,6 +791,7 @@ impl AppView {
                                     anyhow::Error::from(error),
                                     cx,
                                 );
+                                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
                             })
                             .map_err(|error| {
                                 log::debug!(
@@ -633,6 +808,7 @@ impl AppView {
                 if pty_tap_active {
                     this.set_active_session_pty_tap(None);
                 }
+                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
             });
         });
         self.session_agent.pending_task = Some(task);
@@ -895,6 +1071,7 @@ impl AppView {
                         messages: history,
                         prompt,
                         tools: None,
+                        target_guidance: None,
                     })
                     .await
                     .map_err(anyhow::Error::from)
@@ -1002,6 +1179,127 @@ impl AppView {
         channel
     }
 
+    fn resolve_session_agent_mentions(
+        &mut self,
+        targets: &[String],
+    ) -> ResolvedSessionAgentMentions {
+        let mut aux_channels = HashMap::new();
+        let mut guidance_lines = Vec::new();
+        let mut resolved_names = Vec::new();
+        let mut pty_tap_tab_ids = Vec::new();
+        let mut pending_pty_taps = Vec::new();
+
+        match self.session_agent.exec_mode {
+            AgentExecMode::ExecChannel => {
+                for profile in &self.data.sessions {
+                    let marker = format!("@{}", profile.name);
+                    if !targets.iter().any(|target| target == &profile.name)
+                        || resolved_names.contains(&profile.name)
+                    {
+                        continue;
+                    }
+                    aux_channels.insert(
+                        marker.clone(),
+                        self.agent_exec_channel_for_profile(profile.clone()),
+                    );
+                    guidance_lines.push(format!(
+                        "- {marker}: SSH profile \"{}\" (host: {}, user: {})",
+                        profile.name, profile.host, profile.username
+                    ));
+                    resolved_names.push(profile.name.clone());
+                }
+            }
+            AgentExecMode::Pty => {
+                for tab in &self.workspace_state.tabs {
+                    let Some(session) = tab.as_session() else {
+                        continue;
+                    };
+                    if session.purpose != SessionPurpose::Terminal {
+                        continue;
+                    }
+                    let marker = format!("@{}", tab.title);
+                    if !targets.iter().any(|target| target == &tab.title)
+                        || resolved_names.contains(&tab.title)
+                    {
+                        continue;
+                    }
+                    let Some(command_sender) = session.commands.clone() else {
+                        continue;
+                    };
+                    let Some(profile) = self
+                        .data
+                        .sessions
+                        .iter()
+                        .find(|profile| profile.id == session.profile_id)
+                        .cloned()
+                        .or_else(|| session.pending_profile.clone())
+                    else {
+                        continue;
+                    };
+                    let (sender, receiver) = mpsc::unbounded_channel();
+                    let channel = self
+                        .agent_exec_channel_for_profile(profile.clone())
+                        .with_pty_handle(AgentPtyHandle {
+                            command_sender,
+                            output_tap: Arc::new(Mutex::new(Some(receiver))),
+                        });
+                    aux_channels.insert(marker.clone(), channel);
+                    if !pty_tap_tab_ids.contains(&tab.id) {
+                        pty_tap_tab_ids.push(tab.id);
+                    }
+                    pending_pty_taps.push((tab.id, sender));
+                    guidance_lines.push(format!(
+                        "- {marker}: terminal session \"{}\" (profile: {}, host: {}, user: {})",
+                        tab.title, profile.name, profile.host, profile.username
+                    ));
+                    resolved_names.push(tab.title.clone());
+                }
+            }
+        }
+
+        for (tab_id, sender) in pending_pty_taps {
+            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender));
+        }
+
+        let unresolved = targets
+            .iter()
+            .cloned()
+            .into_iter()
+            .filter(|name| {
+                !resolved_names.iter().any(|resolved| {
+                    resolved == name
+                        || resolved
+                            .strip_prefix(name)
+                            .is_some_and(|suffix| suffix.starts_with(' '))
+                })
+            })
+            .collect::<Vec<_>>();
+        let guidance = (!guidance_lines.is_empty()).then(|| {
+            format!(
+                "Available execution targets:\n{}\nTo run a tool on a specific target, add \"target\": \"@name\" to the tool arguments, using one of the exact @ targets above.",
+                guidance_lines.join("\n")
+            )
+        });
+
+        ResolvedSessionAgentMentions {
+            aux_channels,
+            guidance,
+            unresolved,
+            pty_tap_tab_ids,
+        }
+    }
+
+    fn resolve_mentions_from_tool_arguments(
+        &mut self,
+        arguments: &Value,
+    ) -> ResolvedSessionAgentMentions {
+        let Some(target) = arguments.get("target").and_then(Value::as_str) else {
+            return ResolvedSessionAgentMentions::default();
+        };
+        let target = target.trim_start_matches('@').to_string();
+        self.resolve_session_agent_mentions(&[target])
+    }
+
     fn resolve_ai_provider_api_key(&self, provider: &AiProviderConfig) -> anyhow::Result<String> {
         if !provider.api_key_env.trim().is_empty()
             && let Ok(value) = std::env::var(provider.api_key_env.trim())
@@ -1023,6 +1321,31 @@ impl AppView {
         }
 
         Ok(api_key)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct SessionAgentTargetCandidate {
+    pub(in crate::ui::shell) name: String,
+    pub(in crate::ui::shell) detail: String,
+    pub(in crate::ui::shell) resolved: bool,
+}
+
+struct ResolvedSessionAgentMentions {
+    aux_channels: HashMap<String, AgentExecChannel>,
+    guidance: Option<String>,
+    unresolved: Vec<String>,
+    pty_tap_tab_ids: Vec<usize>,
+}
+
+impl Default for ResolvedSessionAgentMentions {
+    fn default() -> Self {
+        Self {
+            aux_channels: HashMap::new(),
+            guidance: None,
+            unresolved: Vec::new(),
+            pty_tap_tab_ids: Vec::new(),
+        }
     }
 }
 

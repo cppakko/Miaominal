@@ -87,8 +87,8 @@ pub(crate) use crate::ui::utils::{
     format_byte_size, format_local_timestamp, truncate_with_ellipsis,
 };
 pub(in crate::ui::shell) use actions::{
-    ValidationFailure, ValidationNotificationKind, ai_provider_kind_label_key,
-    ai_provider_select_options,
+    SessionAgentTargetCandidate, ValidationFailure, ValidationNotificationKind,
+    ai_provider_kind_label_key, ai_provider_select_options,
 };
 use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
 use controllers::ControllerSet;
@@ -119,7 +119,7 @@ pub(in crate::ui::shell) use state::{
     SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
     SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
     SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
+    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
