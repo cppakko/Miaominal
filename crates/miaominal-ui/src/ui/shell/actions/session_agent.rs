@@ -1140,7 +1140,7 @@ impl AppView {
             .settings()
             .ai_providers
             .iter()
-            .find(|provider| provider.id == provider_id)
+            .find(|provider| provider.id == provider_id && provider.enabled)
             .cloned()
             .ok_or_else(|| {
                 anyhow::anyhow!(i18n::string("workspace.panel.agent.provider_missing"))
