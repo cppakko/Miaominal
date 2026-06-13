@@ -17,8 +17,8 @@ pub use channel::{
 };
 pub use chat::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentToolResultContinuationRequest, send_chat, stream_chat,
-    stream_chat_after_tool_result,
+    AgentChatRole, AgentChatToolEvent, AgentToolResultContinuationRequest, generate_title,
+    send_chat, stream_chat, stream_chat_after_tool_result,
 };
 pub use error::{AgentError, AgentResult};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};

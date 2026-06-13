@@ -100,6 +100,7 @@ pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _search_input_subscription: Subscription,
     pub _session_snippets_filter_input_subscription: Subscription,
     pub _session_agent_prompt_input_subscription: Subscription,
+    pub _session_agent_title_input_subscription: Subscription,
     pub _terminal_focus_in_subscription: Subscription,
     pub _terminal_focus_out_subscription: Subscription,
     pub _window_activation_subscription: Subscription,
