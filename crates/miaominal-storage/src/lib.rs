@@ -1,3 +1,4 @@
+pub mod chat_store;
 pub mod config_store;
 pub mod keychain_store;
 pub mod known_hosts_store;

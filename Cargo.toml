@@ -70,6 +70,7 @@ theme_settings = { git = "https://github.com/zed-industries/zed" }
 resvg = "0.45.1"
 rfd = "0.15"
 roxmltree = "0.20"
+rusqlite = { version = "0.32", features = ["bundled"] }
 russh = "0.60.1"
 russh-sftp = "2.1.1"
 rust-embed = "8.11.0"

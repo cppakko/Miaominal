@@ -2,6 +2,8 @@
 mod agent_service;
 #[path = "services/app_services.rs"]
 mod app_services;
+#[path = "services/chat_service.rs"]
+mod chat_service;
 #[path = "services/keychain_service.rs"]
 mod keychain_service;
 #[path = "services/profile_service.rs"]
@@ -17,6 +19,7 @@ mod terminal_service;
 
 pub use agent_service::AgentService;
 pub use app_services::{AppServices, LoadedAppData};
+pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
 pub use profile_service::{ImportedProfilesResult, ProfileService};
 pub use settings_service::{

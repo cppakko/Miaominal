@@ -5,11 +5,13 @@ use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_ssh::AgentIdentitySummary;
+use miaominal_storage::chat_store::ChatSessionRecord;
 
 pub(in crate::ui::shell) struct AppDataState {
     pub known_hosts_entries: Vec<KnownHostEntry>,
     pub managed_keys: Vec<ManagedKeyRecord>,
     pub agent_identities: Vec<AgentIdentitySummary>,
+    pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
     pub snippets: Vec<SnippetRecord>,
     pub selected_profile: Option<usize>,

@@ -83,6 +83,7 @@ impl Render for AppView {
         let pending_known_host_delete = self.pending_known_host_delete_prompt();
         let pending_snippet_delete = self.pending_snippet_delete_prompt();
         let pending_port_forward_rule_delete = self.pending_port_forward_rule_delete_prompt();
+        let pending_chat_session_delete = self.pending_chat_session_delete_prompt();
         let pending_sync_direction = self.pending_sync_direction_prompt();
         let pending_sync_pull_confirm = self.pending_sync_pull_confirm_prompt();
         let pending_local_vault_disable_confirm = self.pending_local_vault_disable_confirm_prompt();
@@ -292,6 +293,9 @@ impl Render for AppView {
                     &prompt,
                     None,
                 ))
+            })
+            .when_some(pending_chat_session_delete, |this, prompt| {
+                this.child(self.render_chat_session_delete_prompt(entity.clone(), &prompt, None))
             })
             .when_some(pending_sync_direction, |this, prompt| {
                 this.child(self.render_sync_direction_prompt(entity.clone(), &prompt, None))
@@ -1554,6 +1558,60 @@ impl AppView {
         )
     }
 
+    fn render_chat_session_delete_prompt(
+        &self,
+        entity: Entity<AppView>,
+        prompt: &PendingChatSessionDeleteState,
+        exit_progress: Option<f32>,
+    ) -> gpui::AnyElement {
+        let title = if prompt.title.trim().is_empty() {
+            "Untitled chat"
+        } else {
+            prompt.title.as_str()
+        };
+        let subtitle = format!("Delete \"{title}\"? This will remove the chat and its messages.");
+
+        let entity_cancel = entity.clone();
+        let entity_confirm = entity.clone();
+
+        let actions = h_flex()
+            .gap_2()
+            .justify_end()
+            .child(
+                basic_dialog_action_button(
+                    "chat-session-delete-cancel",
+                    "Cancel",
+                    BasicDialogActionTone::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    entity_cancel.update(cx, |this, cx| {
+                        this.cancel_session_agent_chat_delete(cx);
+                    });
+                }),
+            )
+            .child(
+                basic_dialog_action_button(
+                    "chat-session-delete-confirm",
+                    "Delete",
+                    BasicDialogActionTone::Destructive,
+                )
+                .on_click(move |_, _, cx| {
+                    entity_confirm.update(cx, |this, cx| {
+                        this.confirm_session_agent_chat_delete(cx);
+                    });
+                }),
+            );
+
+        render_basic_dialog(
+            "chat-session-delete",
+            "Delete chat".to_string(),
+            Some(subtitle),
+            None,
+            actions.into_any_element(),
+            exit_progress,
+        )
+    }
+
     fn render_sync_direction_prompt(
         &self,
         entity: Entity<AppView>,
@@ -2665,6 +2723,9 @@ impl AppView {
             }
             DialogOverlaySnapshot::PortForwardRuleDelete(prompt) => {
                 self.render_port_forward_rule_delete_prompt(entity, &prompt, Some(exit_progress))
+            }
+            DialogOverlaySnapshot::ChatSessionDelete(prompt) => {
+                self.render_chat_session_delete_prompt(entity, &prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::SyncDirection(prompt) => {
                 self.render_sync_direction_prompt(entity, &prompt, Some(exit_progress))

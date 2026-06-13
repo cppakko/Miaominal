@@ -130,6 +130,13 @@ pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) markdown_entity: Option<gpui::Entity<Markdown>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::ui::shell) enum ChatPanelView {
+    #[default]
+    SessionList,
+    Conversation,
+}
+
 impl SessionAgentMessage {
     pub(in crate::ui::shell) fn user(content: impl Into<String>) -> Self {
         Self {
@@ -209,6 +216,7 @@ impl AgentExecMode {
 
 #[derive(Default)]
 pub(in crate::ui::shell) struct SessionAgentState {
+    pub(in crate::ui::shell) session_id: Option<String>,
     pub(in crate::ui::shell) messages: Vec<SessionAgentMessage>,
     pub(in crate::ui::shell) pending_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) active_request_id: u64,
@@ -220,6 +228,7 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) selected_at_targets: Vec<String>,
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
     pub(in crate::ui::shell) title: Option<String>,
+    pub(in crate::ui::shell) panel_view: ChatPanelView,
 }
 
 impl SessionAgentState {
@@ -857,6 +866,12 @@ pub(in crate::ui::shell) struct PendingPortForwardRuleDeleteState {
     pub(in crate::ui::shell) rule_label: String,
 }
 
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingChatSessionDeleteState {
+    pub(in crate::ui::shell) session_id: String,
+    pub(in crate::ui::shell) title: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingSyncDirectionState;
 
@@ -898,6 +913,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     KnownHostDelete(PendingKnownHostDeleteState),
     SnippetDelete(PendingSnippetDeleteState),
     PortForwardRuleDelete(PendingPortForwardRuleDeleteState),
+    ChatSessionDelete(PendingChatSessionDeleteState),
     SyncDirection(PendingSyncDirectionState),
     SyncPullConfirm(PendingSyncPullConfirmState),
     LocalVaultDisableConfirm(PendingLocalVaultDisableConfirmState),
@@ -923,6 +939,7 @@ impl DialogOverlaySnapshot {
             Self::KnownHostDelete(_) => "known-host-delete".to_string(),
             Self::SnippetDelete(_) => "snippet-delete".to_string(),
             Self::PortForwardRuleDelete(_) => "port-forward-rule-delete".to_string(),
+            Self::ChatSessionDelete(_) => "chat-session-delete".to_string(),
             Self::SyncDirection(_) => "sync-direction".to_string(),
             Self::SyncPullConfirm(_) => "sync-pull-confirm".to_string(),
             Self::LocalVaultDisableConfirm(_) => "local-vault-disable-confirm".to_string(),
@@ -1407,6 +1424,7 @@ pub(in crate::ui::shell) struct DialogState {
     pub(in crate::ui::shell) pending_snippet_delete: Option<PendingSnippetDeleteState>,
     pub(in crate::ui::shell) pending_port_forward_rule_delete:
         Option<PendingPortForwardRuleDeleteState>,
+    pub(in crate::ui::shell) pending_chat_session_delete: Option<PendingChatSessionDeleteState>,
     pub(in crate::ui::shell) pending_sync_direction: Option<PendingSyncDirectionState>,
     pub(in crate::ui::shell) pending_sync_pull_confirm: Option<PendingSyncPullConfirmState>,
     pub(in crate::ui::shell) pending_local_vault_disable_confirm:

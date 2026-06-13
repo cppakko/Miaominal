@@ -23,6 +23,7 @@ pub struct AppView {
     pub(in crate::ui::shell) shell_state: ShellState,
     pub(in crate::ui::shell) panels: PanelState,
     pub(in crate::ui::shell) session_agent: SessionAgentState,
+    pub(in crate::ui::shell) session_agent_sessions: HashMap<String, SessionAgentState>,
     pub(in crate::ui::shell) kbi_inputs: Vec<Entity<InputState>>,
     pub(in crate::ui::shell) dialogs: DialogState,
     pub(in crate::ui::shell) onboarding: OnboardingState,
@@ -890,6 +891,12 @@ impl AppView {
         &self,
     ) -> Option<PendingPortForwardRuleDeleteState> {
         self.dialogs.pending_port_forward_rule_delete.clone()
+    }
+
+    pub(in crate::ui::shell) fn pending_chat_session_delete_prompt(
+        &self,
+    ) -> Option<PendingChatSessionDeleteState> {
+        self.dialogs.pending_chat_session_delete.clone()
     }
 
     pub(in crate::ui::shell) fn pending_sync_direction_prompt(
