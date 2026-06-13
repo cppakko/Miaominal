@@ -110,6 +110,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.local_vault_enabled != b.local_vault_enabled
         || a.local_vault_auto_lock_duration != b.local_vault_auto_lock_duration
         || a.ai_providers != b.ai_providers
+        || a.selected_ai_provider_id != b.selected_ai_provider_id
         || a.web_search != b.web_search
 }
 
