@@ -1138,7 +1138,7 @@ impl AppView {
     }
 
     fn refresh_ai_provider_select(
-        &self,
+        &mut self,
         selected_provider_id: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1149,6 +1149,13 @@ impl AppView {
             .filter(|id| options.iter().any(|option| option.value().as_str() == *id))
             .map(ToOwned::to_owned)
             .or(fallback_id);
+
+        let current_persisted = self.settings_store.settings().selected_ai_provider_id.clone();
+        if selected_id != current_persisted {
+            self.settings_store.update(|settings| {
+                settings.selected_ai_provider_id = selected_id.clone();
+            });
+        }
 
         self.panel_forms
             .settings

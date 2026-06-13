@@ -612,6 +612,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub ai_providers: Vec<AiProviderConfig>,
     #[serde(default)]
+    pub selected_ai_provider_id: Option<String>,
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 }
 
@@ -748,6 +750,7 @@ impl Default for AppSettings {
             local_vault_enabled: default_local_vault_enabled(),
             local_vault_auto_lock_duration: default_local_vault_auto_lock_duration(),
             ai_providers: Vec::new(),
+            selected_ai_provider_id: None,
             web_search: WebSearchConfig::default(),
         }
     }

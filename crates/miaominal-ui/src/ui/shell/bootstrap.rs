@@ -911,14 +911,32 @@ impl AppView {
             )
         });
         let ai_provider_options = ai_provider_select_options(settings_store.settings());
-        let selected_ai_provider_index =
-            (!ai_provider_options.is_empty()).then(|| IndexPath::default().row(0));
+        let selected_ai_provider_index = settings_store
+            .settings()
+            .selected_ai_provider_id
+            .as_ref()
+            .and_then(|persisted_id| {
+                ai_provider_options
+                    .iter()
+                    .position(|option| option.value() == persisted_id)
+            })
+            .map(|index| IndexPath::default().row(index))
+            .or_else(|| {
+                (!ai_provider_options.is_empty()).then(|| IndexPath::default().row(0))
+            });
         let ai_provider_select = cx.new(|cx| {
             SelectState::new(ai_provider_options, selected_ai_provider_index, window, cx)
         });
         let ai_provider_select_subscription = cx.subscribe(
             &ai_provider_select,
-            |_this: &mut AppView, _, _event: &SelectEvent<Vec<SelectOption<String>>>, cx| {
+            |this: &mut AppView, _, event: &SelectEvent<Vec<SelectOption<String>>>, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(selected) = selected {
+                    let new_id = selected.value().clone();
+                    this.settings_store.update(|settings| {
+                        settings.selected_ai_provider_id = Some(new_id);
+                    });
+                }
                 cx.notify();
             },
         );
