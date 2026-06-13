@@ -786,6 +786,29 @@ impl AppView {
         session.pty_output_tap = tap;
     }
 
+    pub(in crate::ui::shell) fn set_session_pty_tap_by_tab_id(
+        &mut self,
+        tab_id: usize,
+        tap: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    ) {
+        let Some(session) = self
+            .workspace_state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_session_mut)
+        else {
+            return;
+        };
+        session.pty_output_tap = tap;
+    }
+
+    pub(in crate::ui::shell) fn clear_session_pty_taps_by_tab_id(&mut self, tab_ids: &[usize]) {
+        for tab_id in tab_ids {
+            self.set_session_pty_tap_by_tab_id(*tab_id, None);
+        }
+    }
+
     pub(in crate::ui::shell) fn toggle_session_side_panel(&mut self) {
         self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
     }

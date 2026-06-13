@@ -538,7 +538,8 @@ impl AppView {
                 .get(index)
                 .is_some_and(|tab| !tab.hidden_from_topbar && tab.is_hosts())
         });
-        let tab = self.build_session_tab(profile.clone());
+        let mut tab = self.build_session_tab(profile.clone());
+        tab.title = self.unique_topbar_tab_title(&tab.title, None);
 
         self.unload_active_topbar_workspace(cx);
 
@@ -582,6 +583,32 @@ impl AppView {
         );
         self.sync_terminal_focus_reporting(window, cx);
         cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn unique_topbar_tab_title(
+        &self,
+        desired_title: &str,
+        excluding_index: Option<usize>,
+    ) -> String {
+        let base_title = desired_title.trim();
+        let base_title = if base_title.is_empty() {
+            i18n::string("placeholders.workspace.tab_name")
+        } else {
+            base_title.to_string()
+        };
+        let mut candidate = base_title.clone();
+        let mut suffix = 2usize;
+        while self
+            .workspace_state
+            .tabs
+            .iter()
+            .enumerate()
+            .any(|(index, tab)| Some(index) != excluding_index && tab.title == candidate)
+        {
+            candidate = format!("{base_title} ({suffix})");
+            suffix = suffix.saturating_add(1);
+        }
+        candidate
     }
 
     pub(in crate::ui::shell) fn open_sftp_tab_for_session(
@@ -1864,10 +1891,11 @@ impl AppView {
             .value()
             .to_string();
         let trimmed = new_title.trim();
-        if !trimmed.is_empty()
-            && let Some(tab) = self.workspace_state.tabs.get_mut(index)
-        {
-            tab.title = trimmed.to_string();
+        if !trimmed.is_empty() {
+            let title = self.unique_topbar_tab_title(trimmed, Some(index));
+            if let Some(tab) = self.workspace_state.tabs.get_mut(index) {
+                tab.title = title;
+            }
         }
         self.workspace_state.renaming_tab = None;
         cx.notify();

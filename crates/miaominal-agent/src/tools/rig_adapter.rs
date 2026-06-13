@@ -157,6 +157,12 @@ fn string_schema(description: &str) -> Value {
     json!({ "type": "string", "description": description })
 }
 
+fn target_schema() -> Value {
+    string_schema(
+        "Optional execution target from the user's @mentions, such as @Server or @Server (2). Omit to use the current session.",
+    )
+}
+
 fn integer_schema(description: &str, minimum: usize) -> Value {
     json!({ "type": "integer", "minimum": minimum, "description": description })
 }
@@ -179,6 +185,7 @@ fn tool_parameters(name: &str) -> Value {
         "read" => object_schema(
             vec![
                 ("path", string_schema("Remote workspace file path to read.")),
+                ("target", target_schema()),
                 (
                     "start_line",
                     integer_schema("First 1-based line to read.", 1),
@@ -191,6 +198,7 @@ fn tool_parameters(name: &str) -> Value {
         "list" => object_schema(
             vec![
                 ("path", string_schema("Remote workspace directory path.")),
+                ("target", target_schema()),
                 ("include_hidden", boolean_schema("Include dotfiles.")),
                 (
                     "max_entries",
@@ -205,6 +213,7 @@ fn tool_parameters(name: &str) -> Value {
                     "root",
                     string_schema("Narrow remote workspace root to search."),
                 ),
+                ("target", target_schema()),
                 ("pattern", string_schema("Glob-style filename pattern.")),
                 ("max_results", integer_schema("Maximum matching paths.", 1)),
                 ("include_hidden", boolean_schema("Include hidden paths.")),
@@ -218,6 +227,7 @@ fn tool_parameters(name: &str) -> Value {
                     "root",
                     string_schema("Narrow remote workspace root to search."),
                 ),
+                ("target", target_schema()),
                 ("include", string_array_schema("File globs to include.")),
                 ("max_results", integer_schema("Maximum matching lines.", 1)),
                 ("max_bytes", integer_schema("Maximum bytes to return.", 1)),
@@ -235,6 +245,7 @@ fn tool_parameters(name: &str) -> Value {
                     "base_dir",
                     string_schema("Remote workspace directory for patch."),
                 ),
+                ("target", target_schema()),
                 (
                     "validator",
                     json!({
@@ -252,6 +263,7 @@ fn tool_parameters(name: &str) -> Value {
         "run_shell" => object_schema(
             vec![
                 ("command", string_schema("Non-interactive shell command.")),
+                ("target", target_schema()),
                 ("cwd", string_schema("Remote workspace directory.")),
                 ("timeout_seconds", integer_schema("Timeout in seconds.", 1)),
                 (
@@ -265,12 +277,16 @@ fn tool_parameters(name: &str) -> Value {
         "start_job" => object_schema(
             vec![
                 ("command", string_schema("Long-running shell command.")),
+                ("target", target_schema()),
                 ("cwd", string_schema("Remote workspace directory.")),
             ],
             &["command"],
         ),
         "poll_job" | "stop_job" => object_schema(
-            vec![("job_id", string_schema("Job id returned by start_job."))],
+            vec![
+                ("job_id", string_schema("Job id returned by start_job.")),
+                ("target", target_schema()),
+            ],
             &["job_id"],
         ),
         "web_search" => object_schema(vec![("query", string_schema("Search query."))], &["query"]),

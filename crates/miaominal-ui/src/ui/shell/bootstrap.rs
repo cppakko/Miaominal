@@ -506,6 +506,14 @@ impl AppView {
                 }
             },
         );
+        let session_agent_prompt_subscription = cx.subscribe(
+            &agent_prompt_input,
+            |this: &mut AppView, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.update_session_agent_at_mention_state(cx);
+                }
+            },
+        );
         let keychain_filter_subscription = cx.subscribe(
             &keychain_filter_input,
             |_: &mut AppView, _, event: &InputEvent, cx| {
@@ -572,7 +580,12 @@ impl AppView {
                 let Some(view) = weak.upgrade() else { return };
                 let mut consumed = false;
                 view.update(cx, |this, cx| {
-                    if this.panel_forms.settings.recording_binding.is_some() {
+                    if this.session_agent.at_mention_query.is_some() {
+                        this.session_agent.at_mention_query = None;
+                        this.session_agent.at_mention_anchor = 0;
+                        cx.notify();
+                        consumed = true;
+                    } else if this.panel_forms.settings.recording_binding.is_some() {
                         this.cancel_recording_key_binding(cx);
                         consumed = true;
                     } else if this.workspace_forms.search.open {
@@ -1576,6 +1589,7 @@ impl AppView {
                 sftp_inline_rename_subscription,
                 search_subscription,
                 session_snippets_filter_subscription,
+                session_agent_prompt_subscription,
                 terminal_focus_in_subscription,
                 terminal_focus_out_subscription,
                 window_activation_subscription,

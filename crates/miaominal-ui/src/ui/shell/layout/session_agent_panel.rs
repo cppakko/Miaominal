@@ -199,190 +199,306 @@ impl AppView {
         let message_column_width =
             session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
 
-        v_flex()
+        div()
             .id("session-agent-panel-content")
             .size_full()
-            .overflow_hidden()
+            .relative()
             .child(
                 v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .px_3()
-                    .pt_2()
-                    .gap_3()
+                    .size_full()
+                    .overflow_hidden()
                     .child(
-                        h_flex().w_full().h(px(28.0)).items_center().gap_2().child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(roles.on_surface))
-                                .child(i18n::string("workspace.panel.agent.chat")),
-                        ),
+                        v_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .px_3()
+                            .pt_2()
+                            .gap_3()
+                            .child(
+                                h_flex().w_full().h(px(28.0)).items_center().gap_2().child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .text_size(
+                                            miaominal_settings::FontSize::Subheading.scaled(),
+                                        )
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(roles.on_surface))
+                                        .child(i18n::string("workspace.panel.agent.chat")),
+                                ),
+                            )
+                            .child(
+                                div().flex_1().min_h_0().child(
+                                    div()
+                                        .id("session-agent-scroll")
+                                        .size_full()
+                                        .overflow_x_hidden()
+                                        .track_scroll(&agent_scroll_handle)
+                                        .overflow_y_scroll()
+                                        .pb_2()
+                                        .child(self.render_session_agent_messages(
+                                            message_column_width,
+                                            entity.clone(),
+                                            window,
+                                            cx,
+                                        ))
+                                        .vertical_scrollbar(&agent_scroll_handle),
+                                ),
+                            ),
                     )
                     .child(
-                        div().flex_1().min_h_0().child(
-                            div()
-                                .id("session-agent-scroll")
-                                .size_full()
-                                .overflow_x_hidden()
-                                .track_scroll(&agent_scroll_handle)
-                                .overflow_y_scroll()
-                                .pb_2()
-                                .child(self.render_session_agent_messages(
-                                    message_column_width,
-                                    entity.clone(),
-                                    window,
-                                    cx,
-                                ))
-                                .vertical_scrollbar(&agent_scroll_handle),
+                        div().flex_shrink_0().p_2().relative().child(
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .rounded(px(8.0))
+                                .bg(rgb(roles.surface_container_high))
+                                .p_2()
+                                .child(self.render_session_agent_target_chips(entity.clone()))
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_h(px(86.0))
+                                        .max_h(px(190.0))
+                                        .rounded(px(6.0))
+                                        .relative()
+                                        .overflow_hidden()
+                                        .id("session-agent-prompt-input-menu")
+                                        .child(
+                                            Input::new(&prompt_input)
+                                                .w_full()
+                                                .appearance(false)
+                                                .focus_bordered(false)
+                                                .p_1(),
+                                        )
+                                        .context_menu(move |menu, _window, cx| {
+                                            let state = prompt_menu_input.read(cx);
+                                            let has_selection = !state.selected_range().is_empty();
+                                            let has_text = !state.value().is_empty();
+                                            let focus = state.focus_handle(cx);
+                                            menu.action_context(focus)
+                                                .menu_with_disabled(
+                                                    "Cut",
+                                                    Box::new(gpui_component::input::Cut),
+                                                    !has_selection,
+                                                )
+                                                .menu_with_disabled(
+                                                    i18n::string("workspace.menu.copy"),
+                                                    Box::new(gpui_component::input::Copy),
+                                                    !has_selection,
+                                                )
+                                                .menu_with_disabled(
+                                                    i18n::string("workspace.menu.paste"),
+                                                    Box::new(gpui_component::input::Paste),
+                                                    cx.read_from_clipboard().is_none(),
+                                                )
+                                                .item(PopupMenuItem::separator())
+                                                .menu_with_disabled(
+                                                    "Select All",
+                                                    Box::new(gpui_component::input::SelectAll),
+                                                    !has_text,
+                                                )
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .h(px(28.0))
+                                        .items_center()
+                                        .gap_2()
+                                        .child(icon_button(
+                                            AppIcon::Plus,
+                                            24.0,
+                                            8.0,
+                                            Some(roles.surface_container_high),
+                                            Some(text_muted),
+                                            None,
+                                            |_window, _cx| {},
+                                        ))
+                                        .child(
+                                            div()
+                                                .h(px(16.0))
+                                                .w(px(1.0))
+                                                .bg(rgb(roles.outline_variant)),
+                                        )
+                                        .child(
+                                            div().w(px(112.0)).min_w(px(0.0)).child(
+                                                md3_select(&provider_select)
+                                                    .small()
+                                                    .w_full()
+                                                    .bg(rgb(roles.surface_container_high)),
+                                            ),
+                                        )
+                                        .child(icon_button(
+                                            AppIcon::Sliders,
+                                            24.0,
+                                            8.0,
+                                            Some(roles.surface_container_high),
+                                            Some(text_muted),
+                                            None,
+                                            |_window, _cx| {},
+                                        ))
+                                        .child(icon_button(
+                                            AppIcon::LaptopMinimal,
+                                            24.0,
+                                            8.0,
+                                            Some(if self.session_agent.exec_mode.is_pty() {
+                                                roles.secondary_container
+                                            } else {
+                                                roles.surface_container_high
+                                            }),
+                                            Some(if self.session_agent.exec_mode.is_pty() {
+                                                roles.on_secondary_container
+                                            } else {
+                                                text_muted
+                                            }),
+                                            None,
+                                            move |_window, cx| {
+                                                let entity = pty_toggle_entity.clone();
+                                                entity.update(cx, |this, cx| {
+                                                    this.session_agent.exec_mode =
+                                                        this.session_agent.exec_mode.toggle();
+                                                    cx.notify();
+                                                });
+                                            },
+                                        ))
+                                        .child(div().flex_1())
+                                        .child(icon_button(
+                                            if waiting {
+                                                AppIcon::Pause
+                                            } else {
+                                                AppIcon::ChevronUp
+                                            },
+                                            26.0,
+                                            8.0,
+                                            Some(if waiting {
+                                                roles.error_container
+                                            } else {
+                                                roles.primary
+                                            }),
+                                            Some(if waiting {
+                                                roles.on_error_container
+                                            } else {
+                                                roles.on_primary
+                                            }),
+                                            None,
+                                            move |window, cx| {
+                                                let entity = send_entity.clone();
+                                                entity.update(cx, |this, cx| {
+                                                    if this.session_agent.is_busy() {
+                                                        this.stop_session_agent_stream(cx);
+                                                    } else {
+                                                        this.submit_session_agent_prompt(
+                                                            window, cx,
+                                                        );
+                                                    }
+                                                });
+                                            },
+                                        )),
+                                ),
                         ),
                     ),
             )
-            .child(
-                div().flex_shrink_0().p_2().child(
-                    v_flex()
-                        .w_full()
-                        .gap_2()
-                        .rounded(px(8.0))
-                        .bg(rgb(roles.surface_container_high))
-                        .p_2()
-                        .child(
-                            div()
-                                .w_full()
-                                .min_h(px(86.0))
-                                .max_h(px(190.0))
-                                .rounded(px(6.0))
-                                .overflow_hidden()
-                                .id("session-agent-prompt-input-menu")
-                                .child(
-                                    Input::new(&prompt_input)
-                                        .w_full()
-                                        .appearance(false)
-                                        .focus_bordered(false)
-                                        .p_1(),
-                                )
-                                .context_menu(move |menu, _window, cx| {
-                                    let state = prompt_menu_input.read(cx);
-                                    let has_selection = !state.selected_range().is_empty();
-                                    let has_text = !state.value().is_empty();
-                                    let focus = state.focus_handle(cx);
-                                    menu.action_context(focus)
-                                        .menu_with_disabled(
-                                            "Cut",
-                                            Box::new(gpui_component::input::Cut),
-                                            !has_selection,
-                                        )
-                                        .menu_with_disabled(
-                                            i18n::string("workspace.menu.copy"),
-                                            Box::new(gpui_component::input::Copy),
-                                            !has_selection,
-                                        )
-                                        .menu_with_disabled(
-                                            i18n::string("workspace.menu.paste"),
-                                            Box::new(gpui_component::input::Paste),
-                                            cx.read_from_clipboard().is_none(),
-                                        )
-                                        .item(PopupMenuItem::separator())
-                                        .menu_with_disabled(
-                                            "Select All",
-                                            Box::new(gpui_component::input::SelectAll),
-                                            !has_text,
-                                        )
-                                }),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .h(px(28.0))
-                                .items_center()
-                                .gap_2()
-                                .child(icon_button(
-                                    AppIcon::Plus,
-                                    24.0,
-                                    8.0,
-                                    Some(roles.surface_container_high),
-                                    Some(text_muted),
+            .into_any_element()
+    }
+
+    /// Renders the @-mention candidate popup as a window-root-level absolute overlay.
+    /// Must be called from `Render::render()` so the absolute positioning escapes all
+    /// overflow-hidden containers inside the sidebar panel hierarchy.
+    pub(in crate::ui::shell) fn render_session_agent_at_mention_overlay(
+        &self,
+        entity: Entity<Self>,
+        query: String,
+    ) -> gpui::AnyElement {
+        let agent_panel_width =
+            clamp_session_agent_panel_width(self.workspace_state.session_agent_panel_width);
+        let popup_width = (agent_panel_width - 16.0).max(200.0);
+        let candidates = self.session_agent_target_candidates();
+
+        // The popup is positioned relative to the window root div (which is `relative()`).
+        // Composer height (no chips): outer-p_2(8+8) + inner-p_2(8+8) + input(86) + gap(8) + controls(28) = 154px
+        //   bottom = STATUS_BAR_HEIGHT(28) + composer_height(154) = 182px
+        //   right  = 8px inset within the panel card content area
+        div()
+            .id("agent-at-mention-overlay")
+            .absolute()
+            .right(px(8.0))
+            .bottom(px(STATUS_BAR_HEIGHT + 154.0))
+            .w(px(popup_width))
+            .occlude()
+            .child(render_session_agent_at_mention_menu(
+                entity, candidates, query,
+            ))
+            .into_any_element()
+    }
+
+    fn render_session_agent_target_chips(&self, entity: Entity<Self>) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let candidates = self.session_agent_target_candidates();
+        let names = self.session_agent.selected_at_targets.clone();
+        if names.is_empty() {
+            return div().hidden().into_any_element();
+        }
+
+        h_flex()
+            .w_full()
+            .gap_1()
+            .flex_wrap()
+            .children(names.into_iter().map(|name| {
+                let remove_name = name.clone();
+                let remove_entity = entity.clone();
+                let resolved = candidates.iter().any(|candidate| {
+                    candidate.name == name
+                        || candidate
+                            .name
+                            .strip_prefix(&name)
+                            .is_some_and(|suffix| suffix.starts_with(' '))
+                });
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(999.0))
+                    .bg(rgb(if resolved {
+                        roles.secondary_container
+                    } else {
+                        roles.error_container
+                    }))
+                    .text_color(rgb(if resolved {
+                        roles.on_secondary_container
+                    } else {
+                        roles.on_error_container
+                    }))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(format!("@{name}"))
+                            .child(
+                                icon_button(
+                                    AppIcon::Close,
+                                    16.0,
+                                    4.0,
                                     None,
-                                    |_window, _cx| {},
-                                ))
-                                .child(div().h(px(16.0)).w(px(1.0)).bg(rgb(roles.outline_variant)))
-                                .child(
-                                    div().w(px(112.0)).min_w(px(0.0)).child(
-                                        md3_select(&provider_select)
-                                            .small()
-                                            .w_full()
-                                            .bg(rgb(roles.surface_container_high)),
-                                    ),
-                                )
-                                .child(icon_button(
-                                    AppIcon::Sliders,
-                                    24.0,
-                                    8.0,
-                                    Some(roles.surface_container_high),
-                                    Some(text_muted),
-                                    None,
-                                    |_window, _cx| {},
-                                ))
-                                .child(icon_button(
-                                    AppIcon::LaptopMinimal,
-                                    24.0,
-                                    8.0,
-                                    Some(if self.session_agent.exec_mode.is_pty() {
-                                        roles.secondary_container
-                                    } else {
-                                        roles.surface_container_high
-                                    }),
-                                    Some(if self.session_agent.exec_mode.is_pty() {
+                                    Some(if resolved {
                                         roles.on_secondary_container
                                     } else {
-                                        text_muted
+                                        roles.on_error_container
                                     }),
                                     None,
                                     move |_window, cx| {
-                                        let entity = pty_toggle_entity.clone();
+                                        let entity = remove_entity.clone();
+                                        let name = remove_name.clone();
                                         entity.update(cx, |this, cx| {
-                                            this.session_agent.exec_mode =
-                                                this.session_agent.exec_mode.toggle();
-                                            cx.notify();
+                                            this.remove_session_agent_at_target(name, cx);
                                         });
                                     },
-                                ))
-                                .child(div().flex_1())
-                                .child(icon_button(
-                                    if waiting {
-                                        AppIcon::Pause
-                                    } else {
-                                        AppIcon::ChevronUp
-                                    },
-                                    26.0,
-                                    8.0,
-                                    Some(if waiting {
-                                        roles.error_container
-                                    } else {
-                                        roles.primary
-                                    }),
-                                    Some(if waiting {
-                                        roles.on_error_container
-                                    } else {
-                                        roles.on_primary
-                                    }),
-                                    None,
-                                    move |window, cx| {
-                                        let entity = send_entity.clone();
-                                        entity.update(cx, |this, cx| {
-                                            if this.session_agent.is_busy() {
-                                                this.stop_session_agent_stream(cx);
-                                            } else {
-                                                this.submit_session_agent_prompt(window, cx);
-                                            }
-                                        });
-                                    },
-                                )),
-                        ),
-                ),
-            )
+                                )
+                                .id("session-agent-target-remove"),
+                            ),
+                    )
+                    .into_any_element()
+            }))
             .into_any_element()
     }
 
@@ -2005,6 +2121,102 @@ fn format_duration_ms(ms: u128) -> String {
         let seconds = ms as f64 / 1_000.0;
         format!("{seconds:.1}s")
     }
+}
+
+fn render_session_agent_at_mention_menu(
+    entity: Entity<AppView>,
+    candidates: Vec<SessionAgentTargetCandidate>,
+    query: String,
+) -> gpui::AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let query = query.trim().to_ascii_lowercase();
+    let filtered = candidates
+        .into_iter()
+        .filter(|candidate| {
+            query.is_empty() || candidate.name.to_ascii_lowercase().contains(&query)
+        })
+        .take(8)
+        .collect::<Vec<_>>();
+
+    v_flex()
+        .w_full()
+        .min_h(px(96.0))
+        .max_h(px(306.0))
+        .overflow_y_scrollbar()
+        .rounded(px(8.0))
+        .border_1()
+        .border_color(rgb(roles.outline_variant))
+        .bg(rgb(roles.surface_container_lowest))
+        .p_1()
+        .when(filtered.is_empty(), |this| {
+            this.child(
+                div()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child("No targets"),
+            )
+        })
+        .children(filtered.into_iter().map(|candidate| {
+            let name = candidate.name.clone();
+            let id_name = candidate.name.clone();
+            let click_entity = entity.clone();
+            h_flex()
+                .id(SharedString::from(format!(
+                    "agent-at-mention-row-{id_name}"
+                )))
+                .w_full()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded(px(6.0))
+                .bg(rgb(roles.surface_container_low))
+                .cursor_pointer()
+                .hover(move |this| this.bg(rgb(roles.secondary_container)))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(MouseButton::Left, move |_, window, cx| {
+                    let name = name.clone();
+                    let entity = click_entity.clone();
+                    entity.update(cx, |this, cx| {
+                        this.insert_session_agent_at_mention(name, window, cx);
+                    });
+                    cx.stop_propagation();
+                })
+                .child(
+                    div().flex_1().min_w_0().overflow_hidden().child(
+                        v_flex()
+                            .gap(px(1.0))
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(format!("@{}", candidate.name)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(candidate.detail),
+                            ),
+                    ),
+                )
+                .when(!candidate.resolved, |this| {
+                    this.child(
+                        div()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(roles.error))
+                            .child("offline"),
+                    )
+                })
+                .into_any_element()
+        }))
+        .into_any_element()
 }
 
 fn format_tool_call_copy_text(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> String {

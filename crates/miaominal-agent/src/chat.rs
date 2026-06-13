@@ -61,6 +61,7 @@ pub struct AgentChatRequest {
     pub messages: Vec<AgentChatMessage>,
     pub prompt: String,
     pub tools: Option<AgentToolSet>,
+    pub target_guidance: Option<String>,
 }
 
 #[derive(Clone)]
@@ -71,6 +72,7 @@ pub struct AgentToolResultContinuationRequest {
     pub reasoning: Option<String>,
     pub result: String,
     pub tools: Option<AgentToolSet>,
+    pub target_guidance: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +136,7 @@ pub async fn stream_chat(
         chat_history(request.messages),
         Message::user(request.prompt),
         request.tools,
+        request.target_guidance,
     )
     .await
 }
@@ -162,7 +165,14 @@ pub async fn stream_chat_after_tool_result(
     };
     history.push(Message::Assistant { id: None, content });
     let prompt = Message::tool_result(request.tool_call.id, request.result);
-    stream_chat_with_history(provider, history, prompt, request.tools).await
+    stream_chat_with_history(
+        provider,
+        history,
+        prompt,
+        request.tools,
+        request.target_guidance,
+    )
+    .await
 }
 
 async fn stream_chat_with_history(
@@ -170,8 +180,15 @@ async fn stream_chat_with_history(
     history: Vec<Message>,
     prompt: Message,
     tools: Option<AgentToolSet>,
+    target_guidance: Option<String>,
 ) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
     let (sender, receiver) = mpsc::channel(64);
+    let preamble = match target_guidance {
+        Some(guidance) if !guidance.trim().is_empty() => {
+            format!("{SESSION_AGENT_PREAMBLE}\n\n{guidance}")
+        }
+        _ => SESSION_AGENT_PREAMBLE.to_string(),
+    };
 
     match provider.kind {
         AgentChatProviderKind::OpenAi => {
@@ -183,7 +200,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build OpenAI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -205,7 +222,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Anthropic chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -227,7 +244,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build DeepSeek chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -249,7 +266,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Gemini chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -271,7 +288,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build OpenRouter chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -293,7 +310,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Mistral chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -315,7 +332,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Cohere chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -337,7 +354,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Together AI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -357,7 +374,7 @@ async fn stream_chat_with_history(
             }
             let client = builder.build().context("failed to build xAI chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
@@ -379,7 +396,7 @@ async fn stream_chat_with_history(
                 .build()
                 .context("failed to build Hugging Face chat client")?;
             let builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(SESSION_AGENT_PREAMBLE)
+                .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
             if let Some(tools) = tools {
                 spawn_stream_chat(
