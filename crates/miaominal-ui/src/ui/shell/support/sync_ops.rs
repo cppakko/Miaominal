@@ -451,7 +451,7 @@ impl AppView {
         }
 
         self.sync_managed_key_select_in_active_window(None, cx);
-        self.refresh_ai_provider_select_in_active_window(None, cx);
+        cx.notify();
     }
 }
 
