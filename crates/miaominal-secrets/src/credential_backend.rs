@@ -421,6 +421,39 @@ struct VaultDocument {
     services: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+pub fn encrypt_with_aad(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            aes_gcm::aead::Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|error| anyhow!("AES-GCM encryption failed: {error}"))?;
+
+    let mut combined = nonce.to_vec();
+    combined.extend_from_slice(&ciphertext);
+    Ok(combined)
+}
+
+pub fn decrypt_with_aad(key: &[u8; 32], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    if ciphertext.len() < 12 {
+        anyhow::bail!("ciphertext too short to contain nonce");
+    }
+    let (nonce_bytes, payload) = ciphertext.split_at(12);
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+
+    cipher
+        .decrypt(
+            Nonce::from_slice(nonce_bytes),
+            aes_gcm::aead::Payload { msg: payload, aad },
+        )
+        .map_err(|error| anyhow!("AES-GCM decryption failed: {error}"))
+}
+
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     let params = Params::new(
         VAULT_MEMORY_COST,

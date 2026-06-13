@@ -126,7 +126,21 @@ pub async fn generate_title(
     };
     match send_chat(request).await {
         Ok(reply) => {
-            let title = reply.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '。' || c == '.' || c == '，' || c == ',' || c == '！' || c == '!' || c == '？' || c == '?').to_string();
+            let title = reply
+                .trim()
+                .trim_matches(|c: char| {
+                    c == '"'
+                        || c == '\''
+                        || c == '。'
+                        || c == '.'
+                        || c == '，'
+                        || c == ','
+                        || c == '！'
+                        || c == '!'
+                        || c == '？'
+                        || c == '?'
+                })
+                .to_string();
             if title.is_empty() { None } else { Some(title) }
         }
         Err(error) => {

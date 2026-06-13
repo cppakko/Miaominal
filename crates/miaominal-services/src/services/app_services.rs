@@ -2,11 +2,14 @@ use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::snippet::SnippetRecord;
-use miaominal_secrets::SecretStore;
+use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, SecretStore};
+use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use tokio::runtime::Handle as TokioHandle;
+
+use crate::ChatService;
 
 pub struct AppServices {
     pub runtime: TokioHandle,
@@ -15,12 +18,14 @@ pub struct AppServices {
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
     pub keychain_store: Option<ManagedKeyStore>,
+    pub chat_service: Option<ChatService>,
 }
 
 pub struct LoadedAppData {
     pub services: AppServices,
     pub known_hosts_entries: Vec<KnownHostEntry>,
     pub managed_keys: Vec<ManagedKeyRecord>,
+    pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
     pub snippets: Vec<SnippetRecord>,
     pub selected_profile: Option<usize>,
@@ -35,6 +40,7 @@ impl AppServices {
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
         keychain_store: Option<ManagedKeyStore>,
+        chat_service: Option<ChatService>,
     ) -> Self {
         Self {
             runtime,
@@ -43,6 +49,7 @@ impl AppServices {
             secrets,
             known_hosts,
             keychain_store,
+            chat_service,
         }
     }
 
@@ -115,6 +122,20 @@ impl AppServices {
                 (None, Vec::new())
             }
         };
+        let chat_credentials = CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE);
+        let (chat_service, chat_sessions) = match ChatService::open(&chat_credentials) {
+            Ok(service) => {
+                let sessions = service.list_sessions().unwrap_or_else(|error| {
+                    log::warn!("failed to list chat sessions: {error:?}");
+                    Vec::new()
+                });
+                (Some(service), sessions)
+            }
+            Err(error) => {
+                log::warn!("chat service unavailable: {error:?}");
+                (None, Vec::new())
+            }
+        };
         let selected_profile = (!sessions.is_empty()).then_some(0);
 
         LoadedAppData {
@@ -125,9 +146,11 @@ impl AppServices {
                 secrets,
                 known_hosts,
                 keychain_store,
+                chat_service,
             ),
             known_hosts_entries,
             managed_keys,
+            chat_sessions,
             sessions,
             snippets,
             selected_profile,

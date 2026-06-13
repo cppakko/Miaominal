@@ -1150,7 +1150,11 @@ impl AppView {
             .map(ToOwned::to_owned)
             .or(fallback_id);
 
-        let current_persisted = self.settings_store.settings().selected_ai_provider_id.clone();
+        let current_persisted = self
+            .settings_store
+            .settings()
+            .selected_ai_provider_id
+            .clone();
         if selected_id != current_persisted {
             self.settings_store.update(|settings| {
                 settings.selected_ai_provider_id = selected_id.clone();

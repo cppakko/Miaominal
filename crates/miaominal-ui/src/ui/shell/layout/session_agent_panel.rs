@@ -113,7 +113,7 @@ impl AppView {
                 move |window, cx| {
                     let entity = entity.clone();
                     entity.update(cx, |this, cx| {
-                        this.reset_session_agent_chat(window, cx);
+                        this.start_session_agent_conversation(window, cx);
                     });
                 },
             )))
@@ -143,11 +143,8 @@ impl AppView {
                                 .cursor_text()
                                 .on_click(move |_click, window, cx| {
                                     click_entity.update(cx, |this, cx| {
-                                        let current_title = this
-                                            .session_agent
-                                            .title
-                                            .clone()
-                                            .unwrap_or_default();
+                                        let current_title =
+                                            this.session_agent.title.clone().unwrap_or_default();
                                         set_input_value(
                                             &this.workspace_forms.agent.title_input,
                                             current_title,
@@ -213,7 +210,11 @@ impl AppView {
                             .flex_shrink_0()
                             .items_center()
                             .px_2()
-                            .child(self.render_session_agent_sidebar_toolbar(entity.clone(), window, cx)),
+                            .child(self.render_session_agent_sidebar_toolbar(
+                                entity.clone(),
+                                window,
+                                cx,
+                            )),
                     )
                     .child(
                         div()
@@ -231,18 +232,16 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        if self.session_agent.panel_view == ChatPanelView::SessionList {
+            return self.render_session_agent_history_panel(entity, window, cx);
+        }
+
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let provider_select = self.panel_forms.settings.ai_provider_select.clone();
-        let prompt_input = self.workspace_forms.agent.prompt_input.clone();
-        let prompt_menu_input = prompt_input.clone();
-        let pty_toggle_entity = entity.clone();
-        let send_entity = entity.clone();
-        let waiting = self.session_agent.is_busy();
         let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
         let message_column_width =
             session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
@@ -263,58 +262,101 @@ impl AppView {
                             .pt_2()
                             .gap_3()
                             .child(
-                                h_flex().w_full().h(px(28.0)).items_center().gap_2().child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.0))
-                                        .text_size(
-                                            miaominal_settings::FontSize::Subheading.scaled(),
-                                        )
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(roles.on_surface))
-                                        .when(self.workspace_forms.agent.editing_title, move |this| {
-                                            this.child(
-                                                div()
-                                                    .flex_1()
-                                                    .child(Input::new(&self.workspace_forms.agent.title_input.clone()).appearance(false).w_full()),
-                                            )
-                                        })
-                                        .when(!self.workspace_forms.agent.editing_title, {
-                                            let click_entity = entity.clone();
-                                            let display_text = self
-                                                .session_agent
-                                                .title
-                                                .clone()
-                                                .unwrap_or_else(|| i18n::string("workspace.panel.agent.chat"));
-                                            move |this: Div| {
-                                                this.child(
-                                                    div()
-                                                        .id("session-agent-conversations-title")
-                                                        .overflow_x_hidden()
-                                                        .text_ellipsis()
-                                                        .cursor_text()
-                                                        .on_click(move |_click, window, cx| {
-                                                            click_entity.update(cx, |this, cx| {
-                                                                let current_title = this
-                                                                    .session_agent
-                                                                    .title
-                                                                    .clone()
-                                                                    .unwrap_or_default();
-                                                                set_input_value(
-                                                                    &this.workspace_forms.agent.title_input,
-                                                                    current_title,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                this.workspace_forms.agent.editing_title = true;
-                                                                cx.notify();
-                                                            });
-                                                        })
-                                                        .child(display_text),
-                                                )
+                                h_flex()
+                                    .w_full()
+                                    .h(px(28.0))
+                                    .items_center()
+                                    .gap_2()
+                                    .child(icon_button(
+                                        AppIcon::CornerLeftUp,
+                                        24.0,
+                                        8.0,
+                                        Some(roles.surface_container_high),
+                                        Some(text_muted),
+                                        None,
+                                        {
+                                            let entity = entity.clone();
+                                            move |_window, cx| {
+                                                let entity = entity.clone();
+                                                entity.update(cx, |this, cx| {
+                                                    this.show_session_agent_history(cx);
+                                                });
                                             }
-                                        }),
-                                ),
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .text_size(
+                                                miaominal_settings::FontSize::Subheading.scaled(),
+                                            )
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(rgb(roles.on_surface))
+                                            .when(
+                                                self.workspace_forms.agent.editing_title,
+                                                move |this| {
+                                                    this.child(
+                                                        div().flex_1().child(
+                                                            Input::new(
+                                                                &self
+                                                                    .workspace_forms
+                                                                    .agent
+                                                                    .title_input
+                                                                    .clone(),
+                                                            )
+                                                            .appearance(false)
+                                                            .w_full(),
+                                                        ),
+                                                    )
+                                                },
+                                            )
+                                            .when(!self.workspace_forms.agent.editing_title, {
+                                                let click_entity = entity.clone();
+                                                let display_text = self
+                                                    .session_agent
+                                                    .title
+                                                    .clone()
+                                                    .unwrap_or_else(|| {
+                                                        i18n::string("workspace.panel.agent.chat")
+                                                    });
+                                                move |this: Div| {
+                                                    this.child(
+                                                        div()
+                                                            .id("session-agent-conversations-title")
+                                                            .overflow_x_hidden()
+                                                            .text_ellipsis()
+                                                            .cursor_text()
+                                                            .on_click(move |_click, window, cx| {
+                                                                click_entity.update(
+                                                                    cx,
+                                                                    |this, cx| {
+                                                                        let current_title = this
+                                                                            .session_agent
+                                                                            .title
+                                                                            .clone()
+                                                                            .unwrap_or_default();
+                                                                        set_input_value(
+                                                                            &this
+                                                                                .workspace_forms
+                                                                                .agent
+                                                                                .title_input,
+                                                                            current_title,
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                        this.workspace_forms
+                                                                            .agent
+                                                                            .editing_title = true;
+                                                                        cx.notify();
+                                                                    },
+                                                                );
+                                                            })
+                                                            .child(display_text),
+                                                    )
+                                                }
+                                            }),
+                                    ),
                             )
                             .child(
                                 div().flex_1().min_h_0().child(
@@ -335,159 +377,365 @@ impl AppView {
                                 ),
                             ),
                     )
+                    .child(self.render_session_agent_composer(entity.clone())),
+            )
+            .into_any_element()
+    }
+
+    fn render_session_agent_composer(&self, entity: Entity<Self>) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+        let provider_select = self.panel_forms.settings.ai_provider_select.clone();
+        let prompt_input = self.workspace_forms.agent.prompt_input.clone();
+        let prompt_menu_input = prompt_input.clone();
+        let pty_toggle_entity = entity.clone();
+        let send_entity = entity;
+        let waiting = self.session_agent.is_busy();
+
+        div()
+            .flex_shrink_0()
+            .p_2()
+            .relative()
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .rounded(px(8.0))
+                    .bg(rgb(roles.surface_container_high))
+                    .p_2()
+                    .child(self.render_session_agent_target_chips(pty_toggle_entity.clone()))
                     .child(
-                        div().flex_shrink_0().p_2().relative().child(
-                            v_flex()
-                                .w_full()
-                                .gap_2()
-                                .rounded(px(8.0))
-                                .bg(rgb(roles.surface_container_high))
-                                .p_2()
-                                .child(self.render_session_agent_target_chips(entity.clone()))
-                                .child(
-                                    div()
+                        div()
+                            .w_full()
+                            .min_h(px(86.0))
+                            .max_h(px(190.0))
+                            .rounded(px(6.0))
+                            .relative()
+                            .overflow_hidden()
+                            .id("session-agent-prompt-input-menu")
+                            .child(
+                                Input::new(&prompt_input)
+                                    .w_full()
+                                    .appearance(false)
+                                    .focus_bordered(false)
+                                    .p_1(),
+                            )
+                            .context_menu(move |menu, _window, cx| {
+                                let state = prompt_menu_input.read(cx);
+                                let has_selection = !state.selected_range().is_empty();
+                                let has_text = !state.value().is_empty();
+                                let focus = state.focus_handle(cx);
+                                menu.action_context(focus)
+                                    .menu_with_disabled(
+                                        "Cut",
+                                        Box::new(gpui_component::input::Cut),
+                                        !has_selection,
+                                    )
+                                    .menu_with_disabled(
+                                        i18n::string("workspace.menu.copy"),
+                                        Box::new(gpui_component::input::Copy),
+                                        !has_selection,
+                                    )
+                                    .menu_with_disabled(
+                                        i18n::string("workspace.menu.paste"),
+                                        Box::new(gpui_component::input::Paste),
+                                        cx.read_from_clipboard().is_none(),
+                                    )
+                                    .item(PopupMenuItem::separator())
+                                    .menu_with_disabled(
+                                        "Select All",
+                                        Box::new(gpui_component::input::SelectAll),
+                                        !has_text,
+                                    )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(28.0))
+                            .items_center()
+                            .gap_2()
+                            .child(icon_button(
+                                AppIcon::Plus,
+                                24.0,
+                                8.0,
+                                Some(roles.surface_container_high),
+                                Some(text_muted),
+                                None,
+                                |_window, _cx| {},
+                            ))
+                            .child(div().h(px(16.0)).w(px(1.0)).bg(rgb(roles.outline_variant)))
+                            .child(
+                                div().w(px(112.0)).min_w(px(0.0)).child(
+                                    md3_select(&provider_select)
+                                        .small()
                                         .w_full()
-                                        .min_h(px(86.0))
-                                        .max_h(px(190.0))
-                                        .rounded(px(6.0))
-                                        .relative()
-                                        .overflow_hidden()
-                                        .id("session-agent-prompt-input-menu")
-                                        .child(
-                                            Input::new(&prompt_input)
-                                                .w_full()
-                                                .appearance(false)
-                                                .focus_bordered(false)
-                                                .p_1(),
-                                        )
-                                        .context_menu(move |menu, _window, cx| {
-                                            let state = prompt_menu_input.read(cx);
-                                            let has_selection = !state.selected_range().is_empty();
-                                            let has_text = !state.value().is_empty();
-                                            let focus = state.focus_handle(cx);
-                                            menu.action_context(focus)
-                                                .menu_with_disabled(
-                                                    "Cut",
-                                                    Box::new(gpui_component::input::Cut),
-                                                    !has_selection,
-                                                )
-                                                .menu_with_disabled(
-                                                    i18n::string("workspace.menu.copy"),
-                                                    Box::new(gpui_component::input::Copy),
-                                                    !has_selection,
-                                                )
-                                                .menu_with_disabled(
-                                                    i18n::string("workspace.menu.paste"),
-                                                    Box::new(gpui_component::input::Paste),
-                                                    cx.read_from_clipboard().is_none(),
-                                                )
-                                                .item(PopupMenuItem::separator())
-                                                .menu_with_disabled(
-                                                    "Select All",
-                                                    Box::new(gpui_component::input::SelectAll),
-                                                    !has_text,
-                                                )
-                                        }),
-                                )
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .h(px(28.0))
-                                        .items_center()
-                                        .gap_2()
-                                        .child(icon_button(
-                                            AppIcon::Plus,
-                                            24.0,
-                                            8.0,
-                                            Some(roles.surface_container_high),
-                                            Some(text_muted),
-                                            None,
-                                            |_window, _cx| {},
-                                        ))
-                                        .child(
-                                            div()
-                                                .h(px(16.0))
-                                                .w(px(1.0))
-                                                .bg(rgb(roles.outline_variant)),
-                                        )
-                                        .child(
-                                            div().w(px(112.0)).min_w(px(0.0)).child(
-                                                md3_select(&provider_select)
-                                                    .small()
-                                                    .w_full()
-                                                    .bg(rgb(roles.surface_container_high)),
-                                            ),
-                                        )
-                                        .child(icon_button(
-                                            AppIcon::Sliders,
-                                            24.0,
-                                            8.0,
-                                            Some(roles.surface_container_high),
-                                            Some(text_muted),
-                                            None,
-                                            |_window, _cx| {},
-                                        ))
-                                        .child(icon_button(
-                                            AppIcon::LaptopMinimal,
-                                            24.0,
-                                            8.0,
-                                            Some(if self.session_agent.exec_mode.is_pty() {
-                                                roles.secondary_container
-                                            } else {
-                                                roles.surface_container_high
-                                            }),
-                                            Some(if self.session_agent.exec_mode.is_pty() {
-                                                roles.on_secondary_container
-                                            } else {
-                                                text_muted
-                                            }),
-                                            None,
-                                            move |_window, cx| {
-                                                let entity = pty_toggle_entity.clone();
-                                                entity.update(cx, |this, cx| {
-                                                    this.session_agent.exec_mode =
-                                                        this.session_agent.exec_mode.toggle();
-                                                    cx.notify();
-                                                });
-                                            },
-                                        ))
-                                        .child(div().flex_1())
-                                        .child(icon_button(
-                                            if waiting {
-                                                AppIcon::Pause
-                                            } else {
-                                                AppIcon::ChevronUp
-                                            },
-                                            26.0,
-                                            8.0,
-                                            Some(if waiting {
-                                                roles.error_container
-                                            } else {
-                                                roles.primary
-                                            }),
-                                            Some(if waiting {
-                                                roles.on_error_container
-                                            } else {
-                                                roles.on_primary
-                                            }),
-                                            None,
-                                            move |window, cx| {
-                                                let entity = send_entity.clone();
-                                                entity.update(cx, |this, cx| {
-                                                    if this.session_agent.is_busy() {
-                                                        this.stop_session_agent_stream(cx);
-                                                    } else {
-                                                        this.submit_session_agent_prompt(
-                                                            window, cx,
-                                                        );
-                                                    }
-                                                });
-                                            },
-                                        )),
+                                        .bg(rgb(roles.surface_container_high)),
                                 ),
-                        ),
+                            )
+                            .child(icon_button(
+                                AppIcon::Sliders,
+                                24.0,
+                                8.0,
+                                Some(roles.surface_container_high),
+                                Some(text_muted),
+                                None,
+                                |_window, _cx| {},
+                            ))
+                            .child(icon_button(
+                                AppIcon::LaptopMinimal,
+                                24.0,
+                                8.0,
+                                Some(if self.session_agent.exec_mode.is_pty() {
+                                    roles.secondary_container
+                                } else {
+                                    roles.surface_container_high
+                                }),
+                                Some(if self.session_agent.exec_mode.is_pty() {
+                                    roles.on_secondary_container
+                                } else {
+                                    text_muted
+                                }),
+                                None,
+                                move |_window, cx| {
+                                    let entity = pty_toggle_entity.clone();
+                                    entity.update(cx, |this, cx| {
+                                        this.session_agent.exec_mode =
+                                            this.session_agent.exec_mode.toggle();
+                                        cx.notify();
+                                    });
+                                },
+                            ))
+                            .child(div().flex_1())
+                            .child(icon_button(
+                                if waiting {
+                                    AppIcon::Pause
+                                } else {
+                                    AppIcon::ChevronUp
+                                },
+                                26.0,
+                                8.0,
+                                Some(if waiting {
+                                    roles.error_container
+                                } else {
+                                    roles.primary
+                                }),
+                                Some(if waiting {
+                                    roles.on_error_container
+                                } else {
+                                    roles.on_primary
+                                }),
+                                None,
+                                move |window, cx| {
+                                    let entity = send_entity.clone();
+                                    entity.update(cx, |this, cx| {
+                                        if this.session_agent.is_busy() {
+                                            this.stop_session_agent_stream(cx);
+                                        } else {
+                                            this.submit_session_agent_prompt(window, cx);
+                                        }
+                                    });
+                                },
+                            )),
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_session_agent_history_panel(
+        &self,
+        entity: Entity<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+        let sessions = self.data.chat_sessions.clone();
+        let current_session_id = self.session_agent.session_id.clone();
+
+        v_flex()
+            .id("session-agent-history-panel")
+            .size_full()
+            .overflow_hidden()
+            .px_3()
+            .pt_2()
+            .pb_0()
+            .gap_3()
+            .child(
+                h_flex().w_full().h(px(30.0)).items_center().gap_2().child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(miaominal_settings::FontSize::Subheading.scaled())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(roles.on_surface))
+                        .child("AI Chat"),
+                ),
+            )
+            .child(if sessions.is_empty() {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_h(px(160.0))
+                    .w_full()
+                    .items_center()
+                    .justify_center()
+                    .flex()
+                    .text_center()
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                    .text_color(rgb(text_muted))
+                    .child("No saved chats")
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .gap_2()
+                    .children(sessions.into_iter().map(|session| {
+                        let open_entity = entity.clone();
+                        let delete_entity = entity.clone();
+                        let session_id = session.id.clone();
+                        let delete_session_id = session.id.clone();
+                        let is_current = current_session_id.as_deref() == Some(session.id.as_str());
+                        let is_busy = self.session_agent_session_is_busy(&session.id);
+                        let title = if session.title.trim().is_empty() {
+                            if is_current {
+                                "Current chat".to_string()
+                            } else {
+                                "Untitled chat".to_string()
+                            }
+                        } else {
+                            session.title.clone()
+                        };
+                        let delete_title = title.clone();
+                        let updated_at = format_relative_chat_time(session.updated_at);
+                        let status_label = if is_busy {
+                            Some("Working")
+                        } else if is_current {
+                            Some("Current")
+                        } else {
+                            None
+                        };
+
+                        h_flex()
+                            .id(SharedString::from(format!(
+                                "chat-session-row-{}",
+                                session.id
+                            )))
+                            .w_full()
+                            .min_h(px(58.0))
+                            .items_center()
+                            .gap_2()
+                            .rounded(px(8.0))
+                            .bg(rgb(if is_current {
+                                roles.secondary_container
+                            } else {
+                                roles.surface_container_high
+                            }))
+                            .border_1()
+                            .border_color(rgb(if is_current {
+                                roles.secondary
+                            } else {
+                                roles.outline_variant
+                            }))
+                            .px_2()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(move |this| {
+                                this.bg(rgb(if is_current {
+                                    roles.secondary_container
+                                } else {
+                                    roles.surface_container_highest
+                                }))
+                            })
+                            .on_click(move |_click, _window, cx| {
+                                let entity = open_entity.clone();
+                                let session_id = session_id.clone();
+                                entity.update(cx, |this, cx| {
+                                    this.load_session_agent_chat(session_id, cx);
+                                });
+                            })
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .text_size(miaominal_settings::FontSize::Input.scaled())
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(rgb(if is_current {
+                                                roles.on_secondary_container
+                                            } else {
+                                                roles.on_surface
+                                            }))
+                                            .child(title.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(text_muted))
+                                            .child(updated_at),
+                                    ),
+                            )
+                            .when_some(status_label, |this, label| {
+                                this.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .rounded(px(999.0))
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(if is_busy {
+                                            roles.primary
+                                        } else {
+                                            roles.surface_container_highest
+                                        }))
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(if is_busy {
+                                            roles.on_primary
+                                        } else {
+                                            roles.on_surface_variant
+                                        }))
+                                        .child(label),
+                                )
+                            })
+                            .child(icon_button(
+                                AppIcon::Trash,
+                                24.0,
+                                8.0,
+                                Some(roles.surface_container_high),
+                                Some(text_muted),
+                                None,
+                                move |_window, cx| {
+                                    cx.stop_propagation();
+                                    let entity = delete_entity.clone();
+                                    let session_id = delete_session_id.clone();
+                                    let title = delete_title.clone();
+                                    entity.update(cx, |this, cx| {
+                                        this.request_session_agent_chat_delete(
+                                            session_id, title, cx,
+                                        );
+                                    });
+                                },
+                            ))
+                            .into_any_element()
+                    }))
+                    .into_any_element()
+            })
+            .child(self.render_session_agent_composer(entity.clone()))
             .into_any_element()
     }
 
@@ -2201,6 +2449,29 @@ fn patch_paths(patch: &str) -> Vec<String> {
 fn estimate_session_agent_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     chars.saturating_add(3) / 4
+}
+
+fn format_relative_chat_time(timestamp: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(timestamp);
+    let elapsed = now.saturating_sub(timestamp).max(0);
+
+    if elapsed < 60 {
+        "Just now".to_string()
+    } else if elapsed < 3_600 {
+        format!("{}m ago", elapsed / 60)
+    } else if elapsed < 86_400 {
+        format!("{}h ago", elapsed / 3_600)
+    } else if elapsed < 604_800 {
+        format!("{}d ago", elapsed / 86_400)
+    } else {
+        format_local_timestamp(Some(
+            SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp.max(0) as u64),
+        ))
+        .to_string()
+    }
 }
 
 fn format_duration_ms(ms: u128) -> String {

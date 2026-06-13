@@ -373,13 +373,7 @@ impl AppView {
                 .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
-        let agent_title_input = new_input_state(
-            "Chat",
-            "",
-            false,
-            window,
-            cx,
-        );
+        let agent_title_input = new_input_state("Chat", "", false, window, cx);
         let filter_input = new_input_state(
             i18n::string("placeholders.hosts.filter"),
             "",
@@ -525,8 +519,19 @@ impl AppView {
             &agent_title_input,
             |this: &mut AppView, _, event: &InputEvent, cx| match event {
                 InputEvent::PressEnter { .. } => {
-                    let value = this.workspace_forms.agent.title_input.read(cx).value().trim().to_string();
-                    this.session_agent.title = if value.is_empty() { None } else { Some(value) };
+                    let value = this
+                        .workspace_forms
+                        .agent
+                        .title_input
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .to_string();
+                    this.update_session_agent_title(if value.is_empty() {
+                        None
+                    } else {
+                        Some(value)
+                    });
                     this.workspace_forms.agent.editing_title = false;
                     cx.notify();
                 }
@@ -944,9 +949,7 @@ impl AppView {
                     .position(|option| option.value() == persisted_id)
             })
             .map(|index| IndexPath::default().row(index))
-            .or_else(|| {
-                (!ai_provider_options.is_empty()).then(|| IndexPath::default().row(0))
-            });
+            .or_else(|| (!ai_provider_options.is_empty()).then(|| IndexPath::default().row(0)));
         let ai_provider_select = cx.new(|cx| {
             SelectState::new(ai_provider_options, selected_ai_provider_index, window, cx)
         });
@@ -1561,6 +1564,7 @@ impl AppView {
             shell_state: ShellState::default(),
             panels: PanelState::default(),
             session_agent: SessionAgentState::default(),
+            session_agent_sessions: HashMap::new(),
             kbi_inputs: Vec::new(),
             dialogs: DialogState::default(),
             onboarding: OnboardingState {

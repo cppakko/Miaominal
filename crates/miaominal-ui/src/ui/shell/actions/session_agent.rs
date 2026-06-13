@@ -7,6 +7,7 @@ use miaominal_agent::{
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
+use miaominal_storage::chat_store::{ChatMessageRecord, ChatMessageRole};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -192,12 +193,14 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.session_agent.messages.clear();
+        self.session_agent.session_id = None;
         self.session_agent.last_error = None;
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.pending_task = None;
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
         self.session_agent.title = None;
+        self.session_agent.panel_view = ChatPanelView::Conversation;
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
@@ -208,6 +211,310 @@ impl AppView {
         self.session_agent.at_mention_anchor = 0;
         self.status_message = i18n::string("workspace.panel.agent.new_chat_started");
         cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn show_session_agent_history(&mut self, cx: &mut Context<Self>) {
+        self.stash_current_session_agent();
+        self.refresh_chat_sessions();
+        self.session_agent = SessionAgentState {
+            panel_view: ChatPanelView::SessionList,
+            ..Default::default()
+        };
+        self.session_agent.panel_view = ChatPanelView::SessionList;
+        self.workspace_forms.agent.editing_title = false;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn start_session_agent_conversation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stash_current_session_agent();
+        self.reset_session_agent_chat(window, cx);
+        self.session_agent.panel_view = ChatPanelView::Conversation;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn load_session_agent_chat(
+        &mut self,
+        session_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
+            self.session_agent.panel_view = ChatPanelView::Conversation;
+            cx.notify();
+            return;
+        }
+
+        self.stash_current_session_agent();
+        if let Some(mut state) = self.session_agent_sessions.remove(&session_id) {
+            state.panel_view = ChatPanelView::Conversation;
+            self.session_agent = state;
+            self.status_message = "Chat restored.".into();
+            cx.notify();
+            return;
+        }
+
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            self.status_message = "Chat history is unavailable.".into();
+            cx.notify();
+            return;
+        };
+
+        let messages = match chat_service.load_session_messages(&session_id) {
+            Ok(messages) => messages,
+            Err(error) => {
+                let message = format!("Failed to load chat history: {error}");
+                self.session_agent.last_error = Some(message.clone());
+                self.status_message = message;
+                cx.notify();
+                return;
+            }
+        };
+        let title = chat_service
+            .session_title(&session_id)
+            .unwrap_or_else(|error| {
+                log::warn!("failed to load chat session title: {error:?}");
+                None
+            })
+            .filter(|title| !title.trim().is_empty());
+
+        self.session_agent = SessionAgentState::default();
+        self.session_agent.messages = messages
+            .into_iter()
+            .map(session_agent_message_from_record)
+            .collect();
+        self.session_agent.session_id = Some(session_id);
+        self.session_agent.title = title;
+        self.session_agent.pending_task = None;
+        self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
+        self.session_agent.last_error = None;
+        self.session_agent.selected_at_targets.clear();
+        self.session_agent.active_at_targets.clear();
+        self.session_agent.panel_view = ChatPanelView::Conversation;
+        self.rebuild_session_agent_markdown(cx);
+        self.status_message = "Chat history loaded.".into();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn delete_session_agent_chat(
+        &mut self,
+        session_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent_session_is_busy(&session_id) {
+            self.status_message = "Stop the current chat before deleting it.".into();
+            cx.notify();
+            return;
+        }
+
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            self.status_message = "Chat history is unavailable.".into();
+            cx.notify();
+            return;
+        };
+
+        if let Err(error) = chat_service.delete_session(&session_id) {
+            self.status_message = format!("Failed to delete chat: {error}");
+            cx.notify();
+            return;
+        }
+
+        if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
+            self.session_agent.session_id = None;
+            self.session_agent.messages.clear();
+            self.session_agent.title = None;
+        }
+        self.session_agent_sessions.remove(&session_id);
+        self.refresh_chat_sessions();
+        self.status_message = "Chat deleted.".into();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn request_session_agent_chat_delete(
+        &mut self,
+        session_id: String,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent_session_is_busy(&session_id) {
+            self.status_message = "Stop the current chat before deleting it.".into();
+            cx.notify();
+            return;
+        }
+
+        self.dialogs.pending_chat_session_delete =
+            Some(PendingChatSessionDeleteState { session_id, title });
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn cancel_session_agent_chat_delete(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pending) = self.dialogs.pending_chat_session_delete.take() {
+            self.start_dialog_exit(DialogOverlaySnapshot::ChatSessionDelete(pending), cx);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn confirm_session_agent_chat_delete(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.dialogs.pending_chat_session_delete.take() else {
+            return;
+        };
+        self.start_dialog_exit(
+            DialogOverlaySnapshot::ChatSessionDelete(pending.clone()),
+            cx,
+        );
+        self.delete_session_agent_chat(pending.session_id, cx);
+    }
+
+    fn stash_current_session_agent(&mut self) {
+        let Some(session_id) = self.session_agent.session_id.clone() else {
+            return;
+        };
+        if self.session_agent.messages.is_empty() && !self.session_agent.is_busy() {
+            return;
+        }
+        let state = std::mem::take(&mut self.session_agent);
+        self.session_agent_sessions.insert(session_id, state);
+    }
+
+    fn ensure_session_agent_session(&mut self) -> String {
+        if let Some(session_id) = self.session_agent.session_id.clone() {
+            return session_id;
+        }
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        if let Some(chat_service) = self.services.chat_service.as_ref()
+            && let Err(error) = chat_service.create_session(&session_id, unix_timestamp())
+        {
+            log::warn!("failed to create chat session: {error:?}");
+        }
+        self.session_agent.session_id = Some(session_id.clone());
+        session_id
+    }
+
+    pub(in crate::ui::shell) fn session_agent_session_is_busy(&self, session_id: &str) -> bool {
+        if self.session_agent.session_id.as_deref() == Some(session_id) {
+            return self.session_agent.is_busy();
+        }
+        self.session_agent_sessions
+            .get(session_id)
+            .is_some_and(SessionAgentState::is_busy)
+    }
+
+    fn with_session_agent_state(&mut self, session_id: &str, f: impl FnOnce(&mut Self)) -> bool {
+        if self.session_agent.session_id.as_deref() == Some(session_id) {
+            f(self);
+            return true;
+        }
+
+        let Some(mut target) = self.session_agent_sessions.remove(session_id) else {
+            return false;
+        };
+        std::mem::swap(&mut self.session_agent, &mut target);
+        f(self);
+        std::mem::swap(&mut self.session_agent, &mut target);
+        self.session_agent_sessions
+            .insert(session_id.to_string(), target);
+        true
+    }
+
+    fn refresh_chat_sessions(&mut self) {
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            self.data.chat_sessions.clear();
+            return;
+        };
+        match chat_service.list_sessions() {
+            Ok(sessions) => self.data.chat_sessions = sessions,
+            Err(error) => log::warn!("failed to refresh chat sessions: {error:?}"),
+        }
+    }
+
+    pub(in crate::ui::shell) fn update_session_agent_title(&mut self, title: Option<String>) {
+        self.session_agent.title = title.clone();
+        let Some(session_id) = self.session_agent.session_id.as_deref() else {
+            return;
+        };
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            return;
+        };
+        if let Err(error) =
+            chat_service.update_session_title(session_id, title.as_deref().unwrap_or(""))
+        {
+            log::warn!("failed to update chat title: {error:?}");
+            return;
+        }
+        self.refresh_chat_sessions();
+    }
+
+    fn persist_session_agent_chat(&mut self) {
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            return;
+        };
+        if self.session_agent.messages.is_empty() {
+            return;
+        }
+
+        let now = unix_timestamp();
+        let session_id = match self.session_agent.session_id.clone() {
+            Some(session_id) => session_id,
+            None => {
+                let session_id = uuid::Uuid::new_v4().to_string();
+                if let Err(error) = chat_service.create_session(&session_id, now) {
+                    log::warn!("failed to create chat session: {error:?}");
+                    return;
+                }
+                self.session_agent.session_id = Some(session_id.clone());
+                session_id
+            }
+        };
+
+        let records = self
+            .session_agent
+            .messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                chat_record_from_session_agent_message(&session_id, index, now, message)
+            })
+            .collect::<Vec<_>>();
+
+        for record in records {
+            if let Err(error) = chat_service.insert_message(&record) {
+                log::warn!("failed to persist chat message: {error:?}");
+                return;
+            }
+        }
+
+        if let Some(title) = self.session_agent.title.as_deref()
+            && let Err(error) = chat_service.update_session_title(&session_id, title)
+        {
+            log::warn!("failed to persist chat title: {error:?}");
+        }
+        self.refresh_chat_sessions();
+    }
+
+    fn rebuild_session_agent_markdown(&mut self, cx: &mut Context<Self>) {
+        for index in 0..self.session_agent.messages.len() {
+            match self.session_agent.messages[index].role {
+                SessionAgentMessageRole::User | SessionAgentMessageRole::Error => {
+                    self.session_agent.ensure_plain_markdown(index, cx);
+                }
+                SessionAgentMessageRole::Assistant => {
+                    self.session_agent.ensure_assistant_markdown(index, cx);
+                }
+                SessionAgentMessageRole::Thinking => {
+                    self.session_agent.ensure_thinking_markdown(index, cx);
+                }
+                SessionAgentMessageRole::ToolCall => {}
+            }
+        }
     }
 
     pub(in crate::ui::shell) fn submit_session_agent_prompt(
@@ -278,6 +585,7 @@ impl AppView {
             return;
         };
         let target_guidance = mentions.guidance;
+        self.session_agent.panel_view = ChatPanelView::Conversation;
         self.session_agent.active_at_targets = target_names.clone();
         let target_prefix = if target_names.is_empty() {
             String::new()
@@ -292,6 +600,7 @@ impl AppView {
             )
         };
         let model_prompt = format!("{target_prefix}{prompt}");
+        let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -307,6 +616,7 @@ impl AppView {
             .collect::<Vec<_>>();
 
         self.push_session_agent_message(SessionAgentMessage::user(model_prompt.clone()), cx);
+        self.persist_session_agent_chat();
         self.workspace_state
             .session_agent_scroll_handle
             .scroll_to_bottom();
@@ -325,6 +635,7 @@ impl AppView {
 
         let runtime = self.services.runtime.clone();
         let task = cx.spawn(async move |this, cx| {
+            let stream_session_id_for_error = stream_session_id.clone();
             let stream_result = runtime
                 .spawn(async move {
                     miaominal_agent::stream_chat(AgentChatRequest {
@@ -348,7 +659,12 @@ impl AppView {
                 Ok(receiver) => receiver,
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
-                        this.handle_session_agent_stream_error(request_id, error, cx);
+                        this.handle_session_agent_stream_error_for_session(
+                            &stream_session_id_for_error,
+                            request_id,
+                            error,
+                            cx,
+                        );
                         if pty_tap_active {
                             this.set_active_session_pty_tap(None);
                         }
@@ -362,8 +678,14 @@ impl AppView {
                 match event {
                     Ok(event) => {
                         let done = matches!(event, AgentChatEvent::Finished(_));
+                        let event_session_id = stream_session_id.clone();
                         if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event(request_id, event, cx);
+                            this.apply_session_agent_event_for_session(
+                                &event_session_id,
+                                request_id,
+                                event,
+                                cx,
+                            );
                         }) {
                             log::debug!("failed to apply session agent chat event: {error:?}");
                             break;
@@ -373,9 +695,11 @@ impl AppView {
                         }
                     }
                     Err(error) => {
+                        let error_session_id = stream_session_id.clone();
                         let _ = this
                             .update(cx, move |this, cx| {
-                                this.handle_session_agent_stream_error(
+                                this.handle_session_agent_stream_error_for_session(
+                                    &error_session_id,
                                     request_id,
                                     anyhow::Error::from(error),
                                     cx,
@@ -390,8 +714,9 @@ impl AppView {
                 }
             }
 
+            let finish_session_id = stream_session_id.clone();
             let _ = this.update(cx, move |this, cx| {
-                this.finish_session_agent_stream(request_id, cx);
+                this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
                 if pty_tap_active {
                     this.set_active_session_pty_tap(None);
                 }
@@ -492,6 +817,7 @@ impl AppView {
         let reasoning = self.session_agent.reasoning_before_tool_call(&tool_id);
         self.session_agent.approve_tool_call(&tool_id);
         self.status_message = "Tool approved. Running...".into();
+        let approval_session_id = self.ensure_session_agent_session();
 
         let pty_handle = if self.session_agent.exec_mode == AgentExecMode::Pty {
             let Some(index) = self.active_terminal_session_index() else {
@@ -595,58 +921,61 @@ impl AppView {
                     this.set_active_session_pty_tap(None);
                 }
                 this.clear_session_pty_taps_by_tab_id(&approval_pty_target_tap_tab_ids);
-                let previous_message_count = this.session_agent.messages.len();
-                let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
-                let (tool_result, failed) = match result {
-                    Ok(result) => {
-                        if !matches!(
+                let approval_session_id = approval_session_id.clone();
+                this.with_session_agent_state(&approval_session_id, |this| {
+                    let previous_message_count = this.session_agent.messages.len();
+                    let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
+                    let (tool_result, failed) = match result {
+                        Ok(result) => {
+                            if !matches!(
+                                this.session_agent
+                                    .tool_call(&tool_id)
+                                    .map(|tool_call| tool_call.status),
+                                Some(SessionAgentToolStatus::InProgress)
+                            ) {
+                                this.status_message = "Agent stopped.".into();
+                                cx.notify();
+                                return;
+                            }
                             this.session_agent
-                                .tool_call(&tool_id)
-                                .map(|tool_call| tool_call.status),
-                            Some(SessionAgentToolStatus::InProgress)
-                        ) {
-                            this.status_message = "Agent stopped.".into();
-                            cx.notify();
-                            return;
+                                .complete_tool_call(&tool_id, result.clone());
+                            this.status_message = "Approved tool finished. Continuing...".into();
+                            (result, false)
                         }
-                        this.session_agent
-                            .complete_tool_call(&tool_id, result.clone());
-                        this.status_message = "Approved tool finished. Continuing...".into();
-                        (result, false)
-                    }
-                    Err(error) => {
-                        if !matches!(
-                            this.session_agent
-                                .tool_call(&tool_id)
-                                .map(|tool_call| tool_call.status),
-                            Some(SessionAgentToolStatus::InProgress)
-                        ) {
-                            this.status_message = "Agent stopped.".into();
-                            cx.notify();
-                            return;
+                        Err(error) => {
+                            if !matches!(
+                                this.session_agent
+                                    .tool_call(&tool_id)
+                                    .map(|tool_call| tool_call.status),
+                                Some(SessionAgentToolStatus::InProgress)
+                            ) {
+                                this.status_message = "Agent stopped.".into();
+                                cx.notify();
+                                return;
+                            }
+                            let result = format!("tool failed after approval: {error}");
+                            this.session_agent.fail_tool_call(&tool_id, result.clone());
+                            this.status_message = "Approved tool failed. Continuing...".into();
+                            (result, true)
                         }
-                        let result = format!("tool failed after approval: {error}");
-                        this.session_agent.fail_tool_call(&tool_id, result.clone());
-                        this.status_message = "Approved tool failed. Continuing...".into();
-                        (result, true)
-                    }
-                };
-                this.scroll_session_agent_to_bottom_if_following(
-                    previous_message_count,
-                    was_scrolled_to_bottom,
-                    true,
-                );
-                this.continue_session_agent_after_tool_result(
-                    AgentChatToolEvent {
-                        id: tool_id,
-                        name: tool_name,
-                        arguments: tool_arguments,
-                    },
-                    reasoning,
-                    tool_result,
-                    failed,
-                    cx,
-                );
+                    };
+                    this.scroll_session_agent_to_bottom_if_following(
+                        previous_message_count,
+                        was_scrolled_to_bottom,
+                        true,
+                    );
+                    this.continue_session_agent_after_tool_result(
+                        AgentChatToolEvent {
+                            id: tool_id,
+                            name: tool_name,
+                            arguments: tool_arguments,
+                        },
+                        reasoning,
+                        tool_result,
+                        failed,
+                        cx,
+                    );
+                });
                 cx.notify();
             });
         });
@@ -698,6 +1027,7 @@ impl AppView {
         else {
             return;
         };
+        let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
         let history = self
             .session_agent
@@ -726,6 +1056,7 @@ impl AppView {
 
         let runtime = self.services.runtime.clone();
         let task = cx.spawn(async move |this, cx| {
+            let stream_session_id_for_error = stream_session_id.clone();
             let stream_result = runtime
                 .spawn(async move {
                     let result = if failed {
@@ -758,7 +1089,12 @@ impl AppView {
                 Ok(receiver) => receiver,
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
-                        this.handle_session_agent_stream_error(request_id, error, cx);
+                        this.handle_session_agent_stream_error_for_session(
+                            &stream_session_id_for_error,
+                            request_id,
+                            error,
+                            cx,
+                        );
                         if pty_tap_active {
                             this.set_active_session_pty_tap(None);
                         }
@@ -772,8 +1108,14 @@ impl AppView {
                 match event {
                     Ok(event) => {
                         let done = matches!(event, AgentChatEvent::Finished(_));
+                        let event_session_id = stream_session_id.clone();
                         if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event(request_id, event, cx);
+                            this.apply_session_agent_event_for_session(
+                                &event_session_id,
+                                request_id,
+                                event,
+                                cx,
+                            );
                         }) {
                             log::debug!(
                                 "failed to apply session agent continuation event: {error:?}"
@@ -785,9 +1127,11 @@ impl AppView {
                         }
                     }
                     Err(error) => {
+                        let error_session_id = stream_session_id.clone();
                         let _ = this
                             .update(cx, move |this, cx| {
-                                this.handle_session_agent_stream_error(
+                                this.handle_session_agent_stream_error_for_session(
+                                    &error_session_id,
                                     request_id,
                                     anyhow::Error::from(error),
                                     cx,
@@ -804,8 +1148,9 @@ impl AppView {
                 }
             }
 
+            let finish_session_id = stream_session_id.clone();
             let _ = this.update(cx, move |this, cx| {
-                this.finish_session_agent_stream(request_id, cx);
+                this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
                 if pty_tap_active {
                     this.set_active_session_pty_tap(None);
                 }
@@ -910,6 +1255,23 @@ impl AppView {
         cx.notify();
     }
 
+    fn apply_session_agent_event_for_session(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        event: AgentChatEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
+        if self.with_session_agent_state(session_id, |this| {
+            this.apply_session_agent_event(request_id, event, cx);
+        }) && !is_visible
+        {
+            self.refresh_chat_sessions();
+            cx.notify();
+        }
+    }
+
     fn finish_session_agent_stream(&mut self, request_id: u64, cx: &mut Context<Self>) {
         if self.session_agent.active_request_id != request_id {
             return;
@@ -954,6 +1316,10 @@ impl AppView {
             i18n::string("workspace.panel.agent.reply_ready")
         };
 
+        if !waiting_for_confirmation {
+            self.persist_session_agent_chat();
+        }
+
         // --- title generation ---
         if self.session_agent.title.is_none() && !waiting_for_confirmation {
             let user_count = self
@@ -990,6 +1356,7 @@ impl AppView {
                     };
                     if let Some(provider) = provider {
                         let runtime = self.services.runtime.clone();
+                        let title_session_id = self.ensure_session_agent_session();
                         let task = cx.spawn(async move |this, cx| {
                             let title = runtime
                                 .spawn(async move {
@@ -1007,7 +1374,9 @@ impl AppView {
                                 });
                             if let Some(title) = title {
                                 let _ = this.update(cx, move |this, cx| {
-                                    this.session_agent.title = Some(title);
+                                    this.with_session_agent_state(&title_session_id, |this| {
+                                        this.update_session_agent_title(Some(title));
+                                    });
                                     cx.notify();
                                 });
                             }
@@ -1020,6 +1389,22 @@ impl AppView {
         // --- end title generation ---
 
         cx.notify();
+    }
+
+    fn finish_session_agent_stream_for_session(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
+        if self.with_session_agent_state(session_id, |this| {
+            this.finish_session_agent_stream(request_id, cx);
+        }) && !is_visible
+        {
+            self.refresh_chat_sessions();
+            cx.notify();
+        }
     }
 
     fn fail_session_agent_stream(
@@ -1052,6 +1437,23 @@ impl AppView {
             self.recover_session_agent_prompt_error(request_id, message, cx);
         } else {
             self.fail_session_agent_stream(request_id, error, cx);
+        }
+    }
+
+    fn handle_session_agent_stream_error_for_session(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        error: anyhow::Error,
+        cx: &mut Context<Self>,
+    ) {
+        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
+        if self.with_session_agent_state(session_id, |this| {
+            this.handle_session_agent_stream_error(request_id, error, cx);
+        }) && !is_visible
+        {
+            self.refresh_chat_sessions();
+            cx.notify();
         }
     }
 
@@ -1129,7 +1531,9 @@ impl AppView {
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
         let runtime = self.services.runtime.clone();
+        let recovery_session_id = self.ensure_session_agent_session();
         let task = cx.spawn(async move |this, cx| {
+            let recovery_session_id_for_error = recovery_session_id.clone();
             let stream_result = runtime
                 .spawn(async move {
                     miaominal_agent::stream_chat(AgentChatRequest {
@@ -1153,7 +1557,12 @@ impl AppView {
                 Ok(receiver) => receiver,
                 Err(error) => {
                     let _ = this.update(cx, move |this, cx| {
-                        this.fail_session_agent_stream(request_id, error, cx);
+                        this.handle_session_agent_stream_error_for_session(
+                            &recovery_session_id_for_error,
+                            request_id,
+                            error,
+                            cx,
+                        );
                     });
                     return;
                 }
@@ -1163,8 +1572,14 @@ impl AppView {
                 match event {
                     Ok(event) => {
                         let done = matches!(event, AgentChatEvent::Finished(_));
+                        let event_session_id = recovery_session_id.clone();
                         if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event(request_id, event, cx);
+                            this.apply_session_agent_event_for_session(
+                                &event_session_id,
+                                request_id,
+                                event,
+                                cx,
+                            );
                         }) {
                             log::debug!("failed to apply session agent recovery event: {error:?}");
                             break;
@@ -1174,9 +1589,11 @@ impl AppView {
                         }
                     }
                     Err(error) => {
+                        let error_session_id = recovery_session_id.clone();
                         let _ = this
                             .update(cx, move |this, cx| {
-                                this.fail_session_agent_stream(
+                                this.handle_session_agent_stream_error_for_session(
+                                    &error_session_id,
                                     request_id,
                                     anyhow::Error::from(error),
                                     cx,
@@ -1192,8 +1609,9 @@ impl AppView {
                 }
             }
 
+            let finish_session_id = recovery_session_id.clone();
             let _ = this.update(cx, move |this, cx| {
-                this.finish_session_agent_stream(request_id, cx);
+                this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
             });
         });
         self.session_agent.pending_task = Some(task);
@@ -1432,4 +1850,71 @@ fn is_recoverable_session_agent_prompt_error(message: &str) -> bool {
         || message.contains("ToolCallError")
         || message.contains("ToolServerError")
         || message.contains("MaxTurnError")
+}
+
+fn chat_record_from_session_agent_message(
+    session_id: &str,
+    index: usize,
+    now: i64,
+    message: &SessionAgentMessage,
+) -> Option<ChatMessageRecord> {
+    let role = match message.role {
+        SessionAgentMessageRole::User => ChatMessageRole::User,
+        SessionAgentMessageRole::Assistant => ChatMessageRole::Assistant,
+        SessionAgentMessageRole::Thinking => ChatMessageRole::Thinking,
+        SessionAgentMessageRole::ToolCall => ChatMessageRole::ToolCall,
+        SessionAgentMessageRole::Error => return None,
+    };
+    let tool_call = message.tool_call.as_ref();
+    let content = tool_call
+        .map(|tool| tool.arguments.clone())
+        .unwrap_or_else(|| message.content.clone());
+
+    Some(ChatMessageRecord {
+        id: format!("{session_id}:{index}"),
+        session_id: session_id.to_string(),
+        role,
+        content,
+        tool_name: tool_call.map(|tool| tool.name.clone()),
+        tool_summary: tool_call
+            .and_then(|tool| tool.confirmation_note.clone())
+            .or_else(|| tool_call.map(|tool| tool.summary.clone())),
+        sort_order: index as i64,
+        created_at: now,
+    })
+}
+
+fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentMessage {
+    match record.role {
+        ChatMessageRole::User => SessionAgentMessage::user(record.content),
+        ChatMessageRole::Assistant => SessionAgentMessage::assistant_raw(record.content),
+        ChatMessageRole::Thinking => SessionAgentMessage::thinking_raw(record.content),
+        ChatMessageRole::ToolCall => {
+            let summary = record
+                .tool_summary
+                .clone()
+                .filter(|summary| !summary.trim().is_empty())
+                .unwrap_or_else(|| record.content.clone());
+            SessionAgentMessage::tool_call(SessionAgentToolCall {
+                id: record.id,
+                name: record
+                    .tool_name
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "tool".to_string()),
+                arguments: record.content,
+                summary,
+                status: SessionAgentToolStatus::Completed,
+                requires_confirmation: false,
+                confirmation_note: record.tool_summary,
+                expanded: false,
+            })
+        }
+    }
+}
+
+fn unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
 }
