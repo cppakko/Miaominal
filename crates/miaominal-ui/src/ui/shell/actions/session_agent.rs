@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
+use crate::ui::shell::state::TokenUsage;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
     AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentPtyHandle, AgentToolCallRequest,
@@ -200,6 +201,7 @@ impl AppView {
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
         self.session_agent.title = None;
+        self.session_agent.last_usage = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
@@ -1244,6 +1246,15 @@ impl AppView {
                     self.session_agent.ensure_assistant_markdown(idx, cx);
                 }
                 self.finish_session_agent_stream(request_id, cx);
+            }
+            AgentChatEvent::TokenUsage {
+                input_tokens,
+                output_tokens,
+            } => {
+                self.session_agent.last_usage = Some(TokenUsage {
+                    input_tokens,
+                    output_tokens,
+                });
             }
         }
         self.scroll_session_agent_to_bottom_if_following(

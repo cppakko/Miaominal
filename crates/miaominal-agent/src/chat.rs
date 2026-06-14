@@ -91,6 +91,11 @@ pub enum AgentChatEvent {
     ToolCallCompleted { id: String, result: String },
     ToolCallApprovalRequired { id: String, message: String },
     Finished(String),
+    /// Token usage for the most recent completion request.
+    TokenUsage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
 }
 
 const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
@@ -165,7 +170,8 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
             | AgentChatEvent::ToolCallStarted(_)
             | AgentChatEvent::ToolCallDelta { .. }
             | AgentChatEvent::ToolCallCompleted { .. }
-            | AgentChatEvent::ToolCallApprovalRequired { .. } => {}
+            | AgentChatEvent::ToolCallApprovalRequired { .. }
+            | AgentChatEvent::TokenUsage { .. } => {}
         }
     }
     Ok(reply)
@@ -526,7 +532,15 @@ fn spawn_stream_chat<M>(
                     pending_streamed_tools.remove(internal_call_id);
                     chat_event_from_user_content(content)
                 }
-                Ok(MultiTurnStreamItem::CompletionCall(_)) => {
+                Ok(MultiTurnStreamItem::CompletionCall(completion_call)) => {
+                    if let Some(usage) = completion_call.usage {
+                        let _ = sender
+                            .send(Ok(AgentChatEvent::TokenUsage {
+                                input_tokens: usage.input_tokens,
+                                output_tokens: usage.output_tokens,
+                            }))
+                            .await;
+                    }
                     log::info!("agent llm completion call boundary");
                     None
                 }

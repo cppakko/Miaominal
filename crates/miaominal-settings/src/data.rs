@@ -81,6 +81,10 @@ pub struct AiProviderConfig {
     pub has_api_key: bool,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Optional context window size for the model (e.g. 200000 for 200K).
+    /// When set, the chat UI shows estimated context usage as a percentage.
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 impl AiProviderConfig {
@@ -94,6 +98,7 @@ impl AiProviderConfig {
             api_key_env: String::new(),
             has_api_key: false,
             enabled: true,
+            context_window: None,
         };
         provider.sanitize();
         provider
@@ -904,6 +909,7 @@ mod tests {
                 api_key_env: String::new(),
                 has_api_key: true,
                 enabled: true,
+                context_window: None,
             }],
             ..AppSettings::default()
         };
@@ -951,6 +957,7 @@ mod tests {
                 api_key_env: " ANTHROPIC_API_KEY ".into(),
                 has_api_key: false,
                 enabled: true,
+                context_window: None,
             }],
             ..AppSettings::default()
         };
