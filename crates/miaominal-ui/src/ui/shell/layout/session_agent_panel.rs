@@ -245,6 +245,8 @@ impl AppView {
         let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
         let message_column_width =
             session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
+        let show_scrollable_messages =
+            !self.session_agent.messages.is_empty() || self.session_agent.is_busy();
 
         div()
             .id("session-agent-panel-content")
@@ -358,24 +360,35 @@ impl AppView {
                                             }),
                                     ),
                             )
-                            .child(
-                                div().flex_1().min_h_0().child(
-                                    div()
-                                        .id("session-agent-scroll")
-                                        .size_full()
-                                        .overflow_x_hidden()
-                                        .track_scroll(&agent_scroll_handle)
-                                        .overflow_y_scroll()
-                                        .pb_2()
-                                        .child(self.render_session_agent_messages(
-                                            message_column_width,
-                                            entity.clone(),
-                                            window,
-                                            cx,
-                                        ))
-                                        .vertical_scrollbar(&agent_scroll_handle),
-                                ),
-                            ),
+                            .child(div().flex_1().min_h_0().child(if show_scrollable_messages {
+                                div()
+                                    .id("session-agent-scroll")
+                                    .size_full()
+                                    .overflow_x_hidden()
+                                    .track_scroll(&agent_scroll_handle)
+                                    .overflow_y_scroll()
+                                    .pb_2()
+                                    .child(self.render_session_agent_messages(
+                                        message_column_width,
+                                        entity.clone(),
+                                        window,
+                                        cx,
+                                    ))
+                                    .vertical_scrollbar(&agent_scroll_handle)
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .id("session-agent-empty")
+                                    .size_full()
+                                    .overflow_hidden()
+                                    .child(self.render_session_agent_messages(
+                                        message_column_width,
+                                        entity.clone(),
+                                        window,
+                                        cx,
+                                    ))
+                                    .into_any_element()
+                            })),
                     )
                     .child(self.render_session_agent_composer(entity.clone())),
             )
@@ -861,8 +874,7 @@ impl AppView {
 
         if self.session_agent.messages.is_empty() && !self.session_agent.is_busy() {
             return div()
-                .flex_1()
-                .min_h(px(180.0))
+                .size_full()
                 .w_full()
                 .items_center()
                 .justify_center()

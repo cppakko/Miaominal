@@ -329,8 +329,8 @@ impl SessionAgentState {
             };
             message.markdown_entity = Some(entity);
         } else if let Some(entity) = message.markdown_entity.as_ref() {
-                let entity = entity.clone();
-                entity.update(cx, |md, cx| md.reset(content, cx));
+            let entity = entity.clone();
+            entity.update(cx, |md, cx| md.reset(content, cx));
         }
         message.markdown_uses_syntax_highlighting = use_syntax_highlighting;
     }

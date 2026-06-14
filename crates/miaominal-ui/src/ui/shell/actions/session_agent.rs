@@ -158,7 +158,16 @@ impl AppView {
         let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
         let offset = scroll_handle.offset();
         let max_offset = scroll_handle.max_offset();
+        if max_offset.y <= px(2.0) {
+            return false;
+        }
         (offset.y + max_offset.y).abs() <= px(2.0)
+    }
+
+    fn reset_session_agent_scroll(&self) {
+        self.workspace_state
+            .session_agent_scroll_handle
+            .set_offset(Point::new(px(0.0), px(0.0)));
     }
 
     fn scroll_session_agent_to_bottom_if_following(
@@ -203,6 +212,7 @@ impl AppView {
         self.session_agent.title = None;
         self.session_agent.last_usage = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
+        self.reset_session_agent_scroll();
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
@@ -223,6 +233,7 @@ impl AppView {
             ..Default::default()
         };
         self.session_agent.panel_view = ChatPanelView::SessionList;
+        self.reset_session_agent_scroll();
         self.workspace_forms.agent.editing_title = false;
         cx.notify();
     }
@@ -245,6 +256,7 @@ impl AppView {
     ) {
         if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
             self.session_agent.panel_view = ChatPanelView::Conversation;
+            self.reset_session_agent_scroll();
             cx.notify();
             return;
         }
@@ -253,6 +265,7 @@ impl AppView {
         if let Some(mut state) = self.session_agent_sessions.remove(&session_id) {
             state.panel_view = ChatPanelView::Conversation;
             self.session_agent = state;
+            self.reset_session_agent_scroll();
             self.status_message = "Chat restored.".into();
             cx.notify();
             return;
@@ -296,6 +309,7 @@ impl AppView {
         self.session_agent.active_at_targets.clear();
         self.session_agent.panel_view = ChatPanelView::Conversation;
         self.rebuild_session_agent_markdown(cx);
+        self.reset_session_agent_scroll();
         self.status_message = "Chat history loaded.".into();
         cx.notify();
     }
@@ -619,9 +633,6 @@ impl AppView {
 
         self.push_session_agent_message(SessionAgentMessage::user(model_prompt.clone()), cx);
         self.persist_session_agent_chat();
-        self.workspace_state
-            .session_agent_scroll_handle
-            .scroll_to_bottom();
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
         self.status_message = i18n::string("workspace.panel.agent.send_pending");
