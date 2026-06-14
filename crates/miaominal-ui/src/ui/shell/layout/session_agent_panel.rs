@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
+use std::time::Duration;
 use theme::ActiveTheme as _;
 use zed_markdown::{MarkdownElement, MarkdownStyle};
 
@@ -8,6 +9,10 @@ const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
 const SESSION_AGENT_PANEL_MAX_WIDTH: f32 = 720.0;
 const SESSION_AGENT_PANEL_RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const SESSION_AGENT_USER_BUBBLE_MAX_WIDTH: f32 = 420.0;
+const SESSION_AGENT_AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
+const SESSION_AGENT_AUTO_SCROLL_DEAD_ZONE: f32 = 12.0;
+const SESSION_AGENT_AUTO_SCROLL_SPEED: f32 = 0.55;
+const SESSION_AGENT_AUTO_SCROLL_MAX_STEP: f32 = 72.0;
 
 #[derive(Clone, Copy)]
 struct SessionAgentPanelResizeMarker;
@@ -74,7 +79,113 @@ fn render_session_agent_resize_handle(
         .into_any_element()
 }
 
+fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
+    canvas(
+        |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+        |_bounds, _hitbox, window, _cx| {
+            window.set_window_cursor_style(CursorStyle::ResizeUpDown);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .right_0()
+    .bottom_0()
+    .into_any_element()
+}
+
 impl AppView {
+    fn start_session_agent_auto_scroll(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
+        self.workspace_state.session_agent_auto_scroll_generation = self
+            .workspace_state
+            .session_agent_auto_scroll_generation
+            .wrapping_add(1);
+        let generation = self.workspace_state.session_agent_auto_scroll_generation;
+        self.workspace_state.session_agent_auto_scroll = Some(SessionAgentAutoScrollState {
+            anchor_y: pointer_y,
+            pointer_y,
+            generation,
+        });
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(SESSION_AGENT_AUTO_SCROLL_INTERVAL)
+                    .await;
+
+                let keep_scrolling = this
+                    .update(cx, |this, cx| {
+                        this.tick_session_agent_auto_scroll(generation, cx)
+                    })
+                    .unwrap_or(false);
+
+                if !keep_scrolling {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn update_session_agent_auto_scroll_pointer(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
+        if let Some(auto_scroll) = self.workspace_state.session_agent_auto_scroll.as_mut() {
+            auto_scroll.pointer_y = pointer_y;
+            cx.notify();
+        }
+    }
+
+    fn stop_session_agent_auto_scroll(&mut self, cx: &mut Context<Self>) {
+        if self
+            .workspace_state
+            .session_agent_auto_scroll
+            .take()
+            .is_some()
+        {
+            self.workspace_state.session_agent_auto_scroll_generation = self
+                .workspace_state
+                .session_agent_auto_scroll_generation
+                .wrapping_add(1);
+            cx.notify();
+        }
+    }
+
+    fn tick_session_agent_auto_scroll(&mut self, generation: u64, cx: &mut Context<Self>) -> bool {
+        if !self.panels.session_agent_panel_open
+            || self.session_agent.panel_view != ChatPanelView::Conversation
+        {
+            self.stop_session_agent_auto_scroll(cx);
+            return false;
+        }
+
+        let Some(auto_scroll) = self.workspace_state.session_agent_auto_scroll.as_ref() else {
+            return false;
+        };
+        if auto_scroll.generation != generation {
+            return false;
+        }
+
+        let distance = auto_scroll.pointer_y - auto_scroll.anchor_y;
+        let active_distance = distance.abs() - SESSION_AGENT_AUTO_SCROLL_DEAD_ZONE;
+        if active_distance <= 0.0 {
+            return true;
+        }
+
+        let step = (active_distance * SESSION_AGENT_AUTO_SCROLL_SPEED)
+            .min(SESSION_AGENT_AUTO_SCROLL_MAX_STEP)
+            * distance.signum();
+        let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
+        let current_offset = scroll_handle.offset();
+        let max_offset = scroll_handle.max_offset();
+        let next_y = (f32::from(current_offset.y) - step).clamp(-f32::from(max_offset.y), 0.0);
+
+        if (next_y - f32::from(current_offset.y)).abs() >= 0.1 {
+            scroll_handle.set_offset(Point::new(current_offset.x, px(next_y)));
+            cx.notify();
+        }
+
+        true
+    }
+
     fn render_session_agent_sidebar_toolbar(
         &self,
         entity: Entity<Self>,
@@ -367,6 +478,46 @@ impl AppView {
                                     .overflow_x_hidden()
                                     .track_scroll(&agent_scroll_handle)
                                     .overflow_y_scroll()
+                                    .capture_any_mouse_down(cx.listener(
+                                        move |this, event: &MouseDownEvent, _window, cx| {
+                                            if this
+                                                .workspace_state
+                                                .session_agent_auto_scroll
+                                                .is_some()
+                                            {
+                                                this.stop_session_agent_auto_scroll(cx);
+                                                cx.stop_propagation();
+                                            } else if event.button != MouseButton::Middle {
+                                                this.stop_session_agent_auto_scroll(cx);
+                                            }
+                                        },
+                                    ))
+                                    .on_mouse_down(
+                                        MouseButton::Middle,
+                                        cx.listener(
+                                            move |this, event: &MouseDownEvent, _window, cx| {
+                                                if this
+                                                    .workspace_state
+                                                    .session_agent_auto_scroll
+                                                    .is_none()
+                                                {
+                                                    this.start_session_agent_auto_scroll(
+                                                        f32::from(event.position.y),
+                                                        cx,
+                                                    );
+                                                    cx.stop_propagation();
+                                                }
+                                            },
+                                        ),
+                                    )
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _window, cx| {
+                                            this.update_session_agent_auto_scroll_pointer(
+                                                f32::from(event.position.y),
+                                                cx,
+                                            );
+                                        },
+                                    ))
                                     .pb_2()
                                     .child(self.render_session_agent_messages(
                                         message_column_width,
@@ -374,6 +525,14 @@ impl AppView {
                                         window,
                                         cx,
                                     ))
+                                    .when(
+                                        self.workspace_state.session_agent_auto_scroll.is_some(),
+                                        |this| {
+                                            this.child(
+                                                render_session_agent_auto_scroll_cursor_layer(),
+                                            )
+                                        },
+                                    )
                                     .vertical_scrollbar(&agent_scroll_handle)
                                     .into_any_element()
                             } else {
