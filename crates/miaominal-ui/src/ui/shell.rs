@@ -3,11 +3,11 @@ use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver as FuturesUnboundedReceiver;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Div, ElementId, Entity,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, Div, ElementId,
+    Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
     KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful,
-    Styled, Subscription, WeakEntity, Window, WindowControlArea, div, prelude::*, px, rgb,
+    Styled, Subscription, WeakEntity, Window, WindowControlArea, canvas, div, prelude::*, px, rgb,
 };
 use gpui_component::{
     Colorize, Sizable as _,
@@ -115,12 +115,13 @@ pub(in crate::ui::shell) use state::{
     PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
     PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
     PendingSyncDirectionState, PendingSyncPassphrasePopupState, PendingSyncPullConfirmState,
-    SecretVisibilityState, SessionAgentMessage, SessionAgentMessageRole,
-    SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
-    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
-    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
-    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, trailing_at_mention_query,
+    SecretVisibilityState, SessionAgentAutoScrollState, SessionAgentMessage,
+    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall,
+    SessionAgentToolStatus, SessionConnectionState, SessionMonitoringState, SessionPurpose,
+    SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
+    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
+    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
+    trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

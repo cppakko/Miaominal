@@ -1592,12 +1592,21 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) visible_terminal_view_tab_id: Option<usize>,
     pub(in crate::ui::shell) session_agent_panel_width: f32,
     pub(in crate::ui::shell) session_agent_panel_drag: Option<SessionAgentPanelDragState>,
+    pub(in crate::ui::shell) session_agent_auto_scroll: Option<SessionAgentAutoScrollState>,
+    pub(in crate::ui::shell) session_agent_auto_scroll_generation: u64,
 }
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct SessionAgentPanelDragState {
     pub(in crate::ui::shell) initial_pointer: f32,
     pub(in crate::ui::shell) initial_width: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct SessionAgentAutoScrollState {
+    pub(in crate::ui::shell) anchor_y: f32,
+    pub(in crate::ui::shell) pointer_y: f32,
+    pub(in crate::ui::shell) generation: u64,
 }
 
 #[derive(Default)]
