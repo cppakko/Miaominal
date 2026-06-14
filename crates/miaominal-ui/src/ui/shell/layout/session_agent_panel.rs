@@ -511,6 +511,12 @@ impl AppView {
                                 },
                             ))
                             .child(div().flex_1())
+                            .child(render_session_agent_token_usage(
+                                &self.session_agent,
+                                &self.settings_store,
+                                text_muted,
+                            ))
+                            .child(div().min_w(px(4.0)))
                             .child(icon_button(
                                 if waiting {
                                     AppIcon::Pause
@@ -2449,6 +2455,61 @@ fn patch_paths(patch: &str) -> Vec<String> {
 fn estimate_session_agent_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     chars.saturating_add(3) / 4
+}
+
+fn format_token_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn render_session_agent_token_usage(
+    agent: &SessionAgentState,
+    settings_store: &SettingsStore,
+    text_muted: u32,
+) -> gpui::AnyElement {
+    let Some(usage) = &agent.last_usage else {
+        return div().into_any_element();
+    };
+    if usage.input_tokens == 0 && usage.output_tokens == 0 {
+        return div().into_any_element();
+    }
+
+    let provider_context_window = settings_store
+        .settings()
+        .selected_ai_provider_id
+        .as_ref()
+        .and_then(|id| {
+            settings_store
+                .settings()
+                .ai_providers
+                .iter()
+                .find(|p| &p.id == id)
+        })
+        .and_then(|p| p.context_window);
+
+    let text = match provider_context_window {
+        Some(max) if max > 0 => {
+            let pct = usage.input_tokens as f64 / max as f64 * 100.0;
+            format!(
+                "{} / {} ({:.0}%)",
+                format_token_count(usage.input_tokens),
+                format_token_count(max),
+                pct
+            )
+        }
+        _ => format!("{} tok", format_token_count(usage.input_tokens)),
+    };
+
+    div()
+        .text_size(miaominal_settings::FontSize::Body.scaled())
+        .text_color(rgb(text_muted))
+        .child(text)
+        .into_any_element()
 }
 
 fn format_relative_chat_time(timestamp: i64) -> String {

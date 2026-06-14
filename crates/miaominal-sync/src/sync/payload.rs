@@ -442,6 +442,7 @@ mod tests {
             api_key_env: String::new(),
             has_api_key: true,
             enabled: true,
+            context_window: None,
         };
         let settings = AppSettings {
             ai_providers: vec![provider],

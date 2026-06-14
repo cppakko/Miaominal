@@ -130,6 +130,12 @@ pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) markdown_entity: Option<gpui::Entity<Markdown>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) struct TokenUsage {
+    pub(in crate::ui::shell) input_tokens: u64,
+    pub(in crate::ui::shell) output_tokens: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::ui::shell) enum ChatPanelView {
     #[default]
@@ -229,6 +235,8 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
     pub(in crate::ui::shell) title: Option<String>,
     pub(in crate::ui::shell) panel_view: ChatPanelView,
+    /// Token usage from the most recent LLM completion request.
+    pub(in crate::ui::shell) last_usage: Option<TokenUsage>,
 }
 
 impl SessionAgentState {
