@@ -87,9 +87,18 @@ pub enum AgentChatEvent {
     TextDelta(String),
     ThinkingDelta(String),
     ToolCallStarted(AgentChatToolEvent),
-    ToolCallDelta { id: String, delta: String },
-    ToolCallCompleted { id: String, result: String },
-    ToolCallApprovalRequired { id: String, message: String },
+    ToolCallDelta {
+        id: String,
+        delta: String,
+    },
+    ToolCallCompleted {
+        id: String,
+        result: String,
+    },
+    ToolCallApprovalRequired {
+        id: String,
+        message: String,
+    },
     Finished(String),
     /// Token usage for the most recent completion request.
     TokenUsage {
