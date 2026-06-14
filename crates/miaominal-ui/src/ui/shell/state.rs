@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use zed_markdown::Markdown;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
+const SESSION_AGENT_MARKDOWN_HIGHLIGHT_MAX_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct MonitorChartPoint {
@@ -128,6 +129,7 @@ pub(in crate::ui::shell) struct SessionAgentMessage {
     /// Created and updated only in state-mutation methods (not during render),
     /// so Markdown::reset() / cx.notify() never fires inside draw_roots.
     pub(in crate::ui::shell) markdown_entity: Option<gpui::Entity<Markdown>>,
+    markdown_uses_syntax_highlighting: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +153,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -161,6 +164,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -175,6 +179,7 @@ impl SessionAgentMessage {
                 expanded: false,
             }),
             markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -186,6 +191,7 @@ impl SessionAgentMessage {
             tool_call: Some(tool_call),
             thinking: None,
             markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -196,6 +202,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
         }
     }
 }
@@ -292,6 +299,7 @@ impl SessionAgentState {
                 message.markdown_entity = Some(entity);
             }
         }
+        message.markdown_uses_syntax_highlighting = false;
     }
 
     /// Create or update the `Entity<Markdown>` for an assistant message at `index`.
@@ -308,17 +316,23 @@ impl SessionAgentState {
             return;
         }
         let content: gpui::SharedString = message.content.clone().into();
-        match message.markdown_entity.as_ref() {
-            Some(entity) => {
+        let use_syntax_highlighting =
+            message.content.len() <= SESSION_AGENT_MARKDOWN_HIGHLIGHT_MAX_BYTES;
+        if message.markdown_entity.is_none()
+            || message.markdown_uses_syntax_highlighting != use_syntax_highlighting
+        {
+            let entity = if use_syntax_highlighting {
+                let registry = crate::ui::markdown_language_registry(cx);
+                cx.new(|cx| Markdown::new(content, Some(registry), None, cx))
+            } else {
+                cx.new(|cx| Markdown::new(content, None, None, cx))
+            };
+            message.markdown_entity = Some(entity);
+        } else if let Some(entity) = message.markdown_entity.as_ref() {
                 let entity = entity.clone();
                 entity.update(cx, |md, cx| md.reset(content, cx));
-            }
-            None => {
-                let registry = crate::ui::markdown_language_registry(cx);
-                let entity = cx.new(|cx| Markdown::new(content, Some(registry), None, cx));
-                message.markdown_entity = Some(entity);
-            }
         }
+        message.markdown_uses_syntax_highlighting = use_syntax_highlighting;
     }
 
     /// Create or update the `Entity<Markdown>` for a thinking message at `index`.
@@ -345,6 +359,7 @@ impl SessionAgentState {
                 message.markdown_entity = Some(entity);
             }
         }
+        message.markdown_uses_syntax_highlighting = false;
     }
 
     pub(in crate::ui::shell) fn append_assistant_delta(

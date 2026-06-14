@@ -25,6 +25,10 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={SYSTEM_ICON_PATH}");
+    #[cfg(all(windows, target_env = "msvc"))]
+    {
+        println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
+    }
 
     let system_icon_path = Path::new(SYSTEM_ICON_PATH);
     let generated_dir = Path::new("assets/generated");

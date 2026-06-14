@@ -17,6 +17,35 @@ struct MarkdownLanguageRegistry(Arc<LanguageRegistry>);
 
 impl Global for MarkdownLanguageRegistry {}
 
+#[cfg(windows)]
+fn warm_markdown_parser_stack() {
+    let result = std::thread::Builder::new()
+        .name("markdown-parser-warmup".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| language::with_parser(|_| ()))
+        .and_then(|thread| {
+            thread.join().map_err(|panic| {
+                let message = if let Some(message) = panic.downcast_ref::<&str>() {
+                    (*message).to_string()
+                } else if let Some(message) = panic.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                std::io::Error::other(format!("markdown parser warmup panicked: {message}"))
+            })
+        });
+
+    if let Err(error) = result {
+        log::warn!("failed to warm markdown parser: {error}");
+    }
+}
+
+#[cfg(not(windows))]
+fn warm_markdown_parser_stack() {
+    language::with_parser(|_| ());
+}
+
 pub fn init_zed_markdown(cx: &mut App) {
     if !cx.has_global::<settings::SettingsStore>() {
         settings::init(cx);
@@ -34,6 +63,7 @@ pub fn init_zed_markdown(cx: &mut App) {
     ]);
 
     if !cx.has_global::<MarkdownLanguageRegistry>() {
+        warm_markdown_parser_stack();
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         registry.set_theme(cx.theme().clone());
         markdown_languages::register(&registry);
