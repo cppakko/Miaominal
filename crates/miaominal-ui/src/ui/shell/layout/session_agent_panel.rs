@@ -843,12 +843,6 @@ impl AppView {
                             } else {
                                 roles.surface_container_high
                             }))
-                            .border_1()
-                            .border_color(rgb(if is_current {
-                                roles.secondary
-                            } else {
-                                roles.outline_variant
-                            }))
                             .px_2()
                             .py_2()
                             .cursor_pointer()
@@ -1049,7 +1043,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
@@ -1100,8 +1093,6 @@ impl AppView {
                         .flex_shrink_0()
                         .pl_3()
                         .py_1()
-                        .border_l_2()
-                        .border_color(rgb(roles.outline_variant))
                         .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(text_muted))
                         .child(i18n::string("workspace.panel.agent.thinking")),
@@ -1181,14 +1172,6 @@ impl AppView {
                     right: Some(gpui::Length::Definite(px(0.0).into())),
                     bottom: Some(gpui::Length::Definite(px(8.0).into())),
                 },
-                border_style: Some(gpui::BorderStyle::Solid),
-                border_widths: gpui::EdgesRefinement {
-                    top: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
-                    left: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
-                    right: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
-                    bottom: Some(gpui::AbsoluteLength::Pixels(px(1.0))),
-                },
-                border_color: Some(border_color),
                 background: Some(code_background.into()),
                 text: gpui::TextStyleRefinement {
                     font_size: Some(miaominal_settings::FontSize::Body.scaled().into()),
@@ -1429,7 +1412,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
@@ -1466,8 +1448,6 @@ impl AppView {
                 v_flex()
                     .gap_1()
                     .pl_3()
-                    .border_l_2()
-                    .border_color(rgb(roles.outline_variant))
                     .child(
                         h_flex()
                             .id(("session-agent-thinking-header", index))
@@ -2312,8 +2292,6 @@ fn render_tool_terminal_block_content(
         .w_full()
         .overflow_hidden()
         .rounded(px(6.0))
-        .border_1()
-        .border_color(rgb(colors.outline_variant))
         .bg(rgb(terminal_bg))
         .child(
             div()
@@ -2768,8 +2746,6 @@ fn render_session_agent_at_mention_menu(
         .max_h(px(306.0))
         .overflow_y_scrollbar()
         .rounded(px(8.0))
-        .border_1()
-        .border_color(rgb(roles.outline_variant))
         .bg(rgb(roles.surface_container_lowest))
         .p_1()
         .when(filtered.is_empty(), |this| {
