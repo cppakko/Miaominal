@@ -133,7 +133,7 @@ fn main() {
 
     application.run(move |cx: &mut App| {
         gpui_component::init(cx);
-        miaominal_ui::init_zed_markdown(cx);
+        miaominal_ui::init_markdown(cx);
         miaominal_ui::i18n::init();
         app::install_app_menus(cx);
 

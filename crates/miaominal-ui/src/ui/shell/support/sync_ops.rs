@@ -401,7 +401,6 @@ impl AppView {
             Ok(store) => {
                 self.settings_store = store;
                 miaominal_settings::sync_component_theme(cx);
-                crate::ui::sync_markdown_theme(cx);
             }
             Err(e) => {
                 log::warn!("failed to reload settings after sync: {e:?}");
@@ -461,11 +460,7 @@ impl AppView {
         let selected_provider_id = current_selected
             .as_deref()
             .filter(|id| ai_provider_options.iter().any(|o| o.value() == *id))
-            .or_else(|| {
-                ai_provider_options
-                    .first()
-                    .map(|o| o.value().as_str())
-            })
+            .or_else(|| ai_provider_options.first().map(|o| o.value().as_str()))
             .map(ToOwned::to_owned);
         if selected_provider_id.as_deref()
             != Some(

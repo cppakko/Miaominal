@@ -46,7 +46,6 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 image = { version = "0.25", default-features = false }
-zed-markdown = { package = "markdown", git = "https://github.com/zed-industries/zed" }
 language = { git = "https://github.com/zed-industries/zed" }
 keyring = { version = "3", features = [
     "apple-native",
@@ -76,6 +75,8 @@ russh-sftp = "2.1.1"
 rust-embed = "8.11.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+pulldown-cmark = "0.13.4"
+syntect = { version = "5.2.0", default-features = false, features = ["default-fancy"] }
 sys-locale = "0.3"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 tiny-skia = "0.11.4"
@@ -88,13 +89,6 @@ tokio = { version = "1", features = [
     "time",
 ] }
 toml = "0.8"
-tree-sitter = "0.26.9"
-tree-sitter-bash = "0.25.1"
-tree-sitter-css = "0.23.2"
-tree-sitter-json = "0.24.8"
-tree-sitter-python = "0.25.0"
-tree-sitter-rust = "0.24.2"
-tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" }
 unicode-segmentation = "1"
 usvg = "0.45.1"
 uuid = { version = "1", features = ["v4"] }

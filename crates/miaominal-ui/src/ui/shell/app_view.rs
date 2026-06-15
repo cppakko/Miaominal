@@ -18,6 +18,7 @@ pub struct AppView {
     pub(in crate::ui::shell) keychain_editor_draft_source: Option<ManagedKeySource>,
     pub(in crate::ui::shell) keychain_deploy_key_id: Option<String>,
     pub(in crate::ui::shell) workspace_state: WorkspaceState,
+    pub(in crate::ui::shell) session_agent_focus: FocusHandle,
     pub(in crate::ui::shell) panel_view: PanelViewState,
     pub(in crate::ui::shell) editors: EditorOverlayState,
     pub(in crate::ui::shell) shell_state: ShellState,

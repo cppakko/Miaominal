@@ -289,8 +289,6 @@ impl AppView {
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.messages.push(message);
-        let index = self.session_agent.messages.len() - 1;
-        self.session_agent.ensure_plain_markdown(index, cx);
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -410,7 +408,6 @@ impl AppView {
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
         self.session_agent.panel_view = ChatPanelView::Conversation;
-        self.rebuild_session_agent_markdown(cx);
         self.reset_session_agent_scroll();
         self.status_message = "Chat history loaded.".into();
         cx.notify();
@@ -616,23 +613,6 @@ impl AppView {
             log::warn!("failed to persist chat title: {error:?}");
         }
         self.refresh_chat_sessions();
-    }
-
-    fn rebuild_session_agent_markdown(&mut self, cx: &mut Context<Self>) {
-        for index in 0..self.session_agent.messages.len() {
-            match self.session_agent.messages[index].role {
-                SessionAgentMessageRole::User | SessionAgentMessageRole::Error => {
-                    self.session_agent.ensure_plain_markdown(index, cx);
-                }
-                SessionAgentMessageRole::Assistant => {
-                    self.session_agent.ensure_assistant_markdown(index, cx);
-                }
-                SessionAgentMessageRole::Thinking => {
-                    self.session_agent.ensure_thinking_markdown(index, cx);
-                }
-                SessionAgentMessageRole::ToolCall => {}
-            }
-        }
     }
 
     pub(in crate::ui::shell) fn submit_session_agent_prompt(
@@ -1350,17 +1330,6 @@ impl AppView {
             }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);
-                // Sync the markdown entity with the final authoritative content.
-                // finish_assistant_reply overwrites message.content but does not
-                // update markdown_entity, so we need to do it here.
-                let last_assistant_idx = self
-                    .session_agent
-                    .messages
-                    .iter()
-                    .rposition(|m| m.role == SessionAgentMessageRole::Assistant);
-                if let Some(idx) = last_assistant_idx {
-                    self.session_agent.ensure_assistant_markdown(idx, cx);
-                }
                 self.finish_session_agent_stream(request_id, cx);
             }
             AgentChatEvent::TokenUsage {

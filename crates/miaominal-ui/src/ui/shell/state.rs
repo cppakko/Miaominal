@@ -2,10 +2,8 @@ use super::*;
 use crate::ui::i18n;
 use std::time::Instant;
 use tokio::sync::mpsc;
-use zed_markdown::Markdown;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
-const SESSION_AGENT_MARKDOWN_HIGHLIGHT_MAX_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct MonitorChartPoint {
@@ -125,11 +123,6 @@ pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) content: String,
     pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
     pub(in crate::ui::shell) thinking: Option<SessionAgentThinking>,
-    /// Pre-built Entity<Markdown> for assistant/thinking messages.
-    /// Created and updated only in state-mutation methods (not during render),
-    /// so Markdown::reset() / cx.notify() never fires inside draw_roots.
-    pub(in crate::ui::shell) markdown_entity: Option<gpui::Entity<Markdown>>,
-    markdown_uses_syntax_highlighting: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,8 +145,6 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -163,8 +154,6 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -178,8 +167,6 @@ impl SessionAgentMessage {
                 elapsed_ms: None,
                 expanded: false,
             }),
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -196,8 +183,6 @@ impl SessionAgentMessage {
                 elapsed_ms: Some(0),
                 expanded: false,
             }),
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -208,8 +193,6 @@ impl SessionAgentMessage {
             content: tool_call.summary.clone(),
             tool_call: Some(tool_call),
             thinking: None,
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 
@@ -219,8 +202,6 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
-            markdown_entity: None,
-            markdown_uses_syntax_highlighting: false,
         }
     }
 }
@@ -260,8 +241,31 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
     pub(in crate::ui::shell) title: Option<String>,
     pub(in crate::ui::shell) panel_view: ChatPanelView,
+    pub(in crate::ui::shell) markdown_selection: Option<SessionAgentMarkdownSelection>,
     /// Token usage from the most recent LLM completion request.
     pub(in crate::ui::shell) last_usage: Option<TokenUsage>,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) struct SessionAgentMarkdownSelection {
+    pub(in crate::ui::shell) message_index: usize,
+    pub(in crate::ui::shell) anchor_block: usize,
+    pub(in crate::ui::shell) anchor_offset: usize,
+    pub(in crate::ui::shell) focus_block: usize,
+    pub(in crate::ui::shell) focus_offset: usize,
+    pub(in crate::ui::shell) dragging: bool,
+}
+
+impl SessionAgentMarkdownSelection {
+    pub(in crate::ui::shell) fn ordered_endpoints(&self) -> ((usize, usize), (usize, usize)) {
+        let anchor = (self.anchor_block, self.anchor_offset);
+        let focus = (self.focus_block, self.focus_offset);
+        if anchor <= focus {
+            (anchor, focus)
+        } else {
+            (focus, anchor)
+        }
+    }
 }
 
 impl SessionAgentState {
@@ -290,100 +294,10 @@ impl SessionAgentState {
         self.request_counter
     }
 
-    /// Create or update the `Entity<Markdown>` for a user/error message at `index`.
-    /// Must be called from a state-mutation context (event handler), never from render.
-    pub(in crate::ui::shell) fn ensure_plain_markdown(
-        &mut self,
-        index: usize,
-        cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
-        let Some(message) = self.messages.get_mut(index) else {
-            return;
-        };
-        if !matches!(
-            message.role,
-            SessionAgentMessageRole::User | SessionAgentMessageRole::Error
-        ) {
-            return;
-        }
-        let content: gpui::SharedString = Markdown::escape(&message.content).into_owned().into();
-        match message.markdown_entity.as_ref() {
-            Some(entity) => {
-                let entity = entity.clone();
-                entity.update(cx, |md, cx| md.reset(content, cx));
-            }
-            None => {
-                let entity = cx.new(|cx| Markdown::new_text(content, cx));
-                message.markdown_entity = Some(entity);
-            }
-        }
-        message.markdown_uses_syntax_highlighting = false;
-    }
-
-    /// Create or update the `Entity<Markdown>` for an assistant message at `index`.
-    /// Must be called from a state-mutation context (event handler), never from render.
-    pub(in crate::ui::shell) fn ensure_assistant_markdown(
-        &mut self,
-        index: usize,
-        cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
-        let Some(message) = self.messages.get_mut(index) else {
-            return;
-        };
-        if message.role != SessionAgentMessageRole::Assistant {
-            return;
-        }
-        let content: gpui::SharedString = message.content.clone().into();
-        let use_syntax_highlighting =
-            message.content.len() <= SESSION_AGENT_MARKDOWN_HIGHLIGHT_MAX_BYTES;
-        if message.markdown_entity.is_none()
-            || message.markdown_uses_syntax_highlighting != use_syntax_highlighting
-        {
-            let entity = if use_syntax_highlighting {
-                let registry = crate::ui::markdown_language_registry(cx);
-                cx.new(|cx| Markdown::new(content, Some(registry), None, cx))
-            } else {
-                cx.new(|cx| Markdown::new(content, None, None, cx))
-            };
-            message.markdown_entity = Some(entity);
-        } else if let Some(entity) = message.markdown_entity.as_ref() {
-            let entity = entity.clone();
-            entity.update(cx, |md, cx| md.reset(content, cx));
-        }
-        message.markdown_uses_syntax_highlighting = use_syntax_highlighting;
-    }
-
-    /// Create or update the `Entity<Markdown>` for a thinking message at `index`.
-    /// Must be called from a state-mutation context (event handler), never from render.
-    pub(in crate::ui::shell) fn ensure_thinking_markdown(
-        &mut self,
-        index: usize,
-        cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
-        let Some(message) = self.messages.get_mut(index) else {
-            return;
-        };
-        if message.role != SessionAgentMessageRole::Thinking {
-            return;
-        }
-        let content: gpui::SharedString = message.content.clone().into();
-        match message.markdown_entity.as_ref() {
-            Some(entity) => {
-                let entity = entity.clone();
-                entity.update(cx, |md, cx| md.reset(content, cx));
-            }
-            None => {
-                let entity = cx.new(|cx| Markdown::new_text(content, cx));
-                message.markdown_entity = Some(entity);
-            }
-        }
-        message.markdown_uses_syntax_highlighting = false;
-    }
-
     pub(in crate::ui::shell) fn append_assistant_delta(
         &mut self,
         delta: impl AsRef<str>,
-        cx: &mut gpui::Context<super::app_view::AppView>,
+        _cx: &mut gpui::Context<super::app_view::AppView>,
     ) {
         self.finish_active_thinking();
         let delta = delta.as_ref();
@@ -406,14 +320,11 @@ impl SessionAgentState {
             self.messages
                 .push(SessionAgentMessage::assistant_raw(delta));
         }
-
-        let index = self.messages.len() - 1;
-        self.ensure_assistant_markdown(index, cx);
     }
 
     pub(in crate::ui::shell) fn start_assistant_reply(
         &mut self,
-        cx: &mut gpui::Context<super::app_view::AppView>,
+        _cx: &mut gpui::Context<super::app_view::AppView>,
     ) {
         self.finish_active_thinking();
         if !self.messages.last().is_some_and(|message| {
@@ -421,14 +332,12 @@ impl SessionAgentState {
         }) {
             self.messages.push(SessionAgentMessage::assistant_raw(""));
         }
-        let index = self.messages.len() - 1;
-        self.ensure_assistant_markdown(index, cx);
     }
 
     pub(in crate::ui::shell) fn append_thinking_delta(
         &mut self,
         delta: impl AsRef<str>,
-        cx: &mut gpui::Context<super::app_view::AppView>,
+        _cx: &mut gpui::Context<super::app_view::AppView>,
     ) {
         let delta = delta.as_ref();
         if delta.trim().is_empty() {
@@ -442,9 +351,6 @@ impl SessionAgentState {
         } else {
             self.messages.push(SessionAgentMessage::thinking_raw(delta));
         }
-
-        let index = self.messages.len() - 1;
-        self.ensure_thinking_markdown(index, cx);
     }
 
     pub(in crate::ui::shell) fn push_tool_call(

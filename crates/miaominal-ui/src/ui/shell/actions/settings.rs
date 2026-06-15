@@ -2960,7 +2960,6 @@ impl AppView {
         let changed = self.settings_store.update(|s| s.font_family = next.clone());
         if changed {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             self.status_message = i18n::string_args("status.font_set", &[("font", &next)]);
             self.invalidate_terminal_metrics();
             cx.notify();
@@ -2984,7 +2983,6 @@ impl AppView {
             });
         if changed {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             self.status_message =
                 i18n::string_args("status.font_reset", &[("font", &default_font)]);
             self.invalidate_terminal_metrics();
@@ -3032,7 +3030,6 @@ impl AppView {
     pub(in crate::ui::shell) fn adjust_font_size(&mut self, delta: f32, cx: &mut Context<Self>) {
         if let Some(target) = SettingsService::adjust_font_size(&mut self.settings_store, delta) {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             let value = format!("{target:.1}");
             self.status_message = i18n::string_args("status.font_size", &[("value", &value)]);
             self.invalidate_terminal_metrics();
@@ -3043,7 +3040,6 @@ impl AppView {
     pub(in crate::ui::shell) fn adjust_line_height(&mut self, delta: f32, cx: &mut Context<Self>) {
         if let Some(target) = SettingsService::adjust_line_height(&mut self.settings_store, delta) {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             let value = format!("{target:.1}");
             self.status_message = i18n::string_args("status.line_height", &[("value", &value)]);
             self.invalidate_terminal_metrics();
@@ -3070,7 +3066,6 @@ impl AppView {
             .update(|settings| settings.seed_color = normalized.clone());
         if changed {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             self.status_message = i18n::string_args("status.theme_seed", &[("value", &normalized)]);
             cx.notify();
         }
@@ -3097,7 +3092,6 @@ impl AppView {
             });
         if changed {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             self.status_message =
                 i18n::string_args("status.theme_seed_reset", &[("value", &default_seed)]);
             cx.notify();
@@ -3108,7 +3102,6 @@ impl AppView {
         let changed = self.settings_store.update(|s| s.theme_id = theme_id);
         if changed {
             miaominal_settings::sync_component_theme(cx);
-            crate::ui::sync_markdown_theme(cx);
             let theme = theme_id_label(theme_id);
             self.status_message = i18n::string_args("status.theme_changed", &[("theme", &theme)]);
             cx.notify();

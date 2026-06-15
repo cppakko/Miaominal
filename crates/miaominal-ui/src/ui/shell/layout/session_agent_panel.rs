@@ -1,8 +1,10 @@
 use super::super::*;
 use crate::ui::i18n;
+use crate::ui::markdown_view::{MarkdownTextSelection, MarkdownTextSelectionHandlers};
+use crate::ui::shell::state::SessionAgentMarkdownSelection;
+use std::rc::Rc;
 use std::time::Duration;
 use theme::ActiveTheme as _;
-use zed_markdown::{MarkdownElement, MarkdownStyle};
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
 const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
@@ -96,6 +98,108 @@ fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
 }
 
 impl AppView {
+    fn start_session_agent_markdown_selection(
+        &mut self,
+        message_index: usize,
+        block_index: usize,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.session_agent_focus, cx);
+        self.session_agent.markdown_selection = Some(SessionAgentMarkdownSelection {
+            message_index,
+            anchor_block: block_index,
+            anchor_offset: index,
+            focus_block: block_index,
+            focus_offset: index,
+            dragging: true,
+        });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn update_session_agent_markdown_selection(
+        &mut self,
+        message_index: usize,
+        block_index: usize,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.session_agent.markdown_selection.as_mut() else {
+            return;
+        };
+        if !selection.dragging || selection.message_index != message_index {
+            return;
+        }
+
+        selection.focus_block = block_index;
+        selection.focus_offset = index;
+        cx.notify();
+    }
+
+    fn finish_session_agent_markdown_selection(
+        &mut self,
+        message_index: usize,
+        block_index: usize,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.session_agent.markdown_selection.as_mut() else {
+            return;
+        };
+        if selection.message_index != message_index {
+            return;
+        }
+
+        selection.focus_block = block_index;
+        selection.focus_offset = index;
+        selection.dragging = false;
+        let ((start_block, start_offset), (end_block, end_offset)) = selection.ordered_endpoints();
+        if start_block == end_block && start_offset == end_offset {
+            self.session_agent.markdown_selection = None;
+        }
+        cx.notify();
+    }
+
+    fn copy_session_agent_markdown_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(selection) = self.session_agent.markdown_selection.as_ref() else {
+            return false;
+        };
+        let Some(message) = self.session_agent.messages.get(selection.message_index) else {
+            return false;
+        };
+        let style = self.session_agent_markdown_style(
+            miaominal_settings::current_theme()
+                .material
+                .roles
+                .on_surface,
+        );
+        let blocks = crate::ui::markdown_view::markdown_plain_blocks(&message.content, style);
+        let text = selected_markdown_blocks_text(selection, blocks);
+        if text.is_empty() {
+            return false;
+        }
+
+        self.copy_session_agent_text("selection", text, cx);
+        true
+    }
+
+    fn handle_session_agent_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = &event.keystroke.modifiers;
+        if event.keystroke.key == "c"
+            && (modifiers.platform || modifiers.control)
+            && self.copy_session_agent_markdown_selection(cx)
+        {
+            cx.stop_propagation();
+        }
+    }
+
     fn start_session_agent_auto_scroll(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
         self.workspace_state.session_agent_auto_scroll_generation = self
             .workspace_state
@@ -364,6 +468,8 @@ impl AppView {
             .id("session-agent-panel-content")
             .size_full()
             .relative()
+            .track_focus(&self.session_agent_focus)
+            .on_key_down(cx.listener(Self::handle_session_agent_key_down))
             .child(
                 v_flex()
                     .size_full()
@@ -836,7 +942,8 @@ impl AppView {
                                             session.title.clone()
                                         };
                                         let delete_title = title.clone();
-                                        let updated_at = format_relative_chat_time(session.updated_at);
+                                        let updated_at =
+                                            format_relative_chat_time(session.updated_at);
                                         let status_label = if is_busy {
                                             Some("Working")
                                         } else if is_current {
@@ -1134,13 +1241,17 @@ impl AppView {
     fn render_session_agent_markdown(
         &self,
         id: impl Into<ElementId>,
+        message_index: usize,
         message: &SessionAgentMessage,
         color: u32,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        use_cache: bool,
+        entity: Entity<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
+        let selection_color = gpui::Hsla::from(rgb(roles.primary_container)).opacity(0.7);
 
         let text_color = gpui::Hsla::from(rgb(color));
         let muted_color = gpui::Hsla::from(rgb(crate::ui::theme::palette_tone_rgb(
@@ -1151,105 +1262,48 @@ impl AppView {
         let code_background = gpui::Hsla::from(rgb(roles.surface_container_high));
         let border_color = gpui::Hsla::from(rgb(roles.outline_variant));
 
-        let mut base_text_style = window.text_style();
-        base_text_style.refine(&gpui::TextStyleRefinement {
-            font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
-            line_height: Some(miaominal_settings::scaled_line_height(21.0).into()),
-            color: Some(text_color),
-            ..Default::default()
-        });
-
-        // Entity<Markdown> is always pre-built in the state-mutation path (append_*_delta /
         // ensure_*_markdown). We only read it here — never create or update it during render.
-        let Some(markdown) = message.markdown_entity.clone() else {
-            // Fallback: entity not yet allocated (empty/pending content), show plain text.
-            return div()
-                .id(id)
-                .w_full()
-                .min_w_0()
-                .min_h(px(20.0))
-                .text_size(miaominal_settings::FontSize::Input.scaled())
-                .line_height(miaominal_settings::scaled_line_height(21.0))
-                .text_color(text_color)
-                .child(message.content.clone())
-                .into_any_element();
+        let markdown_style = crate::ui::markdown_view::MarkdownViewStyle {
+            text_color,
+            muted_color,
+            link_color,
+            code_background,
+            border_color,
         };
 
-        let style = MarkdownStyle {
-            base_text_style,
-            selection_background_color: gpui::Hsla::from(rgb(roles.primary)).opacity(0.28),
-            rule_color: border_color,
-            block_quote_border_color: border_color,
-            code_block_overflow_x_scroll: true,
-            code_block: gpui::StyleRefinement {
-                padding: gpui::EdgesRefinement {
-                    top: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(px(8.0)),
-                    )),
-                    left: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(px(10.0)),
-                    )),
-                    right: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(px(10.0)),
-                    )),
-                    bottom: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(px(8.0)),
-                    )),
-                },
-                margin: gpui::EdgesRefinement {
-                    top: Some(gpui::Length::Definite(px(6.0).into())),
-                    left: Some(gpui::Length::Definite(px(0.0).into())),
-                    right: Some(gpui::Length::Definite(px(0.0).into())),
-                    bottom: Some(gpui::Length::Definite(px(8.0).into())),
-                },
-                background: Some(code_background.into()),
-                text: gpui::TextStyleRefinement {
-                    font_size: Some(miaominal_settings::FontSize::Body.scaled().into()),
-                    color: Some(text_color),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            inline_code: gpui::TextStyleRefinement {
-                font_size: Some(miaominal_settings::FontSize::Body.scaled().into()),
-                background_color: Some(code_background),
-                color: Some(text_color),
-                ..Default::default()
-            },
-            block_quote: gpui::TextStyleRefinement {
-                color: Some(muted_color),
-                ..Default::default()
-            },
-            link: gpui::TextStyleRefinement {
-                color: Some(link_color),
-                underline: Some(gpui::UnderlineStyle {
-                    color: Some(link_color.opacity(0.65)),
-                    thickness: px(1.0),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            heading_level_styles: Some(zed_markdown::HeadingLevelStyles {
-                h1: Some(gpui::TextStyleRefinement {
-                    font_size: Some(miaominal_settings::FontSize::Subheading.scaled().into()),
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    ..Default::default()
-                }),
-                h2: Some(gpui::TextStyleRefinement {
-                    font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    ..Default::default()
-                }),
-                h3: Some(gpui::TextStyleRefinement {
-                    font_size: Some(miaominal_settings::FontSize::Input.scaled().into()),
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            heading_border_color: Some(border_color),
-            syntax: cx.theme().syntax().clone(),
-            ..Default::default()
+        let selection = self
+            .session_agent
+            .markdown_selection
+            .as_ref()
+            .filter(|selection| selection.message_index == message_index)
+            .map(|selection| {
+                let ((start_block, start_offset), (end_block, end_offset)) =
+                    selection.ordered_endpoints();
+                MarkdownTextSelection {
+                    start_block,
+                    start_offset,
+                    end_block,
+                    end_offset,
+                    color: selection_color,
+                }
+            });
+        let selection_handlers =
+            self.session_agent_markdown_selection_handlers(message_index, entity);
+
+        let markdown = if use_cache {
+            crate::ui::markdown_view::render_markdown_selectable(
+                &message.content,
+                markdown_style,
+                selection.as_ref(),
+                Some(&selection_handlers),
+            )
+        } else {
+            crate::ui::markdown_view::render_markdown_uncached_selectable(
+                &message.content,
+                markdown_style,
+                selection.as_ref(),
+                Some(&selection_handlers),
+            )
         };
 
         div()
@@ -1258,14 +1312,72 @@ impl AppView {
             .min_w_0()
             .min_h(px(20.0))
             .overflow_x_hidden()
-            .child(
-                MarkdownElement::new(markdown, style)
-                    .w_full()
-                    .min_w_0()
-                    .min_h(px(20.0))
-                    .overflow_x_hidden(),
-            )
+            .child(markdown)
             .into_any_element()
+    }
+
+    fn session_agent_markdown_selection_handlers(
+        &self,
+        message_index: usize,
+        entity: Entity<Self>,
+    ) -> MarkdownTextSelectionHandlers {
+        let start_entity = entity.clone();
+        let update_entity = entity.clone();
+        let finish_entity = entity;
+        MarkdownTextSelectionHandlers {
+            on_start: Rc::new(move |block_index, index, window, cx| {
+                let entity = start_entity.clone();
+                entity.update(cx, |this, cx| {
+                    this.start_session_agent_markdown_selection(
+                        message_index,
+                        block_index,
+                        index,
+                        window,
+                        cx,
+                    );
+                });
+            }),
+            on_update: Rc::new(move |block_index, index, _window, cx| {
+                let entity = update_entity.clone();
+                entity.update(cx, |this, cx| {
+                    this.update_session_agent_markdown_selection(
+                        message_index,
+                        block_index,
+                        index,
+                        cx,
+                    );
+                });
+            }),
+            on_finish: Rc::new(move |block_index, index, _window, cx| {
+                let entity = finish_entity.clone();
+                entity.update(cx, |this, cx| {
+                    this.finish_session_agent_markdown_selection(
+                        message_index,
+                        block_index,
+                        index,
+                        cx,
+                    );
+                });
+            }),
+        }
+    }
+
+    fn session_agent_markdown_style(
+        &self,
+        color: u32,
+    ) -> crate::ui::markdown_view::MarkdownViewStyle {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        crate::ui::markdown_view::MarkdownViewStyle {
+            text_color: gpui::Hsla::from(rgb(color)),
+            muted_color: gpui::Hsla::from(rgb(crate::ui::theme::palette_tone_rgb(
+                material.palettes.neutral_variant,
+                if material.dark { 70 } else { 45 },
+            ))),
+            link_color: gpui::Hsla::from(rgb(roles.primary)),
+            code_background: gpui::Hsla::from(rgb(roles.surface_container_high)),
+            border_color: gpui::Hsla::from(rgb(roles.outline_variant)),
+        }
     }
 
     fn render_session_agent_message(
@@ -1282,7 +1394,6 @@ impl AppView {
         let is_user = message.role == SessionAgentMessageRole::User;
         let is_error = message.role == SessionAgentMessageRole::Error;
         let context_menu_entity = entity.clone();
-        let context_menu_markdown = message.markdown_entity.clone();
         let context_menu_text = message.content.clone();
         if message.role == SessionAgentMessageRole::Thinking {
             if message.content.trim().is_empty() {
@@ -1305,6 +1416,8 @@ impl AppView {
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::Assistant {
+            let use_markdown_cache = !(index + 1 == self.session_agent.messages.len()
+                && self.session_agent.has_pending_task());
             return div()
                 .id(SharedString::from(format!(
                     "session-agent-message-menu-{index}-assistant"
@@ -1318,23 +1431,25 @@ impl AppView {
                 .py_1()
                 .child(self.render_session_agent_markdown(
                     SharedString::from(format!("session-agent-message-{index}-assistant")),
+                    index,
                     message,
                     roles.on_surface,
+                    use_markdown_cache,
+                    entity.clone(),
                     window,
                     cx,
                 ))
-                .context_menu(move |menu, _window, cx| {
-                    let selected_text = context_menu_markdown
-                        .as_ref()
-                        .and_then(|markdown| markdown.read(cx).selected_text());
-                    let text = selected_text.unwrap_or_else(|| context_menu_text.clone());
+                .context_menu(move |menu, _window, _cx| {
+                    let text = context_menu_text.clone();
                     let entity = context_menu_entity.clone();
                     menu.item(
                         PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                             move |_, _window, cx| {
                                 let text = text.clone();
                                 entity.update(cx, |this, cx| {
-                                    this.copy_session_agent_text("message", text, cx);
+                                    if !this.copy_session_agent_markdown_selection(cx) {
+                                        this.copy_session_agent_text("message", text, cx);
+                                    }
                                 });
                             },
                         ),
@@ -1405,25 +1520,27 @@ impl AppView {
                             .text_color(rgb(fg))
                             .child(self.render_session_agent_markdown(
                                 SharedString::from(format!("session-agent-message-{index}-plain")),
+                                index,
                                 message,
                                 fg,
+                                true,
+                                entity.clone(),
                                 window,
                                 cx,
                             )),
                     ),
             )
-            .context_menu(move |menu, _window, cx| {
-                let selected_text = context_menu_markdown
-                    .as_ref()
-                    .and_then(|markdown| markdown.read(cx).selected_text());
-                let text = selected_text.unwrap_or_else(|| context_menu_text.clone());
+            .context_menu(move |menu, _window, _cx| {
+                let text = context_menu_text.clone();
                 let entity = context_menu_entity.clone();
                 menu.item(
                     PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                         move |_, _window, cx| {
                             let text = text.clone();
                             entity.update(cx, |this, cx| {
-                                this.copy_session_agent_text("message", text, cx);
+                                if !this.copy_session_agent_markdown_selection(cx) {
+                                    this.copy_session_agent_text("message", text, cx);
+                                }
                             });
                         },
                     ),
@@ -1515,8 +1632,11 @@ impl AppView {
                     .when(expanded, |this| {
                         this.child(self.render_session_agent_markdown(
                             SharedString::from(format!("session-agent-message-{index}-thinking")),
+                            index,
                             message,
                             text_muted,
+                            !is_active_thinking,
+                            entity.clone(),
                             window,
                             cx,
                         ))
@@ -2306,6 +2426,45 @@ fn render_tool_terminal_block(
     )
 }
 
+fn selected_markdown_blocks_text(
+    selection: &SessionAgentMarkdownSelection,
+    mut blocks: Vec<(usize, String)>,
+) -> String {
+    let ((start_block, start_offset), (end_block, end_offset)) = selection.ordered_endpoints();
+    blocks.sort_by_key(|(block_index, _)| *block_index);
+
+    let mut parts = Vec::new();
+    for (block_index, text) in blocks {
+        if block_index < start_block || block_index > end_block {
+            continue;
+        }
+
+        let start = if block_index == start_block {
+            clamp_to_char_boundary(&text, start_offset)
+        } else {
+            0
+        };
+        let end = if block_index == end_block {
+            clamp_to_char_boundary(&text, end_offset)
+        } else {
+            text.len()
+        };
+        if start < end {
+            parts.push(text[start..end].to_string());
+        }
+    }
+
+    parts.join("\n")
+}
+
+fn clamp_to_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 fn render_tool_terminal_block_content(
     label: &str,
     content: gpui::AnyElement,
@@ -2862,8 +3021,6 @@ fn format_tool_call_copy_text(tool_call: &crate::ui::shell::state::SessionAgentT
 }
 
 /// Renders a terminal-style block with syntax-highlighted bash command text.
-/// Uses tree-sitter directly for synchronous, lightweight, zero-entity highlighting.
-/// This avoids any Entity<Markdown> creation inside the render path, preventing stack overflow.
 fn render_bash_highlighted_command_block(
     label: &str,
     command: &str,
@@ -2871,12 +3028,16 @@ fn render_bash_highlighted_command_block(
     syntax_theme: &::theme::SyntaxTheme,
 ) -> gpui::AnyElement {
     let base_color = gpui::Hsla::from(rgb(colors.on_surface));
-    let highlights = collect_bash_highlights(command, syntax_theme);
+    let _ = syntax_theme;
     let text: SharedString = if command.trim().is_empty() {
         "(no command)".into()
     } else {
         command.to_string().into()
     };
+    let highlights = crate::ui::markdown_view::valid_highlights(
+        text.as_ref(),
+        crate::ui::markdown_view::code_highlights_for_language("bash", text.as_ref()),
+    );
     let content = div()
         .font_family("JetBrains Mono")
         .text_size(miaominal_settings::FontSize::Body.scaled())
@@ -2885,81 +3046,4 @@ fn render_bash_highlighted_command_block(
         .child(gpui::StyledText::new(text).with_highlights(highlights))
         .into_any_element();
     render_tool_terminal_block_content(label, content, colors)
-}
-
-/// Cached compiled bash highlight query. Compiled once and reused across renders.
-static BASH_HIGHLIGHT_QUERY: std::sync::OnceLock<Option<tree_sitter::Query>> =
-    std::sync::OnceLock::new();
-
-fn get_bash_highlight_query() -> Option<&'static tree_sitter::Query> {
-    BASH_HIGHLIGHT_QUERY
-        .get_or_init(|| {
-            let lang: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
-            tree_sitter::Query::new(&lang, tree_sitter_bash::HIGHLIGHT_QUERY).ok()
-        })
-        .as_ref()
-}
-
-/// Synchronously collects syntax highlight spans for a bash command string
-/// using tree-sitter, without creating any GPUI entities.
-fn collect_bash_highlights(
-    command: &str,
-    syntax_theme: &::theme::SyntaxTheme,
-) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> {
-    use tree_sitter::StreamingIterator as _;
-
-    let Some(query) = get_bash_highlight_query() else {
-        return Vec::new();
-    };
-
-    let mut parser = tree_sitter::Parser::new();
-    let lang: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
-    if parser.set_language(&lang).is_err() {
-        return Vec::new();
-    }
-    let Some(tree) = parser.parse(command.as_bytes(), None) else {
-        return Vec::new();
-    };
-
-    let capture_names = query.capture_names();
-    let mut raw: Vec<(usize, usize, gpui::HighlightStyle)> = Vec::new();
-
-    let mut cursor = tree_sitter::QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), command.as_bytes());
-    loop {
-        matches.advance();
-        let Some(m) = matches.get() else { break };
-        for capture in m.captures {
-            let start = capture.node.start_byte();
-            let end = capture.node.end_byte();
-            if start >= end || end > command.len() {
-                continue;
-            }
-            if !command.is_char_boundary(start) || !command.is_char_boundary(end) {
-                continue;
-            }
-            let name_idx = capture.index as usize;
-            let Some(capture_name) = capture_names.get(name_idx) else {
-                continue;
-            };
-            let Some(style) = syntax_theme.style_for_name(capture_name) else {
-                continue;
-            };
-            if style != gpui::HighlightStyle::default() {
-                raw.push((start, end, style));
-            }
-        }
-    }
-
-    // Sort by start byte; keep only non-overlapping ranges (first match wins).
-    raw.sort_by_key(|(start, _, _)| *start);
-    let mut result: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
-    let mut last_end = 0usize;
-    for (start, end, style) in raw {
-        if start >= last_end {
-            result.push((start..end, style));
-            last_end = end;
-        }
-    }
-    result
 }
