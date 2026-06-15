@@ -8,6 +8,7 @@ const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
 const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
 const SESSION_AGENT_PANEL_MAX_WIDTH: f32 = 720.0;
 const SESSION_AGENT_PANEL_RESIZE_HANDLE_WIDTH: f32 = 8.0;
+const SESSION_AGENT_SCROLLBAR_GUTTER: f32 = 16.0;
 const SESSION_AGENT_USER_BUBBLE_MAX_WIDTH: f32 = 420.0;
 const SESSION_AGENT_AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_AUTO_SCROLL_DEAD_ZONE: f32 = 12.0;
@@ -28,8 +29,8 @@ pub(in crate::ui::shell::layout) fn clamp_session_agent_panel_width(width: f32) 
 }
 
 fn session_agent_message_column_width(panel_width: f32) -> f32 {
-    (panel_width - SESSION_AGENT_PANEL_HORIZONTAL_PADDING)
-        .max(SESSION_AGENT_PANEL_MIN_WIDTH - SESSION_AGENT_PANEL_HORIZONTAL_PADDING)
+    let reserved_width = SESSION_AGENT_PANEL_HORIZONTAL_PADDING + SESSION_AGENT_SCROLLBAR_GUTTER;
+    (panel_width - reserved_width).max(SESSION_AGENT_PANEL_MIN_WIDTH - reserved_width)
 }
 
 fn render_session_agent_resize_handle(
@@ -1488,7 +1489,7 @@ impl AppView {
                             })
                             .when(is_active_thinking, |this| {
                                 this.child(format!("~{token_count} tok"))
-                            })
+                            }),
                     )
                     .when(expanded, |this| {
                         this.child(self.render_session_agent_markdown(
