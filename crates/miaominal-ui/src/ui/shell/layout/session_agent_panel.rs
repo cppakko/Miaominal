@@ -486,6 +486,7 @@ impl AppView {
                                             .overflow_y_scroll()
                                             .capture_any_mouse_down(cx.listener(
                                                 move |this, event: &MouseDownEvent, _window, cx| {
+                                                    this.stop_session_agent_follow_bottom(true);
                                                     if this
                                                         .workspace_state
                                                         .session_agent_auto_scroll
@@ -496,6 +497,16 @@ impl AppView {
                                                     } else if event.button != MouseButton::Middle {
                                                         this.stop_session_agent_auto_scroll(cx);
                                                     }
+                                                },
+                                            ))
+                                            .on_scroll_wheel(cx.listener(
+                                                move |this,
+                                                      event: &ScrollWheelEvent,
+                                                      window,
+                                                      cx| {
+                                                    this.handle_session_agent_scroll_wheel(
+                                                        event, window, cx,
+                                                    );
                                                 },
                                             ))
                                             .on_mouse_down(

@@ -1560,6 +1560,8 @@ impl AppView {
                 session_agent_panel_drag: None,
                 session_agent_auto_scroll: None,
                 session_agent_auto_scroll_generation: 0,
+                session_agent_follow_bottom_generation: 0,
+                session_agent_follow_bottom_disabled_until: None,
             },
             panel_view: PanelViewState::new(),
             editors: EditorOverlayState::new(),

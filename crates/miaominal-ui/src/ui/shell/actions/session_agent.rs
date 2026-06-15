@@ -12,7 +12,12 @@ use miaominal_storage::chat_store::{ChatMessageRecord, ChatMessageRole};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, mpsc};
+
+const SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL: Duration = Duration::from_millis(16);
+const SESSION_AGENT_FOLLOW_BOTTOM_TICKS: usize = 50;
+const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::from_millis(1000);
 
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
@@ -155,13 +160,110 @@ impl AppView {
     }
 
     fn session_agent_is_scrolled_to_bottom(&self) -> bool {
+        if self.session_agent_is_physically_scrolled_to_bottom() {
+            return true;
+        }
+
+        if self
+            .workspace_state
+            .session_agent_follow_bottom_disabled_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return false;
+        }
+
+        false
+    }
+
+    fn session_agent_is_physically_scrolled_to_bottom(&self) -> bool {
         let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
         let offset = scroll_handle.offset();
         let max_offset = scroll_handle.max_offset();
         if max_offset.y <= px(2.0) {
-            return false;
+            return true;
         }
         (offset.y + max_offset.y).abs() <= px(2.0)
+    }
+
+    fn clear_expired_session_agent_follow_bottom_cooldown(&mut self) {
+        if self.session_agent_is_physically_scrolled_to_bottom()
+            || self
+                .workspace_state
+                .session_agent_follow_bottom_disabled_until
+                .is_some_and(|until| Instant::now() >= until)
+        {
+            self.workspace_state
+                .session_agent_follow_bottom_disabled_until = None;
+        }
+    }
+
+    pub(in crate::ui::shell) fn stop_session_agent_follow_bottom(&mut self, user_initiated: bool) {
+        self.workspace_state.session_agent_follow_bottom_generation = self
+            .workspace_state
+            .session_agent_follow_bottom_generation
+            .wrapping_add(1);
+        if user_initiated {
+            self.workspace_state
+                .session_agent_follow_bottom_disabled_until =
+                Some(Instant::now() + SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN);
+        }
+    }
+
+    pub(in crate::ui::shell) fn handle_session_agent_scroll_wheel(
+        &mut self,
+        _event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_session_agent_follow_bottom(true);
+        cx.on_next_frame(window, |this, _window, cx| {
+            if this.session_agent_is_physically_scrolled_to_bottom() {
+                this.keep_session_agent_following_bottom_for_layout(cx);
+            }
+        });
+    }
+
+    fn keep_session_agent_following_bottom_for_layout(&mut self, cx: &mut Context<Self>) {
+        self.workspace_state
+            .session_agent_follow_bottom_disabled_until = None;
+        self.workspace_state.session_agent_follow_bottom_generation = self
+            .workspace_state
+            .session_agent_follow_bottom_generation
+            .wrapping_add(1);
+        let generation = self.workspace_state.session_agent_follow_bottom_generation;
+        self.workspace_state
+            .session_agent_scroll_handle
+            .scroll_to_bottom();
+
+        cx.spawn(async move |this, cx| {
+            for _ in 0..SESSION_AGENT_FOLLOW_BOTTOM_TICKS {
+                cx.background_executor()
+                    .timer(SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL)
+                    .await;
+
+                let keep_following = this
+                    .update(cx, |this, cx| {
+                        if this.workspace_state.session_agent_follow_bottom_generation != generation
+                            || !this.panels.session_agent_panel_open
+                            || this.session_agent.panel_view != ChatPanelView::Conversation
+                        {
+                            return false;
+                        }
+
+                        this.workspace_state
+                            .session_agent_scroll_handle
+                            .scroll_to_bottom();
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+
+                if !keep_following {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn reset_session_agent_scroll(&self) {
@@ -171,16 +273,15 @@ impl AppView {
     }
 
     fn scroll_session_agent_to_bottom_if_following(
-        &self,
+        &mut self,
         previous_message_count: usize,
         was_scrolled_to_bottom: bool,
         content_may_have_grown: bool,
+        cx: &mut Context<Self>,
     ) {
         let new_block_added = self.session_agent.messages.len() > previous_message_count;
         if was_scrolled_to_bottom && (new_block_added || content_may_have_grown) {
-            self.workspace_state
-                .session_agent_scroll_handle
-                .scroll_to_bottom();
+            self.keep_session_agent_following_bottom_for_layout(cx);
         }
     }
 
@@ -194,6 +295,7 @@ impl AppView {
             previous_message_count,
             was_scrolled_to_bottom,
             false,
+            cx,
         );
     }
 
@@ -976,6 +1078,7 @@ impl AppView {
                         previous_message_count,
                         was_scrolled_to_bottom,
                         true,
+                        cx,
                     );
                     this.continue_session_agent_after_tool_result(
                         AgentChatToolEvent {
@@ -1064,6 +1167,7 @@ impl AppView {
             previous_message_count,
             was_scrolled_to_bottom,
             false,
+            cx,
         );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
@@ -1204,6 +1308,7 @@ impl AppView {
             return;
         }
 
+        self.clear_expired_session_agent_follow_bottom_cooldown();
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         let content_may_have_grown = matches!(
@@ -1272,6 +1377,7 @@ impl AppView {
             previous_message_count,
             was_scrolled_to_bottom,
             content_may_have_grown,
+            cx,
         );
 
         cx.notify();
@@ -1549,6 +1655,7 @@ impl AppView {
             previous_message_count,
             was_scrolled_to_bottom,
             false,
+            cx,
         );
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 

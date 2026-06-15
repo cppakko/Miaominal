@@ -1612,6 +1612,8 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) session_agent_panel_drag: Option<SessionAgentPanelDragState>,
     pub(in crate::ui::shell) session_agent_auto_scroll: Option<SessionAgentAutoScrollState>,
     pub(in crate::ui::shell) session_agent_auto_scroll_generation: u64,
+    pub(in crate::ui::shell) session_agent_follow_bottom_generation: u64,
+    pub(in crate::ui::shell) session_agent_follow_bottom_disabled_until: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
