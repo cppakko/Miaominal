@@ -473,65 +473,77 @@ impl AppView {
                             )
                             .child(div().flex_1().min_h_0().child(if show_scrollable_messages {
                                 div()
-                                    .id("session-agent-scroll")
+                                    .relative()
                                     .size_full()
-                                    .overflow_x_hidden()
-                                    .track_scroll(&agent_scroll_handle)
-                                    .overflow_y_scroll()
-                                    .capture_any_mouse_down(cx.listener(
-                                        move |this, event: &MouseDownEvent, _window, cx| {
-                                            if this
-                                                .workspace_state
-                                                .session_agent_auto_scroll
-                                                .is_some()
-                                            {
-                                                this.stop_session_agent_auto_scroll(cx);
-                                                cx.stop_propagation();
-                                            } else if event.button != MouseButton::Middle {
-                                                this.stop_session_agent_auto_scroll(cx);
-                                            }
-                                        },
-                                    ))
-                                    .on_mouse_down(
-                                        MouseButton::Middle,
-                                        cx.listener(
-                                            move |this, event: &MouseDownEvent, _window, cx| {
-                                                if this
-                                                    .workspace_state
-                                                    .session_agent_auto_scroll
-                                                    .is_none()
-                                                {
-                                                    this.start_session_agent_auto_scroll(
+                                    .min_h_0()
+                                    .child(
+                                        div()
+                                            .id("session-agent-scroll")
+                                            .size_full()
+                                            .overflow_x_hidden()
+                                            .track_scroll(&agent_scroll_handle)
+                                            .overflow_y_scroll()
+                                            .capture_any_mouse_down(cx.listener(
+                                                move |this, event: &MouseDownEvent, _window, cx| {
+                                                    if this
+                                                        .workspace_state
+                                                        .session_agent_auto_scroll
+                                                        .is_some()
+                                                    {
+                                                        this.stop_session_agent_auto_scroll(cx);
+                                                        cx.stop_propagation();
+                                                    } else if event.button != MouseButton::Middle {
+                                                        this.stop_session_agent_auto_scroll(cx);
+                                                    }
+                                                },
+                                            ))
+                                            .on_mouse_down(
+                                                MouseButton::Middle,
+                                                cx.listener(
+                                                    move |this,
+                                                          event: &MouseDownEvent,
+                                                          _window,
+                                                          cx| {
+                                                        if this
+                                                            .workspace_state
+                                                            .session_agent_auto_scroll
+                                                            .is_none()
+                                                        {
+                                                            this.start_session_agent_auto_scroll(
+                                                                f32::from(event.position.y),
+                                                                cx,
+                                                            );
+                                                            cx.stop_propagation();
+                                                        }
+                                                    },
+                                                ),
+                                            )
+                                            .on_mouse_move(cx.listener(
+                                                move |this,
+                                                      event: &MouseMoveEvent,
+                                                      _window,
+                                                      cx| {
+                                                    this.update_session_agent_auto_scroll_pointer(
                                                         f32::from(event.position.y),
                                                         cx,
                                                     );
-                                                    cx.stop_propagation();
-                                                }
-                                            },
-                                        ),
-                                    )
-                                    .on_mouse_move(cx.listener(
-                                        move |this, event: &MouseMoveEvent, _window, cx| {
-                                            this.update_session_agent_auto_scroll_pointer(
-                                                f32::from(event.position.y),
+                                                },
+                                            ))
+                                            .pb_2()
+                                            .child(self.render_session_agent_messages(
+                                                message_column_width,
+                                                entity.clone(),
+                                                window,
                                                 cx,
-                                            );
-                                        },
-                                    ))
-                                    .pb_2()
-                                    .child(self.render_session_agent_messages(
-                                        message_column_width,
-                                        entity.clone(),
-                                        window,
-                                        cx,
-                                    ))
-                                    .when(
-                                        self.workspace_state.session_agent_auto_scroll.is_some(),
-                                        |this| {
-                                            this.child(
-                                                render_session_agent_auto_scroll_cursor_layer(),
-                                            )
-                                        },
+                                            ))
+                                            .when(
+                                                self.workspace_state
+                                                    .session_agent_auto_scroll
+                                                    .is_some(),
+                                                |this| {
+                                                    this.child(render_session_agent_auto_scroll_cursor_layer())
+                                                },
+                                            ),
                                     )
                                     .vertical_scrollbar(&agent_scroll_handle)
                                     .into_any_element()
