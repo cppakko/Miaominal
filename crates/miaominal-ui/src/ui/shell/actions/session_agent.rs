@@ -1910,7 +1910,7 @@ fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentM
     match record.role {
         ChatMessageRole::User => SessionAgentMessage::user(record.content),
         ChatMessageRole::Assistant => SessionAgentMessage::assistant_raw(record.content),
-        ChatMessageRole::Thinking => SessionAgentMessage::thinking_raw(record.content),
+        ChatMessageRole::Thinking => SessionAgentMessage::thinking_from_history(record.content),
         ChatMessageRole::ToolCall => {
             let summary = record
                 .tool_summary
