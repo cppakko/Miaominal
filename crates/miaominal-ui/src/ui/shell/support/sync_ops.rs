@@ -450,6 +450,51 @@ impl AppView {
             }
         }
 
+        let ai_provider_options = ai_provider_select_options(self.settings_store.settings());
+        let current_selected = self
+            .panel_forms
+            .settings
+            .ai_provider_select
+            .read(cx)
+            .selected_value()
+            .cloned();
+        let selected_provider_id = current_selected
+            .as_deref()
+            .filter(|id| ai_provider_options.iter().any(|o| o.value() == *id))
+            .or_else(|| {
+                ai_provider_options
+                    .first()
+                    .map(|o| o.value().as_str())
+            })
+            .map(ToOwned::to_owned);
+        if selected_provider_id.as_deref()
+            != Some(
+                self.settings_store
+                    .settings()
+                    .selected_ai_provider_id
+                    .as_deref()
+                    .unwrap_or(""),
+            )
+        {
+            if let Some(ref id) = selected_provider_id {
+                self.settings_store.update(|settings| {
+                    settings.selected_ai_provider_id = Some(id.clone());
+                });
+            }
+        }
+        let ai_provider_select = self.panel_forms.settings.ai_provider_select.clone();
+        let provider_id = selected_provider_id.clone();
+        self.with_active_window(cx, move |window, cx| {
+            ai_provider_select.update(cx, |select, cx| {
+                select.set_items(ai_provider_options, window, cx);
+                if let Some(id) = provider_id.as_ref() {
+                    select.set_selected_value(id, window, cx);
+                } else {
+                    select.set_selected_index(None, window, cx);
+                }
+            });
+        });
+
         self.sync_managed_key_select_in_active_window(None, cx);
         cx.notify();
     }
