@@ -1595,6 +1595,7 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_monitor_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_agent_scroll_handle: ScrollHandle,
+    pub(in crate::ui::shell) session_agent_history_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
     pub(in crate::ui::shell) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
     pub(in crate::ui::shell) topbar_exiting_tabs: Vec<TopbarTabExitTransition>,
