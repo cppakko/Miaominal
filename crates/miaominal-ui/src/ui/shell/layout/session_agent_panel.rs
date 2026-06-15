@@ -1438,6 +1438,10 @@ impl AppView {
                     .unwrap_or(0)
             });
         let token_count = estimate_session_agent_tokens(&message.content);
+        let is_active_thinking = message
+            .thinking
+            .as_ref()
+            .is_some_and(|t| t.elapsed_ms.is_none());
         let toggle_entity = entity.clone();
 
         div()
@@ -1479,8 +1483,12 @@ impl AppView {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("Thinking"),
                             )
-                            .child(format_duration_ms(elapsed_ms))
-                            .child(format!("~{token_count} tok")),
+                            .when(is_active_thinking, |this| {
+                                this.child(format_duration_ms(elapsed_ms))
+                            })
+                            .when(is_active_thinking, |this| {
+                                this.child(format!("~{token_count} tok"))
+                            })
                     )
                     .when(expanded, |this| {
                         this.child(self.render_session_agent_markdown(

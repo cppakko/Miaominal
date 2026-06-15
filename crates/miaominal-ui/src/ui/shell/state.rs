@@ -183,6 +183,24 @@ impl SessionAgentMessage {
         }
     }
 
+    /// Creates a thinking message from a historical record.
+    /// elapsed_ms is set to Some(0) to signal this is a completed/historical
+    /// message — the renderer hides the live timer for these.
+    pub(in crate::ui::shell) fn thinking_from_history(content: impl Into<String>) -> Self {
+        Self {
+            role: SessionAgentMessageRole::Thinking,
+            content: content.into(),
+            tool_call: None,
+            thinking: Some(SessionAgentThinking {
+                started_at: Instant::now(),
+                elapsed_ms: Some(0),
+                expanded: false,
+            }),
+            markdown_entity: None,
+            markdown_uses_syntax_highlighting: false,
+        }
+    }
+
     #[allow(dead_code)]
     pub(in crate::ui::shell) fn tool_call(tool_call: SessionAgentToolCall) -> Self {
         Self {
