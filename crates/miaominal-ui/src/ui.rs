@@ -93,6 +93,9 @@ pub fn sync_markdown_theme(cx: &mut App) {
     theme.styles.colors.title_bar_background = to_hsla(roles.surface_container);
     theme.styles.colors.panel_background = to_hsla(roles.surface_container_low);
     theme.styles.colors.editor_background = to_hsla(roles.surface_container_low);
+    theme.styles.colors.elevated_surface_background = to_hsla(roles.surface_container);
+    theme.styles.colors.ghost_element_hover = to_hsla(roles.surface_container_highest);
+    theme.styles.colors.ghost_element_active = to_hsla(roles.surface_container_highest);
     ::theme::GlobalTheme::update_theme(cx, Arc::new(theme));
 }
 
