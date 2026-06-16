@@ -89,7 +89,7 @@ pub fn sync_component_theme(cx: &mut App) {
     colors.input = hsla(material.roles.outline);
     colors.caret = hsla(material.roles.on_surface);
     colors.ring = hsla(material.roles.primary);
-    colors.selection = hsla(material.roles.primary_container);
+    colors.selection = hsla(material.roles.primary).opacity(0.28);
     colors.accent = hsla(material.roles.primary_container);
     colors.accent_foreground = hsla(material.roles.on_primary_container);
     colors.primary = hsla(material.roles.primary);

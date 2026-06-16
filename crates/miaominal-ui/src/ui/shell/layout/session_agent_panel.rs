@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
+use gpui_component::WindowExt as _;
 use std::time::Duration;
 use theme::ActiveTheme as _;
 
@@ -95,10 +96,18 @@ fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
 }
 
 impl AppView {
-    fn copy_session_agent_markdown_selection(&mut self, _cx: &mut Context<Self>) -> bool {
-        // Window-level selection is now handled by gpui-component Root.
-        // This function kept as a no-op to preserve call sites during transition.
-        false
+    fn copy_session_agent_message_or_selection(
+        &mut self,
+        fallback_label: &str,
+        fallback_text: String,
+        selected_text: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_text) = selected_text {
+            self.copy_session_agent_text("selection", selected_text, cx);
+        } else {
+            self.copy_session_agent_text(fallback_label, fallback_text, cx);
+        }
     }
 
     fn handle_session_agent_key_down(
@@ -1240,17 +1249,23 @@ impl AppView {
                     window,
                     cx,
                 ))
-                .context_menu(move |menu, _window, _cx| {
+                .context_menu(move |menu, window, cx| {
                     let text = context_menu_text.clone();
                     let entity = context_menu_entity.clone();
+                    let selected_text = window.selected_text(cx);
+                    let selected_text = (!selected_text.trim().is_empty()).then_some(selected_text);
                     menu.item(
                         PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                             move |_, _window, cx| {
                                 let text = text.clone();
+                                let selected_text = selected_text.clone();
                                 entity.update(cx, |this, cx| {
-                                    if !this.copy_session_agent_markdown_selection(cx) {
-                                        this.copy_session_agent_text("message", text, cx);
-                                    }
+                                    this.copy_session_agent_message_or_selection(
+                                        "message",
+                                        text,
+                                        selected_text,
+                                        cx,
+                                    );
                                 });
                             },
                         ),
@@ -1331,17 +1346,23 @@ impl AppView {
                             )),
                     ),
             )
-            .context_menu(move |menu, _window, _cx| {
+            .context_menu(move |menu, window, cx| {
                 let text = context_menu_text.clone();
                 let entity = context_menu_entity.clone();
+                let selected_text = window.selected_text(cx);
+                let selected_text = (!selected_text.trim().is_empty()).then_some(selected_text);
                 menu.item(
                     PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                         move |_, _window, cx| {
                             let text = text.clone();
+                            let selected_text = selected_text.clone();
                             entity.update(cx, |this, cx| {
-                                if !this.copy_session_agent_markdown_selection(cx) {
-                                    this.copy_session_agent_text("message", text, cx);
-                                }
+                                this.copy_session_agent_message_or_selection(
+                                    "message",
+                                    text,
+                                    selected_text,
+                                    cx,
+                                );
                             });
                         },
                     ),
