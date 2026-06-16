@@ -1170,6 +1170,9 @@ impl AppView {
         _cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let code = message.content.clone();
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let on_surface_variant = roles.on_surface_variant;
 
         div()
             .id(id)
@@ -1179,11 +1182,26 @@ impl AppView {
             .overflow_x_hidden()
             .child(
                 gpui_component::text::markdown(code)
-                    .code_block_actions(|code_block, _window, _cx| {
+                    .code_block_actions(move |code_block, _window, _cx| {
                         let code = code_block.code();
-                        gpui_component::h_flex().gap_1().child(
-                            gpui_component::clipboard::Clipboard::new("copy").value(code.clone()),
-                        )
+                        let language = code_block.lang().unwrap_or_else(|| "text".into());
+
+                        gpui_component::h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                // Language badge
+                                div()
+                                    .px_1()
+                                    .rounded(px(4.0))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(on_surface_variant))
+                                    .child(language.to_string()),
+                            )
+                            .child(
+                                gpui_component::clipboard::Clipboard::new("copy")
+                                    .value(code.clone()),
+                            )
                     })
                     .selectable(true),
             )
@@ -2632,6 +2650,9 @@ fn render_session_agent_token_usage(
         return div().into_any_element();
     }
 
+    let material = miaominal_settings::current_theme().material;
+    let roles = material.roles;
+
     let provider_context_window = settings_store
         .settings()
         .selected_ai_provider_id
@@ -2645,24 +2666,59 @@ fn render_session_agent_token_usage(
         })
         .and_then(|p| p.context_window);
 
+    let total_tokens = usage.input_tokens + usage.output_tokens;
+
+    // Determine text color based on context window usage
+    let (text_color, bg_color) = if let Some(max) = provider_context_window {
+        if max > 0 {
+            let usage_pct = usage.input_tokens as f64 / max as f64;
+            if usage_pct >= 0.9 {
+                // Critical: red
+                (roles.on_error_container, Some(roles.error_container))
+            } else if usage_pct >= 0.7 {
+                // Warning: yellow/amber
+                (roles.on_tertiary_container, Some(roles.tertiary_container))
+            } else {
+                // Normal: muted
+                (text_muted, None)
+            }
+        } else {
+            (text_muted, None)
+        }
+    } else {
+        (text_muted, None)
+    };
+
     let text = match provider_context_window {
         Some(max) if max > 0 => {
             let pct = usage.input_tokens as f64 / max as f64 * 100.0;
             format!(
-                "{} / {} ({:.0}%)",
+                "↑{} ↓{} / {} ({:.0}%)",
                 format_token_count(usage.input_tokens),
+                format_token_count(usage.output_tokens),
                 format_token_count(max),
                 pct
             )
         }
-        _ => format!("{} tok", format_token_count(usage.input_tokens)),
+        _ => format!(
+            "↑{} ↓{} ({})",
+            format_token_count(usage.input_tokens),
+            format_token_count(usage.output_tokens),
+            format_token_count(total_tokens)
+        ),
     };
 
-    div()
+    let mut container = div()
         .text_size(miaominal_settings::FontSize::Body.scaled())
-        .text_color(rgb(text_muted))
-        .child(text)
-        .into_any_element()
+        .text_color(rgb(text_color))
+        .child(text);
+
+    // Add background if warning/error
+    if let Some(bg) = bg_color {
+        container = container.bg(rgb(bg)).px_2().py(px(2.0)).rounded(px(4.0));
+    }
+
+    container.into_any_element()
 }
 
 fn format_relative_chat_time(timestamp: i64) -> String {
