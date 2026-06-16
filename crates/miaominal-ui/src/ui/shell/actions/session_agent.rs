@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::ui::i18n;
 use crate::ui::shell::state::TokenUsage;
+use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
     AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentPtyHandle, AgentToolCallRequest,
@@ -18,6 +19,12 @@ use tokio::sync::{Mutex, mpsc};
 const SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_FOLLOW_BOTTOM_TICKS: usize = 50;
 const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::from_millis(1000);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum PromptHistoryDirection {
+    Previous,
+    Next,
+}
 
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
@@ -53,6 +60,122 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
 }
 
 impl AppView {
+    pub(in crate::ui::shell) fn is_session_agent_prompt_input_focused(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        window.focused_input(cx).is_some_and(|input| {
+            input.entity_id() == self.workspace_forms.agent.prompt_input.entity_id()
+        })
+    }
+
+    fn clear_session_agent_prompt_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        set_input_value(
+            &self.workspace_forms.agent.prompt_input,
+            String::new(),
+            window,
+            cx,
+        );
+        self.session_agent.at_mention_query = None;
+        self.session_agent.at_mention_anchor = 0;
+        self.session_agent.prompt_history_cursor = None;
+        self.session_agent.prompt_history_draft = None;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn clear_focused_session_agent_prompt_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_session_agent_prompt_input(window, cx);
+    }
+
+    fn record_session_agent_prompt_history(&mut self, prompt: &str) {
+        const SESSION_AGENT_PROMPT_HISTORY_LIMIT: usize = 100;
+
+        if prompt.trim().is_empty() {
+            return;
+        }
+
+        if self
+            .session_agent
+            .prompt_history
+            .last()
+            .is_some_and(|previous| previous == prompt)
+        {
+            self.session_agent.prompt_history_cursor = None;
+            self.session_agent.prompt_history_draft = None;
+            return;
+        }
+
+        self.session_agent.prompt_history.push(prompt.to_string());
+        if self.session_agent.prompt_history.len() > SESSION_AGENT_PROMPT_HISTORY_LIMIT {
+            let overflow =
+                self.session_agent.prompt_history.len() - SESSION_AGENT_PROMPT_HISTORY_LIMIT;
+            self.session_agent.prompt_history.drain(0..overflow);
+        }
+        self.session_agent.prompt_history_cursor = None;
+        self.session_agent.prompt_history_draft = None;
+    }
+
+    pub(in crate::ui::shell) fn reset_session_agent_prompt_history_cursor(&mut self) {
+        self.session_agent.prompt_history_cursor = None;
+        self.session_agent.prompt_history_draft = None;
+    }
+
+    pub(in crate::ui::shell) fn browse_session_agent_prompt_history(
+        &mut self,
+        direction: PromptHistoryDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.session_agent.prompt_history.is_empty() {
+            return false;
+        }
+
+        let current_value = self
+            .workspace_forms
+            .agent
+            .prompt_input
+            .read(cx)
+            .value()
+            .to_string();
+        let next_cursor = match (direction, self.session_agent.prompt_history_cursor) {
+            (PromptHistoryDirection::Previous, None) => {
+                self.session_agent.prompt_history_draft = Some(current_value);
+                Some(self.session_agent.prompt_history.len() - 1)
+            }
+            (PromptHistoryDirection::Previous, Some(cursor)) => Some(cursor.saturating_sub(1)),
+            (PromptHistoryDirection::Next, Some(cursor))
+                if cursor + 1 < self.session_agent.prompt_history.len() =>
+            {
+                Some(cursor + 1)
+            }
+            (PromptHistoryDirection::Next, Some(_)) => None,
+            (PromptHistoryDirection::Next, None) => return true,
+        };
+
+        let next_value = next_cursor
+            .and_then(|cursor| self.session_agent.prompt_history.get(cursor).cloned())
+            .unwrap_or_else(|| {
+                self.session_agent
+                    .prompt_history_draft
+                    .take()
+                    .unwrap_or_default()
+            });
+        self.session_agent.prompt_history_cursor = next_cursor;
+        set_input_value(
+            &self.workspace_forms.agent.prompt_input,
+            next_value,
+            window,
+            cx,
+        );
+        self.update_session_agent_at_mention_state(cx);
+        true
+    }
+
     pub(in crate::ui::shell) fn update_session_agent_at_mention_state(
         &mut self,
         cx: &mut Context<Self>,
@@ -714,6 +837,7 @@ impl AppView {
             .collect::<Vec<_>>();
 
         self.push_session_agent_message(SessionAgentMessage::user(model_prompt.clone()), cx);
+        self.record_session_agent_prompt_history(&prompt);
         self.persist_session_agent_chat();
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;

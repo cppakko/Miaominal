@@ -239,6 +239,9 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) at_mention_anchor: usize,
     pub(in crate::ui::shell) selected_at_targets: Vec<String>,
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
+    pub(in crate::ui::shell) prompt_history: Vec<String>,
+    pub(in crate::ui::shell) prompt_history_cursor: Option<usize>,
+    pub(in crate::ui::shell) prompt_history_draft: Option<String>,
     pub(in crate::ui::shell) title: Option<String>,
     pub(in crate::ui::shell) panel_view: ChatPanelView,
     /// Token usage from the most recent LLM completion request.

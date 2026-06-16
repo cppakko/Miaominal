@@ -369,6 +369,7 @@ impl AppView {
             InputState::new(window, cx)
                 .multi_line(true)
                 .auto_grow(3, 8)
+                .submit_on_enter(true)
                 .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
@@ -508,10 +509,12 @@ impl AppView {
         );
         let session_agent_prompt_subscription = cx.subscribe(
             &agent_prompt_input,
-            |this: &mut AppView, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
+            |this: &mut AppView, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    this.reset_session_agent_prompt_history_cursor();
                     this.update_session_agent_at_mention_state(cx);
                 }
+                _ => {}
             },
         );
         let session_agent_title_subscription = cx.subscribe(
@@ -648,6 +651,54 @@ impl AppView {
                 .recording_binding
                 .is_some()
             {
+                return;
+            }
+
+            let mut handled_session_agent_prompt_shortcut = false;
+            view.update(cx, |this, cx| {
+                if !this.is_session_agent_prompt_input_focused(window, cx) {
+                    return;
+                }
+
+                let command_modifier = modifiers.control || modifiers.platform;
+                let command_only = command_modifier && !modifiers.alt && !modifiers.shift;
+                let plain_key =
+                    !modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.shift;
+
+                match key {
+                    "enter" if plain_key => {
+                        this.submit_session_agent_prompt(window, cx);
+                        handled_session_agent_prompt_shortcut = true;
+                    }
+                    "k" if command_only => {
+                        this.clear_focused_session_agent_prompt_input(window, cx);
+                        handled_session_agent_prompt_shortcut = true;
+                    }
+                    "n" if command_only => {
+                        this.start_session_agent_conversation(window, cx);
+                        handled_session_agent_prompt_shortcut = true;
+                    }
+                    "up" if plain_key => {
+                        handled_session_agent_prompt_shortcut = this
+                            .browse_session_agent_prompt_history(
+                                PromptHistoryDirection::Previous,
+                                window,
+                                cx,
+                            );
+                    }
+                    "down" if plain_key => {
+                        handled_session_agent_prompt_shortcut = this
+                            .browse_session_agent_prompt_history(
+                                PromptHistoryDirection::Next,
+                                window,
+                                cx,
+                            );
+                    }
+                    _ => {}
+                }
+            });
+            if handled_session_agent_prompt_shortcut {
+                cx.stop_propagation();
                 return;
             }
 

@@ -87,8 +87,8 @@ pub(crate) use crate::ui::utils::{
     format_byte_size, format_local_timestamp, truncate_with_ellipsis,
 };
 pub(in crate::ui::shell) use actions::{
-    SessionAgentTargetCandidate, ValidationFailure, ValidationNotificationKind,
-    ai_provider_kind_label_key, ai_provider_select_options,
+    PromptHistoryDirection, SessionAgentTargetCandidate, ValidationFailure,
+    ValidationNotificationKind, ai_provider_kind_label_key, ai_provider_select_options,
 };
 use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
 use controllers::ControllerSet;
