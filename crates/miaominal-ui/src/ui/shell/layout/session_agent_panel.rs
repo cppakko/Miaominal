@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ui::components::md3_spinner;
 use crate::ui::i18n;
 use gpui_component::WindowExt as _;
 use std::time::Duration;
@@ -1144,15 +1145,21 @@ impl AppView {
             )
             .when(self.session_agent.has_pending_task(), |this| {
                 this.child(
-                    div()
+                    h_flex()
                         .w(px(message_column_width))
                         .max_w(px(message_column_width))
                         .flex_shrink_0()
                         .pl_3()
                         .py_1()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("workspace.panel.agent.thinking")),
+                        .gap_2()
+                        .items_center()
+                        .child(md3_spinner(16.0))
+                        .child(
+                            div()
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
+                                .text_color(rgb(text_muted))
+                                .child(i18n::string("workspace.panel.agent.thinking")),
+                        ),
                 )
             })
             .into_any_element()
