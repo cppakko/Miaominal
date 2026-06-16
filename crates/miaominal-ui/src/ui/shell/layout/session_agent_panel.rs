@@ -2252,9 +2252,8 @@ fn render_tool_terminal_block(
     colors: ToolTerminalColors,
     error: bool,
 ) -> gpui::AnyElement {
-    render_tool_terminal_block_content(
-        label,
-        div()
+    if content.trim().is_empty() {
+        let empty_content = div()
             .font_family("JetBrains Mono")
             .text_size(miaominal_settings::FontSize::Body.scaled())
             .line_height(miaominal_settings::scaled_line_height(18.0))
@@ -2263,14 +2262,47 @@ fn render_tool_terminal_block(
             } else {
                 colors.on_surface
             }))
-            .child(if content.trim().is_empty() {
-                "(no output)".to_string()
+            .child("(no output)")
+            .into_any_element();
+        return render_tool_terminal_block_content(label, empty_content, colors);
+    }
+
+    // Use markdown code block for syntax highlighting via tree-sitter
+    // Try to infer language from label
+    let language = match label {
+        "Diff" | "Patch Output" => "diff",
+        "Command" => "bash",
+        _ => "", // Plain text, no highlighting
+    };
+
+    let markdown_code = if language.is_empty() {
+        // For plain text or unknown content, use plain div
+        let highlighted_content = div()
+            .font_family("JetBrains Mono")
+            .text_size(miaominal_settings::FontSize::Body.scaled())
+            .line_height(miaominal_settings::scaled_line_height(18.0))
+            .text_color(rgb(if error {
+                colors.error
             } else {
-                content
-            })
-            .into_any_element(),
-        colors,
-    )
+                colors.on_surface
+            }))
+            .child(content.clone())
+            .into_any_element();
+        return render_tool_terminal_block_content(label, highlighted_content, colors);
+    } else {
+        format!("```{}\n{}\n```", language, content)
+    };
+
+    let highlighted_content = div()
+        .w_full()
+        .child(
+            gpui_component::text::markdown(markdown_code)
+                .selectable(true),
+        )
+        .when(error, |this| this.text_color(rgb(colors.error)))
+        .into_any_element();
+
+    render_tool_terminal_block_content(label, highlighted_content, colors)
 }
 
 fn render_tool_terminal_block_content(
@@ -2873,20 +2905,26 @@ fn render_bash_highlighted_command_block(
     colors: ToolTerminalColors,
     _syntax_theme: &::theme::SyntaxTheme,
 ) -> gpui::AnyElement {
-    let base_color = gpui::Hsla::from(rgb(colors.on_surface));
-    let text: SharedString = if command.trim().is_empty() {
-        "(no command)".into()
-    } else {
-        command.to_string().into()
-    };
+    if command.trim().is_empty() {
+        let base_color = gpui::Hsla::from(rgb(colors.on_surface));
+        let content = div()
+            .font_family("JetBrains Mono")
+            .text_size(miaominal_settings::FontSize::Body.scaled())
+            .line_height(miaominal_settings::scaled_line_height(18.0))
+            .text_color(base_color)
+            .child("(no command)")
+            .into_any_element();
+        return render_tool_terminal_block_content(label, content, colors);
+    }
 
-    // Use plain text for bash commands - no highlighting needed
+    // Use markdown code block for syntax highlighting via tree-sitter
+    let markdown_code = format!("```bash\n{}\n```", command);
     let content = div()
-        .font_family("JetBrains Mono")
-        .text_size(miaominal_settings::FontSize::Body.scaled())
-        .line_height(miaominal_settings::scaled_line_height(18.0))
-        .text_color(base_color)
-        .child(text)
+        .w_full()
+        .child(
+            gpui_component::text::markdown(markdown_code)
+                .selectable(true),
+        )
         .into_any_element();
     render_tool_terminal_block_content(label, content, colors)
 }
