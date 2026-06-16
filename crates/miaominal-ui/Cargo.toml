@@ -24,12 +24,10 @@ miaominal-sync = { path = "../miaominal-sync" }
 miaominal-terminal = { path = "../miaominal-terminal" }
 notify.workspace = true
 open.workspace = true
-pulldown-cmark.workspace = true
 rfd.workspace = true
 rust-embed.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-syntect.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true

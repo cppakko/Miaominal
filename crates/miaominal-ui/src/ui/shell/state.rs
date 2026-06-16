@@ -241,31 +241,8 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) active_at_targets: Vec<String>,
     pub(in crate::ui::shell) title: Option<String>,
     pub(in crate::ui::shell) panel_view: ChatPanelView,
-    pub(in crate::ui::shell) markdown_selection: Option<SessionAgentMarkdownSelection>,
     /// Token usage from the most recent LLM completion request.
     pub(in crate::ui::shell) last_usage: Option<TokenUsage>,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct SessionAgentMarkdownSelection {
-    pub(in crate::ui::shell) message_index: usize,
-    pub(in crate::ui::shell) anchor_block: usize,
-    pub(in crate::ui::shell) anchor_offset: usize,
-    pub(in crate::ui::shell) focus_block: usize,
-    pub(in crate::ui::shell) focus_offset: usize,
-    pub(in crate::ui::shell) dragging: bool,
-}
-
-impl SessionAgentMarkdownSelection {
-    pub(in crate::ui::shell) fn ordered_endpoints(&self) -> ((usize, usize), (usize, usize)) {
-        let anchor = (self.anchor_block, self.anchor_offset);
-        let focus = (self.focus_block, self.focus_offset);
-        if anchor <= focus {
-            (anchor, focus)
-        } else {
-            (focus, anchor)
-        }
-    }
 }
 
 impl SessionAgentState {

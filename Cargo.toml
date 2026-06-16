@@ -43,7 +43,20 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
     "wayland",
     "x11",
 ] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", features = [
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 image = { version = "0.25", default-features = false }
 language = { git = "https://github.com/zed-industries/zed" }
@@ -111,7 +124,20 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
     "wayland",
     "x11",
 ] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", features = [
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 keyring = { version = "3", features = [
     "apple-native",

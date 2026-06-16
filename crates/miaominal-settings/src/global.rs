@@ -1,7 +1,11 @@
 use crate::model::{AppSettings, DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, Theme, ThemeId};
 use crate::theme as material_theme;
 use gpui::{App, Hsla, Pixels, px, rgb};
-use gpui_component::theme::{Theme as ComponentTheme, ThemeMode};
+use gpui_component::{
+    highlighter::{HighlightTheme, HighlightThemeStyle},
+    theme::{Theme as ComponentTheme, ThemeMode},
+};
+use serde_json::{Map, Value};
 use std::sync::{Arc, RwLock};
 
 static GLOBAL: RwLock<GlobalState> = RwLock::new(GlobalState {
@@ -187,15 +191,192 @@ pub fn sync_component_theme(cx: &mut App) {
     colors.slider_bar = hsla(material.roles.secondary_container);
     colors.slider_thumb = hsla(material.roles.primary);
 
-    let highlight_theme = Arc::make_mut(&mut component_theme.highlight_theme);
-    highlight_theme.name = format!("miaominal_{}", if is_dark { "dark" } else { "light" });
-    highlight_theme.appearance = component_theme.mode;
-    highlight_theme.style.editor_background = Some(hsla(material.roles.surface_container_highest));
-    highlight_theme.style.editor_foreground = Some(hsla(material.roles.on_surface));
-    highlight_theme.style.editor_active_line = Some(hsla(material.roles.surface_container_high));
-    highlight_theme.style.editor_line_number = Some(hsla(material.roles.on_surface_variant));
-    highlight_theme.style.editor_active_line_number = Some(hsla(material.roles.on_surface));
-    highlight_theme.style.editor_invisible = Some(hsla(material.roles.outline_variant));
+    component_theme.highlight_theme = Arc::new(md3_highlight_theme(&material));
+}
+
+fn md3_highlight_theme(material: &material_theme::MaterialTheme) -> HighlightTheme {
+    let tone = |palette, light_tone, dark_tone| {
+        material_theme::palette_tone_rgb(
+            palette,
+            if material.dark { dark_tone } else { light_tone },
+        )
+    };
+    let hex = |color: u32| format!("#{color:06x}");
+
+    let foreground = hex(material.roles.on_surface);
+    let muted = hex(tone(material.palettes.neutral_variant, 46, 68));
+    let punctuation = hex(tone(material.palettes.neutral_variant, 40, 72));
+    let primary = hex(tone(material.palettes.primary, 36, 78));
+    let secondary = hex(tone(material.palettes.secondary, 34, 78));
+    let tertiary = hex(tone(material.palettes.tertiary, 36, 80));
+    let error = hex(tone(material.palettes.error, 38, 78));
+    let success = hex(material.extended.success.color);
+    let warning = hex(material.extended.warning.color);
+    let info = hex(material.extended.info.color);
+    let mut syntax = Map::new();
+    syntax.insert("attribute".into(), syntax_color(&tertiary));
+    syntax.insert("boolean".into(), syntax_color(&error));
+    syntax.insert("comment".into(), syntax_color_italic(&muted));
+    syntax.insert("comment.doc".into(), syntax_color_italic(&muted));
+    syntax.insert("constant".into(), syntax_color(&tertiary));
+    syntax.insert("constructor".into(), syntax_color(&secondary));
+    syntax.insert("embedded".into(), syntax_color(&foreground));
+    syntax.insert("emphasis".into(), syntax_italic());
+    syntax.insert("emphasis.strong".into(), syntax_weight(700));
+    syntax.insert("enum".into(), syntax_color(&secondary));
+    syntax.insert("function".into(), syntax_color(&primary));
+    syntax.insert("hint".into(), syntax_color(&secondary));
+    syntax.insert("keyword".into(), syntax_color_weight(&primary, 600));
+    syntax.insert("label".into(), syntax_color(&tertiary));
+    syntax.insert("link_text".into(), syntax_color(&primary));
+    syntax.insert("link_uri".into(), syntax_color_italic(&info));
+    syntax.insert("number".into(), syntax_color(&error));
+    syntax.insert("operator".into(), syntax_color(&secondary));
+    syntax.insert("predictive".into(), syntax_color(&muted));
+    syntax.insert("preproc".into(), syntax_color(&warning));
+    syntax.insert("primary".into(), syntax_color(&primary));
+    syntax.insert("property".into(), syntax_color(&tertiary));
+    syntax.insert("punctuation".into(), syntax_color(&punctuation));
+    syntax.insert("punctuation.bracket".into(), syntax_color(&punctuation));
+    syntax.insert("punctuation.delimiter".into(), syntax_color(&punctuation));
+    syntax.insert("punctuation.list_marker".into(), syntax_color(&secondary));
+    syntax.insert("punctuation.special".into(), syntax_color(&warning));
+    syntax.insert("string".into(), syntax_color(&success));
+    syntax.insert("string.escape".into(), syntax_color(&secondary));
+    syntax.insert("string.regex".into(), syntax_color(&tertiary));
+    syntax.insert("string.special".into(), syntax_color(&warning));
+    syntax.insert("string.special.symbol".into(), syntax_color(&tertiary));
+    syntax.insert("tag".into(), syntax_color(&primary));
+    syntax.insert("tag.doctype".into(), syntax_color(&muted));
+    syntax.insert("text.code.span".into(), syntax_color(&tertiary));
+    syntax.insert("text.literal".into(), syntax_color(&success));
+    syntax.insert("title".into(), syntax_color_weight(&primary, 700));
+    syntax.insert("type".into(), syntax_color(&secondary));
+    syntax.insert("variable".into(), syntax_color(&foreground));
+    syntax.insert("variable.special".into(), syntax_color(&error));
+    syntax.insert("variant".into(), syntax_color(&tertiary));
+
+    let mut style_json = Map::new();
+    style_json.insert(
+        "editor.background".into(),
+        Value::String(hex(material.roles.surface_container_highest)),
+    );
+    style_json.insert("editor.foreground".into(), Value::String(foreground));
+    style_json.insert(
+        "editor.active_line.background".into(),
+        Value::String(hex(material.roles.surface_container_high)),
+    );
+    style_json.insert(
+        "editor.line_number".into(),
+        Value::String(hex(material.roles.on_surface_variant)),
+    );
+    style_json.insert(
+        "editor.active_line_number".into(),
+        Value::String(hex(material.roles.on_surface)),
+    );
+    style_json.insert(
+        "editor.invisible".into(),
+        Value::String(hex(material.roles.outline_variant)),
+    );
+    style_json.insert("error".into(), Value::String(error));
+    style_json.insert(
+        "error.background".into(),
+        Value::String(hex(material.roles.error_container)),
+    );
+    style_json.insert(
+        "error.border".into(),
+        Value::String(hex(material.roles.error)),
+    );
+    style_json.insert("warning".into(), Value::String(warning));
+    style_json.insert(
+        "warning.background".into(),
+        Value::String(hex(material.extended.warning.color_container)),
+    );
+    style_json.insert(
+        "warning.border".into(),
+        Value::String(hex(material.extended.warning.color)),
+    );
+    style_json.insert("info".into(), Value::String(info));
+    style_json.insert(
+        "info.background".into(),
+        Value::String(hex(material.extended.info.color_container)),
+    );
+    style_json.insert(
+        "info.border".into(),
+        Value::String(hex(material.extended.info.color)),
+    );
+    style_json.insert("success".into(), Value::String(success));
+    style_json.insert(
+        "success.background".into(),
+        Value::String(hex(material.extended.success.color_container)),
+    );
+    style_json.insert(
+        "success.border".into(),
+        Value::String(hex(material.extended.success.color)),
+    );
+    style_json.insert("hint".into(), Value::String(secondary.clone()));
+    style_json.insert(
+        "hint.background".into(),
+        Value::String(hex(material.roles.secondary_container)),
+    );
+    style_json.insert(
+        "hint.border".into(),
+        Value::String(hex(material.roles.secondary)),
+    );
+    style_json.insert("syntax".into(), Value::Object(syntax));
+
+    let fallback_theme = if material.dark {
+        HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
+    };
+    let style = serde_json::from_value::<HighlightThemeStyle>(Value::Object(style_json))
+        .unwrap_or_else(|_| fallback_theme.style.clone());
+
+    HighlightTheme {
+        name: format!(
+            "miaominal_md3_{}",
+            if material.dark { "dark" } else { "light" }
+        ),
+        appearance: if material.dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        },
+        style,
+    }
+}
+
+fn syntax_color(color: &str) -> Value {
+    let mut style = Map::new();
+    style.insert("color".into(), Value::String(color.to_string()));
+    Value::Object(style)
+}
+
+fn syntax_italic() -> Value {
+    let mut style = Map::new();
+    style.insert("font_style".into(), Value::String("italic".into()));
+    Value::Object(style)
+}
+
+fn syntax_weight(weight: u16) -> Value {
+    let mut style = Map::new();
+    style.insert("font_weight".into(), Value::from(weight));
+    Value::Object(style)
+}
+
+fn syntax_color_italic(color: &str) -> Value {
+    let mut style = Map::new();
+    style.insert("color".into(), Value::String(color.to_string()));
+    style.insert("font_style".into(), Value::String("italic".into()));
+    Value::Object(style)
+}
+
+fn syntax_color_weight(color: &str, weight: u16) -> Value {
+    let mut style = Map::new();
+    style.insert("color".into(), Value::String(color.to_string()));
+    style.insert("font_weight".into(), Value::from(weight));
+    Value::Object(style)
 }
 
 pub fn font_family() -> String {

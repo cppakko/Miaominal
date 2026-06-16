@@ -1,8 +1,5 @@
 use super::super::*;
 use crate::ui::i18n;
-use crate::ui::markdown_view::{MarkdownTextSelection, MarkdownTextSelectionHandlers};
-use crate::ui::shell::state::SessionAgentMarkdownSelection;
-use std::rc::Rc;
 use std::time::Duration;
 use theme::ActiveTheme as _;
 
@@ -98,106 +95,20 @@ fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
 }
 
 impl AppView {
-    fn start_session_agent_markdown_selection(
-        &mut self,
-        message_index: usize,
-        block_index: usize,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.session_agent_focus, cx);
-        self.session_agent.markdown_selection = Some(SessionAgentMarkdownSelection {
-            message_index,
-            anchor_block: block_index,
-            anchor_offset: index,
-            focus_block: block_index,
-            focus_offset: index,
-            dragging: true,
-        });
-        cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn update_session_agent_markdown_selection(
-        &mut self,
-        message_index: usize,
-        block_index: usize,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(selection) = self.session_agent.markdown_selection.as_mut() else {
-            return;
-        };
-        if !selection.dragging || selection.message_index != message_index {
-            return;
-        }
-
-        selection.focus_block = block_index;
-        selection.focus_offset = index;
-        cx.notify();
-    }
-
-    fn finish_session_agent_markdown_selection(
-        &mut self,
-        message_index: usize,
-        block_index: usize,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(selection) = self.session_agent.markdown_selection.as_mut() else {
-            return;
-        };
-        if selection.message_index != message_index {
-            return;
-        }
-
-        selection.focus_block = block_index;
-        selection.focus_offset = index;
-        selection.dragging = false;
-        let ((start_block, start_offset), (end_block, end_offset)) = selection.ordered_endpoints();
-        if start_block == end_block && start_offset == end_offset {
-            self.session_agent.markdown_selection = None;
-        }
-        cx.notify();
-    }
-
-    fn copy_session_agent_markdown_selection(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(selection) = self.session_agent.markdown_selection.as_ref() else {
-            return false;
-        };
-        let Some(message) = self.session_agent.messages.get(selection.message_index) else {
-            return false;
-        };
-        let style = self.session_agent_markdown_style(
-            miaominal_settings::current_theme()
-                .material
-                .roles
-                .on_surface,
-        );
-        let blocks = crate::ui::markdown_view::markdown_plain_blocks(&message.content, style);
-        let text = selected_markdown_blocks_text(selection, blocks);
-        if text.is_empty() {
-            return false;
-        }
-
-        self.copy_session_agent_text("selection", text, cx);
-        true
+    fn copy_session_agent_markdown_selection(&mut self, _cx: &mut Context<Self>) -> bool {
+        // Window-level selection is now handled by gpui-component Root.
+        // This function kept as a no-op to preserve call sites during transition.
+        false
     }
 
     fn handle_session_agent_key_down(
         &mut self,
-        event: &KeyDownEvent,
+        _event: &KeyDownEvent,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
-        let modifiers = &event.keystroke.modifiers;
-        if event.keystroke.key == "c"
-            && (modifiers.platform || modifiers.control)
-            && self.copy_session_agent_markdown_selection(cx)
-        {
-            cx.stop_propagation();
-        }
+        // Ctrl/Cmd+C is now handled by gpui-component Root's window-level selection.
+        // This handler can be removed or used for other session agent shortcuts.
     }
 
     fn start_session_agent_auto_scroll(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
@@ -1241,70 +1152,15 @@ impl AppView {
     fn render_session_agent_markdown(
         &self,
         id: impl Into<ElementId>,
-        message_index: usize,
+        _message_index: usize,
         message: &SessionAgentMessage,
-        color: u32,
-        use_cache: bool,
-        entity: Entity<Self>,
+        _color: u32,
+        _use_cache: bool,
+        _entity: Entity<Self>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
-        let selection_color = gpui::Hsla::from(rgb(roles.primary_container)).opacity(0.7);
-
-        let text_color = gpui::Hsla::from(rgb(color));
-        let muted_color = gpui::Hsla::from(rgb(crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 70 } else { 45 },
-        )));
-        let link_color = gpui::Hsla::from(rgb(roles.primary));
-        let code_background = gpui::Hsla::from(rgb(roles.surface_container_high));
-        let border_color = gpui::Hsla::from(rgb(roles.outline_variant));
-
-        // ensure_*_markdown). We only read it here — never create or update it during render.
-        let markdown_style = crate::ui::markdown_view::MarkdownViewStyle {
-            text_color,
-            muted_color,
-            link_color,
-            code_background,
-            border_color,
-        };
-
-        let selection = self
-            .session_agent
-            .markdown_selection
-            .as_ref()
-            .filter(|selection| selection.message_index == message_index)
-            .map(|selection| {
-                let ((start_block, start_offset), (end_block, end_offset)) =
-                    selection.ordered_endpoints();
-                MarkdownTextSelection {
-                    start_block,
-                    start_offset,
-                    end_block,
-                    end_offset,
-                    color: selection_color,
-                }
-            });
-        let selection_handlers =
-            self.session_agent_markdown_selection_handlers(message_index, entity);
-
-        let markdown = if use_cache {
-            crate::ui::markdown_view::render_markdown_selectable(
-                &message.content,
-                markdown_style,
-                selection.as_ref(),
-                Some(&selection_handlers),
-            )
-        } else {
-            crate::ui::markdown_view::render_markdown_uncached_selectable(
-                &message.content,
-                markdown_style,
-                selection.as_ref(),
-                Some(&selection_handlers),
-            )
-        };
+        let code = message.content.clone();
 
         div()
             .id(id)
@@ -1312,72 +1168,17 @@ impl AppView {
             .min_w_0()
             .min_h(px(20.0))
             .overflow_x_hidden()
-            .child(markdown)
+            .child(
+                gpui_component::text::markdown(code)
+                    .code_block_actions(|code_block, _window, _cx| {
+                        let code = code_block.code();
+                        gpui_component::h_flex().gap_1().child(
+                            gpui_component::clipboard::Clipboard::new("copy").value(code.clone()),
+                        )
+                    })
+                    .selectable(true),
+            )
             .into_any_element()
-    }
-
-    fn session_agent_markdown_selection_handlers(
-        &self,
-        message_index: usize,
-        entity: Entity<Self>,
-    ) -> MarkdownTextSelectionHandlers {
-        let start_entity = entity.clone();
-        let update_entity = entity.clone();
-        let finish_entity = entity;
-        MarkdownTextSelectionHandlers {
-            on_start: Rc::new(move |block_index, index, window, cx| {
-                let entity = start_entity.clone();
-                entity.update(cx, |this, cx| {
-                    this.start_session_agent_markdown_selection(
-                        message_index,
-                        block_index,
-                        index,
-                        window,
-                        cx,
-                    );
-                });
-            }),
-            on_update: Rc::new(move |block_index, index, _window, cx| {
-                let entity = update_entity.clone();
-                entity.update(cx, |this, cx| {
-                    this.update_session_agent_markdown_selection(
-                        message_index,
-                        block_index,
-                        index,
-                        cx,
-                    );
-                });
-            }),
-            on_finish: Rc::new(move |block_index, index, _window, cx| {
-                let entity = finish_entity.clone();
-                entity.update(cx, |this, cx| {
-                    this.finish_session_agent_markdown_selection(
-                        message_index,
-                        block_index,
-                        index,
-                        cx,
-                    );
-                });
-            }),
-        }
-    }
-
-    fn session_agent_markdown_style(
-        &self,
-        color: u32,
-    ) -> crate::ui::markdown_view::MarkdownViewStyle {
-        let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
-        crate::ui::markdown_view::MarkdownViewStyle {
-            text_color: gpui::Hsla::from(rgb(color)),
-            muted_color: gpui::Hsla::from(rgb(crate::ui::theme::palette_tone_rgb(
-                material.palettes.neutral_variant,
-                if material.dark { 70 } else { 45 },
-            ))),
-            link_color: gpui::Hsla::from(rgb(roles.primary)),
-            code_background: gpui::Hsla::from(rgb(roles.surface_container_high)),
-            border_color: gpui::Hsla::from(rgb(roles.outline_variant)),
-        }
     }
 
     fn render_session_agent_message(
@@ -2426,45 +2227,6 @@ fn render_tool_terminal_block(
     )
 }
 
-fn selected_markdown_blocks_text(
-    selection: &SessionAgentMarkdownSelection,
-    mut blocks: Vec<(usize, String)>,
-) -> String {
-    let ((start_block, start_offset), (end_block, end_offset)) = selection.ordered_endpoints();
-    blocks.sort_by_key(|(block_index, _)| *block_index);
-
-    let mut parts = Vec::new();
-    for (block_index, text) in blocks {
-        if block_index < start_block || block_index > end_block {
-            continue;
-        }
-
-        let start = if block_index == start_block {
-            clamp_to_char_boundary(&text, start_offset)
-        } else {
-            0
-        };
-        let end = if block_index == end_block {
-            clamp_to_char_boundary(&text, end_offset)
-        } else {
-            text.len()
-        };
-        if start < end {
-            parts.push(text[start..end].to_string());
-        }
-    }
-
-    parts.join("\n")
-}
-
-fn clamp_to_char_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
 fn render_tool_terminal_block_content(
     label: &str,
     content: gpui::AnyElement,
@@ -3025,25 +2787,22 @@ fn render_bash_highlighted_command_block(
     label: &str,
     command: &str,
     colors: ToolTerminalColors,
-    syntax_theme: &::theme::SyntaxTheme,
+    _syntax_theme: &::theme::SyntaxTheme,
 ) -> gpui::AnyElement {
     let base_color = gpui::Hsla::from(rgb(colors.on_surface));
-    let _ = syntax_theme;
     let text: SharedString = if command.trim().is_empty() {
         "(no command)".into()
     } else {
         command.to_string().into()
     };
-    let highlights = crate::ui::markdown_view::valid_highlights(
-        text.as_ref(),
-        crate::ui::markdown_view::code_highlights_for_language("bash", text.as_ref()),
-    );
+
+    // Use plain text for bash commands - no highlighting needed
     let content = div()
         .font_family("JetBrains Mono")
         .text_size(miaominal_settings::FontSize::Body.scaled())
         .line_height(miaominal_settings::scaled_line_height(18.0))
         .text_color(base_color)
-        .child(gpui::StyledText::new(text).with_highlights(highlights))
+        .child(text)
         .into_any_element();
     render_tool_terminal_block_content(label, content, colors)
 }
