@@ -10,7 +10,7 @@ use gpui::{
     Styled, Subscription, WeakEntity, Window, WindowControlArea, canvas, div, prelude::*, px, rgb,
 };
 use gpui_component::{
-    Colorize, Sizable as _,
+    Colorize, Sizable as _, VirtualListScrollHandle,
     button::{Button, ButtonVariants as _},
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     h_flex,
