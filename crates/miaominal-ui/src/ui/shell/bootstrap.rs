@@ -1609,6 +1609,7 @@ impl AppView {
                 visible_terminal_view_tab_id: None,
                 session_agent_panel_width: SESSION_MONITOR_PANEL_WIDTH,
                 session_agent_panel_drag: None,
+                terminal_originated_selection_drag: None,
                 session_agent_auto_scroll: None,
                 session_agent_auto_scroll_generation: 0,
                 session_agent_follow_bottom_generation: 0,

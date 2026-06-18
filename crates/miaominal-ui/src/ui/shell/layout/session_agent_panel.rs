@@ -644,4 +644,3 @@ impl AppView {
         session_agent_conversation::render_session_agent_messages(self, message_column_width, entity, window, cx)
     }
 }
-

@@ -1,13 +1,17 @@
 use super::super::*;
 use super::session_agent_panel::SESSION_AGENT_USER_BUBBLE_MAX_WIDTH;
-use super::session_agent_utils::*;
-use super::session_agent_tool_ui::*;
 use super::session_agent_tool_parse::*;
+use super::session_agent_tool_ui::*;
 use super::session_agent_tools::*;
+use super::session_agent_utils::*;
 use crate::ui::components::md3_spinner;
 use crate::ui::i18n;
 use gpui_component::WindowExt as _;
 use theme::ActiveTheme as _;
+
+fn session_agent_text_selectable(terminal_originated_selection_drag_active: bool) -> bool {
+    !terminal_originated_selection_drag_active
+}
 
 pub(in crate::ui::shell::layout) fn render_session_agent_messages(
     app: &AppView,
@@ -83,7 +87,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
-    _app: &AppView,
+    app: &AppView,
     id: impl Into<ElementId>,
     message: &SessionAgentMessage,
     _color: u32,
@@ -96,6 +100,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let on_surface_variant = roles.on_surface_variant;
+    let selectable = session_agent_text_selectable(app.terminal_originated_selection_drag_active());
 
     div()
         .id(id)
@@ -122,11 +127,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
                                 .child(language.to_string()),
                         )
                         .child(
-                            gpui_component::clipboard::Clipboard::new("copy")
-                                .value(code.clone()),
+                            gpui_component::clipboard::Clipboard::new("copy").value(code.clone()),
                         )
                 })
-                .selectable(true),
+                .selectable(selectable),
         )
         .into_any_element()
 }
@@ -410,7 +414,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
-    _app: &AppView,
+    app: &AppView,
     message_column_width: f32,
     index: usize,
     message: &SessionAgentMessage,
@@ -455,6 +459,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
         on_surface: roles.on_surface,
         error: roles.error,
         text_muted,
+        selectable: session_agent_text_selectable(app.terminal_originated_selection_drag_active()),
     };
     let syntax_theme = cx.theme().syntax().clone();
 
@@ -585,4 +590,19 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
             )
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_agent_text_is_selectable_without_terminal_originated_drag() {
+        assert!(session_agent_text_selectable(false));
+    }
+
+    #[test]
+    fn session_agent_text_is_not_selectable_during_terminal_originated_drag() {
+        assert!(!session_agent_text_selectable(true));
+    }
 }

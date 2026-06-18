@@ -452,6 +452,11 @@ impl AppView {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
+        self.clear_terminal_originated_selection_drag(cx);
+        if event.button == MouseButton::Left {
+            gpui_component::GlobalState::suppress_text_selection(cx);
+        }
+
         if event.button == MouseButton::Left
             && let Some(metrics) = self.terminal_scrollbar_metrics()
             && metrics.track_bounds.contains(&event.position)
@@ -570,6 +575,7 @@ impl AppView {
 
                 session.terminal.start_selection(line, column, side, block);
                 self.workspace_state.workspace.active_pane.terminal_dragging = true;
+                self.start_terminal_originated_selection_drag(cx);
                 self.set_terminal_hover_state(None, false, cx);
                 self.workspace_state
                     .workspace
@@ -857,6 +863,7 @@ impl AppView {
                 event.modifiers.control || event.modifiers.platform,
                 cx,
             );
+            self.clear_terminal_originated_selection_drag(cx);
             return;
         }
         if !self.workspace_state.workspace.active_pane.terminal_dragging {
@@ -865,9 +872,11 @@ impl AppView {
                 event.modifiers.control || event.modifiers.platform,
                 cx,
             );
+            self.clear_terminal_originated_selection_drag(cx);
             return;
         }
         self.workspace_state.workspace.active_pane.terminal_dragging = false;
+        self.defer_clear_terminal_originated_selection_drag(cx);
 
         let Some(index) = self.workspace_state.workspace.active_tab else {
             return;
@@ -963,6 +972,56 @@ impl AppView {
             .and_then(|index| self.workspace_state.tabs.get(index))
             .and_then(TabState::as_session)
             .is_some_and(|session| session.terminal.has_selection())
+    }
+
+    pub(in crate::ui::shell) fn terminal_originated_selection_drag_active(&self) -> bool {
+        self.workspace_state
+            .terminal_originated_selection_drag
+            .is_some()
+    }
+
+    fn start_terminal_originated_selection_drag(&mut self, cx: &mut Context<Self>) {
+        let pane_id = self.workspace_state.workspace.active_pane_id;
+        if self.workspace_state.terminal_originated_selection_drag != Some(pane_id) {
+            self.workspace_state.terminal_originated_selection_drag = Some(pane_id);
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui::shell) fn clear_terminal_originated_selection_drag(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .workspace_state
+            .terminal_originated_selection_drag
+            .take()
+            .is_some()
+        {
+            cx.notify();
+        }
+    }
+
+    fn defer_clear_terminal_originated_selection_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(pane_id) = self.workspace_state.terminal_originated_selection_drag else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(0))
+                .await;
+
+            this.update(cx, |this, cx| {
+                if this.workspace_state.terminal_originated_selection_drag == Some(pane_id)
+                    && !this.workspace_state.workspace.active_pane.terminal_dragging
+                {
+                    this.clear_terminal_originated_selection_drag(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn clear_terminal_selection(&mut self, cx: &mut Context<Self>) {
@@ -1303,6 +1362,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let next_reported_tab_id = self.current_terminal_focus_report_target(window);
+        if next_reported_tab_id.is_none() {
+            self.clear_terminal_originated_selection_drag(cx);
+        }
         if next_reported_tab_id == self.workspace_state.reported_terminal_focus_tab_id {
             return;
         }

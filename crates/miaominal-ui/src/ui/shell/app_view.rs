@@ -86,6 +86,7 @@ impl AppView {
             self.sync_terminal_focus_reporting(window, cx);
             return;
         }
+        self.clear_terminal_originated_selection_drag(cx);
         // Tabs are global; only per-pane state is parked.
         let outgoing = self.workspace_state.workspace.active_pane_id;
         let parked = ParkedPane {

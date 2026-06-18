@@ -8,6 +8,7 @@ pub(in crate::ui::shell::layout) struct ToolTerminalColors {
     pub(in crate::ui::shell::layout) on_surface: u32,
     pub(in crate::ui::shell::layout) error: u32,
     pub(in crate::ui::shell::layout) text_muted: u32,
+    pub(in crate::ui::shell::layout) selectable: bool,
 }
 
 pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
@@ -65,7 +66,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
                 tool_terminal_markdown_id(tool_call_id, label, language),
                 markdown_code,
             )
-            .selectable(true),
+            .selectable(colors.selectable),
         )
         .when(error, |this| this.text_color(rgb(colors.error)))
         .into_any_element();
@@ -73,7 +74,11 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
     render_tool_terminal_block_content(label, highlighted_content, colors)
 }
 
-pub(in crate::ui::shell::layout) fn tool_terminal_markdown_id(tool_call_id: &str, label: &str, language: &str) -> String {
+pub(in crate::ui::shell::layout) fn tool_terminal_markdown_id(
+    tool_call_id: &str,
+    label: &str,
+    language: &str,
+) -> String {
     format!("session-agent-tool-markdown-{tool_call_id}-{label}-{language}")
 }
 
@@ -183,7 +188,7 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
                 tool_terminal_markdown_id(tool_call_id, label, "bash"),
                 markdown_code,
             )
-            .selectable(true),
+            .selectable(colors.selectable),
         )
         .into_any_element();
     render_tool_terminal_block_content(label, content, colors)
