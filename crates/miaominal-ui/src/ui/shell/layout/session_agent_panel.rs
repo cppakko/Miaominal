@@ -1168,15 +1168,14 @@ impl AppView {
     fn render_session_agent_markdown(
         &self,
         id: impl Into<ElementId>,
-        _message_index: usize,
         message: &SessionAgentMessage,
         _color: u32,
-        _use_cache: bool,
         _entity: Entity<Self>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let code = message.content.clone();
+        let id = id.into();
+        let text_view_id = (id.clone(), "markdown");
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let on_surface_variant = roles.on_surface_variant;
@@ -1188,7 +1187,7 @@ impl AppView {
             .min_h(px(20.0))
             .overflow_x_hidden()
             .child(
-                gpui_component::text::markdown(code)
+                gpui_component::text::TextView::markdown(text_view_id, message.content.clone())
                     .code_block_actions(move |code_block, _window, _cx| {
                         let code = code_block.code();
                         let language = code_block.lang().unwrap_or_else(|| "text".into());
@@ -1251,8 +1250,6 @@ impl AppView {
                 .into_any_element();
         }
         if message.role == SessionAgentMessageRole::Assistant {
-            let use_markdown_cache = !(index + 1 == self.session_agent.messages.len()
-                && self.session_agent.has_pending_task());
             return div()
                 .id(SharedString::from(format!(
                     "session-agent-message-menu-{index}-assistant"
@@ -1266,10 +1263,8 @@ impl AppView {
                 .py_1()
                 .child(self.render_session_agent_markdown(
                     SharedString::from(format!("session-agent-message-{index}-assistant")),
-                    index,
                     message,
                     roles.on_surface,
-                    use_markdown_cache,
                     entity.clone(),
                     window,
                     cx,
@@ -1361,10 +1356,8 @@ impl AppView {
                             .text_color(rgb(fg))
                             .child(self.render_session_agent_markdown(
                                 SharedString::from(format!("session-agent-message-{index}-plain")),
-                                index,
                                 message,
                                 fg,
-                                true,
                                 entity.clone(),
                                 window,
                                 cx,
@@ -1479,10 +1472,8 @@ impl AppView {
                     .when(expanded, |this| {
                         this.child(self.render_session_agent_markdown(
                             SharedString::from(format!("session-agent-message-{index}-thinking")),
-                            index,
                             message,
                             text_muted,
-                            !is_active_thinking,
                             entity.clone(),
                             window,
                             cx,
@@ -1746,13 +1737,20 @@ fn render_run_shell_tool_body(
         .gap_2()
         .p_2()
         .child(render_bash_highlighted_command_block(
+            &tool_call.id,
             "Command",
             &command,
             colors,
             syntax_theme,
         ))
         .when_some(result_block, |this, (label, content, error)| {
-            this.child(render_tool_terminal_block(&label, content, colors, error))
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                &label,
+                content,
+                colors,
+                error,
+            ))
         })
         .into_any_element()
 }
@@ -1798,11 +1796,18 @@ fn render_apply_patch_tool_body(
             ],
             colors,
         ))
-        .child(render_tool_terminal_block("Diff", patch, colors, false))
+        .child(render_tool_terminal_block(
+            &tool_call.id,
+            "Diff",
+            patch,
+            colors,
+            false,
+        ))
         .when_some(
             summary.filter(|summary| !summary.trim().is_empty()),
             |this, summary| {
                 this.child(render_tool_terminal_block(
+                    &tool_call.id,
                     "Patch Output",
                     summary,
                     colors,
@@ -1842,7 +1847,11 @@ fn render_read_tool_body(
         ))
         .when_some(content, |this, content| {
             this.child(render_tool_terminal_block(
-                "Content", content, colors, false,
+                &tool_call.id,
+                "Content",
+                content,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -1889,7 +1898,11 @@ fn render_list_tool_body(
         ))
         .when_some(entries, |this, entries| {
             this.child(render_tool_terminal_block(
-                "Entries", entries, colors, false,
+                &tool_call.id,
+                "Entries",
+                entries,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -1915,7 +1928,11 @@ fn render_glob_tool_body(
         ))
         .when_some(entries, |this, entries| {
             this.child(render_tool_terminal_block(
-                "Matches", entries, colors, false,
+                &tool_call.id,
+                "Matches",
+                entries,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -1943,7 +1960,11 @@ fn render_grep_tool_body(
         ))
         .when_some(content, |this, content| {
             this.child(render_tool_terminal_block(
-                "Matches", content, colors, false,
+                &tool_call.id,
+                "Matches",
+                content,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -1972,7 +1993,11 @@ fn render_start_job_tool_body(
         .p_2()
         .child(render_tool_field_grid(fields, colors))
         .child(render_tool_terminal_block(
-            "Command", command, colors, false,
+            &tool_call.id,
+            "Command",
+            command,
+            colors,
+            false,
         ))
         .into_any_element()
 }
@@ -2002,7 +2027,13 @@ fn render_job_tool_body(
             colors,
         ))
         .when_some(content, |this, content| {
-            this.child(render_tool_terminal_block("Result", content, colors, false))
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                "Result",
+                content,
+                colors,
+                false,
+            ))
         })
         .into_any_element()
 }
@@ -2023,7 +2054,13 @@ fn render_list_jobs_tool_body(
         .gap_2()
         .p_2()
         .when_some(content, |this, content| {
-            this.child(render_tool_terminal_block("Jobs", content, colors, false))
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                "Jobs",
+                content,
+                colors,
+                false,
+            ))
         })
         .into_any_element()
 }
@@ -2062,15 +2099,37 @@ fn render_poll_job_tool_body(
         .child(render_tool_field_grid(fields, colors))
         .when_some(
             stdout.filter(|text| !text.trim().is_empty()),
-            |this, stdout| this.child(render_tool_terminal_block("Stdout", stdout, colors, false)),
+            |this, stdout| {
+                this.child(render_tool_terminal_block(
+                    &tool_call.id,
+                    "Stdout",
+                    stdout,
+                    colors,
+                    false,
+                ))
+            },
         )
         .when_some(
             stderr.filter(|text| !text.trim().is_empty()),
-            |this, stderr| this.child(render_tool_terminal_block("Stderr", stderr, colors, true)),
+            |this, stderr| {
+                this.child(render_tool_terminal_block(
+                    &tool_call.id,
+                    "Stderr",
+                    stderr,
+                    colors,
+                    true,
+                ))
+            },
         )
         .when(result.is_none(), |this| {
             this.when_some(tool_display_result(tool_call), |this, content| {
-                this.child(render_tool_terminal_block("Result", content, colors, false))
+                this.child(render_tool_terminal_block(
+                    &tool_call.id,
+                    "Result",
+                    content,
+                    colors,
+                    false,
+                ))
             })
         })
         .into_any_element()
@@ -2098,7 +2157,11 @@ fn render_web_search_tool_body(
         ))
         .when_some(results, |this, results| {
             this.child(render_tool_terminal_block(
-                "Results", results, colors, false,
+                &tool_call.id,
+                "Results",
+                results,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -2129,7 +2192,11 @@ fn render_web_fetch_tool_body(
         ))
         .when_some(content, |this, content| {
             this.child(render_tool_terminal_block(
-                "Content", content, colors, false,
+                &tool_call.id,
+                "Content",
+                content,
+                colors,
+                false,
             ))
         })
         .into_any_element()
@@ -2189,7 +2256,11 @@ fn render_approval_tool_body(
         .gap_2()
         .p_2()
         .child(render_tool_terminal_block(
-            "Approval", message, colors, false,
+            &tool_call.id,
+            "Approval",
+            message,
+            colors,
+            false,
         ))
         .into_any_element()
 }
@@ -2224,7 +2295,13 @@ fn render_generic_tool_body(
             this.child(render_tool_field_grid(fields, colors))
         })
         .when_some(result, |this, result| {
-            this.child(render_tool_terminal_block("Result", result, colors, false))
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                "Result",
+                result,
+                colors,
+                false,
+            ))
         })
         .into_any_element()
 }
@@ -2238,6 +2315,7 @@ fn render_preparing_tool_body(
         .gap_2()
         .p_2()
         .child(render_tool_terminal_block(
+            &tool_call.id,
             "Request",
             preparing_tool_text(&tool_call.name),
             colors,
@@ -2247,6 +2325,7 @@ fn render_preparing_tool_body(
 }
 
 fn render_tool_terminal_block(
+    tool_call_id: &str,
     label: &str,
     content: String,
     colors: ToolTerminalColors,
@@ -2296,13 +2375,20 @@ fn render_tool_terminal_block(
     let highlighted_content = div()
         .w_full()
         .child(
-            gpui_component::text::markdown(markdown_code)
-                .selectable(true),
+            gpui_component::text::TextView::markdown(
+                tool_terminal_markdown_id(tool_call_id, label, language),
+                markdown_code,
+            )
+            .selectable(true),
         )
         .when(error, |this| this.text_color(rgb(colors.error)))
         .into_any_element();
 
     render_tool_terminal_block_content(label, highlighted_content, colors)
+}
+
+fn tool_terminal_markdown_id(tool_call_id: &str, label: &str, language: &str) -> String {
+    format!("session-agent-tool-markdown-{tool_call_id}-{label}-{language}")
 }
 
 fn render_tool_terminal_block_content(
@@ -2900,6 +2986,7 @@ fn format_tool_call_copy_text(tool_call: &crate::ui::shell::state::SessionAgentT
 
 /// Renders a terminal-style block with syntax-highlighted bash command text.
 fn render_bash_highlighted_command_block(
+    tool_call_id: &str,
     label: &str,
     command: &str,
     colors: ToolTerminalColors,
@@ -2922,8 +3009,11 @@ fn render_bash_highlighted_command_block(
     let content = div()
         .w_full()
         .child(
-            gpui_component::text::markdown(markdown_code)
-                .selectable(true),
+            gpui_component::text::TextView::markdown(
+                tool_terminal_markdown_id(tool_call_id, label, "bash"),
+                markdown_code,
+            )
+            .selectable(true),
         )
         .into_any_element();
     render_tool_terminal_block_content(label, content, colors)
