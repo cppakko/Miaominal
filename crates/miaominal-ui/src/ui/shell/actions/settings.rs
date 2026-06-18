@@ -39,13 +39,29 @@ pub(in crate::ui::shell) fn ai_provider_kind_label_key(kind: AiProviderKind) -> 
     }
 }
 
+pub(in crate::ui::shell) const fn ai_provider_kind_chat_supported(kind: AiProviderKind) -> bool {
+    matches!(
+        kind,
+        AiProviderKind::Anthropic
+            | AiProviderKind::Cohere
+            | AiProviderKind::DeepSeek
+            | AiProviderKind::Gemini
+            | AiProviderKind::HuggingFace
+            | AiProviderKind::Mistral
+            | AiProviderKind::OpenAi
+            | AiProviderKind::OpenRouter
+            | AiProviderKind::Together
+            | AiProviderKind::Xai
+    )
+}
+
 pub(in crate::ui::shell) fn ai_provider_select_options(
     settings: &miaominal_settings::AppSettings,
 ) -> Vec<SelectOption<String>> {
     settings
         .ai_providers
         .iter()
-        .filter(|provider| provider.enabled)
+        .filter(|provider| provider.enabled && ai_provider_kind_chat_supported(provider.kind))
         .map(|provider| SelectOption::new(provider.id.clone(), provider.name.clone()))
         .collect()
 }

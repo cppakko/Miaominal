@@ -82,16 +82,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                         .h(px(28.0))
                         .items_center()
                         .gap_2()
-                        .child(icon_button(
-                            AppIcon::Plus,
-                            24.0,
-                            8.0,
-                            Some(roles.surface_container_high),
-                            Some(text_muted),
-                            None,
-                            |_window, _cx| {},
-                        ))
-                        .child(div().h(px(16.0)).w(px(1.0)).bg(rgb(roles.outline_variant)))
                         .child(
                             div().w(px(112.0)).min_w(px(0.0)).child(
                                 md3_select(&provider_select)
@@ -100,15 +90,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     .bg(rgb(roles.surface_container_high)),
                             ),
                         )
-                        .child(icon_button(
-                            AppIcon::Sliders,
-                            24.0,
-                            8.0,
-                            Some(roles.surface_container_high),
-                            Some(text_muted),
-                            None,
-                            |_window, _cx| {},
-                        ))
                         .child(icon_button(
                             AppIcon::LaptopMinimal,
                             24.0,

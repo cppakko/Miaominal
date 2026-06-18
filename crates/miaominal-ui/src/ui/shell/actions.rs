@@ -40,6 +40,6 @@ mod snippets;
 pub(in crate::ui::shell) use notification::{ValidationFailure, ValidationNotificationKind};
 pub(in crate::ui::shell) use session_agent::{PromptHistoryDirection, SessionAgentTargetCandidate};
 pub(in crate::ui::shell) use settings::{
-    ai_provider_kind_label_key, ai_provider_select_options, web_search_endpoint_placeholder,
-    web_search_provider_kind_label_key,
+    ai_provider_kind_chat_supported, ai_provider_kind_label_key, ai_provider_select_options,
+    web_search_endpoint_placeholder, web_search_provider_kind_label_key,
 };

@@ -1,4 +1,7 @@
-use super::actions::{web_search_endpoint_placeholder, web_search_provider_kind_label_key};
+use super::actions::{
+    ai_provider_kind_chat_supported, web_search_endpoint_placeholder,
+    web_search_provider_kind_label_key,
+};
 use super::bootstrap_form_factory::{HostEditorFormsArgs, PanelFormsArgs, WorkspaceFormsArgs};
 use super::*;
 use crate::ui::i18n;
@@ -1019,6 +1022,7 @@ impl AppView {
         let ai_provider_kind_options: Vec<SelectOption<AiProviderKind>> = AiProviderKind::all()
             .iter()
             .copied()
+            .filter(|kind| ai_provider_kind_chat_supported(*kind))
             .map(|kind| SelectOption::new(kind, i18n::string(ai_provider_kind_label_key(kind))))
             .collect();
         let selected_ai_provider_kind_index = ai_provider_kind_options
