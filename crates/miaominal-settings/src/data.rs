@@ -66,7 +66,7 @@ impl AiProviderKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiProviderConfig {
     pub id: String,
     pub name: String,
@@ -85,7 +85,33 @@ pub struct AiProviderConfig {
     /// When set, the chat UI shows estimated context usage as a percentage.
     #[serde(default)]
     pub context_window: Option<u64>,
+
+    /// Temperature (0.0–2.0). When None, the provider default is used.
+    #[serde(default)]
+    pub temperature: Option<f64>,
+
+    /// Maximum output tokens. When None, the provider default is used.
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
 }
+
+impl PartialEq for AiProviderConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.kind == other.kind
+            && self.model == other.model
+            && self.base_url == other.base_url
+            && self.api_key_env == other.api_key_env
+            && self.has_api_key == other.has_api_key
+            && self.enabled == other.enabled
+            && self.context_window == other.context_window
+            && self.temperature.map(f64::to_bits) == other.temperature.map(f64::to_bits)
+            && self.max_tokens == other.max_tokens
+    }
+}
+
+impl Eq for AiProviderConfig {}
 
 impl AiProviderConfig {
     pub fn new(kind: AiProviderKind) -> Self {
@@ -99,6 +125,8 @@ impl AiProviderConfig {
             has_api_key: false,
             enabled: true,
             context_window: None,
+            temperature: None,
+            max_tokens: None,
         };
         provider.sanitize();
         provider

@@ -81,6 +81,7 @@ pub(in crate::ui::shell) struct WorkspaceForms {
 pub(in crate::ui::shell) struct WorkspaceAgentForms {
     pub(in crate::ui::shell) prompt_input: Entity<InputState>,
     pub(in crate::ui::shell) title_input: Entity<InputState>,
+    pub(in crate::ui::shell) rename_title_input: Entity<InputState>,
     pub(in crate::ui::shell) editing_title: bool,
 }
 
@@ -199,6 +200,9 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) ai_provider_model_input: Entity<InputState>,
     pub(in crate::ui::shell) ai_provider_base_url_input: Entity<InputState>,
     pub(in crate::ui::shell) ai_provider_api_key_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_temperature_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_max_tokens_input: Entity<InputState>,
+    pub(in crate::ui::shell) ai_provider_context_window_input: Entity<InputState>,
     pub(in crate::ui::shell) web_search_api_key_input: Entity<InputState>,
     pub(in crate::ui::shell) web_search_endpoint_input: Entity<InputState>,
     pub(in crate::ui::shell) web_search_max_results_input: Entity<InputState>,

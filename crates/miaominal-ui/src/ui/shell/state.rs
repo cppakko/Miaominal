@@ -856,6 +856,12 @@ pub(in crate::ui::shell) struct PendingChatSessionDeleteState {
     pub(in crate::ui::shell) title: String,
 }
 
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingChatSessionRenameState {
+    pub(in crate::ui::shell) session_id: String,
+    pub(in crate::ui::shell) current_title: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingSyncDirectionState;
 
@@ -898,6 +904,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     SnippetDelete(PendingSnippetDeleteState),
     PortForwardRuleDelete(PendingPortForwardRuleDeleteState),
     ChatSessionDelete(PendingChatSessionDeleteState),
+    ChatSessionRename(PendingChatSessionRenameState),
     SyncDirection(PendingSyncDirectionState),
     SyncPullConfirm(PendingSyncPullConfirmState),
     LocalVaultDisableConfirm(PendingLocalVaultDisableConfirmState),
@@ -924,6 +931,7 @@ impl DialogOverlaySnapshot {
             Self::SnippetDelete(_) => "snippet-delete".to_string(),
             Self::PortForwardRuleDelete(_) => "port-forward-rule-delete".to_string(),
             Self::ChatSessionDelete(_) => "chat-session-delete".to_string(),
+            Self::ChatSessionRename(_) => "chat-session-rename".to_string(),
             Self::SyncDirection(_) => "sync-direction".to_string(),
             Self::SyncPullConfirm(_) => "sync-pull-confirm".to_string(),
             Self::LocalVaultDisableConfirm(_) => "local-vault-disable-confirm".to_string(),
@@ -1409,6 +1417,7 @@ pub(in crate::ui::shell) struct DialogState {
     pub(in crate::ui::shell) pending_port_forward_rule_delete:
         Option<PendingPortForwardRuleDeleteState>,
     pub(in crate::ui::shell) pending_chat_session_delete: Option<PendingChatSessionDeleteState>,
+    pub(in crate::ui::shell) pending_chat_session_rename: Option<PendingChatSessionRenameState>,
     pub(in crate::ui::shell) pending_sync_direction: Option<PendingSyncDirectionState>,
     pub(in crate::ui::shell) pending_sync_pull_confirm: Option<PendingSyncPullConfirmState>,
     pub(in crate::ui::shell) pending_local_vault_disable_confirm:

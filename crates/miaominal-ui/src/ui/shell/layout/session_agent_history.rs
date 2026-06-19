@@ -164,8 +164,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                             let session = &this.data.chat_sessions[actual_ix];
                                             let open_entity = view_entity.clone();
                                             let delete_entity = view_entity.clone();
+                                            let rename_entity = view_entity.clone();
                                             let session_id = session.id.clone();
                                             let delete_session_id = session.id.clone();
+                                            let rename_session_id = session.id.clone();
                                             let is_current = current_sid.as_deref()
                                                 == Some(session.id.as_str());
                                             let is_busy =
@@ -180,6 +182,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                 session.title.clone()
                                             };
                                             let delete_title = title.clone();
+                                            let rename_title = title.clone();
                                             let updated_at =
                                                 format_relative_chat_time(session.updated_at);
                                             let status_label = if is_busy {
@@ -280,6 +283,25 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                             .child(label),
                                                     )
                                                 })
+                                                .child(icon_button(
+                                                    AppIcon::Edit,
+                                                    24.0,
+                                                    8.0,
+                                                    Some(roles.surface_container_high),
+                                                    Some(text_muted),
+                                                    None,
+                                                    move |window, cx| {
+                                                        cx.stop_propagation();
+                                                        let entity = rename_entity.clone();
+                                                        let session_id = rename_session_id.clone();
+                                                        let title = rename_title.clone();
+                                                        entity.update(cx, |this, cx| {
+                                                            this.request_session_agent_chat_rename(
+                                                                session_id, title, window, cx,
+                                                            );
+                                                        });
+                                                    },
+                                                ))
                                                 .child(icon_button(
                                                     AppIcon::Trash,
                                                     24.0,

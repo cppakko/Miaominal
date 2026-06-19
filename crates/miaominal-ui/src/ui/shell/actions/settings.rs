@@ -1276,6 +1276,24 @@ impl AppView {
             window,
             cx,
         );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_temperature_input,
+            "",
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_max_tokens_input,
+            "",
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_context_window_input,
+            "",
+            window,
+            cx,
+        );
         self.secret_visibility.clear_ai_provider_visibility();
         self.open_ai_provider_popup(window, cx);
         cx.notify();
@@ -1335,6 +1353,24 @@ impl AppView {
         set_input_value(
             &self.panel_forms.settings.ai_provider_api_key_input,
             "",
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_temperature_input,
+            provider.temperature.map(|t| t.to_string()).unwrap_or_default(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_max_tokens_input,
+            provider.max_tokens.map(|t| t.to_string()).unwrap_or_default(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.ai_provider_context_window_input,
+            provider.context_window.map(|t| t.to_string()).unwrap_or_default(),
             window,
             cx,
         );
@@ -1578,6 +1614,30 @@ impl AppView {
             .read(cx)
             .value()
             .to_string();
+        provider.temperature = self
+            .panel_forms
+            .settings
+            .ai_provider_temperature_input
+            .read(cx)
+            .value()
+            .parse::<f64>()
+            .ok();
+        provider.max_tokens = self
+            .panel_forms
+            .settings
+            .ai_provider_max_tokens_input
+            .read(cx)
+            .value()
+            .parse::<u64>()
+            .ok();
+        provider.context_window = self
+            .panel_forms
+            .settings
+            .ai_provider_context_window_input
+            .read(cx)
+            .value()
+            .parse::<u64>()
+            .ok();
         if api_key.is_empty() && !existing_has_api_key {
             // Not an existing provider with a stored key and no new key → keep env var fallback when set
             provider.api_key_env = provider.api_key_env.trim().to_string();

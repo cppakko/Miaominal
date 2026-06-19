@@ -296,6 +296,15 @@ label = "Base URL"
 [settings.ai_providers.api_key]
 label = "API key"
 
+[settings.ai_providers.temperature]
+label = "Temperature"
+
+[settings.ai_providers.max_tokens]
+label = "Max tokens"
+
+[settings.ai_providers.context_window]
+label = "Context window"
+
 [settings.ai_providers.actions]
 save = "Save provider"
 delete = "Delete"
@@ -320,6 +329,9 @@ name = "Provider name"
 model = "Default model"
 base_url = "https://api.example.com/v1"
 api_key = "API key"
+temperature = "0.7"
+max_tokens = "4096"
+context_window = "128000"
 
 [settings.ai_providers.status]
 kind_selected = "Provider kind: {kind}"
@@ -504,6 +516,12 @@ confirm = "Delete"
 [dialogs.common]
 cancel = "Cancel"
 submit = "Submit"
+
+[dialogs.chat_rename]
+title = "Rename chat"
+message = "Rename \"{title}\" to:"
+title_label = "New title"
+confirm = "Rename"
 
 [prompts]
 authentication_challenge = "Authentication challenge"

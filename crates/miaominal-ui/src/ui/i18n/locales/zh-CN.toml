@@ -378,6 +378,12 @@ confirm = "删除"
 cancel = "取消"
 submit = "提交"
 
+[dialogs.chat_rename]
+title = "重命名会话"
+message = "将 \"{title}\" 重命名为："
+title_label = "新标题"
+confirm = "重命名"
+
 [prompts]
 authentication_challenge = "认证挑战"
 
@@ -1427,6 +1433,15 @@ label = "Base URL"
 [settings.ai_providers.api_key]
 label = "API key"
 
+[settings.ai_providers.temperature]
+label = "Temperature"
+
+[settings.ai_providers.max_tokens]
+label = "最大输出 Token"
+
+[settings.ai_providers.context_window]
+label = "上下文窗口"
+
 [settings.ai_providers.actions]
 save = "保存 provider"
 delete = "删除"
@@ -1451,6 +1466,9 @@ name = "Provider 名称"
 model = "默认模型"
 base_url = "https://api.example.com/v1"
 api_key = "API key"
+temperature = "0.7"
+max_tokens = "4096"
+context_window = "128000"
 
 [settings.ai_providers.status]
 kind_selected = "Provider 类型：{kind}"

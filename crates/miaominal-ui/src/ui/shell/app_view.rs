@@ -901,6 +901,12 @@ impl AppView {
         self.dialogs.pending_chat_session_delete.clone()
     }
 
+    pub(in crate::ui::shell) fn pending_chat_session_rename_prompt(
+        &self,
+    ) -> Option<PendingChatSessionRenameState> {
+        self.dialogs.pending_chat_session_rename.clone()
+    }
+
     pub(in crate::ui::shell) fn pending_sync_direction_prompt(
         &self,
     ) -> Option<PendingSyncDirectionState> {

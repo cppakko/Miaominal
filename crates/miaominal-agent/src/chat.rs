@@ -41,6 +41,8 @@ pub struct AgentChatProvider {
     pub model: String,
     pub base_url: String,
     pub api_key: String,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,9 +259,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build OpenAI chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -279,9 +287,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Anthropic chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -301,9 +315,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build DeepSeek chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -323,9 +343,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Gemini chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -345,9 +371,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build OpenRouter chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -367,9 +399,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Mistral chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -389,9 +427,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Cohere chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -411,9 +455,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Together AI chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -431,9 +481,15 @@ async fn stream_chat_with_history(
                 builder = builder.base_url(provider.base_url);
             }
             let client = builder.build().context("failed to build xAI chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),
@@ -453,9 +509,15 @@ async fn stream_chat_with_history(
             let client = builder
                 .build()
                 .context("failed to build Hugging Face chat client")?;
-            let builder = AgentBuilder::new(client.completion_model(provider.model))
+            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
                 .preamble(&preamble)
                 .default_max_turns(SESSION_AGENT_MAX_TURNS);
+            if let Some(t) = provider.temperature {
+                builder = builder.temperature(t);
+            }
+            if let Some(mt) = provider.max_tokens {
+                builder = builder.max_tokens(mt);
+            }
             if let Some(tools) = tools {
                 spawn_stream_chat(
                     builder.tools(tools.into_rig_tools()).build(),

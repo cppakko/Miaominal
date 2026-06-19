@@ -377,6 +377,7 @@ impl AppView {
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
         let agent_title_input = new_input_state("Chat", "", false, window, cx);
+        let agent_rename_title_input = new_input_state("New title", "", false, window, cx);
         let filter_input = new_input_state(
             i18n::string("placeholders.hosts.filter"),
             "",
@@ -1431,6 +1432,7 @@ impl AppView {
             conversation_search_input,
             agent_prompt_input,
             agent_title_input,
+            agent_rename_title_input,
             session_snippets_filter_input,
             local_path_input: local_sftp_path_input,
             remote_path_input: remote_sftp_path_input,
@@ -1543,6 +1545,27 @@ impl AppView {
             window,
             cx,
         );
+        let ai_provider_temperature_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.temperature"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let ai_provider_max_tokens_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.max_tokens"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let ai_provider_context_window_input = new_input_state(
+            i18n::string("settings.ai_providers.placeholders.context_window"),
+            "",
+            false,
+            window,
+            cx,
+        );
         let web_search_config = &settings_store.settings().web_search;
         let web_search_api_key_input = new_input_state(
             Self::localized_secret_placeholder(
@@ -1623,6 +1646,9 @@ impl AppView {
             ai_provider_model_input,
             ai_provider_base_url_input,
             ai_provider_api_key_input,
+            ai_provider_temperature_input,
+            ai_provider_max_tokens_input,
+            ai_provider_context_window_input,
             web_search_api_key_input,
             web_search_endpoint_input,
             web_search_max_results_input,
@@ -1944,6 +1970,24 @@ impl AppView {
         set_input_placeholder(
             &self.panel_forms.settings.ai_provider_api_key_input,
             i18n::string("settings.ai_providers.placeholders.api_key"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_temperature_input,
+            i18n::string("settings.ai_providers.placeholders.temperature"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_max_tokens_input,
+            i18n::string("settings.ai_providers.placeholders.max_tokens"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.ai_provider_context_window_input,
+            i18n::string("settings.ai_providers.placeholders.context_window"),
             window,
             cx,
         );

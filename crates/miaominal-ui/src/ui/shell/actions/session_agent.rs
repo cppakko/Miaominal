@@ -635,6 +635,91 @@ impl AppView {
         self.delete_session_agent_chat(pending.session_id, cx);
     }
 
+    pub(in crate::ui::shell) fn rename_session_agent_chat(
+        &mut self,
+        session_id: String,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent_session_is_busy(&session_id) {
+            return;
+        }
+
+        let new_title = title.trim().to_string();
+        if new_title.is_empty() {
+            return;
+        }
+
+        let Some(chat_service) = self.services.chat_service.as_ref() else {
+            self.status_message = "Chat history is unavailable.".into();
+            cx.notify();
+            return;
+        };
+
+        if let Err(error) = chat_service.update_session_title(&session_id, &new_title) {
+            self.status_message = format!("Failed to rename chat: {error}");
+            cx.notify();
+            return;
+        }
+
+        // Update in-memory title if this is the current session
+        if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
+            self.session_agent.title = Some(new_title);
+        }
+
+        self.refresh_chat_sessions();
+        self.status_message = "Chat renamed.".into();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn request_session_agent_chat_rename(
+        &mut self,
+        session_id: String,
+        current_title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_agent_session_is_busy(&session_id) {
+            return;
+        }
+
+        self.workspace_forms
+            .agent
+            .rename_title_input
+            .update(cx, |input, cx| {
+                input.set_value(current_title.clone(), window, cx);
+            });
+
+        self.dialogs.pending_chat_session_rename =
+            Some(PendingChatSessionRenameState { session_id, current_title });
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn cancel_session_agent_chat_rename(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pending) = self.dialogs.pending_chat_session_rename.take() {
+            self.start_dialog_exit(DialogOverlaySnapshot::ChatSessionRename(pending), cx);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn confirm_session_agent_chat_rename(
+        &mut self,
+        new_title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.dialogs.pending_chat_session_rename.take() else {
+            return;
+        };
+        self.start_dialog_exit(
+            DialogOverlaySnapshot::ChatSessionRename(pending.clone()),
+            cx,
+        );
+        self.rename_session_agent_chat(pending.session_id, new_title, cx);
+    }
+
     fn stash_current_session_agent(&mut self) {
         let Some(session_id) = self.session_agent.session_id.clone() else {
             return;
@@ -1884,6 +1969,8 @@ impl AppView {
             model: provider.model,
             base_url: provider.base_url,
             api_key,
+            temperature: provider.temperature,
+            max_tokens: provider.max_tokens,
         })
     }
 

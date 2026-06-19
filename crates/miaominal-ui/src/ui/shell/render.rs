@@ -1,5 +1,5 @@
 use super::state::{
-    PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
+    PendingAiProviderPopupState, PendingChatSessionRenameState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
     PendingSyncPassphrasePopupState,
 };
@@ -84,6 +84,7 @@ impl Render for AppView {
         let pending_snippet_delete = self.pending_snippet_delete_prompt();
         let pending_port_forward_rule_delete = self.pending_port_forward_rule_delete_prompt();
         let pending_chat_session_delete = self.pending_chat_session_delete_prompt();
+        let pending_chat_session_rename = self.pending_chat_session_rename_prompt();
         let pending_sync_direction = self.pending_sync_direction_prompt();
         let pending_sync_pull_confirm = self.pending_sync_pull_confirm_prompt();
         let pending_local_vault_disable_confirm = self.pending_local_vault_disable_confirm_prompt();
@@ -296,6 +297,9 @@ impl Render for AppView {
             })
             .when_some(pending_chat_session_delete, |this, prompt| {
                 this.child(self.render_chat_session_delete_prompt(entity.clone(), &prompt, None))
+            })
+            .when_some(pending_chat_session_rename, |this, prompt| {
+                this.child(self.render_chat_session_rename_prompt(entity.clone(), &prompt, None))
             })
             .when_some(pending_sync_direction, |this, prompt| {
                 this.child(self.render_sync_direction_prompt(entity.clone(), &prompt, None))
@@ -1612,6 +1616,79 @@ impl AppView {
         )
     }
 
+    fn render_chat_session_rename_prompt(
+        &self,
+        entity: Entity<AppView>,
+        prompt: &PendingChatSessionRenameState,
+        exit_progress: Option<f32>,
+    ) -> gpui::AnyElement {
+        let title_input = self.workspace_forms.agent.rename_title_input.clone();
+        let current_title = if prompt.current_title.trim().is_empty() {
+            "Untitled chat"
+        } else {
+            prompt.current_title.as_str()
+        };
+        let subtitle = i18n::string_args(
+            "dialogs.chat_rename.message",
+            &[("title", current_title)],
+        );
+
+        let entity_cancel = entity.clone();
+        let entity_confirm = entity.clone();
+
+        let body = v_flex()
+            .w_full()
+            .child(surface_text_input_stack(
+                i18n::string("dialogs.chat_rename.title_label"),
+                title_input.clone(),
+                TextInputSurface::Highest,
+                false,
+            ))
+            .into_any_element();
+
+        let actions = h_flex()
+            .gap_2()
+            .justify_end()
+            .child(
+                basic_dialog_action_button(
+                    "chat-session-rename-cancel",
+                    i18n::string("dialogs.common.cancel"),
+                    BasicDialogActionTone::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    entity_cancel.update(cx, |this, cx| {
+                        this.cancel_session_agent_chat_rename(cx);
+                    });
+                }),
+            )
+            .child(
+                basic_dialog_action_button(
+                    "chat-session-rename-confirm",
+                    i18n::string("dialogs.chat_rename.confirm"),
+                    BasicDialogActionTone::Default,
+                )
+                .on_click({
+                    let entity = entity_confirm.clone();
+                    let title_input = title_input.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |this, cx| {
+                            let new_title = title_input.read(cx).value().to_string();
+                            this.confirm_session_agent_chat_rename(new_title, cx);
+                        });
+                    }
+                }),
+            );
+
+        render_basic_dialog(
+            "chat-session-rename",
+            i18n::string("dialogs.chat_rename.title"),
+            Some(subtitle),
+            Some(body),
+            actions.into_any_element(),
+            exit_progress,
+        )
+    }
+
     fn render_sync_direction_prompt(
         &self,
         entity: Entity<AppView>,
@@ -2320,6 +2397,13 @@ impl AppView {
         let model_input = self.panel_forms.settings.ai_provider_model_input.clone();
         let base_url_input = self.panel_forms.settings.ai_provider_base_url_input.clone();
         let api_key_input = self.panel_forms.settings.ai_provider_api_key_input.clone();
+        let temperature_input = self.panel_forms.settings.ai_provider_temperature_input.clone();
+        let max_tokens_input = self.panel_forms.settings.ai_provider_max_tokens_input.clone();
+        let context_window_input = self
+            .panel_forms
+            .settings
+            .ai_provider_context_window_input
+            .clone();
         let provider_id = self
             .panel_forms
             .settings
@@ -2404,6 +2488,24 @@ impl AppView {
                         });
                     }
                 },
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.temperature.label"),
+                temperature_input,
+                TextInputSurface::Low,
+                false,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.max_tokens.label"),
+                max_tokens_input,
+                TextInputSurface::Low,
+                false,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.ai_providers.context_window.label"),
+                context_window_input,
+                TextInputSurface::Low,
+                false,
             ))
             .into_any_element();
 
@@ -2726,6 +2828,9 @@ impl AppView {
             }
             DialogOverlaySnapshot::ChatSessionDelete(prompt) => {
                 self.render_chat_session_delete_prompt(entity, &prompt, Some(exit_progress))
+            }
+            DialogOverlaySnapshot::ChatSessionRename(prompt) => {
+                self.render_chat_session_rename_prompt(entity, &prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::SyncDirection(prompt) => {
                 self.render_sync_direction_prompt(entity, &prompt, Some(exit_progress))
