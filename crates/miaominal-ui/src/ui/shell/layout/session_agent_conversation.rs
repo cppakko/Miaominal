@@ -6,6 +6,7 @@ use super::session_agent_tools::*;
 use super::session_agent_utils::*;
 use crate::ui::components::md3_spinner;
 use crate::ui::i18n;
+use gpui::ScrollAnchor;
 use gpui_component::WindowExt as _;
 use theme::ActiveTheme as _;
 
@@ -16,6 +17,7 @@ fn session_agent_text_selectable(terminal_originated_selection_drag_active: bool
 pub(in crate::ui::shell::layout) fn render_session_agent_messages(
     app: &AppView,
     message_column_width: f32,
+    scroll_handle: Option<&ScrollHandle>,
     entity: Entity<AppView>,
     window: &mut Window,
     cx: &mut Context<AppView>,
@@ -40,7 +42,26 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
             .into_any_element();
     }
 
+    // Build block-level search match set + current match block
+    let search_match_set: std::collections::HashSet<(usize, usize)> = app
+        .session_agent
+        .search_match_indices
+        .iter()
+        .copied()
+        .collect();
+    let current_match_block = app
+        .session_agent
+        .search_current_match
+        .and_then(|c| app.session_agent.search_match_indices.get(c).copied());
+
     v_flex()
+        .id("session-agent-message-scroll-content")
+        .when_some(scroll_handle, |this, scroll_handle| {
+            this.size_full()
+                .track_scroll(scroll_handle)
+                .overflow_y_scroll()
+                .pb_2()
+        })
         .w(px(message_column_width))
         .max_w(px(message_column_width))
         .min_w_0()
@@ -60,6 +81,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
                         entity.clone(),
                         window,
                         cx,
+                        &search_match_set,
+                        current_match_block,
                     )
                     .into_any_element()
                 }),
@@ -95,6 +118,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
     _window: &mut Window,
     _cx: &mut Context<AppView>,
 ) -> gpui::AnyElement {
+    if message.content.trim().is_empty() {
+        return div().into_any_element();
+    }
+
     let id = id.into();
     let text_view_id = (id.clone(), "markdown");
     let material = miaominal_settings::current_theme().material;
@@ -135,6 +162,94 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
         .into_any_element()
 }
 
+fn render_session_agent_markdown_block(
+    app: &AppView,
+    id: SharedString,
+    message: &SessionAgentMessage,
+    block: String,
+    fg: u32,
+    entity: Entity<AppView>,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> gpui::AnyElement {
+    render_session_agent_markdown(
+        app,
+        id,
+        &SessionAgentMessage {
+            role: message.role,
+            content: block,
+            tool_call: None,
+            thinking: None,
+        },
+        fg,
+        entity,
+        window,
+        cx,
+    )
+}
+
+fn render_session_agent_search_block(
+    app: &AppView,
+    message_column_width: f32,
+    index: usize,
+    block_idx: usize,
+    message: &SessionAgentMessage,
+    block: String,
+    fg: u32,
+    entity: Entity<AppView>,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+    search_match_set: &std::collections::HashSet<(usize, usize)>,
+    current_match_block: Option<(usize, usize)>,
+) -> gpui::AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let is_match = search_match_set.contains(&(index, block_idx));
+    let is_current = current_match_block == Some((index, block_idx));
+    let anchor = if app.session_agent.search_scroll_target == Some((index, block_idx)) {
+        let anchor =
+            ScrollAnchor::for_handle(app.workspace_state.session_agent_scroll_handle.clone());
+        anchor.scroll_to(window, cx);
+        Some(anchor)
+    } else {
+        None
+    };
+
+    div()
+        .id(SharedString::from(format!(
+            "session-agent-search-block-{index}-{block_idx}"
+        )))
+        .w(px(message_column_width))
+        .max_w(px(message_column_width))
+        .min_w_0()
+        .flex_shrink_0()
+        .anchor_scroll(anchor)
+        .when(is_match, |this| {
+            this.border_l_2()
+                .border_color(rgb(if is_current {
+                    roles.primary
+                } else {
+                    roles.primary_container
+                }))
+                .pl_1()
+        })
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .child(render_session_agent_markdown_block(
+                    app,
+                    SharedString::from(format!("session-agent-message-{index}-block-{block_idx}")),
+                    message,
+                    block,
+                    fg,
+                    entity,
+                    window,
+                    cx,
+                )),
+        )
+        .into_any_element()
+}
+
 pub(in crate::ui::shell::layout) fn render_session_agent_message(
     app: &AppView,
     message_column_width: f32,
@@ -143,11 +258,18 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     entity: Entity<AppView>,
     window: &mut Window,
     cx: &mut Context<AppView>,
+    search_match_set: &std::collections::HashSet<(usize, usize)>,
+    current_match_block: Option<(usize, usize)>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let is_user = message.role == SessionAgentMessageRole::User;
     let is_error = message.role == SessionAgentMessageRole::Error;
+    let search_active = app
+        .session_agent
+        .search_query
+        .as_ref()
+        .is_some_and(|query| !query.trim().is_empty());
     let context_menu_entity = entity.clone();
     let context_menu_text = message.content.clone();
     if message.role == SessionAgentMessageRole::Thinking {
@@ -177,6 +299,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
         .into_any_element();
     }
     if message.role == SessionAgentMessageRole::Assistant {
+        let blocks = split_message_into_blocks(&message.content);
+        let assistant_ct = message.content.clone();
+        let assistant_entity = entity.clone();
+        let fg = roles.on_surface;
+
         return div()
             .id(SharedString::from(format!(
                 "session-agent-message-menu-{index}-assistant"
@@ -188,18 +315,40 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
             .overflow_x_hidden()
             .px_1()
             .py_1()
-            .child(render_session_agent_markdown(
-                app,
-                SharedString::from(format!("session-agent-message-{index}-assistant")),
-                message,
-                roles.on_surface,
-                entity.clone(),
-                window,
-                cx,
-            ))
+            .when(!search_active, |this| {
+                this.child(render_session_agent_markdown(
+                    app,
+                    SharedString::from(format!("session-agent-message-{index}-assistant")),
+                    message,
+                    fg,
+                    entity.clone(),
+                    window,
+                    cx,
+                ))
+            })
+            .when(search_active, |this| {
+                this.child(v_flex().gap_2().children(blocks.iter().enumerate().map(
+                    |(block_idx, block)| {
+                        render_session_agent_search_block(
+                            app,
+                            message_column_width,
+                            index,
+                            block_idx,
+                            message,
+                            block.clone(),
+                            fg,
+                            entity.clone(),
+                            window,
+                            cx,
+                            search_match_set,
+                            current_match_block,
+                        )
+                    },
+                )))
+            })
             .context_menu(move |menu, window, cx| {
-                let text = context_menu_text.clone();
-                let entity = context_menu_entity.clone();
+                let text = assistant_ct.clone();
+                let entity = assistant_entity.clone();
                 let selected_text = window.selected_text(cx);
                 let selected_text = (!selected_text.trim().is_empty()).then_some(selected_text);
                 menu.item(
@@ -275,23 +424,40 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                             .child(label),
                     )
                 })
-                .child(
-                    div()
-                        .w_full()
-                        .min_w_0()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .line_height(miaominal_settings::scaled_line_height(21.0))
-                        .text_color(rgb(fg))
-                        .child(render_session_agent_markdown(
-                            app,
-                            SharedString::from(format!("session-agent-message-{index}-plain")),
-                            message,
-                            fg,
-                            entity.clone(),
-                            window,
-                            cx,
-                        )),
-                ),
+                .when(!search_active, |this| {
+                    this.child(render_session_agent_markdown(
+                        app,
+                        SharedString::from(format!("session-agent-message-{index}-plain")),
+                        message,
+                        fg,
+                        entity.clone(),
+                        window,
+                        cx,
+                    ))
+                })
+                .when(search_active, |this| {
+                    this.children(
+                        split_message_into_blocks(&message.content)
+                            .iter()
+                            .enumerate()
+                            .map(|(block_idx, block)| {
+                                render_session_agent_search_block(
+                                    app,
+                                    message_column_width.min(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH),
+                                    index,
+                                    block_idx,
+                                    message,
+                                    block.clone(),
+                                    fg,
+                                    entity.clone(),
+                                    window,
+                                    cx,
+                                    search_match_set,
+                                    current_match_block,
+                                )
+                            }),
+                    )
+                }),
         )
         .context_menu(move |menu, window, cx| {
             let text = context_menu_text.clone();

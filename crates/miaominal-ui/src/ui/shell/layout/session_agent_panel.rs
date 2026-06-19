@@ -1,10 +1,10 @@
 use super::super::*;
-use crate::ui::i18n;
-use std::time::Duration;
 use super::session_agent_composer;
 use super::session_agent_conversation;
 use super::session_agent_history;
 use super::session_agent_mentions;
+use crate::ui::i18n;
+use std::time::Duration;
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
 const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
@@ -114,12 +114,33 @@ impl AppView {
 
     fn handle_session_agent_key_down(
         &mut self,
-        _event: &KeyDownEvent,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        // Ctrl/Cmd+C is now handled by gpui-component Root's window-level selection.
-        // This handler can be removed or used for other session agent shortcuts.
+        let bindings = &miaominal_settings::current_settings().key_bindings;
+        let is_search = bindings.search.matches_keystroke(&event.keystroke);
+        let is_escape = event.keystroke.key == "escape";
+
+        if is_search {
+            cx.stop_propagation();
+            if self.session_agent.panel_view == ChatPanelView::SessionList {
+                self.open_session_filter(window, cx);
+            } else {
+                self.open_conversation_search(window, cx);
+            }
+            return;
+        }
+
+        if is_escape {
+            cx.stop_propagation();
+            let forms = &self.workspace_forms.chat_search;
+            if forms.session_filter_open {
+                self.close_session_filter(cx);
+            } else if forms.conversation_search_open {
+                self.close_conversation_search(cx);
+            }
+        }
     }
 
     fn start_session_agent_auto_scroll(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
@@ -386,6 +407,22 @@ impl AppView {
         let show_scrollable_messages =
             !self.session_agent.messages.is_empty() || self.session_agent.is_busy();
 
+        // Chat search state
+        let is_search_open = self.workspace_forms.chat_search.conversation_search_open;
+        let search_input_entity = self
+            .workspace_forms
+            .chat_search
+            .conversation_search_input
+            .clone();
+        let search_match_count = self.workspace_forms.chat_search.match_count;
+        let search_current_match = self.workspace_forms.chat_search.current_match;
+        let search_status = self.workspace_forms.chat_search.status.clone();
+
+        let search_button_entity = entity.clone();
+        let close_search_entity = entity.clone();
+        let next_entity = entity.clone();
+        let prev_entity = entity.clone();
+
         div()
             .id("session-agent-panel-content")
             .size_full()
@@ -498,8 +535,115 @@ impl AppView {
                                                     )
                                                 }
                                             }),
-                                    ),
+                                    )
+                                    // Search toggle button
+                                    .child(icon_button(
+                                        AppIcon::Search,
+                                        24.0,
+                                        8.0,
+                                        Some(roles.surface_container_high),
+                                        Some(if is_search_open { roles.primary } else { text_muted }),
+                                        None,
+                                        {
+                                            let entity = search_button_entity.clone();
+                                            move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    if this.workspace_forms.chat_search.conversation_search_open {
+                                                        this.close_conversation_search(cx);
+                                                    } else {
+                                                        this.open_conversation_search(window, cx);
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )),
                             )
+                            // Search overlay bar
+                            .when(is_search_open, {
+                                let search_input = search_input_entity.clone();
+                                let close_ent = close_search_entity.clone();
+                                let next_ent = next_entity.clone();
+                                let prev_ent = prev_entity.clone();
+                                let match_count = search_match_count;
+                                let current_match = search_current_match;
+                                let status_text = search_status.clone();
+                                move |this| {
+                                    this.child(
+                                        v_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .py_1()
+                                            .child(search_filter_input(
+                                                &search_input.clone(),
+                                                SearchInputStyle::Compact,
+                                                {
+                                                    // Suffix: match counter + prev/next + close
+                                                    let close_ent = close_ent.clone();
+                                                    let next_ent = next_ent.clone();
+                                                    let prev_ent = prev_ent.clone();
+                                                    let match_info = if let Some(ref st) = status_text {
+                                                        st.clone()
+                                                    } else if match_count > 0 {
+                                                        format!("{}/{}", current_match.map_or(1, |c| c + 1), match_count)
+                                                    } else {
+                                                        String::new()
+                                                    };
+                                                    Some(
+                                                        h_flex()
+                                                            .gap_1()
+                                                            .items_center()
+                                                            .child(
+                                                                div()
+                                                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                                                    .text_color(rgb(text_muted))
+                                                                    .child(match_info),
+                                                            )
+                                                            .child(icon_button(
+                                                                AppIcon::ChevronUp,
+                                                                16.0,
+                                                                4.0,
+                                                                Some(roles.surface_container_high),
+                                                                Some(text_muted),
+                                                                None,
+                                                                move |_window, cx| {
+                                                                    prev_ent.update(cx, |this, cx| {
+                                                                        this.navigate_conversation_search_prev(cx);
+                                                                    });
+                                                                },
+                                                            ))
+                                                            .child(icon_button(
+                                                                AppIcon::ChevronDown,
+                                                                16.0,
+                                                                4.0,
+                                                                Some(roles.surface_container_high),
+                                                                Some(text_muted),
+                                                                None,
+                                                                move |_window, cx| {
+                                                                    next_ent.update(cx, |this, cx| {
+                                                                        this.navigate_conversation_search_next(cx);
+                                                                    });
+                                                                },
+                                                            ))
+                                                            .child(icon_button(
+                                                                AppIcon::PanelRight,
+                                                                16.0,
+                                                                4.0,
+                                                                Some(roles.surface_container_high),
+                                                                Some(text_muted),
+                                                                None,
+                                                                move |_window, cx| {
+                                                                    close_ent.update(cx, |this, cx| {
+                                                                        this.close_conversation_search(cx);
+                                                                    });
+                                                                },
+                                                            ))
+                                                            .into_any_element(),
+                                                    )
+                                                },
+                                            )),
+                                    )
+                                }
+                            })
                             .child(div().flex_1().min_h_0().child(if show_scrollable_messages {
                                 div()
                                     .relative()
@@ -510,8 +654,6 @@ impl AppView {
                                             .id("session-agent-scroll")
                                             .size_full()
                                             .overflow_x_hidden()
-                                            .track_scroll(&agent_scroll_handle)
-                                            .overflow_y_scroll()
                                             .capture_any_mouse_down(cx.listener(
                                                 move |this, event: &MouseDownEvent, _window, cx| {
                                                     this.stop_session_agent_follow_bottom(true);
@@ -569,9 +711,9 @@ impl AppView {
                                                     );
                                                 },
                                             ))
-                                            .pb_2()
                                             .child(self.render_session_agent_messages(
                                                 message_column_width,
+                                                Some(&agent_scroll_handle),
                                                 entity.clone(),
                                                 window,
                                                 cx,
@@ -594,6 +736,7 @@ impl AppView {
                                     .overflow_hidden()
                                     .child(self.render_session_agent_messages(
                                         message_column_width,
+                                        None,
                                         entity.clone(),
                                         window,
                                         cx,
@@ -630,17 +773,28 @@ impl AppView {
         session_agent_mentions::render_session_agent_at_mention_overlay(self, entity, query)
     }
 
-    pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(&self, entity: Entity<Self>) -> gpui::AnyElement {
+    pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(
+        &self,
+        entity: Entity<Self>,
+    ) -> gpui::AnyElement {
         session_agent_mentions::render_session_agent_target_chips(self, entity)
     }
 
     fn render_session_agent_messages(
         &self,
         message_column_width: f32,
+        scroll_handle: Option<&ScrollHandle>,
         entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        session_agent_conversation::render_session_agent_messages(self, message_column_width, entity, window, cx)
+        session_agent_conversation::render_session_agent_messages(
+            self,
+            message_column_width,
+            scroll_handle,
+            entity,
+            window,
+            cx,
+        )
     }
 }

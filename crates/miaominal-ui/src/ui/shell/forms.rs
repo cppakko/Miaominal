@@ -72,6 +72,7 @@ pub(in crate::ui::shell) struct SftpBrowserForms {
 pub(in crate::ui::shell) struct WorkspaceForms {
     pub(in crate::ui::shell) rename_input: Entity<InputState>,
     pub(in crate::ui::shell) search: TerminalSearchForms,
+    pub(in crate::ui::shell) chat_search: ChatSearchForms,
     pub(in crate::ui::shell) agent: WorkspaceAgentForms,
     pub(in crate::ui::shell) snippets_panel: WorkspaceSnippetsForms,
     pub(in crate::ui::shell) sftp_browser: SftpBrowserForms,
@@ -256,6 +257,19 @@ impl KeyBindingSlot {
     pub(in crate::ui::shell) fn description(self) -> String {
         i18n::string(self.description_key())
     }
+}
+
+pub(in crate::ui::shell) struct ChatSearchForms {
+    pub(in crate::ui::shell) session_filter_input: Entity<InputState>,
+    pub(in crate::ui::shell) session_filter_open: bool,
+    pub(in crate::ui::shell) conversation_search_input: Entity<InputState>,
+    pub(in crate::ui::shell) conversation_search_open: bool,
+    pub(in crate::ui::shell) conversation_search_visible: bool,
+    pub(in crate::ui::shell) conversation_search_visibility: f32,
+    pub(in crate::ui::shell) conversation_search_animation: Option<TerminalSearchAnimation>,
+    pub(in crate::ui::shell) match_count: usize,
+    pub(in crate::ui::shell) current_match: Option<usize>,
+    pub(in crate::ui::shell) status: Option<String>,
 }
 
 pub(in crate::ui::shell) struct PanelForms {

@@ -464,6 +464,8 @@ new_name = "New name"
 [placeholders.workspace]
 tab_name = "Tab name"
 search_scrollback = "Search scrollback"
+search_sessions = "Search sessions"
+search_messages = "Search messages"
 snippet_filter = "Search snippets"
 
 [dialogs.profile_delete]

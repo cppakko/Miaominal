@@ -160,6 +160,212 @@ impl AppView {
             session.terminal.clear_search();
         }
     }
+
+    // ── Chat search actions ──
+
+    pub(in crate::ui::shell) fn open_session_filter(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let forms = &mut self.workspace_forms.chat_search;
+        if forms.session_filter_open {
+            forms
+                .session_filter_input
+                .update(cx, |state, cx| state.focus(window, cx));
+            return;
+        }
+        forms.session_filter_open = true;
+        set_input_value(&forms.session_filter_input, "", window, cx);
+        forms
+            .session_filter_input
+            .update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn close_session_filter(&mut self, cx: &mut Context<Self>) {
+        let forms = &mut self.workspace_forms.chat_search;
+        if !forms.session_filter_open {
+            return;
+        }
+        forms.session_filter_open = false;
+        self.session_agent.search_query = None;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn open_conversation_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let forms = &mut self.workspace_forms.chat_search;
+        if forms.conversation_search_open {
+            forms
+                .conversation_search_input
+                .update(cx, |state, cx| state.focus(window, cx));
+            return;
+        }
+        forms.conversation_search_open = true;
+        forms.conversation_search_visible = true;
+        forms.conversation_search_animation = Some(TerminalSearchAnimation {
+            started_at: Instant::now(),
+            duration: OVERLAY_ENTER_DURATION,
+            from: forms.conversation_search_visibility,
+            to: 1.0,
+        });
+        forms.match_count = 0;
+        forms.current_match = None;
+        forms.status = None;
+        set_input_value(&forms.conversation_search_input, "", window, cx);
+        forms
+            .conversation_search_input
+            .update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn close_conversation_search(&mut self, cx: &mut Context<Self>) {
+        let forms = &mut self.workspace_forms.chat_search;
+        if !forms.conversation_search_open && !forms.conversation_search_visible {
+            return;
+        }
+        forms.conversation_search_open = false;
+        forms.conversation_search_visible = true;
+        forms.conversation_search_animation = Some(TerminalSearchAnimation {
+            started_at: Instant::now(),
+            duration: OVERLAY_ENTER_DURATION,
+            from: forms.conversation_search_visibility,
+            to: 0.0,
+        });
+        self.session_agent.search_query = None;
+        self.session_agent.search_match_indices.clear();
+        self.session_agent.search_current_match = None;
+        self.session_agent.search_scroll_target = None;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn update_conversation_search(
+        &mut self,
+        query: String,
+        cx: &mut Context<Self>,
+    ) {
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.session_agent.search_query = None;
+            self.session_agent.search_match_indices.clear();
+            self.session_agent.search_current_match = None;
+            self.session_agent.search_scroll_target = None;
+            let forms = &mut self.workspace_forms.chat_search;
+            forms.match_count = 0;
+            forms.current_match = None;
+            forms.status = None;
+            cx.notify();
+            return;
+        }
+
+        let query_lower = query.to_lowercase();
+        let mut match_indices: Vec<(usize, usize)> = Vec::new();
+
+        for (msg_idx, message) in self.session_agent.messages.iter().enumerate() {
+            if !matches!(
+                message.role,
+                SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
+            ) {
+                continue;
+            }
+            let blocks = split_message_into_blocks(&message.content);
+            for (block_idx, block) in blocks.iter().enumerate() {
+                if block.to_lowercase().contains(&query_lower) {
+                    match_indices.push((msg_idx, block_idx));
+                }
+            }
+        }
+
+        let count = match_indices.len();
+        self.session_agent.search_query = Some(query);
+        self.session_agent.search_match_indices = match_indices;
+        self.session_agent.search_current_match = if count > 0 { Some(0) } else { None };
+        if count > 0 {
+            self.request_conversation_search_scroll_to_match(0, cx);
+        } else {
+            self.session_agent.search_scroll_target = None;
+        }
+
+        let forms = &mut self.workspace_forms.chat_search;
+        forms.match_count = count;
+        forms.current_match = if count > 0 { Some(0) } else { None };
+        forms.status = if count == 0 {
+            Some(i18n::string("search.messages.no_matches"))
+        } else {
+            None
+        };
+
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn navigate_conversation_search_next(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.session_agent.search_match_indices.len();
+        if count == 0 {
+            return;
+        }
+        let next = self
+            .session_agent
+            .search_current_match
+            .map_or(0, |idx| (idx + 1) % count);
+        self.session_agent.search_current_match = Some(next);
+        self.request_conversation_search_scroll_to_match(next, cx);
+        self.workspace_forms.chat_search.current_match = Some(next);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn navigate_conversation_search_prev(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.session_agent.search_match_indices.len();
+        if count == 0 {
+            return;
+        }
+        let prev = match self.session_agent.search_current_match {
+            Some(0) | None => count - 1,
+            Some(idx) => idx - 1,
+        };
+        self.session_agent.search_current_match = Some(prev);
+        self.request_conversation_search_scroll_to_match(prev, cx);
+        self.workspace_forms.chat_search.current_match = Some(prev);
+        cx.notify();
+    }
+
+    fn request_conversation_search_scroll_to_match(
+        &mut self,
+        match_list_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = self
+            .session_agent
+            .search_match_indices
+            .get(match_list_index)
+            .copied()
+        else {
+            return;
+        };
+
+        self.session_agent.search_scroll_target = Some(target);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(96))
+                .await;
+            let _ = this.update(cx, move |this, cx| {
+                if this.session_agent.search_scroll_target == Some(target) {
+                    this.session_agent.search_scroll_target = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
 }
 
 /// Escape every regex metacharacter so that the user-entered pattern is treated

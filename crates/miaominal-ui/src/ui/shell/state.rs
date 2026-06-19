@@ -246,6 +246,63 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) panel_view: ChatPanelView,
     /// Token usage from the most recent LLM completion request.
     pub(in crate::ui::shell) last_usage: Option<TokenUsage>,
+    /// Active search query for filtering messages in the conversation view.
+    pub(in crate::ui::shell) search_query: Option<String>,
+    /// Matching blocks as (message_index, block_index) pairs.
+    pub(in crate::ui::shell) search_match_indices: Vec<(usize, usize)>,
+    /// Current position in the match navigation (index into search_match_indices).
+    pub(in crate::ui::shell) search_current_match: Option<usize>,
+    /// One-shot target block that should be brought into view after layout.
+    pub(in crate::ui::shell) search_scroll_target: Option<(usize, usize)>,
+}
+
+/// Split message content into logical blocks for per-block search matching.
+/// Code fences are kept as single blocks; paragraphs are separated by blank lines.
+pub(in crate::ui::shell) fn split_message_into_blocks(content: &str) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_code_fence = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            if !in_code_fence && !current.is_empty() {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    blocks.push(trimmed);
+                }
+                current.clear();
+            }
+            current.push_str(line);
+            current.push('\n');
+            in_code_fence = !in_code_fence;
+            if !in_code_fence {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    blocks.push(trimmed);
+                }
+                current.clear();
+            }
+        } else if !in_code_fence && trimmed.is_empty() {
+            if !current.is_empty() {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    blocks.push(trimmed);
+                }
+                current.clear();
+            }
+        } else {
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+    if !current.is_empty() {
+        let trimmed = current.trim().to_string();
+        if !trimmed.is_empty() {
+            blocks.push(trimmed);
+        }
+    }
+    blocks
 }
 
 impl SessionAgentState {
@@ -1551,6 +1608,29 @@ mod tests {
             monitoring: SessionMonitoringState::new(false),
             purpose,
         }
+    }
+
+    #[test]
+    fn split_message_into_blocks_skips_blank_segments() {
+        assert!(split_message_into_blocks("").is_empty());
+        assert!(split_message_into_blocks("\n\n  \n\t\n").is_empty());
+
+        assert_eq!(
+            split_message_into_blocks("hello\n\n\nworld"),
+            vec!["hello".to_string(), "world".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_message_into_blocks_keeps_code_fences_together() {
+        assert_eq!(
+            split_message_into_blocks("before\n\n```rust\nfn main() {}\n```\n\nafter"),
+            vec![
+                "before".to_string(),
+                "```rust\nfn main() {}\n```".to_string(),
+                "after".to_string()
+            ]
+        );
     }
 
     #[test]

@@ -35,7 +35,9 @@ pub(in crate::ui::shell::layout) fn parse_run_shell_command(arguments: &str) -> 
         .map(ToOwned::to_owned)
 }
 
-pub(in crate::ui::shell::layout) fn parse_run_shell_result(note: &str) -> Option<RunShellDisplayResult> {
+pub(in crate::ui::shell::layout) fn parse_run_shell_result(
+    note: &str,
+) -> Option<RunShellDisplayResult> {
     let value: serde_json::Value = serde_json::from_str(note).ok()?;
     let output = value.get("output")?;
     let result = output.get("result")?;
@@ -48,7 +50,9 @@ pub(in crate::ui::shell::layout) fn parse_run_shell_result(note: &str) -> Option
     })
 }
 
-pub(in crate::ui::shell::layout) fn tool_arguments_value(arguments: &str) -> Option<serde_json::Value> {
+pub(in crate::ui::shell::layout) fn tool_arguments_value(
+    arguments: &str,
+) -> Option<serde_json::Value> {
     let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
     Some(value.get("arguments").unwrap_or(&value).clone())
 }
@@ -77,18 +81,26 @@ pub(in crate::ui::shell::layout) fn tool_output_value(
     Some(output.clone())
 }
 
-pub(in crate::ui::shell::layout) fn string_field(value: Option<&serde_json::Value>, key: &str) -> Option<String> {
+pub(in crate::ui::shell::layout) fn string_field(
+    value: Option<&serde_json::Value>,
+    key: &str,
+) -> Option<String> {
     value?
         .get(key)
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned)
 }
 
-pub(in crate::ui::shell::layout) fn number_field(value: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+pub(in crate::ui::shell::layout) fn number_field(
+    value: Option<&serde_json::Value>,
+    key: &str,
+) -> Option<i64> {
     value?.get(key).and_then(serde_json::Value::as_i64)
 }
 
-pub(in crate::ui::shell::layout) fn list_entries_text(value: Option<&serde_json::Value>) -> Option<String> {
+pub(in crate::ui::shell::layout) fn list_entries_text(
+    value: Option<&serde_json::Value>,
+) -> Option<String> {
     let entries = value?.get("entries")?.as_array()?;
     Some(
         entries
@@ -100,11 +112,15 @@ pub(in crate::ui::shell::layout) fn list_entries_text(value: Option<&serde_json:
     )
 }
 
-pub(in crate::ui::shell::layout) fn pending_or_note(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> String {
+pub(in crate::ui::shell::layout) fn pending_or_note(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> String {
     tool_display_result(tool_call).unwrap_or_else(|| pending_result_text(tool_call))
 }
 
-pub(in crate::ui::shell::layout) fn tool_has_result_status(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> bool {
+pub(in crate::ui::shell::layout) fn tool_has_result_status(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> bool {
     matches!(
         tool_call.status,
         SessionAgentToolStatus::Completed
@@ -113,7 +129,9 @@ pub(in crate::ui::shell::layout) fn tool_has_result_status(tool_call: &crate::ui
     )
 }
 
-pub(in crate::ui::shell::layout) fn pending_result_text(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> String {
+pub(in crate::ui::shell::layout) fn pending_result_text(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> String {
     match tool_call.status {
         SessionAgentToolStatus::Pending => "Preparing request...".to_string(),
         SessionAgentToolStatus::WaitingForConfirmation => "Waiting for approval...".to_string(),
@@ -124,7 +142,9 @@ pub(in crate::ui::shell::layout) fn pending_result_text(tool_call: &crate::ui::s
     }
 }
 
-pub(in crate::ui::shell::layout) fn arguments_are_streaming(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> bool {
+pub(in crate::ui::shell::layout) fn arguments_are_streaming(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> bool {
     matches!(
         tool_call.status,
         SessionAgentToolStatus::Pending
@@ -174,7 +194,10 @@ pub(in crate::ui::shell::layout) fn tool_display_result(
         .filter(|text| !text.trim().is_empty())
 }
 
-pub(in crate::ui::shell::layout) fn partial_json_string_field(arguments: &str, key: &str) -> Option<String> {
+pub(in crate::ui::shell::layout) fn partial_json_string_field(
+    arguments: &str,
+    key: &str,
+) -> Option<String> {
     let needle = format!("\"{key}\"");
     let start = arguments.find(&needle)?;
     let after_key = &arguments[start + needle.len()..];
@@ -280,7 +303,9 @@ pub(in crate::ui::shell::layout) fn patch_paths(patch: &str) -> Vec<String> {
     paths
 }
 
-pub(in crate::ui::shell::layout) fn format_tool_call_copy_text(tool_call: &crate::ui::shell::state::SessionAgentToolCall) -> String {
+pub(in crate::ui::shell::layout) fn format_tool_call_copy_text(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> String {
     let mut text = format!(
         "Tool: {}\nStatus: {:?}\nArguments:\n{}",
         tool_call.name, tool_call.status, tool_call.arguments

@@ -466,6 +466,18 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Clear any active search state
+        self.session_agent.search_query = None;
+        self.session_agent.search_match_indices.clear();
+        self.session_agent.search_current_match = None;
+        self.session_agent.search_scroll_target = None;
+        let chat_search = &mut self.workspace_forms.chat_search;
+        chat_search.conversation_search_open = false;
+        chat_search.conversation_search_visible = false;
+        chat_search.match_count = 0;
+        chat_search.current_match = None;
+        chat_search.status = None;
+
         self.stash_current_session_agent();
         self.reset_session_agent_chat(window, cx);
         self.session_agent.panel_view = ChatPanelView::Conversation;
@@ -477,6 +489,18 @@ impl AppView {
         session_id: String,
         cx: &mut Context<Self>,
     ) {
+        // Clear any active search state when loading a session
+        self.session_agent.search_query = None;
+        self.session_agent.search_match_indices.clear();
+        self.session_agent.search_current_match = None;
+        self.session_agent.search_scroll_target = None;
+        let chat_search = &mut self.workspace_forms.chat_search;
+        chat_search.conversation_search_open = false;
+        chat_search.conversation_search_visible = false;
+        chat_search.match_count = 0;
+        chat_search.current_match = None;
+        chat_search.status = None;
+
         if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
             self.session_agent.panel_view = ChatPanelView::Conversation;
             self.reset_session_agent_scroll();

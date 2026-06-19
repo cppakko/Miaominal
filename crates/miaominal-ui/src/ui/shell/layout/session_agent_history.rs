@@ -1,6 +1,7 @@
 use super::super::*;
 use super::session_agent_composer;
 use super::session_agent_utils::format_relative_chat_time;
+use crate::ui::i18n;
 use gpui::{Size, size};
 use gpui_component::v_virtual_list;
 use std::rc::Rc;
@@ -17,12 +18,31 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
         material.palettes.neutral_variant,
         if material.dark { 65 } else { 50 },
     );
-    let sessions = app.data.chat_sessions.clone();
+    let all_sessions = app.data.chat_sessions.clone();
     let current_session_id = app.session_agent.session_id.clone();
     let history_scroll_handle = app
         .workspace_state
         .session_agent_history_scroll_handle
         .clone();
+    let is_search_open = app.workspace_forms.chat_search.session_filter_open;
+    let search_filter_input_entity = app.workspace_forms.chat_search.session_filter_input.clone();
+
+    // Filter sessions by search query — store indices into all_sessions
+    let search_query = app.session_agent.search_query.clone();
+    let filtered_indices: Vec<usize> = if let Some(ref query) = search_query {
+        let query_lower = query.to_lowercase();
+        all_sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.title.to_lowercase().contains(&query_lower))
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        (0..all_sessions.len()).collect()
+    };
+
+    let search_button_entity = entity.clone();
+    let has_sessions = !all_sessions.is_empty();
 
     v_flex()
         .id("session-agent-history-panel")
@@ -44,9 +64,37 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(roles.on_surface))
                             .child("AI Chat"),
-                    ),
+                    )
+                    .child(icon_button(
+                        AppIcon::Search,
+                        24.0,
+                        8.0,
+                        Some(roles.surface_container_high),
+                        Some(if is_search_open { roles.primary } else { text_muted }),
+                        None,
+                        {
+                            let entity = search_button_entity.clone();
+                            move |window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if this.workspace_forms.chat_search.session_filter_open {
+                                        this.close_session_filter(cx);
+                                    } else {
+                                        this.open_session_filter(window, cx);
+                                    }
+                                });
+                            }
+                        },
+                    )),
                 )
-                .child(if sessions.is_empty() {
+                // Search bar
+                .when(is_search_open, move |this| {
+                    this.child(search_filter_input(
+                        &search_filter_input_entity.clone(),
+                        SearchInputStyle::Compact,
+                        None,
+                    ))
+                })
+                .child(if !has_sessions {
                     div()
                         .flex_1()
                         .min_h_0()
@@ -60,20 +108,38 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                         .text_color(rgb(text_muted))
                         .child("No saved chats")
                         .into_any_element()
+                } else if filtered_indices.is_empty() {
+                    // Empty state: no matching sessions
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .min_h(px(160.0))
+                        .w_full()
+                        .items_center()
+                        .justify_center()
+                        .flex()
+                        .text_center()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(text_muted))
+                        .child(i18n::string("search.messages.no_matches"))
+                        .into_any_element()
                 } else {
                     div()
                         .flex_1()
                         .min_h_0()
                         .relative()
                         .child({
+                            let filtered_count = filtered_indices.len();
+                            let filtered_indices_rc: Rc<Vec<usize>> = Rc::new(filtered_indices);
                             let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
-                                (0..sessions.len())
+                                (0..filtered_count)
                                     .map(|_| size(px(0.0), px(58.0)))
                                     .collect(),
                             );
                             let view_entity = entity.clone();
                             let current_sid = current_session_id.clone();
-                            let session_count = sessions.len();
+                            let session_count = filtered_count;
+                            let filtered_ix = filtered_indices_rc.clone();
 
                             v_virtual_list(
                                 entity.clone(),
@@ -88,11 +154,14 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                     );
                                     let view_entity = view_entity.clone();
                                     let current_sid = current_sid.clone();
+                                    let filtered_ix = filtered_ix.clone();
 
                                     visible_range
                                         .filter(|ix| *ix < session_count)
                                         .map(|ix| {
-                                            let session = &this.data.chat_sessions[ix];
+                                            // Map virtual list index to actual session index
+                                            let actual_ix = filtered_ix[ix];
+                                            let session = &this.data.chat_sessions[actual_ix];
                                             let open_entity = view_entity.clone();
                                             let delete_entity = view_entity.clone();
                                             let session_id = session.id.clone();

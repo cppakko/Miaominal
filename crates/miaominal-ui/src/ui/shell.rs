@@ -93,9 +93,9 @@ pub(in crate::ui::shell) use actions::{
 use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
 use controllers::ControllerSet;
 use forms::{
-    HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms, SettingsForms,
-    SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms, WorkspaceAgentForms,
-    WorkspaceForms, WorkspaceSnippetsForms,
+    ChatSearchForms, HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms,
+    SettingsForms, SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms,
+    WorkspaceAgentForms, WorkspaceForms, WorkspaceSnippetsForms,
 };
 pub(in crate::ui::shell) use forms::{KeyBindingSlot, SelectOption};
 pub(in crate::ui::shell) use metrics::*;
@@ -121,7 +121,7 @@ pub(in crate::ui::shell) use state::{
     SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
     SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
     SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
-    trailing_at_mention_query,
+    split_message_into_blocks, trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

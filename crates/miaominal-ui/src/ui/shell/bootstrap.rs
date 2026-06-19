@@ -1193,6 +1193,54 @@ impl AppView {
                 _ => {}
             },
         );
+
+        let session_filter_input = new_input_state(
+            i18n::string("placeholders.workspace.search_sessions"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let session_filter_subscription = cx.subscribe(
+            &session_filter_input,
+            |this: &mut AppView, input, _event: &InputEvent, cx| {
+                if matches!(_event, InputEvent::Change) {
+                    let value = input.read(cx).value().to_string();
+                    this.session_agent.search_query =
+                        if value.is_empty() { None } else { Some(value) };
+                    cx.notify();
+                }
+            },
+        );
+
+        let conversation_search_input = new_input_state(
+            i18n::string("placeholders.workspace.search_messages"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let conversation_search_subscription = cx.subscribe(
+            &conversation_search_input,
+            |this: &mut AppView, input, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    let value = input.read(cx).value().to_string();
+                    this.update_conversation_search(value, cx);
+                }
+                InputEvent::PressEnter {
+                    secondary,
+                    shift: _,
+                } => {
+                    if *secondary {
+                        this.navigate_conversation_search_prev(cx);
+                    } else {
+                        this.navigate_conversation_search_next(cx);
+                    }
+                }
+                _ => {}
+            },
+        );
+
         let terminal_focus_in_subscription =
             cx.on_focus_in(&terminal_focus, window, |this, window, cx| {
                 this.sync_terminal_focus_reporting(window, cx);
@@ -1379,6 +1427,8 @@ impl AppView {
         let workspace_forms = Self::build_workspace_forms(WorkspaceFormsArgs {
             rename_input,
             search_input,
+            session_filter_input,
+            conversation_search_input,
             agent_prompt_input,
             agent_title_input,
             session_snippets_filter_input,
@@ -1695,6 +1745,8 @@ impl AppView {
                 sftp_prompt_subscription,
                 sftp_inline_rename_subscription,
                 search_subscription,
+                session_filter_subscription,
+                conversation_search_subscription,
                 session_snippets_filter_subscription,
                 session_agent_prompt_subscription,
                 session_agent_title_subscription,

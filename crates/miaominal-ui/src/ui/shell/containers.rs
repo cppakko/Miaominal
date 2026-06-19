@@ -107,4 +107,6 @@ pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _terminal_focus_out_subscription: Subscription,
     pub _window_activation_subscription: Subscription,
     pub _terminal_keystroke_interceptor: Subscription,
+    pub _session_filter_input_subscription: Subscription,
+    pub _conversation_search_input_subscription: Subscription,
 }

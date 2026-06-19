@@ -31,6 +31,8 @@ pub(in crate::ui::shell) struct HostEditorFormsArgs {
 pub(in crate::ui::shell) struct WorkspaceFormsArgs {
     pub rename_input: Entity<InputState>,
     pub search_input: Entity<InputState>,
+    pub session_filter_input: Entity<InputState>,
+    pub conversation_search_input: Entity<InputState>,
     pub agent_prompt_input: Entity<InputState>,
     pub agent_title_input: Entity<InputState>,
     pub session_snippets_filter_input: Entity<InputState>,
@@ -168,6 +170,8 @@ impl AppView {
         let WorkspaceFormsArgs {
             rename_input,
             search_input,
+            session_filter_input,
+            conversation_search_input,
             agent_prompt_input,
             agent_title_input,
             session_snippets_filter_input,
@@ -189,6 +193,18 @@ impl AppView {
                 animation: None,
                 total: 0,
                 current: None,
+                status: None,
+            },
+            chat_search: ChatSearchForms {
+                session_filter_input,
+                session_filter_open: false,
+                conversation_search_input,
+                conversation_search_open: false,
+                conversation_search_visible: false,
+                conversation_search_visibility: 0.0,
+                conversation_search_animation: None,
+                match_count: 0,
+                current_match: None,
                 status: None,
             },
             agent: WorkspaceAgentForms {

@@ -337,6 +337,8 @@ filter = "搜索主机、指纹、算法、配置..."
 [placeholders.workspace]
 tab_name = "标签名"
 search_scrollback = "搜索回滚内容"
+search_sessions = "搜索会话"
+search_messages = "搜索消息"
 snippet_filter = "搜索脚本片段"
 
 [dialogs.profile_delete]

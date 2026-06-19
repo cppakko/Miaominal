@@ -1,6 +1,6 @@
 use super::super::*;
-use super::session_agent_tool_ui::*;
 use super::session_agent_tool_parse::*;
+use super::session_agent_tool_ui::*;
 
 pub(in crate::ui::shell::layout) fn render_structured_tool_body(
     tool_call: &crate::ui::shell::state::SessionAgentToolCall,
