@@ -18,5 +18,6 @@ pub use miaominal_core::forwarding::{
 #[allow(unused_imports)]
 pub use session::SessionConnection;
 pub use session::{
-    SessionCommandSender, SessionEvent, connection, execute_profile_command, start_session,
+    SessionCommandSender, SessionEvent, connection, execute_profile_command,
+    execute_profile_pty_command, start_session,
 };

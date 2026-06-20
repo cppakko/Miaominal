@@ -9,11 +9,11 @@ mod policy;
 mod tools;
 mod web;
 
-pub use backend::{BackendRoute, BackendRouter, SshExecBackend, SshExecRequest};
+pub use backend::{BackendRoute, BackendRouter, ExecMode, SshBackend, SshExecRequest};
 pub use capabilities::{CapabilityProbe, CapabilityProbeResult, RemoteCapabilities};
 pub use channel::{
-    AgentExecChannel, AgentPtyHandle, AgentToolCallRequest, AgentToolCallResponse,
-    ShellCommandResult, ToolOutput,
+    AgentExecChannel, AgentToolCallRequest, AgentToolCallResponse,
+    ShellCommandResult, TerminalExecHandle, ToolOutput,
 };
 pub use chat::{
     AgentChatEvent, AgentChatMessage, AgentMode, AgentChatProvider, AgentChatProviderKind,

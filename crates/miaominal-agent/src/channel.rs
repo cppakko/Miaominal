@@ -1,8 +1,8 @@
-use crate::backend::{BackendRoute, BackendRouter, SshExecRequest};
+use crate::backend::{BackendRoute, BackendRouter, ExecMode, SshExecRequest};
 use crate::capabilities::RemoteCapabilities;
 use crate::error::{AgentError, AgentResult};
 use crate::jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult};
-use crate::path_guard::{resolve_workspace_path, shell_quote};
+use crate::path_guard::resolve_workspace_path;
 use crate::policy::{AgentPathAccess, AgentPolicy};
 use crate::tools::{self, ListEntry};
 use crate::web::{
@@ -20,6 +20,13 @@ use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// Handle for executing commands inside a user-visible terminal tab's PTY.
+#[derive(Clone)]
+pub struct TerminalExecHandle {
+    pub command_sender: miaominal_ssh::SessionCommandSender,
+    pub output_tap: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentToolCallRequest {
@@ -113,12 +120,6 @@ pub struct ShellCommandResult {
 }
 
 #[derive(Clone)]
-pub struct AgentPtyHandle {
-    pub command_sender: miaominal_ssh::SessionCommandSender,
-    pub output_tap: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>>,
-}
-
-#[derive(Clone)]
 pub struct AgentExecChannel {
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
@@ -130,7 +131,8 @@ pub struct AgentExecChannel {
     web_search: Arc<dyn WebSearchProvider>,
     web_search_configured: bool,
     web_fetch: WebFetchConfig,
-    pty: Option<AgentPtyHandle>,
+    use_pty: bool,
+    terminal_exec: Option<TerminalExecHandle>,
     aux_channels: HashMap<String, AgentExecChannel>,
 }
 
@@ -168,7 +170,8 @@ impl AgentExecChannel {
             web_search: Arc::new(DisabledWebSearchProvider),
             web_search_configured: false,
             web_fetch: WebFetchConfig::default(),
-            pty: None,
+            use_pty: false,
+            terminal_exec: None,
             aux_channels: HashMap::new(),
         }
     }
@@ -198,6 +201,10 @@ impl AgentExecChannel {
         }
     }
 
+    pub fn is_fish_shell(&self) -> bool {
+        matches!(self.profile.shell_type, ShellType::Fish)
+    }
+
     pub fn web_search(&self) -> &dyn WebSearchProvider {
         self.web_search.as_ref()
     }
@@ -220,8 +227,14 @@ impl AgentExecChannel {
         self
     }
 
-    pub fn with_pty_handle(mut self, handle: AgentPtyHandle) -> Self {
-        self.pty = Some(handle);
+    pub fn with_pty(mut self) -> Self {
+        self.use_pty = true;
+        self
+    }
+
+    pub fn with_terminal_exec(mut self, handle: TerminalExecHandle) -> Self {
+        self.terminal_exec = Some(handle);
+        self.use_pty = true;
         self
     }
 
@@ -230,8 +243,12 @@ impl AgentExecChannel {
         self
     }
 
-    pub fn has_pty_handle(&self) -> bool {
-        self.pty.is_some()
+    pub fn uses_pty(&self) -> bool {
+        self.use_pty
+    }
+
+    pub fn terminal_exec(&self) -> Option<&TerminalExecHandle> {
+        self.terminal_exec.as_ref()
     }
 
     pub async fn call_tool(
@@ -347,79 +364,23 @@ impl AgentExecChannel {
     }
 
     pub async fn exec(&self, command: impl Into<String>) -> AgentResult<String> {
-        self.exec_via(BackendRoute::SshExec, command).await
-    }
-
-    pub async fn exec_pty(
-        &self,
-        command: impl Into<String>,
-        wait_timeout_seconds: u64,
-    ) -> AgentResult<String> {
-        let pty = self
-            .pty
-            .as_ref()
-            .ok_or_else(|| AgentError::Backend(anyhow!("PTY execution is not available")))?;
-        let command = command.into();
-        let uuid = uuid::Uuid::new_v4().simple().to_string();
-        let output_path = format!("/tmp/.mm_{uuid}");
-        let status_path = format!("/tmp/.mm_{uuid}.status");
-        let sentinel_prefix = format!("__MM_DONE_{uuid}_");
-        let wrapped = format!(
-            "{{ ( {command} ); printf '%s' $? > {status}; }} 2>&1 | tee {output}; \
-             _mm_e=$(cat {status} 2>/dev/null || printf 1); rm -f {status}; \
-             printf '\\n{sentinel_prefix}'\"$_mm_e\"'__\\n'",
-            status = shell_quote(&status_path),
-            output = shell_quote(&output_path),
-        );
-        pty.command_sender
-            .send_bytes(format!("{wrapped}\r").into_bytes())
-            .map_err(AgentError::from)?;
-
-        let wait_timeout_seconds = wait_timeout_seconds.max(1);
-        let sentinel_seen = {
-            let mut guard = pty.output_tap.lock().await;
-            let receiver = guard
-                .as_mut()
-                .ok_or_else(|| AgentError::Backend(anyhow!("PTY output tap is closed")))?;
-            let mut cleaned_output = String::new();
-            tokio::time::timeout(Duration::from_secs(wait_timeout_seconds), async {
-                while let Some(chunk) = receiver.recv().await {
-                    cleaned_output.push_str(&strip_ansi_text(&String::from_utf8_lossy(&chunk)));
-                    if has_done_sentinel(&cleaned_output, &sentinel_prefix) {
-                        return true;
-                    }
-                    if cleaned_output.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
-                        let drain_to = cleaned_output.len() - DEFAULT_MAX_OUTPUT_BYTES * 2;
-                        cleaned_output.drain(..drain_to);
-                    }
-                }
-                false
-            })
+        self.exec_with_mode(BackendRoute::SshExec, command, ExecMode::Raw)
             .await
-            .unwrap_or(false)
-        };
-        if !sentinel_seen {
-            let _ = self
-                .exec(format!("rm -f {}", shell_quote(&output_path)))
-                .await;
-            return Err(AgentError::Backend(anyhow!(
-                "timed out waiting for PTY command completion"
-            )));
-        }
-
-        let output = self
-            .exec(format!(
-                "cat {output}; rm -f {output}",
-                output = shell_quote(&output_path)
-            ))
-            .await?;
-        Ok(output)
     }
 
     pub async fn exec_via(
         &self,
         route: BackendRoute,
         command: impl Into<String>,
+    ) -> AgentResult<String> {
+        self.exec_with_mode(route, command, ExecMode::Raw).await
+    }
+
+    pub async fn exec_with_mode(
+        &self,
+        route: BackendRoute,
+        command: impl Into<String>,
+        mode: ExecMode,
     ) -> AgentResult<String> {
         self.backend_router
             .exec(
@@ -430,54 +391,80 @@ impl AgentExecChannel {
                     secrets: self.secrets.clone(),
                     known_hosts: self.known_hosts.clone(),
                     command: command.into(),
+                    mode,
                 },
             )
             .await
     }
-}
 
-fn has_done_sentinel(output: &str, sentinel_prefix: &str) -> bool {
-    output.lines().any(|line| {
-        let line = line.trim();
-        line.strip_prefix(sentinel_prefix)
-            .and_then(|rest| rest.strip_suffix("__"))
-            .is_some_and(|exit| exit.parse::<i32>().is_ok())
-    })
-}
+    /// Execute a command inside the user-visible terminal tab's PTY.
+    ///
+    /// WinkTerm-inspired approach: no stty-echo, no bracketed paste.
+    /// The wrapper is sent as raw bytes + \r. The caller provides a unique
+    /// sentinel string that the wrapper prints after the command finishes,
+    /// along with the exit code and $PWD. Output is collected from the
+    /// output tap until the sentinel is confirmed (followed by a digit).
+    ///
+    /// The sentinel appears twice in the tap: once as a literal inside the
+    /// echoed wrapper text, and once as the actual evaluated output.
+    /// `rfind` + digit-check discriminates the real occurrence.
+    pub async fn exec_via_terminal(
+        &self,
+        command: impl Into<String>,
+        sentinel: &str,
+        timeout_secs: u64,
+    ) -> AgentResult<String> {
+        let handle = self
+            .terminal_exec
+            .as_ref()
+            .ok_or_else(|| AgentError::Backend(anyhow!("terminal exec is not available")))?;
 
-fn strip_ansi_text(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            match chars.peek().copied() {
-                Some('[') => {
-                    chars.next();
-                    for next in chars.by_ref() {
-                        if ('@'..='~').contains(&next) {
-                            break;
+        // Send wrapper + Enter as raw bytes (no stty, no bracketed paste).
+        let wrapper = format!("{}\r", command.into());
+        handle
+            .command_sender
+            .send_bytes(wrapper.into_bytes())
+            .map_err(AgentError::from)?;
+
+        let mut collected = String::new();
+        let sentinel_owned = sentinel.to_string();
+        let done = {
+            let mut guard = handle.output_tap.lock().await;
+            let receiver = guard
+                .as_mut()
+                .ok_or_else(|| AgentError::Backend(anyhow!("terminal output tap is closed")))?;
+
+            tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
+                while let Some(chunk) = receiver.recv().await {
+                    collected.push_str(&String::from_utf8_lossy(&chunk));
+                    // The sentinel string appears twice:
+                    //   (a) Literal in echoed wrapper → followed by '%' (not a digit)
+                    //   (b) Real output                     → followed by '0'..'9'
+                    // rfind + digit-check picks the real one.
+                    if let Some(pos) = collected.rfind(&sentinel_owned) {
+                        let after = &collected[pos + sentinel_owned.len()..];
+                        if after.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                            return;
                         }
                     }
-                }
-                Some(']') => {
-                    chars.next();
-                    while let Some(next) = chars.next() {
-                        if next == '\x07' {
-                            break;
-                        }
-                        if next == '\x1b' && chars.peek().copied() == Some('\\') {
-                            chars.next();
-                            break;
-                        }
+                    if collected.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
+                        let drain_to = collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2;
+                        collected.drain(..drain_to);
                     }
                 }
-                _ => {}
-            }
-        } else if ch != '\r' {
-            output.push(ch);
+            })
+            .await
+            .is_ok()
+        };
+
+        if !done {
+            return Err(AgentError::Backend(anyhow!(
+                "timed out waiting for terminal command completion"
+            )));
         }
+
+        Ok(collected)
     }
-    output
 }
 
 fn string_arg<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
@@ -536,7 +523,7 @@ mod tests {
             KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-unsupported")),
         );
 
-        for route in [BackendRoute::Sftp, BackendRoute::Pty, BackendRoute::Local] {
+        for route in [BackendRoute::Sftp, BackendRoute::Local] {
             assert!(matches!(
                 channel.backend_router.ensure_supported(route),
                 Err(AgentError::UnsupportedRoute(_))

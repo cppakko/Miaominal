@@ -1,3 +1,4 @@
+use crate::backend::{BackendRoute, ExecMode};
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ShellCommandResult, ToolOutput};
 use crate::error::{AgentError, AgentResult};
 use crate::path_guard::{resolve_workspace_path, shell_quote};
@@ -27,15 +28,16 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
     let timeout_secs = args.timeout_seconds.unwrap_or(20).max(1);
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let shell = args.shell.as_deref().unwrap_or("posix-sh");
-    if shell != "posix-sh" && shell != "sh" {
+    let is_fish = shell == "fish" || channel.is_fish_shell();
+    if shell != "posix-sh" && shell != "sh" && shell != "fish" {
         return Err(AgentError::PosixOnly(
-            "run_shell v1 only supports posix-sh".into(),
+            "run_shell v1 supports posix-sh, sh, or fish".into(),
         ));
     }
     let command = format!(
         concat!(
             "cd \"$HOME\" && cd {cwd} && ",
-            "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8; ",
+            "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; ",
             "out=$(mktemp) && err=$(mktemp) && ",
             "timeout {timeout_secs} sh -lc {user_command} >\"$out\" 2>\"$err\"; ",
             "miaominal_status=$?; ",
@@ -55,26 +57,74 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
         user_command = shell_quote(&args.command),
         max = max_bytes,
     );
-    let output = if channel.has_pty_handle() {
-        channel.exec_pty(command, timeout_secs + 5).await?
+
+    // Terminal PTY mode: WinkTerm-inspired approach.
+    //
+    // No output redirection (avoids zsh MULTIOS / fork / $? pitfalls).
+    // No stty -echo / bracketed paste (avoids shell-specific line-editor quirks).
+    //
+    // POSIX wrapper:
+    //   cd ... && export ...; {cmd}; printf '\n{SENTINEL}%d:%s\n' "$?" "$PWD"
+    //
+    // Fish wrapper (fish uses $status not $?, set -x not export, "; and" not &&):
+    //   cd ...; and set -x ...; {cmd}; printf '\n{SENTINEL}%d:%s\n' $status $PWD
+    //
+    // The sentinel is a unique hex string per invocation.
+    // Merged stdout+stderr; collected via output tap until sentinel confirmed.
+    let sentinel = format!(
+        "MIAOMINAL_{:016x}_",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0),
+    );
+    let terminal_command = if is_fish {
+        format!(
+            "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
+            cwd = shell_quote(&cwd),
+            user_command = args.command,
+            sentinel = sentinel,
+        )
+    } else {
+        format!(
+            "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
+            cwd = shell_quote(&cwd),
+            user_command = args.command,
+            sentinel = sentinel,
+        )
+    };
+    let output = if channel.terminal_exec().is_some() {
+        // Terminal exec mode: command runs in user's visible terminal PTY.
+        // WinkTerm-style: raw bytes + \r, unique sentinel for exit-code capture.
+        // Output streams in real-time; collected via tap until sentinel confirmed.
+        channel
+            .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
+            .await?
+    } else if channel.uses_pty() {
+        // Pty mode: execute via dedicated SSH connection with PTY allocation.
+        // Output is collected cleanly; terminal display is injected by the UI layer.
+        channel
+            .exec_with_mode(BackendRoute::Pty, command, ExecMode::pty_default())
+            .await?
     } else {
         channel.exec(command).await?
     };
-    let result = parse_shell_result(&output)?;
+    let result = if channel.terminal_exec().is_some() {
+        parse_terminal_shell_result(&output, &sentinel)?
+    } else {
+        parse_shell_result(&output)?
+    };
     Ok(ToolOutput::Shell { result })
 }
 
 pub fn parse_shell_result(output: &str) -> AgentResult<ShellCommandResult> {
-    let exit_status = output
-        .lines()
-        .find_map(|line| line.strip_prefix("MIAOMINAL_STATUS="))
-        .and_then(|status| status.parse::<i32>().ok())
-        .ok_or_else(|| AgentError::Backend(anyhow!("missing shell exit status")))?;
-    let stdout = extract_section(output, "MIAOMINAL_STDOUT_BEGIN\n", "\nMIAOMINAL_STDOUT_END")
+    let cleaned = sanitize_shell_output(output);
+    let exit_status = extract_status(&cleaned)?;
+    let stdout = extract_section(&cleaned, "MIAOMINAL_STDOUT_BEGIN", "MIAOMINAL_STDOUT_END")
         .unwrap_or_default();
-    let stderr = extract_section(output, "MIAOMINAL_STDERR_BEGIN\n", "\nMIAOMINAL_STDERR_END")
+    let stderr = extract_section(&cleaned, "MIAOMINAL_STDERR_BEGIN", "MIAOMINAL_STDERR_END")
         .unwrap_or_default();
-    let truncated = output.contains("MIAOMINAL_TRUNCATED=1");
+    let truncated = extract_truncated(&cleaned);
 
     Ok(ShellCommandResult {
         stdout,
@@ -85,10 +135,137 @@ pub fn parse_shell_result(output: &str) -> AgentResult<ShellCommandResult> {
     })
 }
 
-fn extract_section(output: &str, start: &str, end: &str) -> Option<String> {
-    let (_, rest) = output.split_once(start)?;
-    let (section, _) = rest.split_once(end)?;
+/// Strip ANSI escape sequences and carriage returns from raw PTY output.
+///
+/// The terminal output tap collects raw PTY bytes which include ANSI control
+/// sequences (colors, cursor movement, bracketed-paste markers) and `\r` from
+/// PTY onlcr line-ending conversion. These would break sentinel parsing.
+fn sanitize_shell_output(raw: &str) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    for nc in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&nc) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(nc) = chars.next() {
+                        if nc == '\x07' {
+                            break;
+                        }
+                        if nc == '\x1b' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            },
+            '\r' => {}
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+/// Extract the exit status by searching for the last `MIAOMINAL_STATUS=` marker.
+///
+/// Uses `rfind` (last occurrence) so that wrapper command text displayed by the
+/// line editor in the terminal tap does not shadow the real sentinel output.
+fn extract_status(output: &str) -> AgentResult<i32> {
+    const MARKER: &str = "MIAOMINAL_STATUS=";
+    // The status sentinel is emitted before stdout. Restrict the search to the
+    // prefix before the last STDOUT_BEGIN so that user command output cannot
+    // shadow the real status sentinel.
+    let search_area = output
+        .rfind("MIAOMINAL_STDOUT_BEGIN")
+        .map(|pos| &output[..pos])
+        .unwrap_or(output);
+    let pos = search_area
+        .rfind(MARKER)
+        .ok_or_else(|| AgentError::Backend(anyhow!("missing shell exit status")))?;
+    let after = &search_area[pos + MARKER.len()..];
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits
+        .parse::<i32>()
+        .map_err(|_| AgentError::Backend(anyhow!("invalid shell exit status: {digits}")))
+}
+
+/// Extract content between the last pair of begin/end sentinels.
+///
+/// Uses `rfind` so that wrapper text in the tap does not produce a false match.
+fn extract_section(output: &str, begin: &str, end: &str) -> Option<String> {
+    let begin_pos = output.rfind(begin)?;
+    let after_begin = &output[begin_pos + begin.len()..];
+    // Skip the single \n that printf emits right after the begin marker.
+    let after_begin = after_begin.strip_prefix('\n').unwrap_or(after_begin);
+    let end_pos = after_begin.find(end)?;
+    let section = &after_begin[..end_pos];
+    // Strip the single \n that printf emits right before the end marker.
+    let section = section.strip_suffix('\n').unwrap_or(section);
     Some(section.to_string())
+}
+
+/// Extract the truncation flag from the last `MIAOMINAL_TRUNCATED=` marker.
+fn extract_truncated(output: &str) -> bool {
+    const MARKER: &str = "MIAOMINAL_TRUNCATED=";
+    output
+        .rfind(MARKER)
+        .map(|pos| output[pos + MARKER.len()..].starts_with('1'))
+        .unwrap_or(false)
+}
+
+/// Parse output from the terminal PTY path (WinkTerm-style unique sentinel).
+///
+/// The command output (merged stdout+stderr) is everything before the sentinel.
+/// The sentinel line contains exit-code and $PWD: `SENTINEL_N:PWD\n`.
+/// Uses `rfind` because the sentinel also appears literally inside the echoed
+/// wrapper command text; the real sentinel is the LAST occurrence.
+pub fn parse_terminal_shell_result(
+    output: &str,
+    sentinel: &str,
+) -> AgentResult<ShellCommandResult> {
+    let cleaned = sanitize_shell_output(output);
+    let pos = cleaned
+        .rfind(sentinel)
+        .ok_or_else(|| AgentError::Backend(anyhow!("missing sentinel marker")))?;
+    let after = &cleaned[pos + sentinel.len()..];
+    let colon = after
+        .find(':')
+        .ok_or_else(|| AgentError::Backend(anyhow!("missing colon in sentinel")))?;
+    let exit_status: i32 = after[..colon]
+        .parse()
+        .map_err(|_| AgentError::Backend(anyhow!("invalid exit code in sentinel")))?;
+    let nl = after.find('\n').unwrap_or(after.len());
+    let _pwd = after[colon + 1..nl].to_string();
+    // Strip the single \n that printf emits between command output and sentinel
+    let mut stdout = cleaned[..pos]
+        .strip_suffix('\n')
+        .unwrap_or(&cleaned[..pos])
+        .to_string();
+    let truncated = stdout.len() > DEFAULT_MAX_OUTPUT_BYTES;
+    if truncated {
+        stdout.truncate(DEFAULT_MAX_OUTPUT_BYTES);
+    }
+    Ok(ShellCommandResult {
+        stdout,
+        stderr: String::new(),
+        exit_status,
+        timed_out: exit_status == 124,
+        truncated,
+    })
 }
 
 #[cfg(test)]
@@ -131,5 +308,189 @@ mod tests {
 
         assert!(result.timed_out);
         assert!(!result.truncated);
+    }
+
+    #[test]
+    fn shell_result_parser_strips_ansi_and_carriage_returns() {
+        let output = concat!(
+            "stty -echo\r\n",
+            "\x1b[?2004l",          // bracketed-paste end marker (CSI)
+            "user@host:~$ \x1b[0m", // prompt with ANSI reset
+            "MIAOMINAL_STATUS=42\r\n",
+            "MIAOMINAL_STDOUT_BEGIN\r\n",
+            "line1\r\n",
+            "line2\r\n",
+            "MIAOMINAL_STDOUT_END\r\n",
+            "MIAOMINAL_STDERR_BEGIN\r\n",
+            "boom\r\n",
+            "MIAOMINAL_STDERR_END\r\n",
+            "MIAOMINAL_TRUNCATED=0\r\n",
+            "\x1b[?2004h", // bracketed-paste start marker (CSI)
+            "user@host:~$ ",
+        );
+
+        let result = parse_shell_result(output).unwrap();
+
+        assert_eq!(result.exit_status, 42);
+        assert_eq!(result.stdout, "line1\nline2");
+        assert_eq!(result.stderr, "boom");
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn shell_result_parser_ignores_sentinel_literals_in_wrapper_text() {
+        // Simulates the line editor displaying the wrapper command (which contains
+        // printf 'MIAOMINAL_STATUS=%s\n' etc.) before the actual sentinel output.
+        let output = concat!(
+            "user@host:~$ printf 'MIAOMINAL_STATUS=%s\\n' \"$_mm_rc\"; ",
+            "printf 'MIAOMINAL_STDOUT_BEGIN\\n'; head -c 65536 \"$out\"; ",
+            "printf '\\nMIAOMINAL_STDOUT_END\\n'; ",
+            "printf 'MIAOMINAL_TRUNCATED=1\\n'; ",
+            "printf 'MIAOMINAL_TRUNCATED=0\\n'; fi\n",
+            "MIAOMINAL_STATUS=0\n",
+            "MIAOMINAL_STDOUT_BEGIN\n",
+            "hello\n",
+            "MIAOMINAL_STDOUT_END\n",
+            "MIAOMINAL_STDERR_BEGIN\n",
+            "\nMIAOMINAL_STDERR_END\n",
+            "MIAOMINAL_TRUNCATED=0\n",
+        );
+
+        let result = parse_shell_result(output).unwrap();
+
+        assert_eq!(result.exit_status, 0);
+        assert_eq!(result.stdout, "hello");
+        assert_eq!(result.stderr, "");
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn shell_result_parser_handles_prompt_on_same_line_as_sentinel() {
+        let output = concat!(
+            "user@host:~$ MIAOMINAL_STATUS=7\n",
+            "MIAOMINAL_STDOUT_BEGIN\n",
+            "hello\n",
+            "MIAOMINAL_STDOUT_END\n",
+            "MIAOMINAL_STDERR_BEGIN\n",
+            "oops\n",
+            "MIAOMINAL_STDERR_END\n",
+            "MIAOMINAL_TRUNCATED=1\n"
+        );
+
+        let result = parse_shell_result(output).unwrap();
+
+        assert_eq!(result.exit_status, 7);
+        assert_eq!(result.stdout, "hello");
+        assert_eq!(result.stderr, "oops");
+        assert!(result.truncated);
+    }
+
+    #[test]
+    fn shell_result_parser_does_not_pick_status_from_stdout_content() {
+        let output = concat!(
+            "MIAOMINAL_STATUS=5\n",
+            "MIAOMINAL_STDOUT_BEGIN\n",
+            "some output\n",
+            "MIAOMINAL_STATUS=999\n",
+            "more output\n",
+            "MIAOMINAL_STDOUT_END\n",
+            "MIAOMINAL_STDERR_BEGIN\n",
+            "\nMIAOMINAL_STDERR_END\n",
+            "MIAOMINAL_TRUNCATED=0\n"
+        );
+
+        let result = parse_shell_result(output).unwrap();
+
+        assert_eq!(result.exit_status, 5);
+        assert_eq!(
+            result.stdout,
+            "some output\nMIAOMINAL_STATUS=999\nmore output"
+        );
+        assert_eq!(result.stderr, "");
+        assert!(!result.truncated);
+    }
+
+    // ── parse_terminal_shell_result (WinkTerm-style unique sentinel) ──
+
+    #[test]
+    fn terminal_parser_extracts_exit_code_and_output() {
+        let sentinel = "MIAOMINAL_abc123def4567890_";
+        let output = concat!(
+            "cd ...; df -h; printf '\\n",
+            "MIAOMINAL_abc123def4567890_%d:%s\\n' \"$?\" \"$PWD\"\n",
+            "Filesystem      Size  Used Avail\n",
+            "/dev/sda1       100G   50G   50G\n",
+            "MIAOMINAL_abc123def4567890_0:/home/user\n",
+            "user@host:~$ ",
+        );
+
+        let result = parse_terminal_shell_result(output, sentinel).unwrap();
+
+        assert_eq!(result.exit_status, 0);
+        // stdout = echoed wrapper + command output (everything before the real sentinel)
+        assert_eq!(
+            result.stdout,
+            concat!(
+                "cd ...; df -h; printf '\\n",
+                "MIAOMINAL_abc123def4567890_%d:%s\\n' \"$?\" \"$PWD\"\n",
+                "Filesystem      Size  Used Avail\n",
+                "/dev/sda1       100G   50G   50G",
+            )
+        );
+        assert_eq!(result.stderr, "");
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn terminal_parser_strips_ansi_and_cr() {
+        let sentinel = "MIAOMINAL_deadbeef00000000_";
+        let output = concat!(
+            "\x1b[31mcd ...\x1b[0m; ls; printf '\n",
+            "MIAOMINAL_deadbeef00000000_%d:%s\n' \"$?\" \"$PWD\"\r\n",
+            "\x1b[32mfile.txt\x1b[0m\r\n",
+            "MIAOMINAL_deadbeef00000000_0:/home/user\r\n",
+            "\x1b[?2004huser@host:~$ ",
+        );
+
+        let result = parse_terminal_shell_result(output, sentinel).unwrap();
+
+        assert_eq!(result.exit_status, 0);
+        // ANSI stripped, CR stripped; echoed wrapper included in stdout
+        assert_eq!(
+            result.stdout,
+            "cd ...; ls; printf '\nMIAOMINAL_deadbeef00000000_%d:%s\n' \"$?\" \"$PWD\"\nfile.txt"
+        );
+        assert_eq!(result.stderr, "");
+    }
+
+    #[test]
+    fn terminal_parser_ignores_echoed_sentinel_in_wrapper_text() {
+        // The sentinel appears in the echoed wrapper BEFORE the real output.
+        // The real occurrence is the LAST one, and is followed by a digit.
+        let sentinel = "MIAOMINAL_1111222233334444_";
+        let output = concat!(
+            // echoed wrapper text (sentinel followed by format specifier, not digit)
+            "cd \"$HOME\" && cd . && export ...; ls; printf '\\n",
+            "MIAOMINAL_1111222233334444_%d:%s\\n' \"$?\" \"$PWD\"\r\n",
+            // actual command output
+            "README.md\ntarget\n",
+            // real sentinel (followed by exit code digit)
+            "MIAOMINAL_1111222233334444_0:/home/project\n",
+            "user@host:~$ ",
+        );
+
+        let result = parse_terminal_shell_result(output, sentinel).unwrap();
+
+        assert_eq!(result.exit_status, 0);
+        // echoed wrapper + command output
+        assert_eq!(
+            result.stdout,
+            concat!(
+                "cd \"$HOME\" && cd . && export ...; ls; printf '\\n",
+                "MIAOMINAL_1111222233334444_%d:%s\\n' \"$?\" \"$PWD\"\n",
+                "README.md\ntarget",
+            )
+        );
+        assert_eq!(result.stderr, "");
     }
 }

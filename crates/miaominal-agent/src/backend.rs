@@ -25,6 +25,27 @@ impl BackendRoute {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecMode {
+    Raw,
+    Pty { columns: u32, lines: u32 },
+}
+
+impl Default for ExecMode {
+    fn default() -> Self {
+        Self::Raw
+    }
+}
+
+impl ExecMode {
+    pub fn pty_default() -> Self {
+        Self::Pty {
+            columns: 120,
+            lines: 40,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SshExecRequest {
     pub profile: SessionProfile,
@@ -32,28 +53,46 @@ pub struct SshExecRequest {
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
     pub command: String,
+    pub mode: ExecMode,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SshExecBackend;
+pub struct SshBackend;
 
-impl SshExecBackend {
+impl SshBackend {
     pub async fn execute(&self, request: SshExecRequest) -> AgentResult<String> {
-        ssh::execute_profile_command(
-            request.profile,
-            request.all_profiles,
-            request.secrets,
-            request.known_hosts,
-            request.command,
-        )
-        .await
-        .map_err(AgentError::from)
+        match request.mode {
+            ExecMode::Raw => {
+                ssh::execute_profile_command(
+                    request.profile,
+                    request.all_profiles,
+                    request.secrets,
+                    request.known_hosts,
+                    request.command,
+                )
+                .await
+                .map_err(AgentError::from)
+            }
+            ExecMode::Pty { columns, lines } => {
+                ssh::execute_profile_pty_command(
+                    request.profile,
+                    request.all_profiles,
+                    request.secrets,
+                    request.known_hosts,
+                    request.command,
+                    columns,
+                    lines,
+                )
+                .await
+                .map_err(AgentError::from)
+            }
+        }
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct BackendRouter {
-    ssh_exec: SshExecBackend,
+    ssh: SshBackend,
 }
 
 impl BackendRouter {
@@ -63,7 +102,7 @@ impl BackendRouter {
 
     pub fn ensure_supported(&self, route: BackendRoute) -> AgentResult<()> {
         match route {
-            BackendRoute::SshExec => Ok(()),
+            BackendRoute::SshExec | BackendRoute::Pty => Ok(()),
             other => Err(AgentError::UnsupportedRoute(other.as_str().into())),
         }
     }
@@ -71,7 +110,7 @@ impl BackendRouter {
     pub async fn exec(&self, route: BackendRoute, request: SshExecRequest) -> AgentResult<String> {
         self.ensure_supported(route)?;
         match route {
-            BackendRoute::SshExec => self.ssh_exec.execute(request).await,
+            BackendRoute::SshExec | BackendRoute::Pty => self.ssh.execute(request).await,
             other => Err(AgentError::UnsupportedRoute(other.as_str().into())),
         }
     }
@@ -82,11 +121,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn router_accepts_only_ssh_exec_in_v1() {
+    fn router_accepts_ssh_exec_and_pty_routes() {
         let router = BackendRouter::new();
 
         assert!(router.ensure_supported(BackendRoute::SshExec).is_ok());
-        for route in [BackendRoute::Sftp, BackendRoute::Pty, BackendRoute::Local] {
+        assert!(router.ensure_supported(BackendRoute::Pty).is_ok());
+        for route in [BackendRoute::Sftp, BackendRoute::Local] {
             assert!(matches!(
                 router.ensure_supported(route),
                 Err(AgentError::UnsupportedRoute(_))

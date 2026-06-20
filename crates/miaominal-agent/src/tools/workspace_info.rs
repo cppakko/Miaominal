@@ -12,7 +12,7 @@ pub async fn workspace_info(channel: &AgentExecChannel) -> AgentResult<ToolOutpu
         user: probe.user,
         platform: probe.platform,
         arch: probe.arch,
-        shell: channel.shell_label().to_string(),
+        shell: probe.shell,
         cwd: probe.cwd,
         workspace_roots: vec![probe.home.clone()],
         trusted_read_roots: vec![probe.home.clone()],

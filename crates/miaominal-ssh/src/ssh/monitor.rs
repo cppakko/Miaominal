@@ -424,6 +424,104 @@ pub(super) async fn run_exec_command(
     Ok(stdout)
 }
 
+pub(super) async fn run_exec_pty_command(
+    session: &Arc<client::Handle<ClientHandler>>,
+    command: &str,
+    columns: u32,
+    lines: u32,
+) -> Result<String> {
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .context("failed to open SSH session channel for PTY exec")?;
+
+    channel
+        .request_pty(true, "xterm-256color", columns, lines, 0, 0, &[])
+        .await
+        .context("failed to request PTY for exec")?;
+
+    channel
+        .exec(true, command.as_bytes().to_vec())
+        .await
+        .with_context(|| format!("failed to execute remote command with PTY: {command}"))?;
+
+    // With a PTY allocated, stdout and stderr are merged at the transport layer.
+    // Only ChannelMsg::Data arrives; ExtendedData will not fire.
+    let mut output = Vec::new();
+    let mut exit_status = None;
+
+    while let Some(message) = channel.wait().await {
+        match message {
+            ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            ChannelMsg::ExitStatus {
+                exit_status: status,
+            } => exit_status = Some(status),
+            ChannelMsg::Eof | ChannelMsg::Close => {}
+            _ => {}
+        }
+    }
+
+    if let Err(error) = channel.close().await {
+        log::debug!("failed to close SSH PTY exec channel cleanly: {error:?}");
+    }
+
+    let raw = String::from_utf8_lossy(&output).into_owned();
+    let cleaned = strip_ansi_text(&raw);
+
+    if exit_status.unwrap_or(0) != 0 {
+        if cleaned.trim().is_empty() {
+            bail!("remote PTY command failed with exit status {}", exit_status.unwrap_or(0));
+        } else {
+            let preview: String = cleaned
+                .lines()
+                .take(20)
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("remote PTY command failed: {preview}");
+        }
+    }
+
+    Ok(cleaned)
+}
+
+/// Strip ANSI escape sequences from PTY output.
+/// Handles CSI sequences (ESC [ ... final_byte), OSC sequences (ESC ] ... BEL/ST),
+/// and carriage returns.
+fn strip_ansi_text(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' {
+                            break;
+                        }
+                        if next == '\x1b' && chars.peek().copied() == Some('\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if ch != '\r' {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 fn parse_scaled_number(value: &str) -> Option<f64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

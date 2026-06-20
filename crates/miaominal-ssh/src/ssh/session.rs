@@ -3,7 +3,7 @@ use super::forwarding::{
     ActiveLocalForward, ActiveRemoteForward, RemoteForwardTargets, emit_port_forward_notice,
     sync_port_forward_rules,
 };
-use super::monitor::{run_exec_command, run_monitor_loop};
+use super::monitor::{run_exec_command, run_exec_pty_command, run_monitor_loop};
 use anyhow::{Context, Result, anyhow, bail};
 use futures::StreamExt;
 use futures::channel::mpsc::{
@@ -376,6 +376,116 @@ pub async fn execute_profile_command(
 
 fn take_non_interactive_exec_error(error: &Arc<Mutex<Option<String>>>) -> Option<String> {
     error.lock().ok().and_then(|mut guard| guard.take())
+}
+
+pub async fn execute_profile_pty_command(
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    command: String,
+    columns: u32,
+    lines: u32,
+) -> Result<String> {
+    if matches!(
+        profile.effective_auth_method(),
+        AuthMethod::KeyboardInteractive
+    ) {
+        bail!("keyboard-interactive authentication is not supported for PTY exec");
+    }
+
+    let (event_sender, event_receiver) = futures_unbounded();
+    let (command_sender, mut command_receiver) = unbounded_channel();
+    let non_interactive_error = Arc::new(Mutex::new(None::<String>));
+    let non_interactive_error_for_events = non_interactive_error.clone();
+    let event_command_sender = command_sender.clone();
+    let event_task = tokio::spawn(async move {
+        let mut event_receiver = event_receiver;
+        while let Some(event) = event_receiver.next().await {
+            match event {
+                SessionEvent::HostKeyPrompt(prompt) => {
+                    let message = if prompt.previous_fingerprint.is_some() {
+                        format!(
+                            "host key for {}:{} has changed ({}); connect or test this profile manually before using the agent",
+                            prompt.host, prompt.port, prompt.fingerprint
+                        )
+                    } else {
+                        format!(
+                            "host key for {}:{} is not trusted yet ({}); connect or test this profile once before using the agent",
+                            prompt.host, prompt.port, prompt.fingerprint
+                        )
+                    };
+                    if let Ok(mut guard) = non_interactive_error_for_events.lock() {
+                        *guard = Some(message);
+                    }
+                    let _ = event_command_sender
+                        .send(SessionCommand::HostKeyDecision(HostKeyDecision::Reject));
+                }
+                SessionEvent::KeyboardInteractivePrompt(_) => {
+                    if let Ok(mut guard) = non_interactive_error_for_events.lock() {
+                        *guard = Some(
+                            "keyboard-interactive authentication is not supported for PTY exec"
+                                .into(),
+                        );
+                    }
+                    let _ = event_command_sender.send(SessionCommand::Close);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = async {
+        let ConnectedSession {
+            session,
+            jump_sessions,
+            ..
+        } = connect_authenticated_session_internal(
+            profile,
+            all_profiles,
+            secrets,
+            known_hosts,
+            &mut command_receiver,
+            &event_sender,
+        )
+        .await?;
+
+        let output = run_exec_pty_command(&session, &command, columns, lines).await;
+
+        if let Err(error) = session
+            .disconnect(Disconnect::ByApplication, "", "English")
+            .await
+        {
+            log::debug!("failed to disconnect PTY exec session cleanly: {error:?}");
+        }
+
+        for jump_session in jump_sessions.into_iter().rev() {
+            if let Err(error) = jump_session
+                .disconnect(Disconnect::ByApplication, "", "English")
+                .await
+            {
+                log::debug!("failed to disconnect exec ProxyJump session cleanly: {error:?}");
+            }
+        }
+
+        output
+    }
+    .await;
+
+    drop(command_sender);
+    drop(event_sender);
+    event_task.abort();
+
+    match result {
+        Ok(output) => Ok(output),
+        Err(error) => {
+            if let Some(message) = take_non_interactive_exec_error(&non_interactive_error) {
+                Err(error.context(message))
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 pub(super) struct ClientHandler {

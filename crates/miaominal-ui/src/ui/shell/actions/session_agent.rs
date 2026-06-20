@@ -4,8 +4,8 @@ use crate::ui::shell::state::TokenUsage;
 use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentPtyHandle,
-    AgentToolCallRequest, AgentToolResultContinuationRequest, AgentToolSet,
+    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentToolCallRequest,
+    AgentToolResultContinuationRequest, AgentToolSet, TerminalExecHandle,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
@@ -1060,7 +1060,8 @@ impl AppView {
         aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
     ) -> Option<(Option<AgentToolSet>, bool)> {
-        let active_pty_commands = if self.session_agent.exec_mode == AgentExecMode::Pty {
+        let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
+        let pty_commands = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
                 let message = "PTY mode requires an active terminal session.".to_string();
                 self.session_agent.last_error = Some(message.clone());
@@ -1086,13 +1087,13 @@ impl AppView {
             None
         };
 
-        let pty_tap_active = active_pty_commands.is_some();
+        let pty_tap_active = pty_commands.is_some();
         let tools = self.active_profile().cloned().map(|profile| {
             let mut channel = self.agent_exec_channel_for_profile(profile);
-            if let Some(command_sender) = active_pty_commands.clone() {
+            if let Some(command_sender) = pty_commands.clone() {
                 let (sender, receiver) = mpsc::unbounded_channel();
                 self.set_active_session_pty_tap(Some(sender));
-                channel = channel.with_pty_handle(AgentPtyHandle {
+                channel = channel.with_terminal_exec(TerminalExecHandle {
                     command_sender,
                     output_tap: Arc::new(Mutex::new(Some(receiver))),
                 });
@@ -1148,7 +1149,8 @@ impl AppView {
         self.status_message = "Tool approved. Running...".into();
         let approval_session_id = self.ensure_session_agent_session();
 
-        let pty_handle = if self.session_agent.exec_mode == AgentExecMode::Pty {
+        let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
+        let pty_handle = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
                 let message = "PTY mode requires an active terminal session.".to_string();
                 self.session_agent.fail_tool_call(&tool_id, message.clone());
@@ -1171,7 +1173,7 @@ impl AppView {
             };
             let (sender, receiver) = mpsc::unbounded_channel();
             self.set_active_session_pty_tap(Some(sender));
-            Some(AgentPtyHandle {
+            Some(TerminalExecHandle {
                 command_sender,
                 output_tap: Arc::new(Mutex::new(Some(receiver))),
             })
@@ -1214,8 +1216,8 @@ impl AppView {
                                         web_search_api_key,
                                     );
                                 }
-                                if let Some(pty_handle) = pty_handle {
-                                    channel = channel.with_pty_handle(pty_handle);
+                                if let Some(ref pty_handle) = pty_handle {
+                                    channel = channel.with_terminal_exec(pty_handle.clone());
                                 }
                                 channel = channel.with_aux_channels(approval_mentions.aux_channels);
                                 channel
@@ -1403,7 +1405,7 @@ impl AppView {
                             tool_call,
                             reasoning,
                             result,
-                            tools,
+                        tools,
                             target_guidance,
                         },
                     )
@@ -2062,7 +2064,7 @@ impl AppView {
                     let (sender, receiver) = mpsc::unbounded_channel();
                     let channel = self
                         .agent_exec_channel_for_profile(profile.clone())
-                        .with_pty_handle(AgentPtyHandle {
+                        .with_terminal_exec(TerminalExecHandle {
                             command_sender,
                             output_tap: Arc::new(Mutex::new(Some(receiver))),
                         });

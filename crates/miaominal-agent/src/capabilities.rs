@@ -23,6 +23,7 @@ pub struct CapabilityProbeResult {
     pub user: String,
     pub platform: String,
     pub arch: String,
+    pub shell: String,
     pub capabilities: RemoteCapabilities,
     pub route: BackendRoute,
 }
@@ -33,7 +34,7 @@ pub struct CapabilityProbe;
 impl CapabilityProbe {
     pub fn posix_command() -> &'static str {
         "printf 'home=%s\\npwd=%s\\nuser=%s\\n' \"$HOME\" \"$PWD\" \"$(id -un 2>/dev/null || whoami)\"; \
-         printf 'platform=%s\\narch=%s\\n' \"$(uname -s 2>/dev/null || printf unknown)\" \"$(uname -m 2>/dev/null || printf unknown)\"; \
+         printf 'platform=%s\\narch=%s\\nshell=%s\\n' \"$(uname -s 2>/dev/null || printf unknown)\" \"$(uname -m 2>/dev/null || printf unknown)\" \"${SHELL##*/}\"; \
          for cmd in rg git patch python3 grep find sed pwsh powershell; do command -v \"$cmd\" >/dev/null 2>&1 && printf 'cap_%s=1\\n' \"$cmd\" || printf 'cap_%s=0\\n' \"$cmd\"; done"
     }
 
@@ -44,6 +45,7 @@ impl CapabilityProbe {
             user: value_for(output, "user").unwrap_or_default(),
             platform: value_for(output, "platform").unwrap_or_else(|| "unknown".into()),
             arch: value_for(output, "arch").unwrap_or_else(|| "unknown".into()),
+            shell: value_for(output, "shell").unwrap_or_else(|| "posix-sh".into()),
             capabilities: RemoteCapabilities {
                 sftp: false,
                 exec: true,

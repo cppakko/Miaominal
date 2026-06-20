@@ -1426,10 +1426,8 @@ impl AppView {
                 SessionEvent::Output(chunk) => {
                     session.bytes_in = session.bytes_in.saturating_add(chunk.len() as u64);
                     session.terminal.push_bytes(&chunk);
-                    if let Some(tap) = &session.pty_output_tap
-                        && tap.send(chunk.clone()).is_err()
-                    {
-                        session.pty_output_tap = None;
+                    if let Some(tap) = &session.pty_output_tap {
+                        let _ = tap.send(chunk.clone());
                     }
                     if inactive_tab {
                         session.has_activity = true;
