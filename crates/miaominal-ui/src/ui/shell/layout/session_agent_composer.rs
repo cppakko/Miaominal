@@ -114,6 +114,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 });
                             },
                         ))
+                        .child(
+                            div().w(px(80.0)).child(
+                                md3_select(&app.workspace_forms.agent.agent_mode_select)
+                                    .small()
+                                    .w_full()
+                            )
+                        )
                         .child(div().flex_1())
                         .child(render_session_agent_token_usage(
                             &app.session_agent,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::ui::i18n;
+use miaominal_agent::AgentMode;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -254,6 +255,8 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) search_current_match: Option<usize>,
     /// One-shot target block that should be brought into view after layout.
     pub(in crate::ui::shell) search_scroll_target: Option<(usize, usize)>,
+    /// Agent mode controlling tool availability, policy enforcement, and confirmation behavior.
+    pub(in crate::ui::shell) agent_mode: AgentMode,
 }
 
 /// Split message content into logical blocks for per-block search matching.

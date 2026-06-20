@@ -8,6 +8,7 @@ use crate::ui::i18n;
 use crate::ui::shell::bootstrap_loaders::{InitialProfileSelection, LoadedAppData};
 use crate::ui::shell::bootstrap_subscriptions::AppViewSubscriptionsArgs;
 use gpui_component::IndexPath;
+use miaominal_agent::AgentMode;
 use miaominal_core::profile::{DEFAULT_SESSION_CHARSET, ImportSourceKind};
 use miaominal_settings::{AiProviderKind, AppLanguage, WebSearchProviderKind};
 use miaominal_sync::SyncProvider;
@@ -546,6 +547,29 @@ impl AppView {
                     cx.notify();
                 }
                 _ => {}
+            },
+        );
+        let agent_mode_options: Vec<SelectOption<AgentMode>> = vec![
+            SelectOption::new_with_icon(AgentMode::Ask, i18n::string("agent.mode.ask"), AppIcon::Eye),
+            SelectOption::new_with_icon(AgentMode::Execute, i18n::string("agent.mode.execute"), AppIcon::Play),
+            SelectOption::new_with_icon(AgentMode::NonBlocking, i18n::string("agent.mode.non_blocking"), AppIcon::Sliders),
+            SelectOption::new_with_icon(AgentMode::FullAuto, i18n::string("agent.mode.full_auto"), AppIcon::Sparkles),
+        ];
+        let agent_mode_select = cx.new(|cx| {
+            SelectState::new(
+                agent_mode_options,
+                Some(IndexPath::default().row(1)),
+                window,
+                cx,
+            )
+        });
+        let agent_mode_select_subscription = cx.subscribe(
+            &agent_mode_select,
+            move |this: &mut AppView, select, _event: &SelectEvent<Vec<SelectOption<AgentMode>>>, cx| {
+                if let Some(mode) = select.read(cx).selected_value().cloned() {
+                    this.session_agent.agent_mode = mode;
+                    cx.notify();
+                }
             },
         );
         let keychain_filter_subscription = cx.subscribe(
@@ -1433,6 +1457,7 @@ impl AppView {
             agent_prompt_input,
             agent_title_input,
             agent_rename_title_input,
+            agent_mode_select,
             session_snippets_filter_input,
             local_path_input: local_sftp_path_input,
             remote_path_input: remote_sftp_path_input,
@@ -1757,6 +1782,7 @@ impl AppView {
                 ai_provider_select_subscription,
                 ai_provider_kind_select_subscription,
                 web_search_kind_select_subscription,
+                agent_mode_select_subscription,
                 keychain_filter_subscription,
                 filter_subscription,
                 trusted_filter_subscription,

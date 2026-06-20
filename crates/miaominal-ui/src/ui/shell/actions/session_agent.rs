@@ -4,8 +4,8 @@ use crate::ui::shell::state::TokenUsage;
 use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentPtyHandle, AgentToolCallRequest,
-    AgentToolResultContinuationRequest, AgentToolSet,
+    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentPtyHandle,
+    AgentToolCallRequest, AgentToolResultContinuationRequest, AgentToolSet,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
@@ -1098,7 +1098,8 @@ impl AppView {
                 });
             }
             channel = channel.with_aux_channels(aux_channels);
-            AgentToolSet::for_channel(channel)
+            let mode = self.session_agent.agent_mode;
+            AgentToolSet::for_channel(channel, mode)
         });
 
         Some((tools, pty_tap_active))
@@ -1223,6 +1224,7 @@ impl AppView {
                                         arguments,
                                         approved: true,
                                         route: None,
+                                        skip_policy: false,
                                     })
                                     .await
                                     .map_err(anyhow::Error::from)
@@ -1557,9 +1559,13 @@ impl AppView {
                 self.session_agent.complete_tool_call(&id, result);
             }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
-                self.session_agent
-                    .require_tool_call_confirmation(&id, message);
-                self.finish_session_agent_stream(request_id, cx);
+                if matches!(self.session_agent.agent_mode, AgentMode::NonBlocking | AgentMode::FullAuto) {
+                    self.approve_session_agent_tool_call(id, cx);
+                } else {
+                    self.session_agent
+                        .require_tool_call_confirmation(&id, message);
+                    self.finish_session_agent_stream(request_id, cx);
+                }
             }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);

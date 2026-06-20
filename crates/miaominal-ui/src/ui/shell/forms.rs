@@ -11,6 +11,7 @@ use miaominal_sync::SyncProvider;
 pub(in crate::ui::shell) struct SelectOption<T> {
     title: SharedString,
     value: T,
+    icon: Option<AppIcon>,
 }
 
 impl<T> SelectOption<T> {
@@ -18,6 +19,19 @@ impl<T> SelectOption<T> {
         Self {
             title: title.into(),
             value,
+            icon: None,
+        }
+    }
+
+    pub(in crate::ui::shell) fn new_with_icon(
+        value: T,
+        title: impl Into<SharedString>,
+        icon: AppIcon,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            value,
+            icon: Some(icon),
         }
     }
 
@@ -31,6 +45,34 @@ impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
 
     fn title(&self) -> SharedString {
         self.title.clone()
+    }
+
+    fn display_title(&self) -> Option<AnyElement> {
+        if let Some(icon) = self.icon {
+            Some(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Icon::new(icon).small())
+                    .child(self.title.clone())
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        if let Some(icon) = self.icon {
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(Icon::new(icon).small())
+                .child(self.title.clone())
+                .into_any_element()
+        } else {
+            div().child(self.title.clone()).into_any_element()
+        }
     }
 
     fn value(&self) -> &Self::Value {
@@ -83,6 +125,7 @@ pub(in crate::ui::shell) struct WorkspaceAgentForms {
     pub(in crate::ui::shell) title_input: Entity<InputState>,
     pub(in crate::ui::shell) rename_title_input: Entity<InputState>,
     pub(in crate::ui::shell) editing_title: bool,
+    pub(in crate::ui::shell) agent_mode_select: Entity<SelectState<Vec<SelectOption<miaominal_agent::AgentMode>>>>,
 }
 
 pub(in crate::ui::shell) struct WorkspaceSnippetsForms {

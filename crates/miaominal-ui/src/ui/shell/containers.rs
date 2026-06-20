@@ -80,6 +80,7 @@ pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _ai_provider_select_subscription: Subscription,
     pub _ai_provider_kind_select_subscription: Subscription,
     pub _web_search_kind_select_subscription: Subscription,
+    pub _agent_mode_select_subscription: Subscription,
     pub _seed_color_subscription: Subscription,
     pub _group_input_subscription: Subscription,
     pub _group_select_subscription: Subscription,

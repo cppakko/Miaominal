@@ -1544,3 +1544,9 @@ saved_message = "已保存 Web Search 设置。"
 api_key_required = "当前服务商需要 API Key。"
 endpoint_required = "SearXNG 需要填写 Endpoint。"
 max_results_range = "最大结果数必须在 {min} 到 {max} 之间。"
+
+[agent.mode]
+ask = "ASK"
+execute = "执行"
+non_blocking = "非阻断"
+full_auto = "全自动"

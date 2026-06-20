@@ -30,6 +30,8 @@ pub struct AgentToolCallRequest {
     pub approved: bool,
     #[serde(default)]
     pub route: Option<BackendRoute>,
+    #[serde(default)]
+    pub skip_policy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,8 +252,10 @@ impl AgentExecChannel {
             request.approved,
             request.arguments
         );
-        self.policy.enforce(&request.tool_name, request.approved)?;
-        self.enforce_context_policy(&request)?;
+        if !request.skip_policy {
+            self.policy.enforce(&request.tool_name, request.approved)?;
+            self.enforce_context_policy(&request)?;
+        }
         let route = request.route.unwrap_or(BackendRoute::SshExec);
         self.backend_router.ensure_supported(route)?;
         self.ensure_posix_supported()?;
@@ -568,6 +572,7 @@ mod tests {
             arguments: serde_json::json!({ "path": ".env" }),
             approved: true,
             route: None,
+            skip_policy: false,
         };
 
         assert!(matches!(
@@ -589,6 +594,7 @@ mod tests {
             arguments: serde_json::json!({ "command": "systemctl restart nginx", "cwd": "." }),
             approved: false,
             route: None,
+            skip_policy: false,
         };
 
         assert!(matches!(

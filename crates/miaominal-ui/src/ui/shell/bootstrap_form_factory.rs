@@ -36,6 +36,7 @@ pub(in crate::ui::shell) struct WorkspaceFormsArgs {
     pub agent_prompt_input: Entity<InputState>,
     pub agent_title_input: Entity<InputState>,
     pub agent_rename_title_input: Entity<InputState>,
+    pub agent_mode_select: Entity<SelectState<Vec<SelectOption<miaominal_agent::AgentMode>>>>,
     pub session_snippets_filter_input: Entity<InputState>,
     pub local_path_input: Entity<InputState>,
     pub remote_path_input: Entity<InputState>,
@@ -179,6 +180,7 @@ impl AppView {
             agent_prompt_input,
             agent_title_input,
             agent_rename_title_input,
+            agent_mode_select,
             session_snippets_filter_input,
             local_path_input,
             remote_path_input,
@@ -217,6 +219,7 @@ impl AppView {
                 title_input: agent_title_input,
                 rename_title_input: agent_rename_title_input,
                 editing_title: false,
+                agent_mode_select,
             },
             snippets_panel: WorkspaceSnippetsForms {
                 filter_input: session_snippets_filter_input,

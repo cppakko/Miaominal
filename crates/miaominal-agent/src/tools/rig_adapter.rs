@@ -1,5 +1,6 @@
 use super::{TOOL_NAMES, tool_description};
 use crate::channel::{AgentExecChannel, AgentToolCallRequest};
+use crate::chat::AgentMode;
 use crate::error::AgentError;
 use rig_core::completion::ToolDefinition;
 use rig_core::tool::{Tool, ToolDyn, ToolSet};
@@ -10,11 +11,12 @@ use tokio::sync::oneshot;
 #[derive(Clone)]
 pub struct AgentToolSet {
     channel: AgentExecChannel,
+    mode: AgentMode,
 }
 
 impl AgentToolSet {
-    pub fn for_channel(channel: AgentExecChannel) -> Self {
-        Self { channel }
+    pub fn for_channel(channel: AgentExecChannel, mode: AgentMode) -> Self {
+        Self { channel, mode }
     }
 
     pub fn into_rig_tool_set(self) -> ToolSet {
@@ -23,6 +25,7 @@ impl AgentToolSet {
             toolset.add_tool(JsonAgentTool {
                 name: name.to_string(),
                 channel: self.channel.clone(),
+                mode: self.mode,
             });
         }
         toolset
@@ -35,6 +38,7 @@ impl AgentToolSet {
                 Box::new(JsonAgentTool {
                     name: name.to_string(),
                     channel: self.channel.clone(),
+                    mode: self.mode,
                 }) as Box<dyn ToolDyn>
             })
             .collect()
@@ -48,11 +52,17 @@ impl AgentToolSet {
     }
 
     fn enabled_tool_names(&self) -> Vec<&'static str> {
-        TOOL_NAMES
+        let all = TOOL_NAMES
             .iter()
             .copied()
-            .filter(|name| *name != "web_search" || self.channel.web_search_enabled())
-            .collect()
+            .filter(|name| *name != "web_search" || self.channel.web_search_enabled());
+        
+        match self.mode {
+            AgentMode::Ask => all.filter(|name| {
+                matches!(*name, "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch")
+            }).collect(),
+            _ => all.collect(),
+        }
     }
 }
 
@@ -60,6 +70,7 @@ impl AgentToolSet {
 struct JsonAgentTool {
     name: String,
     channel: AgentExecChannel,
+    mode: AgentMode,
 }
 
 impl Tool for JsonAgentTool {
@@ -78,13 +89,20 @@ impl Tool for JsonAgentTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let approved = match self.mode {
+            AgentMode::NonBlocking | AgentMode::FullAuto => true,
+            AgentMode::Ask => false,
+            AgentMode::Execute => auto_approve_rig_tool(&self.name),
+        };
+        let skip_policy = matches!(self.mode, AgentMode::FullAuto);
         let response = call_tool_on_worker(
             self.channel.clone(),
             AgentToolCallRequest {
                 tool_name: self.name.clone(),
                 arguments: normalize_tool_arguments(args),
-                approved: auto_approve_rig_tool(&self.name),
+                approved,
                 route: None,
+                skip_policy,
             },
         )
         .await?;
@@ -336,7 +354,7 @@ mod tests {
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-tools")),
         );
-        let definitions = AgentToolSet::for_channel(channel).definitions().await;
+        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute).definitions().await;
 
         assert_eq!(definitions.len(), TOOL_NAMES.len() - 1);
         for name in TOOL_NAMES {
@@ -378,7 +396,7 @@ mod tests {
             Some("tvly-test".into()),
         );
 
-        let definitions = AgentToolSet::for_channel(channel).definitions().await;
+        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute).definitions().await;
         let web_search = definitions
             .iter()
             .find(|definition| definition.name == "web_search")

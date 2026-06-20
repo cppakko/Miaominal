@@ -1544,3 +1544,9 @@ local_vault_auto_lock_duration_changed = "Local vault auto-lock timeout updated"
 session_monitoring_started = "Remote monitoring started for this session"
 session_monitoring_pending = "Remote monitoring will start when this session becomes ready"
 session_monitoring_start_failed = "Couldn't start remote monitoring: {error}"
+
+[agent.mode]
+ask = "ASK"
+execute = "Execute"
+non_blocking = "Non-block"
+full_auto = "Auto"
