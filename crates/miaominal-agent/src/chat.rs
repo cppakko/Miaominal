@@ -253,6 +253,37 @@ pub async fn stream_chat_after_tool_result(
     .await
 }
 
+macro_rules! build_provider_agent {
+    ($client_module:ident, $error_msg:expr, $provider:expr, $preamble:expr, $tools:expr, $prompt:expr, $history:expr, $sender:expr) => {{
+        let mut builder = $client_module::Client::builder().api_key($provider.api_key);
+        if !$provider.base_url.trim().is_empty() {
+            builder = builder.base_url($provider.base_url);
+        }
+        let client = builder
+            .build()
+            .context($error_msg)?;
+        let mut agent_builder = AgentBuilder::new(client.completion_model($provider.model))
+            .preamble($preamble)
+            .default_max_turns(SESSION_AGENT_MAX_TURNS);
+        if let Some(t) = $provider.temperature {
+            agent_builder = agent_builder.temperature(t);
+        }
+        if let Some(mt) = $provider.max_tokens {
+            agent_builder = agent_builder.max_tokens(mt);
+        }
+        if let Some(the_tools) = $tools {
+            spawn_stream_chat(
+                agent_builder.tools(the_tools.into_rig_tools()).build(),
+                $prompt,
+                $history,
+                $sender,
+            );
+        } else {
+            spawn_stream_chat(agent_builder.build(), $prompt, $history, $sender);
+        }
+    }};
+}
+
 async fn stream_chat_with_history(
     provider: AgentChatProvider,
     history: Vec<Message>,
@@ -270,282 +301,34 @@ async fn stream_chat_with_history(
 
     match provider.kind {
         AgentChatProviderKind::OpenAi => {
-            let mut builder = openai::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build OpenAI chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(openai, "failed to build OpenAI chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Anthropic => {
-            let mut builder = anthropic::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Anthropic chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(anthropic, "failed to build Anthropic chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::DeepSeek => {
-            let mut builder = deepseek::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build DeepSeek chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(deepseek, "failed to build DeepSeek chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Gemini => {
-            let mut builder = gemini::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Gemini chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(gemini, "failed to build Gemini chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::OpenRouter => {
-            let mut builder = openrouter::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build OpenRouter chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(openrouter, "failed to build OpenRouter chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Mistral => {
-            let mut builder = mistral::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Mistral chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(mistral, "failed to build Mistral chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Cohere => {
-            let mut builder = cohere::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Cohere chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(cohere, "failed to build Cohere chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Together => {
-            let mut builder = together::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Together AI chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(together, "failed to build Together AI chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::Xai => {
-            let mut builder = xai::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder.build().context("failed to build xAI chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(xai, "failed to build xAI chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::HuggingFace => {
-            let mut builder = huggingface::Client::builder().api_key(provider.api_key);
-            if !provider.base_url.trim().is_empty() {
-                builder = builder.base_url(provider.base_url);
-            }
-            let client = builder
-                .build()
-                .context("failed to build Hugging Face chat client")?;
-            let mut builder = AgentBuilder::new(client.completion_model(provider.model))
-                .preamble(&preamble)
-                .default_max_turns(SESSION_AGENT_MAX_TURNS);
-            if let Some(t) = provider.temperature {
-                builder = builder.temperature(t);
-            }
-            if let Some(mt) = provider.max_tokens {
-                builder = builder.max_tokens(mt);
-            }
-            if let Some(tools) = tools {
-                spawn_stream_chat(
-                    builder.tools(tools.into_rig_tools()).build(),
-                    prompt,
-                    history,
-                    sender,
-                );
-            } else {
-                spawn_stream_chat(builder.build(), prompt, history, sender);
-            }
+            build_provider_agent!(huggingface, "failed to build Hugging Face chat client", provider, &preamble, tools, prompt, history, sender);
         }
         AgentChatProviderKind::ChatGpt
         | AgentChatProviderKind::Copilot
