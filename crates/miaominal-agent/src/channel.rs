@@ -355,11 +355,7 @@ impl AgentExecChannel {
                 "keyboard-interactive authentication is not supported for agent exec channel"
             )));
         }
-        if !matches!(self.profile.shell_type, ShellType::Posix | ShellType::Fish) {
-            return Err(AgentError::PosixOnly(
-                "agent exec channel v1 only supports POSIX-like remote shells".into(),
-            ));
-        }
+        // All ShellType variants are now supported (Posix, Fish, PowerShell, Cmd).
         Ok(())
     }
 
@@ -532,18 +528,54 @@ mod tests {
     }
 
     #[test]
-    fn non_posix_profiles_are_rejected() {
+    fn non_posix_profiles_are_now_supported() {
+        for shell_type in [ShellType::PowerShell, ShellType::Cmd] {
+            let channel = AgentExecChannel::for_profile(
+                profile(shell_type),
+                Vec::new(),
+                SecretStore::new_locked_vault(),
+                KnownHostsStore::with_path(
+                    std::env::temp_dir().join("agent-known-hosts-non-posix"),
+                ),
+            );
+
+            assert!(
+                channel.ensure_posix_supported().is_ok(),
+                "{shell_type:?} should be supported by ensure_posix_supported",
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_profile_passes_ensure_supported() {
         let channel = AgentExecChannel::for_profile(
             profile(ShellType::PowerShell),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-posix")),
+            KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-known-hosts-powershell"),
+            ),
         );
 
-        assert!(matches!(
-            channel.ensure_posix_supported(),
-            Err(AgentError::PosixOnly(_))
-        ));
+        assert!(
+            channel.ensure_posix_supported().is_ok(),
+            "PowerShell profile should be accepted by ensure_posix_supported",
+        );
+    }
+
+    #[test]
+    fn cmd_profile_passes_ensure_supported() {
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::Cmd),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-cmd")),
+        );
+
+        assert!(
+            channel.ensure_posix_supported().is_ok(),
+            "Cmd profile should be accepted by ensure_posix_supported",
+        );
     }
 
     #[test]

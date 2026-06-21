@@ -27,11 +27,11 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
     }
     let timeout_secs = args.timeout_seconds.unwrap_or(20).max(1);
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
-    let shell = args.shell.as_deref().unwrap_or("posix-sh");
+    let shell = args.shell.as_deref().unwrap_or(channel.shell_label());
     let is_fish = shell == "fish" || channel.is_fish_shell();
-    if shell != "posix-sh" && shell != "sh" && shell != "fish" {
+    if shell != "posix-sh" && shell != "sh" && shell != "fish" && shell != "powershell" && shell != "cmd" {
         return Err(AgentError::PosixOnly(
-            "run_shell v1 supports posix-sh, sh, or fish".into(),
+            "run_shell v1 supports posix-sh, sh, fish, powershell, or cmd".into(),
         ));
     }
     let command = format!(
@@ -271,6 +271,17 @@ pub fn parse_terminal_shell_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_core::profile::ShellType;
+    use miaominal_secrets::SecretStore;
+    use miaominal_storage::known_hosts_store::KnownHostsStore;
+
+    fn profile(shell_type: ShellType) -> miaominal_core::profile::SessionProfile {
+        let mut profile = miaominal_core::profile::SessionProfile::blank("session-1", 1);
+        profile.host = "example.com".into();
+        profile.username = "akko".into();
+        profile.shell_type = shell_type;
+        profile
+    }
 
     #[test]
     fn shell_result_parser_extracts_status_streams_and_truncation() {
@@ -492,5 +503,52 @@ mod tests {
             )
         );
         assert_eq!(result.stderr, "");
+    }
+
+    #[test]
+    fn default_shell_matches_profile_shell_type() {
+        // Posix -> "posix-sh"
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::Posix),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-default-shell-posix"),
+            ),
+        );
+        assert_eq!(channel.shell_label(), "posix-sh");
+
+        // Fish -> "fish"
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::Fish),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-default-shell-fish"),
+            ),
+        );
+        assert_eq!(channel.shell_label(), "fish");
+
+        // PowerShell -> "powershell"
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::PowerShell),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-default-shell-powershell"),
+            ),
+        );
+        assert_eq!(channel.shell_label(), "powershell");
+
+        // Cmd -> "cmd"
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::Cmd),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-default-shell-cmd"),
+            ),
+        );
+        assert_eq!(channel.shell_label(), "cmd");
     }
 }
