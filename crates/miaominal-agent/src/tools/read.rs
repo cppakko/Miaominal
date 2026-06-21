@@ -76,10 +76,10 @@ fn powershell_read_command(path: &str, start: usize, end: usize, max_bytes: usiz
     let skip = start.saturating_sub(1);
     let take = end - start + 1;
     let max_byte_index = max_bytes.saturating_sub(1);
-    format!(
+    let ps_script = format!(
         "{env}; \
          if (-not (Test-Path -LiteralPath {path} -PathType Leaf)) {{ \
-         Write-Error \"not a regular file: {path}\"; exit 1 }}; \
+         Write-Error ('not a regular file: ' + {path}); exit 1 }}; \
          $content = Get-Content -LiteralPath {path} -TotalCount {lines_to_read} \
          | Select-Object -Skip {skip} -First {take}; \
          $text = $content -join [char]10; \
@@ -87,7 +87,7 @@ fn powershell_read_command(path: &str, start: usize, end: usize, max_bytes: usiz
          if ($bytes -gt {max}) {{ \
            $raw = [System.Text.Encoding]::UTF8.GetBytes($text); \
            $truncated = [System.Text.Encoding]::UTF8.GetString($raw[0..{max_byte_index}]); \
-           [Console]::Write($truncated + \"`n[MIAOMINAL_TRUNCATED]\") \
+           [Console]::Write($truncated + [char]10 + '[MIAOMINAL_TRUNCATED]') \
          }} else {{ [Console]::Write($text) }}",
         env = env,
         path = quoted,
@@ -96,7 +96,8 @@ fn powershell_read_command(path: &str, start: usize, end: usize, max_bytes: usiz
         take = take,
         max = max_bytes,
         max_byte_index = max_byte_index,
-    )
+    );
+    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
 }
 
 /// Build a CMD read command using PowerShell as fallback.

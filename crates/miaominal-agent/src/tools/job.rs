@@ -49,9 +49,10 @@ fn make_start_job_command(
             let cd = cd_prefix(shell_type, cwd);
             let marker_q = shell_quote(marker, shell_type);
             let cmd_q = shell_quote(user_command, shell_type);
-            format!(
+            let ps_script = format!(
                 "{cd}; $job = Start-Job -Name {marker_q} -ScriptBlock ([ScriptBlock]::Create({cmd_q}))"
-            )
+            );
+            format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
         }
         ShellType::Cmd => {
             let cd = cd_prefix(shell_type, cwd);
@@ -80,7 +81,8 @@ fn make_start_job_launch(
         }
         ShellType::PowerShell => {
             let marker_q = shell_quote(marker, shell_type);
-            format!("{job_command}; Write-Output {marker_q}")
+            let ps_script = format!("{job_command}; Write-Output {marker_q}");
+            format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
         }
         ShellType::Cmd => {
             format!("{job_command} & echo {marker}")
@@ -104,9 +106,10 @@ fn make_poll_command(marker: &str, shell_type: ShellType) -> String {
         }
         ShellType::PowerShell => {
             let marker_q = shell_quote(marker, shell_type);
-            format!(
-                "$job = Get-Job -Name {marker_q} -ErrorAction SilentlyContinue; if (-not $job) {{ Write-Output 'status=not_found' }} elseif ($job.State -eq 'Running') {{ Write-Output 'status=running'; Write-Output 'stdout<<EOF'; Receive-Job -Name {marker_q} -Keep; Write-Output 'EOF' }} else {{ $result = Receive-Job -Name {marker_q} -ErrorAction SilentlyContinue; Write-Output 'status=exited'; Write-Output (\"exit=\" + ($job.ExitCode ?? 0)); Write-Output 'stdout<<EOF'; $result; Write-Output 'EOF'; Write-Output 'stderr<<EOF'; Write-Output 'EOF'; Remove-Job -Name {marker_q} }}"
-            )
+            let ps_script = format!(
+                "$job = Get-Job -Name {marker_q} -ErrorAction SilentlyContinue; if (-not $job) {{ Write-Output 'status=not_found' }} elseif ($job.State -eq 'Running') {{ Write-Output 'status=running'; Write-Output 'stdout<<EOF'; Receive-Job -Name {marker_q} -Keep; Write-Output 'EOF' }} else {{ $result = Receive-Job -Name {marker_q} -ErrorAction SilentlyContinue; Write-Output 'status=exited'; Write-Output ('exit=' + ($job.ExitCode ?? 0)); Write-Output 'stdout<<EOF'; $result; Write-Output 'EOF'; Write-Output 'stderr<<EOF'; Write-Output 'EOF'; Remove-Job -Name {marker_q} }}"
+            );
+            format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
         }
         ShellType::Cmd => {
             let marker_win = marker.replace('/', "\\");
@@ -130,9 +133,10 @@ fn make_stop_command(marker: &str, shell_type: ShellType) -> String {
         }
         ShellType::PowerShell => {
             let marker_q = shell_quote(marker, shell_type);
-            format!(
+            let ps_script = format!(
                 "$job = Get-Job -Name {marker_q} -ErrorAction SilentlyContinue; if ($job) {{ Stop-Job -Name {marker_q}; Remove-Job -Name {marker_q} }}; Write-Output 'stopped'"
-            )
+            );
+            format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
         }
         ShellType::Cmd => {
             let marker_win = marker.replace('/', "\\");

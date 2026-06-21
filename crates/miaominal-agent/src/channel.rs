@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
@@ -134,6 +135,10 @@ pub struct AgentExecChannel {
     use_pty: bool,
     terminal_exec: Option<TerminalExecHandle>,
     aux_channels: HashMap<String, AgentExecChannel>,
+    /// Override set by workspace_info probe when the actual remote shell differs
+    /// from the profile's configured shell_type.  `0` = unset (use profile).
+    /// Uses AtomicU8 for lock-free interior mutability across clones.
+    detected_shell: Arc<AtomicU8>,
 }
 
 impl AgentExecChannel {
@@ -173,6 +178,7 @@ impl AgentExecChannel {
             use_pty: false,
             terminal_exec: None,
             aux_channels: HashMap::new(),
+            detected_shell: Arc::new(AtomicU8::new(0)),
         }
     }
 
@@ -193,7 +199,7 @@ impl AgentExecChannel {
     }
 
     pub fn shell_label(&self) -> &'static str {
-        match self.profile.shell_type {
+        match self.effective_shell_type() {
             ShellType::Posix => "posix-sh",
             ShellType::Fish => "fish",
             ShellType::PowerShell => "powershell",
@@ -202,11 +208,34 @@ impl AgentExecChannel {
     }
 
     pub fn shell_type(&self) -> ShellType {
-        self.profile.shell_type
+        self.effective_shell_type()
+    }
+
+    fn effective_shell_type(&self) -> ShellType {
+        match self.detected_shell.load(Ordering::Relaxed) {
+            1 => ShellType::Posix,
+            2 => ShellType::Fish,
+            3 => ShellType::PowerShell,
+            4 => ShellType::Cmd,
+            _ => self.profile.shell_type,
+        }
+    }
+
+    /// Record the actual shell type detected by workspace_info probing.
+    /// Once set, all tools dispatch to this shell type instead of the profile's
+    /// configured value.
+    pub fn set_detected_shell(&self, shell_type: ShellType) {
+        let code: u8 = match shell_type {
+            ShellType::Posix => 1,
+            ShellType::Fish => 2,
+            ShellType::PowerShell => 3,
+            ShellType::Cmd => 4,
+        };
+        self.detected_shell.store(code, Ordering::Relaxed);
     }
 
     pub fn is_fish_shell(&self) -> bool {
-        matches!(self.profile.shell_type, ShellType::Fish)
+        matches!(self.effective_shell_type(), ShellType::Fish)
     }
 
     pub fn web_search(&self) -> &dyn WebSearchProvider {

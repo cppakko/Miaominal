@@ -83,11 +83,12 @@ fn build_patch_command(
             ))
         }
         ShellType::PowerShell => {
-            Ok(format!(
+            let ps_script = format!(
                 "{cd_prefix}\n@'\n{patch}\n'@ | & patch -p0",
                 cd_prefix = cd_prefix(shell, base_dir),
                 patch = patch,
-            ))
+            );
+            Ok(format!("powershell.exe -NoProfile -Command \"{ps_script}\""))
         }
         ShellType::Cmd => {
             Err(AgentError::PosixOnly(

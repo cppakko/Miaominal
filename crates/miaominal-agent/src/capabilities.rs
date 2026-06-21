@@ -64,23 +64,26 @@ impl CapabilityProbe {
     }
 
     pub fn powershell_command() -> &'static str {
-        "Write-Output \"home=$env:USERPROFILE\"; \
-         Write-Output \"pwd=$(Get-Location).Path\"; \
-         Write-Output \"user=$env:USERNAME\"; \
-         Write-Output \"platform=Windows\"; \
+        // Single-quoted strings inside the PS script avoid double-quote
+        // conflicts with the outer `powershell.exe -NoProfile -Command "..."` wrapper.
+        "powershell.exe -NoProfile -Command \"\
+         Write-Output 'home=' + $env:USERPROFILE; \
+         Write-Output 'pwd=' + (Get-Location).Path; \
+         Write-Output 'user=' + $env:USERNAME; \
+         Write-Output 'platform=Windows'; \
          if ([System.Environment]::Is64BitOperatingSystem) { \
-             Write-Output \"arch=x86_64\" \
+             Write-Output 'arch=x86_64' \
          } else { \
-             Write-Output \"arch=x86\" \
+             Write-Output 'arch=x86' \
          }; \
-         Write-Output \"shell=powershell\"; \
+         Write-Output 'shell=powershell'; \
          @('rg','git','patch','python3','grep','find','sed','pwsh','powershell') | ForEach-Object { \
              if (Get-Command $_ -ErrorAction SilentlyContinue) { \
-                 Write-Output \"cap_$_=1\" \
+                 Write-Output ('cap_' + $_ + '=1') \
              } else { \
-                 Write-Output \"cap_$_=0\" \
+                 Write-Output ('cap_' + $_ + '=0') \
              } \
-         }"
+         }\""
     }
 
     pub fn cmd_command() -> &'static str {

@@ -100,7 +100,7 @@ fn glob_powershell_command(
     } else {
         " | Where-Object { ($_.FullName -split '[\\\\/]') -notmatch '^\\.' }".to_string()
     };
-    format!(
+    let ps_script = format!(
         "{cd}; Get-ChildItem -Recurse -Filter {pattern} -File -ErrorAction SilentlyContinue{hidden_clause} \
          | ForEach-Object {{ $_.FullName.Replace((Get-Location).Path + '\\', '').Replace('\\', '/') }} \
          | Sort-Object | Select-Object -First {max}",
@@ -108,7 +108,8 @@ fn glob_powershell_command(
         pattern = quoted_pattern,
         hidden_clause = hidden_clause,
         max = max,
-    )
+    );
+    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
 }
 
 fn glob_cmd_command(root: &str, pattern: &str, _max_results: usize, include_hidden: bool) -> String {

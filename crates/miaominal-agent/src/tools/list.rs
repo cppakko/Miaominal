@@ -72,9 +72,10 @@ fn list_command(
             } else {
                 " | Where-Object { -not $_.Name.StartsWith('.') }".to_string()
             };
-            format!(
-                "{cd}; Get-ChildItem -Path '.' -Force{hidden_filter} | ForEach-Object {{ $type = if ($_.PSIsContainer) {{ 'd' }} elseif ($_.LinkType) {{ 'l' }} else {{ 'f' }}; \"$($_.Name)`t$type`t$($_.Length)`t$([DateTimeOffset]::new($_.LastWriteTime).ToUnixTimeSeconds())\" }} | Sort-Object | Select-Object -First {max}",
-            )
+            let ps_script = format!(
+                "{cd}; Get-ChildItem -Path '.' -Force{hidden_filter} | ForEach-Object {{ $type = if ($_.PSIsContainer) {{ 'd' }} elseif ($_.LinkType) {{ 'l' }} else {{ 'f' }}; $_.Name + [char]9 + $type + [char]9 + $_.Length + [char]9 + [DateTimeOffset]::new($_.LastWriteTime).ToUnixTimeSeconds() }} | Sort-Object | Select-Object -First {max}",
+            );
+            format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
         }
         ShellType::Cmd => {
             let cd = cd_prefix(shell_type, path);

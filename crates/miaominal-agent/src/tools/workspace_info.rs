@@ -4,14 +4,64 @@ use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::AgentResult;
 
 pub async fn workspace_info(channel: &AgentExecChannel) -> AgentResult<ToolOutput> {
-    // Dispatch probe command + parser based on shell type
-    let output = match channel.shell_label() {
-        "powershell" => channel.exec(CapabilityProbe::powershell_command()).await?,
-        "cmd" => channel.exec(CapabilityProbe::cmd_command()).await?,
-        _ => channel.exec(CapabilityProbe::posix_command()).await?,
-    };
+    /// Try each probe in order, returning (output, effective_shell_label).
+    /// Falls back when the primary probe fails (e.g., POSIX probe on a Windows host).
+    async fn probe_with_fallback(
+        channel: &AgentExecChannel,
+    ) -> AgentResult<(String, &'static str)> {
+        let label = channel.shell_label();
+        match label {
+            "powershell" => {
+                if let Ok(out) = channel.exec(CapabilityProbe::powershell_command()).await {
+                    return Ok((out, "powershell"));
+                }
+                // Fallback: try CMD
+                channel
+                    .exec(CapabilityProbe::cmd_command())
+                    .await
+                    .map(|out| (out, "cmd"))
+            }
+            "cmd" => {
+                if let Ok(out) = channel.exec(CapabilityProbe::cmd_command()).await {
+                    return Ok((out, "cmd"));
+                }
+                // Fallback: try PowerShell
+                channel
+                    .exec(CapabilityProbe::powershell_command())
+                    .await
+                    .map(|out| (out, "powershell"))
+            }
+            _ => {
+                // Posix / Fish: try POSIX first, then PowerShell, then CMD
+                if let Ok(out) = channel.exec(CapabilityProbe::posix_command()).await {
+                    return Ok((out, label));
+                }
+                if let Ok(out) = channel.exec(CapabilityProbe::powershell_command()).await {
+                    return Ok((out, "powershell"));
+                }
+                channel
+                    .exec(CapabilityProbe::cmd_command())
+                    .await
+                    .map(|out| (out, "cmd"))
+            }
+        }
+    }
 
-    let probe = match channel.shell_label() {
+    let (output, effective_label) = probe_with_fallback(channel).await?;
+
+    // When the probe detected a shell different from the configured profile,
+    // record it so subsequent tools use the correct shell type.
+    if effective_label != channel.shell_label() {
+        let detected = match effective_label {
+            "powershell" => miaominal_core::profile::ShellType::PowerShell,
+            "cmd" => miaominal_core::profile::ShellType::Cmd,
+            "fish" => miaominal_core::profile::ShellType::Fish,
+            _ => miaominal_core::profile::ShellType::Posix,
+        };
+        channel.set_detected_shell(detected);
+    }
+
+    let probe = match effective_label {
         "powershell" => CapabilityProbe::parse_powershell(&output, BackendRoute::SshExec),
         "cmd" => CapabilityProbe::parse_cmd(&output, BackendRoute::SshExec),
         _ => CapabilityProbe::parse_posix(&output, BackendRoute::SshExec),

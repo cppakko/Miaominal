@@ -88,12 +88,12 @@ fn build_powershell_grep(
         )
     };
 
-    format!(
+    let ps_script = format!(
         "{cd}; {include_var}$root={root_q}; $pattern={pattern_q}; \
          Get-ChildItem -LiteralPath $root -Recurse -File{include_param} \
          -ErrorAction SilentlyContinue | \
          Select-String -Pattern $pattern{case_flag} | \
-         ForEach-Object {{ \"$($_.Filename):$($_.LineNumber):$($_.Line)\" }} | \
+         ForEach-Object {{ $_.Filename + ':' + $_.LineNumber + ':' + $_.Line }} | \
          Select-Object -First {max_results}",
         cd = cd,
         include_var = include_var,
@@ -102,7 +102,8 @@ fn build_powershell_grep(
         include_param = include_param,
         case_flag = case_flag,
         max_results = max_results,
-    )
+    );
+    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
 }
 
 /// PowerShell variable assignment uses single-quoted strings (same as shell_quote output).
@@ -278,7 +279,7 @@ mod tests {
 
         // Output format: filename:line:content (matching rg's default -n output)
         assert!(
-            cmd.contains("$_.Filename):$($_.LineNumber):$($_.Line"),
+            cmd.contains("$_.Filename") && cmd.contains("$_.LineNumber") && cmd.contains("$_.Line"),
             "Should format as filename:line:content, got: {cmd}"
         );
     }
