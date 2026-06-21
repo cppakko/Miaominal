@@ -117,6 +117,7 @@ pub fn env_setup(shell_type: ShellType) -> String {
 }
 
 /// Generate a command that creates a temporary file and prints its path.
+#[allow(dead_code)]
 pub fn temp_file(shell_type: ShellType) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => "mktemp".into(),
@@ -129,6 +130,7 @@ pub fn temp_file(shell_type: ShellType) -> String {
 ///
 /// `file_var` should already be shell-quoted or be a shell variable reference
 /// (e.g., `"$tmp"`, `$out`). Returns empty string for CMD (no built-in equivalent).
+#[allow(dead_code)]
 pub fn head_bytes_cmd(shell_type: ShellType, file_var: &str, max: usize) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => format!("head -c {max} {file_var}"),
@@ -140,6 +142,7 @@ pub fn head_bytes_cmd(shell_type: ShellType, file_var: &str, max: usize) -> Stri
 }
 
 /// Return the shell variable to read the last exit code.
+#[allow(dead_code)]
 pub fn exit_code_var(shell_type: ShellType) -> &'static str {
     match shell_type {
         ShellType::Posix | ShellType::Fish => "$?",
@@ -149,6 +152,7 @@ pub fn exit_code_var(shell_type: ShellType) -> &'static str {
 }
 
 /// Return the line-ending separator between chained commands.
+#[allow(dead_code)]
 pub fn line_ending(shell_type: ShellType) -> &'static str {
     match shell_type {
         ShellType::Posix | ShellType::Fish => "\n",

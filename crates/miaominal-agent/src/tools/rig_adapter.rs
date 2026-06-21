@@ -288,7 +288,7 @@ fn tool_parameters(name: &str) -> Value {
                     "max_bytes",
                     integer_schema("Maximum stdout/stderr bytes.", 1),
                 ),
-                ("shell", string_schema("Shell label; use posix-sh or fish.")),
+                ("shell", string_schema("Shell label; use posix-sh, fish, powershell, or cmd.")),
             ],
             &["command"],
         ),
