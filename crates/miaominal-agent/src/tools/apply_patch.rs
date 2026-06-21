@@ -29,7 +29,7 @@ pub async fn apply_patch(
     let command = format!(
         "cd \"$HOME\" && cd {base_dir} && patch -p0 <<'MIAOMINAL_AGENT_PATCH'\n{}\nMIAOMINAL_AGENT_PATCH",
         args.patch,
-        base_dir = shell_quote(&base_dir),
+        base_dir = shell_quote(&base_dir, channel.shell_type()),
     );
     let patch_output = channel.exec(command).await?;
 

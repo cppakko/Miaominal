@@ -38,12 +38,12 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
     let include_args = args
         .include
         .iter()
-        .map(|include| format!(" --glob {}", shell_quote(include)))
+        .map(|include| format!(" --glob {}", shell_quote(include, channel.shell_type())))
         .collect::<String>();
     let find_name_filter = args
         .include
         .first()
-        .map(|include| format!(" -name {}", shell_quote(include)))
+        .map(|include| format!(" -name {}", shell_quote(include, channel.shell_type())))
         .unwrap_or_default();
     let command = format!(
         "cd \"$HOME\" && if command -v rg >/dev/null 2>&1; then \
@@ -53,8 +53,8 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
         max_results = max_results,
         include_args = include_args,
         find_name_filter = find_name_filter,
-        pattern = shell_quote(&args.pattern),
-        root = shell_quote(&root),
+        pattern = shell_quote(&args.pattern, channel.shell_type()),
+        root = shell_quote(&root, channel.shell_type()),
         max_bytes = max_bytes,
     );
     Ok(ToolOutput::Text {

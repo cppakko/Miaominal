@@ -149,6 +149,12 @@ pub fn classify_command(command: &str) -> AgentRiskLevel {
             " apt install ",
             " apt-get install ",
             " brew install ",
+            " restart-service ",
+            " stop-service ",
+            " set-service ",
+            " net stop ",
+            " sc stop ",
+            " sc config ",
         ],
     ) {
         return AgentRiskLevel::L2ServiceImpacting;
@@ -165,6 +171,16 @@ pub fn classify_command(command: &str) -> AgentRiskLevel {
             " tee ",
             " patch ",
             " git apply ",
+            " move-item ",
+            " set-acl ",
+            " icacls ",
+            " takeown ",
+            " new-localuser ",
+            " add-localgroupmember ",
+            " set-executionpolicy ",
+            " net user ",
+            " net localgroup ",
+            " reg add ",
         ],
     ) {
         return AgentRiskLevel::L3Dangerous;
@@ -188,6 +204,17 @@ pub fn classify_command(command: &str) -> AgentRiskLevel {
             " find ",
             " cat ",
             " sed ",
+            " get-service ",
+            " get-process ",
+            " get-eventlog ",
+            " get-content ",
+            " select-string ",
+            " where.exe ",
+            " dir ",
+            " type ",
+            " get-childitem ",
+            " test-path ",
+            " get-itemproperty ",
         ],
     ) {
         return AgentRiskLevel::L0ReadOnly;
@@ -211,6 +238,13 @@ pub fn is_sensitive_path(path: &str) -> bool {
         || normalized.ends_with(".pfx")
         || normalized.starts_with("/var/lib/mysql/")
         || normalized.starts_with("/var/lib/postgresql/")
+        // Windows-sensitive paths (normalized: \ → /, lowercase)
+        || normalized.contains("c:/windows/system32/config/")
+        || normalized.ends_with(".rdp")
+        || normalized.ends_with(".kdbx")
+        || normalized.contains("ntds.dit")
+        || normalized.contains("appdata/roaming/mozilla/firefox/profiles")
+        || normalized.contains("appdata/local/google/chrome/user data/default")
 }
 
 pub fn is_sensitive_grep_pattern(pattern: &str) -> bool {
@@ -237,6 +271,19 @@ fn is_forbidden_command(normalized: &str) -> bool {
         || normalized.contains(" chmod -r 777 /")
         || normalized.contains(" iptables ")
         || normalized.contains(" ufw ")
+        // --- Windows destructive commands ---
+        || normalized.contains(" format c:")
+        || normalized.contains(" format /")
+        || normalized.contains(" diskpart")
+        || normalized.contains(" reg delete")
+        || normalized.contains(" bcdedit")
+        || (normalized.contains(" icacls") && normalized.contains("/deny"))
+        || normalized.contains(" del /f /s c:")
+        || normalized.contains(" rmdir /s /q c:")
+        || normalized.contains(" remove-item -recurse -force c:")
+        || normalized.contains(" clear-recyclebin -force")
+        || normalized.contains(" stop-computer")
+        || normalized.contains(" restart-computer")
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -344,6 +391,31 @@ mod tests {
     }
 
     #[test]
+    fn windows_sensitive_paths_detected() {
+        assert!(is_sensitive_path("C:\\Windows\\System32\\config\\SAM"));
+        assert!(is_sensitive_path("C:\\Windows\\System32\\config\\SECURITY"));
+        assert!(is_sensitive_path("C:\\Users\\user\\.ssh\\id_rsa"));
+        assert!(is_sensitive_path("C:\\Users\\user\\secret.rdp"));
+        assert!(is_sensitive_path("C:\\Users\\user\\passwords.kdbx"));
+        assert!(is_sensitive_path("C:\\Windows\\NTDS\\NTDS.dit"));
+        assert!(is_sensitive_path(
+            "C:\\Users\\user\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abc.default\\logins.json"
+        ));
+        assert!(is_sensitive_path(
+            "C:\\Users\\user\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data"
+        ));
+    }
+
+    #[test]
+    fn normal_windows_paths_not_sensitive() {
+        assert!(!is_sensitive_path("C:\\Users\\user\\Documents\\report.txt"));
+        assert!(!is_sensitive_path("C:\\Users\\user\\Downloads\\setup.exe"));
+        assert!(!is_sensitive_path("C:\\Users\\user\\Desktop\\notes.md"));
+        assert!(!is_sensitive_path("D:\\Projects\\code\\main.rs"));
+        assert!(!is_sensitive_path("C:\\Program Files\\SomeApp\\config.json"));
+    }
+
+    #[test]
     fn edit_paths_need_approval() {
         let policy = AgentPolicy;
 
@@ -414,5 +486,118 @@ mod tests {
             policy.decide_command("systemctl restart nginx", true),
             AgentPolicyDecision::Allow
         );
+    }
+
+    // ── Windows command classification tests ──
+
+    #[test]
+    fn windows_forbidden_commands_l4() {
+        let policy = AgentPolicy;
+
+        let forbidden = [
+            "format C: /FS:NTFS",
+            "format /Q /V:Data",
+            "diskpart",
+            "diskpart /s script.txt",
+            "reg delete HKLM\\Software\\App",
+            "bcdedit /set {current} safeboot minimal",
+            "icacls C:\\data /deny Everyone:F",
+            "del /f /s C:\\Windows",
+            "rmdir /s /q C:\\data",
+            "Remove-Item -Recurse -Force C:\\data",
+            "Clear-RecycleBin -Force",
+            "Stop-Computer -Force",
+            "Restart-Computer -Force",
+        ];
+
+        for cmd in &forbidden {
+            assert!(
+                matches!(policy.decide_command(cmd, true), AgentPolicyDecision::Deny { .. }),
+                "expected Deny for forbidden command: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_service_commands_l2() {
+        let policy = AgentPolicy;
+
+        let service_cmds = [
+            "Restart-Service wuauserv",
+            "Stop-Service spooler -Force",
+            "Set-Service wuauserv -StartupType Disabled",
+            "net stop wuauserv",
+            "sc stop wuauserv",
+            "sc config wuauserv start=disabled",
+        ];
+
+        for cmd in &service_cmds {
+            assert!(
+                matches!(policy.decide_command(cmd, false), AgentPolicyDecision::NeedsApproval { .. }),
+                "expected NeedsApproval for L2: {cmd}"
+            );
+            assert_eq!(
+                policy.decide_command(cmd, true),
+                AgentPolicyDecision::Allow,
+                "expected Allow when approved for: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_dangerous_commands_l3() {
+        let policy = AgentPolicy;
+
+        let dangerous = [
+            "Move-Item C:\\data D:\\backup",
+            "Set-Acl -Path C:\\data -AclObject $acl",
+            "icacls C:\\data /grant User:F",
+            "takeown /f C:\\data /r",
+            "New-LocalUser -Name testuser -Password $pw",
+            "Add-LocalGroupMember -Group Administrators -Member testuser",
+            "Set-ExecutionPolicy Unrestricted -Force",
+            "net user testuser password123 /ADD",
+            "net localgroup Administrators testuser /ADD",
+            "reg add HKLM\\Software\\App /v Setting /t REG_DWORD /d 1",
+        ];
+
+        for cmd in &dangerous {
+            assert!(
+                matches!(policy.decide_command(cmd, false), AgentPolicyDecision::NeedsApproval { .. }),
+                "expected NeedsApproval for L3: {cmd}"
+            );
+            assert_eq!(
+                policy.decide_command(cmd, true),
+                AgentPolicyDecision::Allow,
+                "expected Allow when approved for: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_readonly_commands_l0() {
+        let policy = AgentPolicy;
+
+        let readonly = [
+            "Get-Service wuauserv",
+            "Get-Process",
+            "Get-EventLog -LogName System -Newest 10",
+            "Get-Content C:\\logs\\app.log",
+            "Select-String -Path C:\\logs\\*.log -Pattern ERROR",
+            "where.exe notepad",
+            "dir C:\\Windows",
+            "type C:\\logs\\app.log",
+            "Get-ChildItem C:\\Users",
+            "Test-Path C:\\data\\config.json",
+            "Get-ItemProperty HKLM:\\Software\\App",
+        ];
+
+        for cmd in &readonly {
+            assert_eq!(
+                policy.decide_command(cmd, false),
+                AgentPolicyDecision::Allow,
+                "expected Allow for L0 read-only: {cmd}"
+            );
+        }
     }
 }

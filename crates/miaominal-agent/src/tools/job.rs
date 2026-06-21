@@ -2,6 +2,7 @@ use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::{AgentError, AgentResult};
 use crate::jobs::{AgentJobId, JobPollResult, JobStatus};
 use crate::path_guard::{resolve_workspace_path, shell_quote};
+use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -35,17 +36,18 @@ pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentR
     }
     let job_id = AgentJobId::new();
     let marker = job_id.remote_marker()?;
+    let st = channel.shell_type();
     let command = format!(
         "cd \"$HOME\" && cd {cwd} && nohup sh -lc {} >{}.out 2>{}.err; printf $? >{}",
-        shell_quote(&args.command),
-        shell_quote(&marker),
-        shell_quote(&marker),
-        shell_quote(&marker),
-        cwd = shell_quote(&cwd),
+        shell_quote(&args.command, st),
+        shell_quote(&marker, st),
+        shell_quote(&marker, st),
+        shell_quote(&marker, st),
+        cwd = shell_quote(&cwd, st),
     );
     let launch = format!(
         "({command}) >/dev/null 2>&1 & printf '%s' {marker}",
-        marker = shell_quote(&marker)
+        marker = shell_quote(&marker, st)
     );
     let marker = channel.exec(launch).await?.trim_matches('\'').to_string();
     let job_id = channel
@@ -67,18 +69,18 @@ pub async fn list_jobs(channel: &AgentExecChannel) -> AgentResult<ToolOutput> {
 
 pub async fn poll_job(channel: &AgentExecChannel, args: PollJobArgs) -> AgentResult<ToolOutput> {
     let marker = channel.jobs().remote_marker(&args.job_id)?;
-    let output = channel.exec(poll_command(&marker)).await?;
+    let output = channel.exec(poll_command(&marker, channel.shell_type())).await?;
     Ok(ToolOutput::JobPoll {
         result: parse_poll_output(args.job_id, &output)?,
     })
 }
 
-fn poll_command(marker: &str) -> String {
+fn poll_command(marker: &str, shell_type: ShellType) -> String {
     format!(
         "emit_streams() {{ printf 'stdout<<EOF\\n'; cat {out} 2>/dev/null; printf '\\nEOF\\nstderr<<EOF\\n'; cat {err} 2>/dev/null; printf '\\nEOF\\n'; }}; if [ -f {status} ]; then exit_status=$(cat {status}); if [ \"$exit_status\" = stopped ]; then printf 'status=stopped\\n'; else printf 'status=exited\\nexit=%s\\n' \"$exit_status\"; fi; emit_streams; elif [ -f {out} ] || [ -f {err} ]; then printf 'status=running\\n'; emit_streams; else printf 'status=not_found\\n'; fi",
-        status = shell_quote(&marker),
-        out = shell_quote(&format!("{marker}.out")),
-        err = shell_quote(&format!("{marker}.err")),
+        status = shell_quote(&marker, shell_type),
+        out = shell_quote(&format!("{marker}.out"), shell_type),
+        err = shell_quote(&format!("{marker}.err"), shell_type),
     )
 }
 
@@ -124,8 +126,8 @@ pub async fn stop_job(channel: &AgentExecChannel, args: StopJobArgs) -> AgentRes
     let marker = channel.jobs().remote_marker(&args.job_id)?;
     let command = format!(
         "pkill -f {marker} 2>/dev/null || true; printf 'stopped' >{status}; printf 'stopped\\n'",
-        marker = shell_quote(&marker),
-        status = shell_quote(&marker),
+        marker = shell_quote(&marker, channel.shell_type()),
+        status = shell_quote(&marker, channel.shell_type()),
     );
     Ok(ToolOutput::Text {
         content: channel.exec(command).await?,
@@ -139,7 +141,7 @@ mod tests {
 
     #[test]
     fn poll_command_distinguishes_missing_job_from_running_job() {
-        let command = poll_command("/tmp/miaominal-agent-job.status");
+        let command = poll_command("/tmp/miaominal-agent-job.status", ShellType::Posix);
 
         assert!(command.contains("status=running"));
         assert!(command.contains("status=not_found"));

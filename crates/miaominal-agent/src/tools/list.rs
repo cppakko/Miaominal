@@ -42,7 +42,7 @@ pub async fn list(channel: &AgentExecChannel, args: ListArgs) -> AgentResult<Too
     };
     let command = format!(
         "cd \"$HOME\" && find {path} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%s\\t%T@\\n'{hidden_filter} | sort | head -n {max}",
-        path = shell_quote(&path),
+        path = shell_quote(&path, channel.shell_type()),
         hidden_filter = hidden_filter,
         max = max_entries + 1,
     );

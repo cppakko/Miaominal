@@ -52,9 +52,9 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             "printf 'MIAOMINAL_TRUNCATED=1\\n'; ",
             "else printf 'MIAOMINAL_TRUNCATED=0\\n'; fi"
         ),
-        cwd = shell_quote(&cwd),
+        cwd = shell_quote(&cwd, channel.shell_type()),
         timeout_secs = timeout_secs,
-        user_command = shell_quote(&args.command),
+        user_command = shell_quote(&args.command, channel.shell_type()),
         max = max_bytes,
     );
 
@@ -78,17 +78,18 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0),
     );
+    let st = channel.shell_type();
     let terminal_command = if is_fish {
         format!(
             "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
-            cwd = shell_quote(&cwd),
+            cwd = shell_quote(&cwd, st),
             user_command = args.command,
             sentinel = sentinel,
         )
     } else {
         format!(
             "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
-            cwd = shell_quote(&cwd),
+            cwd = shell_quote(&cwd, st),
             user_command = args.command,
             sentinel = sentinel,
         )

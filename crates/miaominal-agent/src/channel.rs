@@ -201,6 +201,10 @@ impl AgentExecChannel {
         }
     }
 
+    pub fn shell_type(&self) -> ShellType {
+        self.profile.shell_type
+    }
+
     pub fn is_fish_shell(&self) -> bool {
         matches!(self.profile.shell_type, ShellType::Fish)
     }

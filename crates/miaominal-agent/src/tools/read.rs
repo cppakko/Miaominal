@@ -30,7 +30,7 @@ pub async fn read(channel: &AgentExecChannel, args: ReadArgs) -> AgentResult<Too
          bytes=$(wc -c <\"$tmp\"); head -c {max} \"$tmp\"; rm -f \"$tmp\"; \
          if [ \"$bytes\" -gt {max} ]; then printf '\\n[MIAOMINAL_TRUNCATED]'; fi; \
          else printf 'not a regular file: %s' {path} >&2; exit 1; fi",
-        path = shell_quote(&path),
+        path = shell_quote(&path, channel.shell_type()),
         start = start,
         end = end,
         max = max_bytes,

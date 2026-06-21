@@ -32,8 +32,8 @@ pub async fn glob(channel: &AgentExecChannel, args: GlobArgs) -> AgentResult<Too
     };
     let command = format!(
         "cd \"$HOME\" && find {root} -type f -name {pattern} -print{hidden_filter} | sed 's#^./##' | sort | head -n {max}",
-        root = shell_quote(&root),
-        pattern = shell_quote(&name_pattern),
+        root = shell_quote(&root, channel.shell_type()),
+        pattern = shell_quote(&name_pattern, channel.shell_type()),
         hidden_filter = hidden_filter,
         max = max_results + 1,
     );

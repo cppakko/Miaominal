@@ -23,6 +23,11 @@ pub async fn workspace_info(channel: &AgentExecChannel) -> AgentResult<ToolOutpu
             "*.pem".into(),
             "*.key".into(),
             "/etc/shadow".into(),
+            // Windows-sensitive path patterns
+            r#"C:\Windows\System32\config\*"#.into(),
+            r#"%USERPROFILE%\.ssh\*"#.into(),
+            "*.rdp".into(),
+            "*.kdbx".into(),
         ],
         capabilities: probe.capabilities,
         route: probe.route,
