@@ -1,8 +1,11 @@
 use crate::backend::{BackendRoute, ExecMode};
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ShellCommandResult, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{resolve_workspace_path, shell_quote};
+use crate::path_guard::{
+    cd_prefix, env_setup, resolve_workspace_path, shell_quote,
+};
 use anyhow::anyhow;
+use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -29,12 +32,86 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let shell = args.shell.as_deref().unwrap_or(channel.shell_label());
     let is_fish = shell == "fish" || channel.is_fish_shell();
-    if shell != "posix-sh" && shell != "sh" && shell != "fish" && shell != "powershell" && shell != "cmd" {
+    let st = channel.shell_type();
+    if shell != "posix-sh"
+        && shell != "sh"
+        && shell != "fish"
+        && shell != "powershell"
+        && shell != "cmd"
+    {
         return Err(AgentError::PosixOnly(
             "run_shell v1 supports posix-sh, sh, fish, powershell, or cmd".into(),
         ));
     }
-    let command = format!(
+
+    let sentinel = format!(
+        "MIAOMINAL_{:016x}_",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0),
+    );
+
+    let (command, terminal_command) = match st {
+        ShellType::PowerShell => (
+            build_powershell_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
+            build_powershell_terminal(&args.command, &cwd, &sentinel, st),
+        ),
+        ShellType::Cmd => (
+            build_cmd_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
+            build_cmd_terminal(&args.command, &cwd, &sentinel, st),
+        ),
+        _ => {
+            let cmd = build_posix_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st);
+            let tc = if is_fish {
+                format!(
+                    "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
+                    cwd = shell_quote(&cwd, st),
+                    user_command = args.command,
+                    sentinel = sentinel,
+                )
+            } else {
+                format!(
+                    "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
+                    cwd = shell_quote(&cwd, st),
+                    user_command = args.command,
+                    sentinel = sentinel,
+                )
+            };
+            (cmd, tc)
+        }
+    };
+
+    let output = if channel.terminal_exec().is_some() {
+        channel
+            .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
+            .await?
+    } else if channel.uses_pty() {
+        channel
+            .exec_with_mode(BackendRoute::Pty, command, ExecMode::pty_default())
+            .await?
+    } else {
+        channel.exec(command).await?
+    };
+    let result = if channel.terminal_exec().is_some() {
+        parse_terminal_shell_result(&output, &sentinel)?
+    } else {
+        parse_shell_result(&output)?
+    };
+    Ok(ToolOutput::Shell { result })
+}
+
+// ── Command wrapper builders ──
+
+/// Build a POSIX non-terminal wrapper with mktemp, timeout, head -c truncation.
+fn build_posix_non_terminal(
+    user_command: &str,
+    cwd: &str,
+    timeout_secs: u64,
+    max_bytes: usize,
+    shell_type: ShellType,
+) -> String {
+    format!(
         concat!(
             "cd \"$HOME\" && cd {cwd} && ",
             "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; ",
@@ -52,70 +129,135 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             "printf 'MIAOMINAL_TRUNCATED=1\\n'; ",
             "else printf 'MIAOMINAL_TRUNCATED=0\\n'; fi"
         ),
-        cwd = shell_quote(&cwd, channel.shell_type()),
+        cwd = shell_quote(cwd, shell_type),
         timeout_secs = timeout_secs,
-        user_command = shell_quote(&args.command, channel.shell_type()),
+        user_command = shell_quote(user_command, shell_type),
         max = max_bytes,
+    )
+}
+
+/// Build a PowerShell non-terminal wrapper.
+///
+/// Uses `New-TemporaryFile` for temp files, `$LASTEXITCODE` for exit code,
+/// `Get-Content -Raw` with `.Substring()` for byte truncation.  Wrapped with
+/// `powershell.exe -NoProfile -Command "..."` so it works over SSH exec even
+/// when the remote default shell is cmd.exe.
+fn build_powershell_non_terminal(
+    user_command: &str,
+    cwd: &str,
+    _timeout_secs: u64,
+    max_bytes: usize,
+    shell_type: ShellType,
+) -> String {
+    let cd = cd_prefix(shell_type, cwd);
+    let env = env_setup(shell_type);
+    let quoted_cmd = shell_quote(user_command, shell_type);
+
+    // PowerShell wrapper avoids double-quotes so it nests cleanly inside
+    // the outer `powershell.exe -NoProfile -Command "..."` call.
+    let ps_script = format!(
+        "{cd}; {env}; \
+         $out=(New-TemporaryFile).FullName; $err=(New-TemporaryFile).FullName; \
+         try{{& {{{quoted_cmd}}} 1>$out 2>$err}}catch{{}}; \
+         $ec=if($LASTEXITCODE -ne $null){{$LASTEXITCODE}}else{{0}}; \
+         Write-Output MIAOMINAL_STATUS=$ec; \
+         Write-Output MIAOMINAL_STDOUT_BEGIN; \
+         $s=Get-Content -Path $out -Raw; \
+         if($s.Length -gt {max_bytes}){{$s=$s.Substring(0,{max_bytes})}}; \
+         Write-Output $s; \
+         Write-Output MIAOMINAL_STDOUT_END; \
+         Write-Output MIAOMINAL_STDERR_BEGIN; \
+         $e=Get-Content -Path $err -Raw; \
+         if($e.Length -gt {max_bytes}){{$e=$e.Substring(0,{max_bytes})}}; \
+         Write-Output $e; \
+         Write-Output MIAOMINAL_STDERR_END; \
+         $so=(Get-Item $out).Length; $se=(Get-Item $err).Length; \
+         if($so -gt {max_bytes} -or $se -gt {max_bytes}){{ \
+           Write-Output MIAOMINAL_TRUNCATED=1 \
+         }}else{{ \
+           Write-Output MIAOMINAL_TRUNCATED=0 \
+         }}; \
+         Remove-Item $out,$err",
+        cd = cd,
+        env = env,
+        quoted_cmd = quoted_cmd,
+        max_bytes = max_bytes,
     );
 
-    // Terminal PTY mode: WinkTerm-inspired approach.
-    //
-    // No output redirection (avoids zsh MULTIOS / fork / $? pitfalls).
-    // No stty -echo / bracketed paste (avoids shell-specific line-editor quirks).
-    //
-    // POSIX wrapper:
-    //   cd ... && export ...; {cmd}; printf '\n{SENTINEL}%d:%s\n' "$?" "$PWD"
-    //
-    // Fish wrapper (fish uses $status not $?, set -x not export, "; and" not &&):
-    //   cd ...; and set -x ...; {cmd}; printf '\n{SENTINEL}%d:%s\n' $status $PWD
-    //
-    // The sentinel is a unique hex string per invocation.
-    // Merged stdout+stderr; collected via output tap until sentinel confirmed.
-    let sentinel = format!(
-        "MIAOMINAL_{:016x}_",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0),
-    );
-    let st = channel.shell_type();
-    let terminal_command = if is_fish {
-        format!(
-            "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
-            cwd = shell_quote(&cwd, st),
-            user_command = args.command,
-            sentinel = sentinel,
-        )
-    } else {
-        format!(
-            "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
-            cwd = shell_quote(&cwd, st),
-            user_command = args.command,
-            sentinel = sentinel,
-        )
-    };
-    let output = if channel.terminal_exec().is_some() {
-        // Terminal exec mode: command runs in user's visible terminal PTY.
-        // WinkTerm-style: raw bytes + \r, unique sentinel for exit-code capture.
-        // Output streams in real-time; collected via tap until sentinel confirmed.
-        channel
-            .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
-            .await?
-    } else if channel.uses_pty() {
-        // Pty mode: execute via dedicated SSH connection with PTY allocation.
-        // Output is collected cleanly; terminal display is injected by the UI layer.
-        channel
-            .exec_with_mode(BackendRoute::Pty, command, ExecMode::pty_default())
-            .await?
-    } else {
-        channel.exec(command).await?
-    };
-    let result = if channel.terminal_exec().is_some() {
-        parse_terminal_shell_result(&output, &sentinel)?
-    } else {
-        parse_shell_result(&output)?
-    };
-    Ok(ToolOutput::Shell { result })
+    // Outer wrapping for SSH exec (remote may start as cmd.exe).
+    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
+}
+
+/// Build a PowerShell terminal-mode wrapper (WinkTerm sentinel style).
+///
+/// Sent directly to the interactive PowerShell PTY — no outer `powershell.exe` wrapper.
+fn build_powershell_terminal(
+    user_command: &str,
+    cwd: &str,
+    sentinel: &str,
+    shell_type: ShellType,
+) -> String {
+    let cd = cd_prefix(shell_type, cwd);
+    let env = env_setup(shell_type);
+    format!(
+        "{cd}; {env}; {user_command}; Write-Host `n{sentinel}$LASTEXITCODE:$PWD",
+        cd = cd,
+        env = env,
+        user_command = user_command,
+        sentinel = sentinel,
+    )
+}
+
+/// Build a CMD non-terminal wrapper with %TEMP%-based temp files.
+///
+/// CMD has no built-in byte truncation and cannot separate stdout/stderr natively.
+/// Both streams are merged; truncation is handled by the Rust parsing layer.
+fn build_cmd_non_terminal(
+    user_command: &str,
+    cwd: &str,
+    _timeout_secs: u64,
+    max_bytes: usize,
+    shell_type: ShellType,
+) -> String {
+    let cd = cd_prefix(shell_type, cwd);
+    let env = env_setup(shell_type);
+    let quoted_cmd = shell_quote(user_command, shell_type);
+    // CMD cannot truncate at byte level; max_bytes unused here.
+    let _ = max_bytes;
+    format!(
+        "{cd} & {env} & \
+         set \"_mo=%TEMP%\\miaominal-%RANDOM%.tmp\" & \
+         {quoted_cmd} > \"%_mo%\" 2>&1 & \
+         echo MIAOMINAL_STATUS=%ERRORLEVEL% & \
+         echo MIAOMINAL_STDOUT_BEGIN & \
+         type \"%_mo%\" & \
+         echo MIAOMINAL_STDOUT_END & \
+         echo MIAOMINAL_STDERR_BEGIN & \
+         echo MIAOMINAL_STDERR_END & \
+         echo MIAOMINAL_TRUNCATED=0 & \
+         del \"%_mo%\"",
+        cd = cd,
+        env = env,
+        quoted_cmd = quoted_cmd,
+    )
+}
+
+/// Build a CMD terminal-mode wrapper (WinkTerm sentinel style).
+fn build_cmd_terminal(
+    user_command: &str,
+    cwd: &str,
+    sentinel: &str,
+    shell_type: ShellType,
+) -> String {
+    let cd = cd_prefix(shell_type, cwd);
+    let env = env_setup(shell_type);
+    format!(
+        "{cd} & {env} & {user_command} & echo( & echo {sentinel}%ERRORLEVEL%:%CD%",
+        cd = cd,
+        env = env,
+        user_command = user_command,
+        sentinel = sentinel,
+    )
 }
 
 pub fn parse_shell_result(output: &str) -> AgentResult<ShellCommandResult> {
@@ -187,9 +329,6 @@ fn sanitize_shell_output(raw: &str) -> String {
 /// line editor in the terminal tap does not shadow the real sentinel output.
 fn extract_status(output: &str) -> AgentResult<i32> {
     const MARKER: &str = "MIAOMINAL_STATUS=";
-    // The status sentinel is emitted before stdout. Restrict the search to the
-    // prefix before the last STDOUT_BEGIN so that user command output cannot
-    // shadow the real status sentinel.
     let search_area = output
         .rfind("MIAOMINAL_STDOUT_BEGIN")
         .map(|pos| &output[..pos])
@@ -210,11 +349,9 @@ fn extract_status(output: &str) -> AgentResult<i32> {
 fn extract_section(output: &str, begin: &str, end: &str) -> Option<String> {
     let begin_pos = output.rfind(begin)?;
     let after_begin = &output[begin_pos + begin.len()..];
-    // Skip the single \n that printf emits right after the begin marker.
     let after_begin = after_begin.strip_prefix('\n').unwrap_or(after_begin);
     let end_pos = after_begin.find(end)?;
     let section = &after_begin[..end_pos];
-    // Strip the single \n that printf emits right before the end marker.
     let section = section.strip_suffix('\n').unwrap_or(section);
     Some(section.to_string())
 }
@@ -229,11 +366,6 @@ fn extract_truncated(output: &str) -> bool {
 }
 
 /// Parse output from the terminal PTY path (WinkTerm-style unique sentinel).
-///
-/// The command output (merged stdout+stderr) is everything before the sentinel.
-/// The sentinel line contains exit-code and $PWD: `SENTINEL_N:PWD\n`.
-/// Uses `rfind` because the sentinel also appears literally inside the echoed
-/// wrapper command text; the real sentinel is the LAST occurrence.
 pub fn parse_terminal_shell_result(
     output: &str,
     sentinel: &str,
@@ -251,7 +383,6 @@ pub fn parse_terminal_shell_result(
         .map_err(|_| AgentError::Backend(anyhow!("invalid exit code in sentinel")))?;
     let nl = after.find('\n').unwrap_or(after.len());
     let _pwd = after[colon + 1..nl].to_string();
-    // Strip the single \n that printf emits between command output and sentinel
     let mut stdout = cleaned[..pos]
         .strip_suffix('\n')
         .unwrap_or(&cleaned[..pos])
@@ -296,9 +427,7 @@ mod tests {
             "MIAOMINAL_STDERR_END\n",
             "MIAOMINAL_TRUNCATED=1\n"
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert_eq!(result.exit_status, 7);
         assert_eq!(result.stdout, "hello");
         assert_eq!(result.stderr, "oops");
@@ -315,9 +444,7 @@ mod tests {
             "\nMIAOMINAL_STDERR_END\n",
             "MIAOMINAL_TRUNCATED=0\n"
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert!(result.timed_out);
         assert!(!result.truncated);
     }
@@ -326,8 +453,8 @@ mod tests {
     fn shell_result_parser_strips_ansi_and_carriage_returns() {
         let output = concat!(
             "stty -echo\r\n",
-            "\x1b[?2004l",          // bracketed-paste end marker (CSI)
-            "user@host:~$ \x1b[0m", // prompt with ANSI reset
+            "\x1b[?2004l",
+            "user@host:~$ \x1b[0m",
             "MIAOMINAL_STATUS=42\r\n",
             "MIAOMINAL_STDOUT_BEGIN\r\n",
             "line1\r\n",
@@ -337,12 +464,10 @@ mod tests {
             "boom\r\n",
             "MIAOMINAL_STDERR_END\r\n",
             "MIAOMINAL_TRUNCATED=0\r\n",
-            "\x1b[?2004h", // bracketed-paste start marker (CSI)
+            "\x1b[?2004h",
             "user@host:~$ ",
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert_eq!(result.exit_status, 42);
         assert_eq!(result.stdout, "line1\nline2");
         assert_eq!(result.stderr, "boom");
@@ -351,8 +476,6 @@ mod tests {
 
     #[test]
     fn shell_result_parser_ignores_sentinel_literals_in_wrapper_text() {
-        // Simulates the line editor displaying the wrapper command (which contains
-        // printf 'MIAOMINAL_STATUS=%s\n' etc.) before the actual sentinel output.
         let output = concat!(
             "user@host:~$ printf 'MIAOMINAL_STATUS=%s\\n' \"$_mm_rc\"; ",
             "printf 'MIAOMINAL_STDOUT_BEGIN\\n'; head -c 65536 \"$out\"; ",
@@ -367,9 +490,7 @@ mod tests {
             "\nMIAOMINAL_STDERR_END\n",
             "MIAOMINAL_TRUNCATED=0\n",
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert_eq!(result.exit_status, 0);
         assert_eq!(result.stdout, "hello");
         assert_eq!(result.stderr, "");
@@ -388,9 +509,7 @@ mod tests {
             "MIAOMINAL_STDERR_END\n",
             "MIAOMINAL_TRUNCATED=1\n"
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert_eq!(result.exit_status, 7);
         assert_eq!(result.stdout, "hello");
         assert_eq!(result.stderr, "oops");
@@ -410,9 +529,7 @@ mod tests {
             "\nMIAOMINAL_STDERR_END\n",
             "MIAOMINAL_TRUNCATED=0\n"
         );
-
         let result = parse_shell_result(output).unwrap();
-
         assert_eq!(result.exit_status, 5);
         assert_eq!(
             result.stdout,
@@ -421,8 +538,6 @@ mod tests {
         assert_eq!(result.stderr, "");
         assert!(!result.truncated);
     }
-
-    // ── parse_terminal_shell_result (WinkTerm-style unique sentinel) ──
 
     #[test]
     fn terminal_parser_extracts_exit_code_and_output() {
@@ -435,11 +550,8 @@ mod tests {
             "MIAOMINAL_abc123def4567890_0:/home/user\n",
             "user@host:~$ ",
         );
-
         let result = parse_terminal_shell_result(output, sentinel).unwrap();
-
         assert_eq!(result.exit_status, 0);
-        // stdout = echoed wrapper + command output (everything before the real sentinel)
         assert_eq!(
             result.stdout,
             concat!(
@@ -463,11 +575,8 @@ mod tests {
             "MIAOMINAL_deadbeef00000000_0:/home/user\r\n",
             "\x1b[?2004huser@host:~$ ",
         );
-
         let result = parse_terminal_shell_result(output, sentinel).unwrap();
-
         assert_eq!(result.exit_status, 0);
-        // ANSI stripped, CR stripped; echoed wrapper included in stdout
         assert_eq!(
             result.stdout,
             "cd ...; ls; printf '\nMIAOMINAL_deadbeef00000000_%d:%s\n' \"$?\" \"$PWD\"\nfile.txt"
@@ -477,24 +586,16 @@ mod tests {
 
     #[test]
     fn terminal_parser_ignores_echoed_sentinel_in_wrapper_text() {
-        // The sentinel appears in the echoed wrapper BEFORE the real output.
-        // The real occurrence is the LAST one, and is followed by a digit.
         let sentinel = "MIAOMINAL_1111222233334444_";
         let output = concat!(
-            // echoed wrapper text (sentinel followed by format specifier, not digit)
             "cd \"$HOME\" && cd . && export ...; ls; printf '\\n",
             "MIAOMINAL_1111222233334444_%d:%s\\n' \"$?\" \"$PWD\"\r\n",
-            // actual command output
             "README.md\ntarget\n",
-            // real sentinel (followed by exit code digit)
             "MIAOMINAL_1111222233334444_0:/home/project\n",
             "user@host:~$ ",
         );
-
         let result = parse_terminal_shell_result(output, sentinel).unwrap();
-
         assert_eq!(result.exit_status, 0);
-        // echoed wrapper + command output
         assert_eq!(
             result.stdout,
             concat!(
@@ -508,7 +609,6 @@ mod tests {
 
     #[test]
     fn default_shell_matches_profile_shell_type() {
-        // Posix -> "posix-sh"
         let channel = AgentExecChannel::for_profile(
             profile(ShellType::Posix),
             Vec::new(),
@@ -519,7 +619,6 @@ mod tests {
         );
         assert_eq!(channel.shell_label(), "posix-sh");
 
-        // Fish -> "fish"
         let channel = AgentExecChannel::for_profile(
             profile(ShellType::Fish),
             Vec::new(),
@@ -530,7 +629,6 @@ mod tests {
         );
         assert_eq!(channel.shell_label(), "fish");
 
-        // PowerShell -> "powershell"
         let channel = AgentExecChannel::for_profile(
             profile(ShellType::PowerShell),
             Vec::new(),
@@ -541,7 +639,6 @@ mod tests {
         );
         assert_eq!(channel.shell_label(), "powershell");
 
-        // Cmd -> "cmd"
         let channel = AgentExecChannel::for_profile(
             profile(ShellType::Cmd),
             Vec::new(),
@@ -551,5 +648,69 @@ mod tests {
             ),
         );
         assert_eq!(channel.shell_label(), "cmd");
+    }
+
+    // ── PowerShell / CMD wrapper tests ──
+
+    #[test]
+    fn powershell_run_shell_wrapper_uses_new_temporary_file() {
+        let wrapper = build_powershell_non_terminal(
+            "echo hello",
+            "C:\\Users\\test",
+            30,
+            65536,
+            ShellType::PowerShell,
+        );
+        assert!(wrapper.contains("New-TemporaryFile"));
+        assert!(!wrapper.contains("mktemp"));
+        assert!(wrapper.contains("$LASTEXITCODE"));
+        assert!(wrapper.contains("MIAOMINAL_STATUS="));
+        assert!(wrapper.contains("MIAOMINAL_STDOUT_BEGIN"));
+        assert!(wrapper.contains("MIAOMINAL_STDERR_BEGIN"));
+        assert!(wrapper.starts_with("powershell.exe -NoProfile -Command"));
+    }
+
+    #[test]
+    fn powershell_run_shell_wrapper_truncation_uses_substring() {
+        let wrapper = build_powershell_non_terminal(
+            "dir",
+            ".",
+            30,
+            4096,
+            ShellType::PowerShell,
+        );
+        assert!(wrapper.contains(".Substring"));
+        assert!(wrapper.contains("4096"));
+    }
+
+    #[test]
+    fn crlf_output_parsing_handles_miaominal_markers_with_crlf() {
+        let output = "MIAOMINAL_STATUS=0\r\n\
+                      MIAOMINAL_STDOUT_BEGIN\r\n\
+                      hello world\r\n\
+                      MIAOMINAL_STDOUT_END\r\n\
+                      MIAOMINAL_STDERR_BEGIN\r\n\
+                      \r\nMIAOMINAL_STDERR_END\r\n\
+                      MIAOMINAL_TRUNCATED=0\r\n";
+        let result = parse_shell_result(output).unwrap();
+        assert_eq!(result.exit_status, 0);
+        assert_eq!(result.stdout, "hello world");
+        assert_eq!(result.stderr, "");
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn posix_wrapper_unchanged_structure() {
+        let wrapper = build_posix_non_terminal(
+            "ls -la",
+            "/home/user/project",
+            30,
+            65536,
+            ShellType::Posix,
+        );
+        assert!(wrapper.contains("mktemp"));
+        assert!(wrapper.contains("head -c 65536"));
+        assert!(wrapper.contains("wc -c"));
+        assert!(wrapper.contains("timeout 30"));
     }
 }
