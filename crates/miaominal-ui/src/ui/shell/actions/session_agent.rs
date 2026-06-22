@@ -1190,62 +1190,52 @@ impl AppView {
         let tool_name = tool_call.name.clone();
         let tool_arguments = tool_call.arguments.clone();
         let task = cx.spawn(async move |this, cx| {
-            let (sender, receiver) = tokio::sync::oneshot::channel();
             let worker_tool_name = tool_name.clone();
-            let spawn_result = std::thread::Builder::new()
-                .name(format!("session-agent-approved-tool-{worker_tool_name}"))
-                .spawn(move || {
-                    let result = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| anyhow::anyhow!(error))
-                        .and_then(|runtime| {
-                            runtime.block_on(async move {
-                                let mut channel = AgentExecChannel::for_profile(
-                                    profile,
-                                    sessions,
-                                    secrets.clone(),
-                                    known_hosts,
-                                );
-                                if web_search_config.enabled {
-                                    let web_search_api_key = secrets
-                                        .get("web_search", SecretKind::WebSearchApiKey)
-                                        .map_err(anyhow::Error::from)?;
-                                    channel = channel.with_web_search_config(
-                                        web_search_config,
-                                        web_search_api_key,
-                                    );
-                                }
-                                if let Some(ref pty_handle) = pty_handle {
-                                    channel = channel.with_terminal_exec(pty_handle.clone());
-                                }
-                                channel = channel.with_aux_channels(approval_mentions.aux_channels);
-                                channel
-                                    .call_tool(AgentToolCallRequest {
-                                        tool_name: worker_tool_name,
-                                        arguments,
-                                        approved: true,
-                                        route: None,
-                                        skip_policy: false,
-                                    })
-                                    .await
-                                    .map_err(anyhow::Error::from)
-                                    .and_then(|response| {
-                                        serde_json::to_string(&response)
-                                            .map_err(|error| anyhow::anyhow!(error))
-                                    })
-                            })
-                        });
-                    let _ = sender.send(result);
-                });
+            let handle = miaominal_agent::agent_runtime().spawn_blocking(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| anyhow::anyhow!(error))?;
+                runtime.block_on(async move {
+                    let mut channel = AgentExecChannel::for_profile(
+                        profile,
+                        sessions,
+                        secrets.clone(),
+                        known_hosts,
+                    );
+                    if web_search_config.enabled {
+                        let web_search_api_key = secrets
+                            .get("web_search", SecretKind::WebSearchApiKey)
+                            .map_err(anyhow::Error::from)?;
+                        channel = channel.with_web_search_config(
+                            web_search_config,
+                            web_search_api_key,
+                        );
+                    }
+                    if let Some(ref pty_handle) = pty_handle {
+                        channel = channel.with_terminal_exec(pty_handle.clone());
+                    }
+                    channel = channel.with_aux_channels(approval_mentions.aux_channels);
+                    channel
+                        .call_tool(AgentToolCallRequest {
+                            tool_name: worker_tool_name,
+                            arguments,
+                            approved: true,
+                            route: None,
+                            skip_policy: false,
+                        })
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|response| {
+                            serde_json::to_string(&response)
+                                .map_err(|error| anyhow::anyhow!(error))
+                        })
+                })
+            });
 
-            let result = match spawn_result {
-                Ok(_) => receiver.await.unwrap_or_else(|_| {
-                    Err(anyhow::anyhow!(
-                        "approved tool worker stopped before returning a result"
-                    ))
-                }),
-                Err(error) => Err(anyhow::anyhow!(error)),
+            let result = match handle.await {
+                Ok(result) => result,
+                Err(e) => Err(anyhow::anyhow!("agent tool task failed: {e}")),
             };
 
             let _ = this.update(cx, move |this, cx| {

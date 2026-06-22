@@ -4,9 +4,9 @@ use crate::chat::AgentMode;
 use crate::error::AgentError;
 use rig_core::completion::ToolDefinition;
 use rig_core::tool::{Tool, ToolDyn, ToolSet};
+use rig_core::wasm_compat::WasmCompatSend;
 use serde_json::Map;
 use serde_json::{Value, json};
-use tokio::sync::oneshot;
 
 #[derive(Clone)]
 pub struct AgentToolSet {
@@ -88,26 +88,30 @@ impl Tool for JsonAgentTool {
         tool_definition(&self.name)
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn call(&self, args: Self::Args) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend {
+        let channel = self.channel.clone();
+        let name = self.name.clone();
         let approved = match self.mode {
             AgentMode::NonBlocking | AgentMode::FullAuto => true,
             AgentMode::Ask => false,
-            AgentMode::Execute => auto_approve_rig_tool(&self.name),
+            AgentMode::Execute => auto_approve_rig_tool(&name),
         };
         let skip_policy = matches!(self.mode, AgentMode::FullAuto);
-        let response = call_tool_on_worker(
-            self.channel.clone(),
-            AgentToolCallRequest {
-                tool_name: self.name.clone(),
-                arguments: normalize_tool_arguments(args),
-                approved,
-                route: None,
-                skip_policy,
-            },
-        )
-        .await?;
-        serde_json::to_string(&response)
-            .map_err(|error| AgentError::InvalidArguments(error.to_string()))
+        async move {
+            let response = call_tool_on_worker(
+                channel,
+                AgentToolCallRequest {
+                    tool_name: name,
+                    arguments: normalize_tool_arguments(args),
+                    approved,
+                    route: None,
+                    skip_policy,
+                },
+            )
+            .await?;
+            serde_json::to_string(&response)
+                .map_err(|error| AgentError::InvalidArguments(error.to_string()))
+        }
     }
 }
 
@@ -115,22 +119,15 @@ async fn call_tool_on_worker(
     channel: AgentExecChannel,
     request: AgentToolCallRequest,
 ) -> Result<crate::AgentToolCallResponse, AgentError> {
-    let (sender, receiver) = oneshot::channel();
-    std::thread::Builder::new()
-        .name(format!("agent-tool-{}", request.tool_name))
-        .spawn(move || {
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| AgentError::Backend(error.into()))
-                .and_then(|runtime| runtime.block_on(channel.call_tool(request)));
-            let _ = sender.send(result);
-        })
-        .map_err(|error| AgentError::Backend(error.into()))?;
-
-    receiver
-        .await
-        .map_err(|_| AgentError::Backend(anyhow::anyhow!("agent tool worker stopped")))?
+    tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| AgentError::Backend(error.into()))?;
+        runtime.block_on(channel.call_tool(request))
+    })
+    .await
+    .map_err(|e| AgentError::Backend(anyhow::anyhow!("agent tool worker failed: {e}")))?
 }
 
 fn tool_definition(name: &str) -> ToolDefinition {

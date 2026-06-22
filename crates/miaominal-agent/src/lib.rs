@@ -6,6 +6,7 @@ mod error;
 mod jobs;
 mod path_guard;
 mod policy;
+mod runtime;
 mod tools;
 mod web;
 
@@ -21,6 +22,7 @@ pub use chat::{
     generate_title, send_chat, stream_chat, stream_chat_after_tool_result,
 };
 pub use error::{AgentError, AgentResult};
+pub use runtime::agent_runtime;
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
 pub use tools::{AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
