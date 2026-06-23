@@ -26,6 +26,12 @@ pub(in crate::ui::shell) enum PromptHistoryDirection {
     Next,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SessionAgentBackgroundNotificationKind {
+    ToolApprovalRequired { tool_name: String },
+    ReplyReady,
+}
+
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
         AiProviderKind::Anthropic => AgentChatProviderKind::Anthropic,
@@ -1515,21 +1521,83 @@ impl AppView {
         cx.notify();
     }
 
+    fn session_agent_session_is_foreground(&self, session_id: &str) -> bool {
+        self.panels.session_agent_panel_open
+            && self.active_terminal_session_index().is_some()
+            && self.session_agent.panel_view == ChatPanelView::Conversation
+            && self.session_agent.session_id.as_deref() == Some(session_id)
+    }
+
+    fn session_agent_notification_chat_label(&self) -> String {
+        if let Some(title) = self
+            .session_agent
+            .title
+            .as_ref()
+            .map(|title| title.trim())
+            .filter(|title| !title.is_empty())
+        {
+            return truncate_with_ellipsis(title, 48);
+        }
+
+        self.session_agent
+            .messages
+            .iter()
+            .find(|message| message.role == SessionAgentMessageRole::User)
+            .map(|message| {
+                truncate_with_ellipsis(message.content.lines().next().unwrap_or("Chat").trim(), 48)
+            })
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"))
+    }
+
+    fn notify_background_session_agent(
+        &mut self,
+        chat_label: String,
+        kind: SessionAgentBackgroundNotificationKind,
+        cx: &mut Context<Self>,
+    ) {
+        let (title, message, notification) = match kind {
+            SessionAgentBackgroundNotificationKind::ToolApprovalRequired { tool_name } => {
+                let title = i18n::string("workspace.panel.agent.notifications.tool_approval_title");
+                let message = i18n::string_args(
+                    "workspace.panel.agent.notifications.tool_approval",
+                    &[("chat", &chat_label), ("tool", &tool_name)],
+                );
+                let notification = Self::warning_notification(title.clone(), message.clone());
+                (title, message, notification)
+            }
+            SessionAgentBackgroundNotificationKind::ReplyReady => {
+                let title = i18n::string("workspace.panel.agent.notifications.reply_ready_title");
+                let message = i18n::string_args(
+                    "workspace.panel.agent.notifications.reply_ready",
+                    &[("chat", &chat_label)],
+                );
+                let notification = Self::success_notification(title.clone(), message.clone());
+                (title, message, notification)
+            }
+        };
+
+        self.status_message = format!("{title}: {message}");
+        self.with_active_window(cx, move |window, cx| {
+            window.push_notification(notification, cx);
+        });
+    }
+
     fn apply_session_agent_event(
         &mut self,
         request_id: u64,
         event: AgentChatEvent,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<SessionAgentBackgroundNotificationKind> {
         if self.session_agent.active_request_id != request_id {
-            return;
+            return None;
         }
 
         self.clear_expired_session_agent_follow_bottom_cooldown();
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         let content_may_have_grown = matches!(
-            event,
+            &event,
             AgentChatEvent::TextDelta(_)
                 | AgentChatEvent::ThinkingDelta(_)
                 | AgentChatEvent::ToolCallDelta { .. }
@@ -1537,14 +1605,16 @@ impl AppView {
                 | AgentChatEvent::ToolCallApprovalRequired { .. }
                 | AgentChatEvent::Finished(_)
         );
-        match event {
+        let notification_kind = match event {
             AgentChatEvent::TextDelta(delta) => {
                 self.session_agent.append_assistant_delta(delta);
                 self.session_agent.last_error = None;
+                None
             }
             AgentChatEvent::ThinkingDelta(delta) => {
                 self.session_agent.append_thinking_delta(delta);
                 self.status_message = i18n::string("workspace.panel.agent.thinking");
+                None
             }
             AgentChatEvent::ToolCallStarted(tool) => {
                 self.session_agent.push_tool_call(
@@ -1553,12 +1623,25 @@ impl AppView {
                     tool.arguments,
                     SessionAgentToolStatus::InProgress,
                 );
+                None
             }
             AgentChatEvent::ToolCallDelta { id, delta } => {
                 self.session_agent.append_tool_call_delta(&id, delta);
+                None
             }
             AgentChatEvent::ToolCallCompleted { id, result } => {
                 self.session_agent.complete_tool_call(&id, result);
+                self.session_agent.tool_call(&id).and_then(|tool_call| {
+                    if tool_call.status == SessionAgentToolStatus::WaitingForConfirmation {
+                        Some(
+                            SessionAgentBackgroundNotificationKind::ToolApprovalRequired {
+                                tool_name: tool_call.name,
+                            },
+                        )
+                    } else {
+                        None
+                    }
+                })
             }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
                 if matches!(
@@ -1566,15 +1649,28 @@ impl AppView {
                     AgentMode::NonBlocking | AgentMode::FullAuto
                 ) {
                     self.approve_session_agent_tool_call(id, cx);
+                    None
                 } else {
+                    let tool_name = self
+                        .session_agent
+                        .tool_call(&id)
+                        .map(|tool_call| tool_call.name)
+                        .unwrap_or_else(|| "tool".to_string());
                     self.session_agent
                         .require_tool_call_confirmation(&id, message);
                     self.finish_session_agent_stream(request_id, cx);
+                    Some(SessionAgentBackgroundNotificationKind::ToolApprovalRequired { tool_name })
                 }
             }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);
-                self.finish_session_agent_stream(request_id, cx);
+                if self.finish_session_agent_stream(request_id, cx)
+                    && !self.session_agent.has_active_tool_call()
+                {
+                    Some(SessionAgentBackgroundNotificationKind::ReplyReady)
+                } else {
+                    None
+                }
             }
             AgentChatEvent::TokenUsage {
                 input_tokens,
@@ -1584,8 +1680,9 @@ impl AppView {
                     input_tokens,
                     output_tokens,
                 });
+                None
             }
-        }
+        };
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -1594,6 +1691,7 @@ impl AppView {
         );
 
         cx.notify();
+        notification_kind
     }
 
     fn apply_session_agent_event_for_session(
@@ -1603,19 +1701,33 @@ impl AppView {
         event: AgentChatEvent,
         cx: &mut Context<Self>,
     ) {
-        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
-        if self.with_session_agent_state(session_id, |this| {
-            this.apply_session_agent_event(request_id, event, cx);
-        }) && !is_visible
-        {
+        let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
+        let should_notify = !self.session_agent_session_is_foreground(session_id);
+        let mut notification = None;
+        let updated = self.with_session_agent_state(session_id, |this| {
+            let kind = this.apply_session_agent_event(request_id, event, cx);
+            if should_notify {
+                notification =
+                    kind.map(|kind| (this.session_agent_notification_chat_label(), kind));
+            }
+        });
+        if !updated {
+            return;
+        }
+
+        if let Some((chat_label, kind)) = notification {
+            self.notify_background_session_agent(chat_label, kind, cx);
+        }
+
+        if !is_loaded_session {
             self.refresh_chat_sessions();
             cx.notify();
         }
     }
 
-    fn finish_session_agent_stream(&mut self, request_id: u64, cx: &mut Context<Self>) {
+    fn finish_session_agent_stream(&mut self, request_id: u64, cx: &mut Context<Self>) -> bool {
         if self.session_agent.active_request_id != request_id {
-            return;
+            return false;
         }
 
         self.session_agent.pending_task = None;
@@ -1728,6 +1840,7 @@ impl AppView {
         // --- end title generation ---
 
         cx.notify();
+        true
     }
 
     fn finish_session_agent_stream_for_session(
@@ -1736,11 +1849,29 @@ impl AppView {
         request_id: u64,
         cx: &mut Context<Self>,
     ) {
-        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
-        if self.with_session_agent_state(session_id, |this| {
-            this.finish_session_agent_stream(request_id, cx);
-        }) && !is_visible
-        {
+        let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
+        let should_notify = !self.session_agent_session_is_foreground(session_id);
+        let mut notification = None;
+        let updated = self.with_session_agent_state(session_id, |this| {
+            if this.finish_session_agent_stream(request_id, cx)
+                && should_notify
+                && !this.session_agent.has_active_tool_call()
+            {
+                notification = Some((
+                    this.session_agent_notification_chat_label(),
+                    SessionAgentBackgroundNotificationKind::ReplyReady,
+                ));
+            }
+        });
+        if !updated {
+            return;
+        }
+
+        if let Some((chat_label, kind)) = notification {
+            self.notify_background_session_agent(chat_label, kind, cx);
+        }
+
+        if !is_loaded_session {
             self.refresh_chat_sessions();
             cx.notify();
         }
@@ -1751,9 +1882,9 @@ impl AppView {
         request_id: u64,
         error: anyhow::Error,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if self.session_agent.active_request_id != request_id {
-            return;
+            return false;
         }
 
         self.session_agent.pending_task = None;
@@ -1764,6 +1895,7 @@ impl AppView {
         self.status_message = message;
         self.persist_session_agent_chat();
         cx.notify();
+        true
     }
 
     fn handle_session_agent_stream_error(
@@ -1787,11 +1919,15 @@ impl AppView {
         error: anyhow::Error,
         cx: &mut Context<Self>,
     ) {
-        let is_visible = self.session_agent.session_id.as_deref() == Some(session_id);
-        if self.with_session_agent_state(session_id, |this| {
+        let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
+        let updated = self.with_session_agent_state(session_id, |this| {
             this.handle_session_agent_stream_error(request_id, error, cx);
-        }) && !is_visible
-        {
+        });
+        if !updated {
+            return;
+        }
+
+        if !is_loaded_session {
             self.refresh_chat_sessions();
             cx.notify();
         }

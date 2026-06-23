@@ -175,6 +175,13 @@ impl AppView {
         Self::custom_notification(NotificationTone::Success, title, message)
     }
 
+    pub(in crate::ui::shell) fn warning_notification(
+        title: impl Into<SharedString>,
+        message: impl Into<SharedString>,
+    ) -> Notification {
+        Self::custom_notification(NotificationTone::Warning, title, message)
+    }
+
     fn validation_notification(kind: ValidationNotificationKind, message: String) -> Notification {
         let notification_id = SharedString::from(format!("validation-error-{message}"));
 

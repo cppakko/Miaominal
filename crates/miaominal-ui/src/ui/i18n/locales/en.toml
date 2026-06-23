@@ -618,6 +618,12 @@ you = "You"
 assistant = "Assistant"
 error = "Error"
 
+[workspace.panel.agent.notifications]
+tool_approval_title = "Tool approval needed"
+tool_approval = "{chat} needs approval to run `{tool}`."
+reply_ready_title = "Agent reply ready"
+reply_ready = "{chat} has a new reply."
+
 [workspace.panel.agent.tooltips]
 new_chat = "New chat"
 close_panel = "Close chat panel"
