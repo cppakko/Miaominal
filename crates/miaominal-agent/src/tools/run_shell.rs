@@ -1,9 +1,7 @@
 use crate::backend::{BackendRoute, ExecMode};
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ShellCommandResult, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{
-    cd_prefix, env_setup, resolve_workspace_path, shell_quote,
-};
+use crate::path_guard::{cd_prefix, env_setup, resolve_workspace_path, shell_quote};
 use anyhow::anyhow;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
@@ -613,9 +611,7 @@ mod tests {
             profile(ShellType::Posix),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(
-                std::env::temp_dir().join("agent-default-shell-posix"),
-            ),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-default-shell-posix")),
         );
         assert_eq!(channel.shell_label(), "posix-sh");
 
@@ -623,9 +619,7 @@ mod tests {
             profile(ShellType::Fish),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(
-                std::env::temp_dir().join("agent-default-shell-fish"),
-            ),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-default-shell-fish")),
         );
         assert_eq!(channel.shell_label(), "fish");
 
@@ -633,9 +627,7 @@ mod tests {
             profile(ShellType::PowerShell),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(
-                std::env::temp_dir().join("agent-default-shell-powershell"),
-            ),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-default-shell-powershell")),
         );
         assert_eq!(channel.shell_label(), "powershell");
 
@@ -643,9 +635,7 @@ mod tests {
             profile(ShellType::Cmd),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(
-                std::env::temp_dir().join("agent-default-shell-cmd"),
-            ),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-default-shell-cmd")),
         );
         assert_eq!(channel.shell_label(), "cmd");
     }
@@ -672,13 +662,7 @@ mod tests {
 
     #[test]
     fn powershell_run_shell_wrapper_truncation_uses_substring() {
-        let wrapper = build_powershell_non_terminal(
-            "dir",
-            ".",
-            30,
-            4096,
-            ShellType::PowerShell,
-        );
+        let wrapper = build_powershell_non_terminal("dir", ".", 30, 4096, ShellType::PowerShell);
         assert!(wrapper.contains(".Substring"));
         assert!(wrapper.contains("4096"));
     }
@@ -701,13 +685,8 @@ mod tests {
 
     #[test]
     fn posix_wrapper_unchanged_structure() {
-        let wrapper = build_posix_non_terminal(
-            "ls -la",
-            "/home/user/project",
-            30,
-            65536,
-            ShellType::Posix,
-        );
+        let wrapper =
+            build_posix_non_terminal("ls -la", "/home/user/project", 30, 65536, ShellType::Posix);
         assert!(wrapper.contains("mktemp"));
         assert!(wrapper.contains("head -c 65536"));
         assert!(wrapper.contains("wc -c"));

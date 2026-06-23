@@ -69,34 +69,28 @@ pub async fn apply_patch(
     }
 }
 
-fn build_patch_command(
-    shell: ShellType,
-    base_dir: &str,
-    patch: &str,
-) -> AgentResult<String> {
+fn build_patch_command(shell: ShellType, base_dir: &str, patch: &str) -> AgentResult<String> {
     match shell {
-        ShellType::Posix | ShellType::Fish => {
-            Ok(format!(
-                "cd \"$HOME\" && cd {base_dir} && patch -p0 <<'MIAOMINAL_AGENT_PATCH'\n{patch}\nMIAOMINAL_AGENT_PATCH",
-                base_dir = shell_quote(base_dir, shell),
-                patch = patch,
-            ))
-        }
+        ShellType::Posix | ShellType::Fish => Ok(format!(
+            "cd \"$HOME\" && cd {base_dir} && patch -p0 <<'MIAOMINAL_AGENT_PATCH'\n{patch}\nMIAOMINAL_AGENT_PATCH",
+            base_dir = shell_quote(base_dir, shell),
+            patch = patch,
+        )),
         ShellType::PowerShell => {
             let ps_script = format!(
                 "{cd_prefix}\n@'\n{patch}\n'@ | & patch -p0",
                 cd_prefix = cd_prefix(shell, base_dir),
                 patch = patch,
             );
-            Ok(format!("powershell.exe -NoProfile -Command \"{ps_script}\""))
-        }
-        ShellType::Cmd => {
-            Err(AgentError::PosixOnly(
-                "apply_patch is not supported in CMD sessions. \
-                 Use a PowerShell session or install Git for Windows."
-                    .into(),
+            Ok(format!(
+                "powershell.exe -NoProfile -Command \"{ps_script}\""
             ))
         }
+        ShellType::Cmd => Err(AgentError::PosixOnly(
+            "apply_patch is not supported in CMD sessions. \
+                 Use a PowerShell session or install Git for Windows."
+                .into(),
+        )),
     }
 }
 
@@ -119,10 +113,19 @@ mod tests {
         )
         .unwrap();
 
-        assert!(cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"), "POSIX should use heredoc");
+        assert!(
+            cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"),
+            "POSIX should use heredoc"
+        );
         assert!(cmd.contains("patch -p0"), "POSIX should call patch -p0");
-        assert!(cmd.contains("cd \"$HOME\""), "POSIX should cd to HOME first");
-        assert!(cmd.contains("MIAOMINAL_AGENT_PATCH"), "POSIX should use MIAOMINAL_AGENT_PATCH sentinel");
+        assert!(
+            cmd.contains("cd \"$HOME\""),
+            "POSIX should cd to HOME first"
+        );
+        assert!(
+            cmd.contains("MIAOMINAL_AGENT_PATCH"),
+            "POSIX should use MIAOMINAL_AGENT_PATCH sentinel"
+        );
         // Verify heredoc content is embedded
         assert!(cmd.contains("--- a/file.txt"));
         assert!(cmd.contains("+++ b/file.txt"));
@@ -137,7 +140,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"), "Fish should use heredoc");
+        assert!(
+            cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"),
+            "Fish should use heredoc"
+        );
         assert!(cmd.contains("patch -p0"), "Fish should call patch -p0");
         assert!(cmd.contains("cd \"$HOME\""), "Fish should cd to HOME first");
     }
@@ -156,7 +162,10 @@ mod tests {
             cmd.contains("@'\n"),
             "PowerShell should use here-string (@')"
         );
-        assert!(cmd.contains("\n'@ | & patch -p0"), "PowerShell should pipe to patch");
+        assert!(
+            cmd.contains("\n'@ | & patch -p0"),
+            "PowerShell should pipe to patch"
+        );
         assert!(
             cmd.contains("Set-Location $env:USERPROFILE"),
             "PowerShell should use Set-Location to user profile"
@@ -169,18 +178,11 @@ mod tests {
 
     #[test]
     fn cmd_returns_posix_only_error() {
-        let result = build_patch_command(
-            ShellType::Cmd,
-            "C:\\Users\\user\\project",
-            "some diff",
-        );
+        let result = build_patch_command(ShellType::Cmd, "C:\\Users\\user\\project", "some diff");
 
         match result {
             Err(AgentError::PosixOnly(msg)) => {
-                assert!(
-                    msg.contains("CMD"),
-                    "Error should mention CMD: {msg}"
-                );
+                assert!(msg.contains("CMD"), "Error should mention CMD: {msg}");
                 assert!(
                     msg.contains("PowerShell"),
                     "Error should suggest PowerShell: {msg}"
@@ -197,25 +199,18 @@ mod tests {
     #[test]
     fn powershell_here_string_contains_patch_content() {
         let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n-foo\n+bar";
-        let cmd = build_patch_command(
-            ShellType::PowerShell,
-            "C:\\project",
-            patch,
-        )
-        .unwrap();
+        let cmd = build_patch_command(ShellType::PowerShell, "C:\\project", patch).unwrap();
 
         // The patch content should appear verbatim between @' and '@
-        assert!(cmd.contains(patch), "PowerShell here-string should contain patch content verbatim");
+        assert!(
+            cmd.contains(patch),
+            "PowerShell here-string should contain patch content verbatim"
+        );
     }
 
     #[test]
     fn posix_quotes_path_with_spaces() {
-        let cmd = build_patch_command(
-            ShellType::Posix,
-            "/home/user/my project",
-            "diff",
-        )
-        .unwrap();
+        let cmd = build_patch_command(ShellType::Posix, "/home/user/my project", "diff").unwrap();
 
         assert!(
             cmd.contains("'/home/user/my project'"),
@@ -225,12 +220,8 @@ mod tests {
 
     #[test]
     fn powershell_quotes_path_with_spaces() {
-        let cmd = build_patch_command(
-            ShellType::PowerShell,
-            "C:\\Users\\user\\my project",
-            "diff",
-        )
-        .unwrap();
+        let cmd = build_patch_command(ShellType::PowerShell, "C:\\Users\\user\\my project", "diff")
+            .unwrap();
 
         assert!(
             cmd.contains("'C:\\Users\\user\\my project'"),

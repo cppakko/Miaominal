@@ -259,9 +259,7 @@ macro_rules! build_provider_agent {
         if !$provider.base_url.trim().is_empty() {
             builder = builder.base_url($provider.base_url);
         }
-        let client = builder
-            .build()
-            .context($error_msg)?;
+        let client = builder.build().context($error_msg)?;
         let mut agent_builder = AgentBuilder::new(client.completion_model($provider.model))
             .preamble($preamble)
             .default_max_turns(SESSION_AGENT_MAX_TURNS);
@@ -301,34 +299,124 @@ async fn stream_chat_with_history(
 
     match provider.kind {
         AgentChatProviderKind::OpenAi => {
-            build_provider_agent!(openai, "failed to build OpenAI chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                openai,
+                "failed to build OpenAI chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Anthropic => {
-            build_provider_agent!(anthropic, "failed to build Anthropic chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                anthropic,
+                "failed to build Anthropic chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::DeepSeek => {
-            build_provider_agent!(deepseek, "failed to build DeepSeek chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                deepseek,
+                "failed to build DeepSeek chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Gemini => {
-            build_provider_agent!(gemini, "failed to build Gemini chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                gemini,
+                "failed to build Gemini chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::OpenRouter => {
-            build_provider_agent!(openrouter, "failed to build OpenRouter chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                openrouter,
+                "failed to build OpenRouter chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Mistral => {
-            build_provider_agent!(mistral, "failed to build Mistral chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                mistral,
+                "failed to build Mistral chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Cohere => {
-            build_provider_agent!(cohere, "failed to build Cohere chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                cohere,
+                "failed to build Cohere chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Together => {
-            build_provider_agent!(together, "failed to build Together AI chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                together,
+                "failed to build Together AI chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::Xai => {
-            build_provider_agent!(xai, "failed to build xAI chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                xai,
+                "failed to build xAI chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::HuggingFace => {
-            build_provider_agent!(huggingface, "failed to build Hugging Face chat client", provider, &preamble, tools, prompt, history, sender);
+            build_provider_agent!(
+                huggingface,
+                "failed to build Hugging Face chat client",
+                provider,
+                &preamble,
+                tools,
+                prompt,
+                history,
+                sender
+            );
         }
         AgentChatProviderKind::ChatGpt
         | AgentChatProviderKind::Copilot

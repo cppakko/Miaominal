@@ -550,10 +550,26 @@ impl AppView {
             },
         );
         let agent_mode_options: Vec<SelectOption<AgentMode>> = vec![
-            SelectOption::new_with_icon(AgentMode::Ask, i18n::string("agent.mode.ask"), AppIcon::Eye),
-            SelectOption::new_with_icon(AgentMode::Execute, i18n::string("agent.mode.execute"), AppIcon::Play),
-            SelectOption::new_with_icon(AgentMode::NonBlocking, i18n::string("agent.mode.non_blocking"), AppIcon::Sliders),
-            SelectOption::new_with_icon(AgentMode::FullAuto, i18n::string("agent.mode.full_auto"), AppIcon::Sparkles),
+            SelectOption::new_with_icon(
+                AgentMode::Ask,
+                i18n::string("agent.mode.ask"),
+                AppIcon::Eye,
+            ),
+            SelectOption::new_with_icon(
+                AgentMode::Execute,
+                i18n::string("agent.mode.execute"),
+                AppIcon::Play,
+            ),
+            SelectOption::new_with_icon(
+                AgentMode::NonBlocking,
+                i18n::string("agent.mode.non_blocking"),
+                AppIcon::Sliders,
+            ),
+            SelectOption::new_with_icon(
+                AgentMode::FullAuto,
+                i18n::string("agent.mode.full_auto"),
+                AppIcon::Sparkles,
+            ),
         ];
         let agent_mode_select = cx.new(|cx| {
             SelectState::new(
@@ -565,7 +581,10 @@ impl AppView {
         });
         let agent_mode_select_subscription = cx.subscribe(
             &agent_mode_select,
-            move |this: &mut AppView, select, _event: &SelectEvent<Vec<SelectOption<AgentMode>>>, cx| {
+            move |this: &mut AppView,
+                  select,
+                  _event: &SelectEvent<Vec<SelectOption<AgentMode>>>,
+                  cx| {
                 if let Some(mode) = select.read(cx).selected_value().cloned() {
                     this.session_agent.agent_mode = mode;
                     cx.notify();

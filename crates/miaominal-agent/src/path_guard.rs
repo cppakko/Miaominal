@@ -90,29 +90,21 @@ pub fn cd_prefix(shell_type: ShellType, cwd: &str) -> String {
 /// Environment variable setup for pager-less, locale-safe, non-interactive execution.
 pub fn env_setup(shell_type: ShellType) -> String {
     match shell_type {
-        ShellType::Posix => {
-            "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 \
+        ShellType::Posix => "export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 \
              NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color"
-                .into()
-        }
-        ShellType::Fish => {
-            "set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; \
+            .into(),
+        ShellType::Fish => "set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; \
              set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; \
              set -x CLICOLOR 0; set -x TERM xterm-256color"
-                .into()
-        }
-        ShellType::PowerShell => {
-            "$env:PAGER='cat'; $env:SYSTEMD_PAGER=''; $env:GIT_PAGER='cat'; \
+            .into(),
+        ShellType::PowerShell => "$env:PAGER='cat'; $env:SYSTEMD_PAGER=''; $env:GIT_PAGER='cat'; \
              $env:LESS=''; $env:LANG='C.UTF-8'; $env:NO_COLOR='1'; \
              $env:CLICOLOR='0'; $env:TERM='xterm-256color'"
-                .into()
-        }
-        ShellType::Cmd => {
-            "SET \"PAGER=cat\" & SET \"SYSTEMD_PAGER=\" & SET \"GIT_PAGER=cat\" & \
+            .into(),
+        ShellType::Cmd => "SET \"PAGER=cat\" & SET \"SYSTEMD_PAGER=\" & SET \"GIT_PAGER=cat\" & \
              SET \"LESS=\" & SET \"LANG=C.UTF-8\" & SET \"NO_COLOR=1\" & \
              SET \"CLICOLOR=0\" & SET \"TERM=xterm-256color\""
-                .into()
-        }
+            .into(),
     }
 }
 
@@ -191,10 +183,7 @@ mod tests {
 
     #[test]
     fn posix_quote_escapes_single_quote() {
-        assert_eq!(
-            shell_quote("it's ok", ShellType::Posix),
-            "'it'\"'\"'s ok'"
-        );
+        assert_eq!(shell_quote("it's ok", ShellType::Posix), "'it'\"'\"'s ok'");
     }
 
     #[test]
@@ -205,10 +194,7 @@ mod tests {
 
     #[test]
     fn fish_quote_escapes_backslash_and_double_quote() {
-        assert_eq!(
-            shell_quote("path\\to", ShellType::Fish),
-            "\"path\\\\to\""
-        );
+        assert_eq!(shell_quote("path\\to", ShellType::Fish), "\"path\\\\to\"");
         assert_eq!(
             shell_quote("say \"hi\"", ShellType::Fish),
             "\"say \\\"hi\\\"\""
@@ -218,10 +204,7 @@ mod tests {
     #[test]
     fn powershell_quote_wraps_in_single_quotes() {
         assert_eq!(shell_quote("hello", ShellType::PowerShell), "'hello'");
-        assert_eq!(
-            shell_quote("it's ok", ShellType::PowerShell),
-            "'it''s ok'"
-        );
+        assert_eq!(shell_quote("it's ok", ShellType::PowerShell), "'it''s ok'");
     }
 
     #[test]
@@ -229,10 +212,7 @@ mod tests {
         assert_eq!(shell_quote("hello", ShellType::Cmd), "hello");
         assert_eq!(shell_quote("say \"hi\"", ShellType::Cmd), "say hi");
         assert_eq!(shell_quote("100%", ShellType::Cmd), "100%%");
-        assert_eq!(
-            shell_quote("\"100%\"", ShellType::Cmd),
-            "100%%"
-        );
+        assert_eq!(shell_quote("\"100%\"", ShellType::Cmd), "100%%");
     }
 
     // ── cd_prefix tests ──
@@ -240,19 +220,13 @@ mod tests {
     #[test]
     fn cd_prefix_posix() {
         let result = cd_prefix(ShellType::Posix, "/home/user/project");
-        assert_eq!(
-            result,
-            "cd \"$HOME\" && cd '/home/user/project'"
-        );
+        assert_eq!(result, "cd \"$HOME\" && cd '/home/user/project'");
     }
 
     #[test]
     fn cd_prefix_fish() {
         let result = cd_prefix(ShellType::Fish, "/home/user/project");
-        assert_eq!(
-            result,
-            "cd \"$HOME\"; and cd \"/home/user/project\""
-        );
+        assert_eq!(result, "cd \"$HOME\"; and cd \"/home/user/project\"");
     }
 
     #[test]
@@ -281,10 +255,7 @@ mod tests {
         assert_eq!(posix, "cd \"$HOME\" && cd '/home/user/my project'");
         // Fish
         let fish = cd_prefix(ShellType::Fish, "/home/user/my project");
-        assert_eq!(
-            fish,
-            "cd \"$HOME\"; and cd \"/home/user/my project\""
-        );
+        assert_eq!(fish, "cd \"$HOME\"; and cd \"/home/user/my project\"");
         // PowerShell
         let ps = cd_prefix(ShellType::PowerShell, "C:\\Users\\user\\my project");
         assert_eq!(

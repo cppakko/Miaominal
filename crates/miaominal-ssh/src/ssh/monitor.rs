@@ -470,13 +470,12 @@ pub(super) async fn run_exec_pty_command(
 
     if exit_status.unwrap_or(0) != 0 {
         if cleaned.trim().is_empty() {
-            bail!("remote PTY command failed with exit status {}", exit_status.unwrap_or(0));
+            bail!(
+                "remote PTY command failed with exit status {}",
+                exit_status.unwrap_or(0)
+            );
         } else {
-            let preview: String = cleaned
-                .lines()
-                .take(20)
-                .collect::<Vec<_>>()
-                .join("\n");
+            let preview: String = cleaned.lines().take(20).collect::<Vec<_>>().join("\n");
             bail!("remote PTY command failed: {preview}");
         }
     }

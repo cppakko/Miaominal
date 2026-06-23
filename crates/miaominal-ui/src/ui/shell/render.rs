@@ -1628,10 +1628,8 @@ impl AppView {
         } else {
             prompt.current_title.as_str()
         };
-        let subtitle = i18n::string_args(
-            "dialogs.chat_rename.message",
-            &[("title", current_title)],
-        );
+        let subtitle =
+            i18n::string_args("dialogs.chat_rename.message", &[("title", current_title)]);
 
         let entity_cancel = entity.clone();
         let entity_confirm = entity.clone();
@@ -2397,8 +2395,16 @@ impl AppView {
         let model_input = self.panel_forms.settings.ai_provider_model_input.clone();
         let base_url_input = self.panel_forms.settings.ai_provider_base_url_input.clone();
         let api_key_input = self.panel_forms.settings.ai_provider_api_key_input.clone();
-        let temperature_input = self.panel_forms.settings.ai_provider_temperature_input.clone();
-        let max_tokens_input = self.panel_forms.settings.ai_provider_max_tokens_input.clone();
+        let temperature_input = self
+            .panel_forms
+            .settings
+            .ai_provider_temperature_input
+            .clone();
+        let max_tokens_input = self
+            .panel_forms
+            .settings
+            .ai_provider_max_tokens_input
+            .clone();
         let context_window_input = self
             .panel_forms
             .settings

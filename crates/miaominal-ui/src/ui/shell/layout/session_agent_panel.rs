@@ -3,6 +3,7 @@ use super::session_agent_composer;
 use super::session_agent_conversation;
 use super::session_agent_history;
 use super::session_agent_mentions;
+use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::AnimationExt as _;
 use std::time::Duration;
@@ -263,20 +264,25 @@ impl AppView {
             .h(px(30.0))
             .items_center()
             .gap_1()
-            .child(div().id("session-agent-new-chat").child(icon_button(
-                AppIcon::Plus,
-                26.0,
-                8.0,
-                Some(icon_bg),
-                Some(text_muted),
-                None,
-                move |window, cx| {
-                    let entity = entity.clone();
-                    entity.update(cx, |this, cx| {
-                        this.start_session_agent_conversation(window, cx);
-                    });
-                },
-            )))
+            .child(
+                div()
+                    .id("session-agent-new-chat")
+                    .child(icon_button_with_tooltip(
+                        AppIcon::Plus,
+                        i18n::string("workspace.panel.agent.tooltips.new_chat"),
+                        26.0,
+                        8.0,
+                        Some(icon_bg),
+                        Some(text_muted),
+                        None,
+                        move |window, cx| {
+                            let entity = entity.clone();
+                            entity.update(cx, |this, cx| {
+                                this.start_session_agent_conversation(window, cx);
+                            });
+                        },
+                    )),
+            )
             .child(
                 div()
                     .flex_1()
@@ -319,21 +325,26 @@ impl AppView {
                         )
                     }),
             )
-            .child(div().id("session-agent-close").child(icon_button(
-                AppIcon::PanelRight,
-                26.0,
-                8.0,
-                Some(icon_bg),
-                Some(text_muted),
-                None,
-                move |_window, cx| {
-                    let entity = close_entity.clone();
-                    entity.update(cx, |this, cx| {
-                        this.panels.session_agent_panel_open = false;
-                        cx.notify();
-                    });
-                },
-            )))
+            .child(
+                div()
+                    .id("session-agent-close")
+                    .child(icon_button_with_tooltip(
+                        AppIcon::PanelRight,
+                        i18n::string("workspace.panel.agent.tooltips.close_panel"),
+                        26.0,
+                        8.0,
+                        Some(icon_bg),
+                        Some(text_muted),
+                        None,
+                        move |_window, cx| {
+                            let entity = close_entity.clone();
+                            entity.update(cx, |this, cx| {
+                                this.panels.session_agent_panel_open = false;
+                                cx.notify();
+                            });
+                        },
+                    )),
+            )
             .into_any_element()
     }
 
@@ -448,8 +459,9 @@ impl AppView {
                                     .h(px(28.0))
                                     .items_center()
                                     .gap_2()
-                                    .child(icon_button(
+                                    .child(icon_button_with_tooltip(
                                         AppIcon::CornerLeftUp,
+                                        i18n::string("workspace.panel.agent.tooltips.back_to_history"),
                                         24.0,
                                         8.0,
                                         Some(roles.surface_container_high),
@@ -536,8 +548,13 @@ impl AppView {
                                             }),
                                     )
                                     // Search toggle button
-                                    .child(icon_button(
+                                    .child(icon_button_with_tooltip(
                                         AppIcon::Search,
+                                        i18n::string(if is_search_open {
+                                            "workspace.panel.agent.tooltips.close_conversation_search"
+                                        } else {
+                                            "workspace.panel.agent.tooltips.search_conversation"
+                                        }),
                                         24.0,
                                         8.0,
                                         Some(roles.surface_container_high),
@@ -599,8 +616,9 @@ impl AppView {
                                                                     .text_color(rgb(text_muted))
                                                                     .child(match_info),
                                                             )
-                                                            .child(icon_button(
+                                                            .child(icon_button_with_tooltip(
                                                                 AppIcon::ChevronUp,
+                                                                i18n::string("workspace.panel.agent.tooltips.previous_search_match"),
                                                                 16.0,
                                                                 4.0,
                                                                 Some(roles.surface_container_high),
@@ -612,8 +630,9 @@ impl AppView {
                                                                     });
                                                                 },
                                                             ))
-                                                            .child(icon_button(
+                                                            .child(icon_button_with_tooltip(
                                                                 AppIcon::ChevronDown,
+                                                                i18n::string("workspace.panel.agent.tooltips.next_search_match"),
                                                                 16.0,
                                                                 4.0,
                                                                 Some(roles.surface_container_high),
@@ -625,8 +644,9 @@ impl AppView {
                                                                     });
                                                                 },
                                                             ))
-                                                            .child(icon_button(
+                                                            .child(icon_button_with_tooltip(
                                                                 AppIcon::PanelRight,
+                                                                i18n::string("workspace.panel.agent.tooltips.close_search"),
                                                                 16.0,
                                                                 4.0,
                                                                 Some(roles.surface_container_high),

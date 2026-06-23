@@ -4,7 +4,7 @@ use super::session_agent_tool_parse::*;
 use super::session_agent_tool_ui::*;
 use super::session_agent_tools::*;
 use super::session_agent_utils::*;
-use crate::ui::components::md3_spinner;
+use crate::ui::components::{icon_button_with_tooltip, md3_spinner};
 use crate::ui::i18n;
 use gpui::{Animation, AnimationExt as _, ScrollAnchor};
 use gpui_component::WindowExt as _;
@@ -828,8 +828,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 cx.stop_propagation();
                             })
-                            .child(icon_button(
+                            .child(icon_button_with_tooltip(
                                 AppIcon::Copy,
+                                i18n::string("workspace.panel.agent.tooltips.copy_tool_call"),
                                 24.0,
                                 6.0,
                                 Some(roles.surface_container_highest),
@@ -851,22 +852,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                     render_structured_tool_body(tool_call, tool_colors)
                 };
 
-                this.child(
-                    div()
-                        .w_full()
-                        .overflow_hidden()
-                        .child(body)
-                        .with_animation(
-                            SharedString::from(format!(
-                                "session-agent-tool-body-reveal-{}",
-                                tool_call.id
-                            )),
-                            container_transition_animation(),
-                            |element, delta| {
-                                element.max_h(px(delta * SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT))
-                            },
-                        ),
-                )
+                this.child(div().w_full().overflow_hidden().child(body).with_animation(
+                    SharedString::from(format!("session-agent-tool-body-reveal-{}", tool_call.id)),
+                    container_transition_animation(),
+                    |element, delta| {
+                        element.max_h(px(delta * SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT))
+                    },
+                ))
             })
             .when(needs_confirmation && expanded, |this| {
                 this.child(

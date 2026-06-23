@@ -1358,19 +1358,28 @@ impl AppView {
         );
         set_input_value(
             &self.panel_forms.settings.ai_provider_temperature_input,
-            provider.temperature.map(|t| t.to_string()).unwrap_or_default(),
+            provider
+                .temperature
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
             window,
             cx,
         );
         set_input_value(
             &self.panel_forms.settings.ai_provider_max_tokens_input,
-            provider.max_tokens.map(|t| t.to_string()).unwrap_or_default(),
+            provider
+                .max_tokens
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
             window,
             cx,
         );
         set_input_value(
             &self.panel_forms.settings.ai_provider_context_window_input,
-            provider.context_window.map(|t| t.to_string()).unwrap_or_default(),
+            provider
+                .context_window
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
             window,
             cx,
         );

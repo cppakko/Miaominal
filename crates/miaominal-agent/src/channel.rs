@@ -585,9 +585,7 @@ mod tests {
             profile(ShellType::PowerShell),
             Vec::new(),
             SecretStore::new_locked_vault(),
-            KnownHostsStore::with_path(
-                std::env::temp_dir().join("agent-known-hosts-powershell"),
-            ),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-powershell")),
         );
 
         assert!(

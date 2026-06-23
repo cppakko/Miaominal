@@ -1,6 +1,7 @@
 use super::super::*;
 use super::session_agent_composer;
 use super::session_agent_utils::format_relative_chat_time;
+use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::AnimationExt as _;
 use gpui::{Size, size};
@@ -67,8 +68,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                             .text_color(rgb(roles.on_surface))
                             .child("AI Chat"),
                     )
-                    .child(icon_button(
+                    .child(icon_button_with_tooltip(
                         AppIcon::Search,
+                        i18n::string(if is_search_open {
+                            "workspace.panel.agent.tooltips.close_history_search"
+                        } else {
+                            "workspace.panel.agent.tooltips.search_history"
+                        }),
                         24.0,
                         8.0,
                         Some(roles.surface_container_high),
@@ -291,8 +297,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                             .child(label),
                                                     )
                                                 })
-                                                .child(icon_button(
+                                                .child(icon_button_with_tooltip(
                                                     AppIcon::Edit,
+                                                    i18n::string("workspace.panel.agent.tooltips.rename_chat"),
                                                     24.0,
                                                     8.0,
                                                     Some(roles.surface_container_high),
@@ -310,8 +317,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                         });
                                                     },
                                                 ))
-                                                .child(icon_button(
+                                                .child(icon_button_with_tooltip(
                                                     AppIcon::Trash,
+                                                    i18n::string("workspace.panel.agent.tooltips.delete_chat"),
                                                     24.0,
                                                     8.0,
                                                     Some(roles.surface_container_high),

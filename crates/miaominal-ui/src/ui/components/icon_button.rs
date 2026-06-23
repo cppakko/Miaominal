@@ -1,8 +1,12 @@
 use crate::ui::assets::AppIcon;
 use gpui::{
-    App, Div, InteractiveElement, MouseButton, ParentElement, Styled, Window, div, px, rgb,
+    App, Div, InteractiveElement, MouseButton, ParentElement, SharedString, Styled, Window, div,
+    px, rgb,
 };
-use gpui_component::{Icon, Sizable as _};
+use gpui_component::{
+    Icon, Sizable as _,
+    button::{Button, ButtonVariants as _},
+};
 
 pub(crate) struct IconButtonStyle {
     pub size: f32,
@@ -30,6 +34,41 @@ pub(crate) fn icon_button(
         on_click,
     )
     .child(Icon::new(icon).small())
+}
+
+pub(crate) fn icon_button_with_tooltip(
+    icon: AppIcon,
+    tooltip: impl Into<SharedString>,
+    size: f32,
+    corner_radius: f32,
+    background: Option<u32>,
+    foreground: Option<u32>,
+    border: Option<u32>,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Div {
+    let tooltip = tooltip.into();
+    let button_id = SharedString::from(format!("icon-button-tooltip-{tooltip}"));
+    let background = background.unwrap_or_else(default_icon_button_background);
+    let foreground = foreground.unwrap_or_else(default_icon_button_foreground);
+
+    let mut button = Button::new(button_id)
+        .text()
+        .tab_stop(false)
+        .tooltip(tooltip)
+        .size(px(size))
+        .p_0()
+        .rounded(px(corner_radius))
+        .bg(rgb(background))
+        .cursor_pointer()
+        .text_color(rgb(foreground))
+        .child(Icon::new(icon).small())
+        .on_click(move |_, window, cx| on_click(window, cx));
+
+    if let Some(border) = border {
+        button = button.border_color(rgb(border));
+    }
+
+    div().size(px(size)).child(button)
 }
 
 pub(crate) fn icon_button_with_icon_size(
@@ -60,30 +99,34 @@ fn icon_button_base(
     let mut button = div()
         .size(px(size))
         .rounded(px(corner_radius))
-        .bg(rgb(if let Some(background) = background {
-            background
-        } else {
-            miaominal_settings::current_theme()
-                .material
-                .roles
-                .secondary_container
-        }))
+        .bg(rgb(
+            background.unwrap_or_else(default_icon_button_background)
+        ))
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .text_color(rgb(if let Some(foreground) = foreground {
-            foreground
-        } else {
-            miaominal_settings::current_theme()
-                .material
-                .roles
-                .on_secondary_container
-        }));
+        .text_color(rgb(
+            foreground.unwrap_or_else(default_icon_button_foreground)
+        ));
 
     if let Some(border) = border {
         button = button.border_color(rgb(border));
     }
 
     button.on_mouse_down(MouseButton::Left, move |_, window, cx| on_click(window, cx))
+}
+
+fn default_icon_button_background() -> u32 {
+    miaominal_settings::current_theme()
+        .material
+        .roles
+        .secondary_container
+}
+
+fn default_icon_button_foreground() -> u32 {
+    miaominal_settings::current_theme()
+        .material
+        .roles
+        .on_secondary_container
 }

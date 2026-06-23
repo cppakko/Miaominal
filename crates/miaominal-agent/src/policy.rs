@@ -412,7 +412,9 @@ mod tests {
         assert!(!is_sensitive_path("C:\\Users\\user\\Downloads\\setup.exe"));
         assert!(!is_sensitive_path("C:\\Users\\user\\Desktop\\notes.md"));
         assert!(!is_sensitive_path("D:\\Projects\\code\\main.rs"));
-        assert!(!is_sensitive_path("C:\\Program Files\\SomeApp\\config.json"));
+        assert!(!is_sensitive_path(
+            "C:\\Program Files\\SomeApp\\config.json"
+        ));
     }
 
     #[test]
@@ -512,7 +514,10 @@ mod tests {
 
         for cmd in &forbidden {
             assert!(
-                matches!(policy.decide_command(cmd, true), AgentPolicyDecision::Deny { .. }),
+                matches!(
+                    policy.decide_command(cmd, true),
+                    AgentPolicyDecision::Deny { .. }
+                ),
                 "expected Deny for forbidden command: {cmd}"
             );
         }
@@ -533,7 +538,10 @@ mod tests {
 
         for cmd in &service_cmds {
             assert!(
-                matches!(policy.decide_command(cmd, false), AgentPolicyDecision::NeedsApproval { .. }),
+                matches!(
+                    policy.decide_command(cmd, false),
+                    AgentPolicyDecision::NeedsApproval { .. }
+                ),
                 "expected NeedsApproval for L2: {cmd}"
             );
             assert_eq!(
@@ -563,7 +571,10 @@ mod tests {
 
         for cmd in &dangerous {
             assert!(
-                matches!(policy.decide_command(cmd, false), AgentPolicyDecision::NeedsApproval { .. }),
+                matches!(
+                    policy.decide_command(cmd, false),
+                    AgentPolicyDecision::NeedsApproval { .. }
+                ),
                 "expected NeedsApproval for L3: {cmd}"
             );
             assert_eq!(

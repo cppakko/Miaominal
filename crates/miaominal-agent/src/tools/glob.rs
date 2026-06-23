@@ -35,9 +35,7 @@ pub async fn glob(channel: &AgentExecChannel, args: GlobArgs) -> AgentResult<Too
         ShellType::PowerShell => {
             glob_powershell_command(&root, &name_pattern, max_results, args.include_hidden)
         }
-        ShellType::Cmd => {
-            glob_cmd_command(&root, &name_pattern, max_results, args.include_hidden)
-        }
+        ShellType::Cmd => glob_cmd_command(&root, &name_pattern, max_results, args.include_hidden),
     };
 
     let output = channel.exec(command).await?;
@@ -112,17 +110,18 @@ fn glob_powershell_command(
     format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
 }
 
-fn glob_cmd_command(root: &str, pattern: &str, _max_results: usize, include_hidden: bool) -> String {
+fn glob_cmd_command(
+    root: &str,
+    pattern: &str,
+    _max_results: usize,
+    include_hidden: bool,
+) -> String {
     let st = ShellType::Cmd;
     let cd = cd_prefix(st, root);
     // CMD shell_quote strips double-quotes and doubles percents;
     // the pattern is already safe (no % or " from find_name_pattern output).
     let quoted_pattern = shell_quote(pattern, st);
-    let attr = if include_hidden {
-        "/a:-d"
-    } else {
-        "/a:-d-h"
-    };
+    let attr = if include_hidden { "/a:-d" } else { "/a:-d-h" };
     // dir /s /b outputs relative paths. 2>nul suppresses "File Not Found".
     // We deliberately omit | head so that all results flow through Rust-side truncation
     // (CMD has no built-in equivalent to `head`).
@@ -245,4 +244,3 @@ mod tests {
         assert!(cmd.contains("; and "));
     }
 }
-

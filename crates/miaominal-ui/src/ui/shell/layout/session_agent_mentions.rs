@@ -1,5 +1,7 @@
 use super::super::*;
 use super::session_agent_panel::clamp_session_agent_panel_width;
+use crate::ui::components::icon_button_with_tooltip;
+use crate::ui::i18n;
 use gpui::AnimationExt as _;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_overlay(
@@ -76,8 +78,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(
                         .gap_1()
                         .child(format!("@{name}"))
                         .child(
-                            icon_button(
+                            icon_button_with_tooltip(
                                 AppIcon::Close,
+                                i18n::string("workspace.panel.agent.tooltips.remove_target"),
                                 16.0,
                                 4.0,
                                 None,

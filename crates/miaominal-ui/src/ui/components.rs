@@ -44,7 +44,9 @@ pub(crate) use dialog::{
 pub(crate) use editor_button::{editor_button, editor_button_with_id};
 pub(crate) use editor_footer_actions::{EDITOR_FOOTER_ACTION_HEIGHT, editor_footer_actions};
 pub(crate) use fab_button::{fab_button, fab_icon_button};
-pub(crate) use icon_button::{IconButtonStyle, icon_button, icon_button_with_icon_size};
+pub(crate) use icon_button::{
+    IconButtonStyle, icon_button, icon_button_with_icon_size, icon_button_with_tooltip,
+};
 pub(crate) use icon_tile::{IconTileTone, icon_tile, page_muted_icon_tile};
 pub(crate) use list_item_card::list_item_card;
 pub(crate) use md3_select::md3_select;

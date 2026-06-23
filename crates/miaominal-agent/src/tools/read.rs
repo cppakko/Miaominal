@@ -162,7 +162,10 @@ mod tests {
         assert!(cmd.contains("it"), "path fragment missing");
         assert!(cmd.contains("s file.txt"), "path fragment missing");
         // Single quote should be escaped via '"'"' pattern
-        assert!(cmd.contains("\"'\"'"), "expected POSIX single-quote escape pattern");
+        assert!(
+            cmd.contains("\"'\"'"),
+            "expected POSIX single-quote escape pattern"
+        );
     }
 
     #[test]
@@ -261,16 +264,11 @@ mod tests {
             (ShellType::Cmd, "C:\\tmp\\file.txt"),
         ] {
             let cmd = match st {
-                ShellType::Posix | ShellType::Fish => {
-                    posix_read_command(path, 1, 10, 4096, st)
-                }
+                ShellType::Posix | ShellType::Fish => posix_read_command(path, 1, 10, 4096, st),
                 ShellType::PowerShell => powershell_read_command(path, 1, 10, 4096),
                 ShellType::Cmd => cmd_read_command(path, 1, 10, 4096),
             };
-            assert!(
-                !cmd.is_empty(),
-                "command for {st:?} must not be empty"
-            );
+            assert!(!cmd.is_empty(), "command for {st:?} must not be empty");
         }
     }
 
@@ -283,9 +281,7 @@ mod tests {
             (ShellType::Cmd, "C:\\tmp\\file.txt"),
         ] {
             let cmd = match st {
-                ShellType::Posix | ShellType::Fish => {
-                    posix_read_command(path, 1, 10, 4096, st)
-                }
+                ShellType::Posix | ShellType::Fish => posix_read_command(path, 1, 10, 4096, st),
                 ShellType::PowerShell => powershell_read_command(path, 1, 10, 4096),
                 ShellType::Cmd => cmd_read_command(path, 1, 10, 4096),
             };

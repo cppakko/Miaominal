@@ -166,11 +166,26 @@ mod tests {
     fn powershell_list_command_structure() {
         let cmd = list_command(ShellType::PowerShell, "src", false, 500);
         // Must use PowerShell cmdlets, not find
-        assert!(cmd.contains("Get-ChildItem"), "expected Get-ChildItem, got: {cmd}");
-        assert!(cmd.contains("ForEach-Object"), "expected ForEach-Object, got: {cmd}");
-        assert!(cmd.contains("Sort-Object"), "expected Sort-Object, got: {cmd}");
-        assert!(cmd.contains("Select-Object -First"), "expected Select-Object -First, got: {cmd}");
-        assert!(cmd.contains("Set-Location $env:USERPROFILE"), "expected cd to USERPROFILE, got: {cmd}");
+        assert!(
+            cmd.contains("Get-ChildItem"),
+            "expected Get-ChildItem, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("ForEach-Object"),
+            "expected ForEach-Object, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("Sort-Object"),
+            "expected Sort-Object, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("Select-Object -First"),
+            "expected Select-Object -First, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("Set-Location $env:USERPROFILE"),
+            "expected cd to USERPROFILE, got: {cmd}"
+        );
         // Must NOT contain POSIX find
         assert!(!cmd.contains("find "), "should not use POSIX find: {cmd}");
         // Must filter dotfiles when include_hidden=false
@@ -199,11 +214,17 @@ mod tests {
         // Must use CMD dir + for loop
         assert!(cmd.contains("dir /b"), "expected dir /b, got: {cmd}");
         assert!(cmd.contains("for /f"), "expected for /f, got: {cmd}");
-        assert!(cmd.contains("cd /d %USERPROFILE%"), "expected cd to USERPROFILE, got: {cmd}");
+        assert!(
+            cmd.contains("cd /d %USERPROFILE%"),
+            "expected cd to USERPROFILE, got: {cmd}"
+        );
         // Must filter hidden files when include_hidden=false
         assert!(cmd.contains("/a-h"), "expected /a-h switch, got: {cmd}");
         // Must NOT contain PowerShell cmdlets
-        assert!(!cmd.contains("Get-ChildItem"), "should not use PowerShell: {cmd}");
+        assert!(
+            !cmd.contains("Get-ChildItem"),
+            "should not use PowerShell: {cmd}"
+        );
     }
 
     #[test]
@@ -213,17 +234,29 @@ mod tests {
             cmd.contains("/a ") || cmd.contains("/a\"") || cmd.ends_with("/a"),
             "include_hidden=true should use /a not /a-h, got: {cmd}"
         );
-        assert!(!cmd.contains("/a-h"), "should not filter hidden, got: {cmd}");
+        assert!(
+            !cmd.contains("/a-h"),
+            "should not filter hidden, got: {cmd}"
+        );
     }
 
     #[test]
     fn posix_list_unchanged() {
         let cmd = list_command(ShellType::Posix, "src", false, 500);
-        assert!(cmd.contains("cd \"$HOME\""), "expected cd $HOME, got: {cmd}");
+        assert!(
+            cmd.contains("cd \"$HOME\""),
+            "expected cd $HOME, got: {cmd}"
+        );
         assert!(cmd.contains("find "), "expected find, got: {cmd}");
-        assert!(cmd.contains("-mindepth 1 -maxdepth 1"), "expected depth limits, got: {cmd}");
+        assert!(
+            cmd.contains("-mindepth 1 -maxdepth 1"),
+            "expected depth limits, got: {cmd}"
+        );
         assert!(cmd.contains("-printf"), "expected -printf, got: {cmd}");
-        assert!(cmd.contains("| sort | head -n"), "expected sort|head, got: {cmd}");
+        assert!(
+            cmd.contains("| sort | head -n"),
+            "expected sort|head, got: {cmd}"
+        );
         assert!(
             cmd.contains("awk -F'\\t'"),
             "expected awk filter for hidden, got: {cmd}"
@@ -233,14 +266,20 @@ mod tests {
     #[test]
     fn posix_list_include_hidden_skips_awk() {
         let cmd = list_command(ShellType::Posix, "src", true, 500);
-        assert!(!cmd.contains("awk"), "include_hidden should skip awk: {cmd}");
+        assert!(
+            !cmd.contains("awk"),
+            "include_hidden should skip awk: {cmd}"
+        );
     }
 
     #[test]
     fn fish_list_uses_posix_path() {
         let cmd = list_command(ShellType::Fish, "src", false, 500);
         // Fish currently falls through to the Posix find command
-        assert!(cmd.contains("cd \"$HOME\""), "expected cd $HOME for fish, got: {cmd}");
+        assert!(
+            cmd.contains("cd \"$HOME\""),
+            "expected cd $HOME for fish, got: {cmd}"
+        );
         assert!(cmd.contains("find "), "expected find for fish, got: {cmd}");
     }
 }

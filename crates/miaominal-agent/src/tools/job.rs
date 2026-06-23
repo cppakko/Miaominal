@@ -69,11 +69,7 @@ fn make_start_job_command(
 
 /// Build the launch wrapper that runs the background command and echoes the
 /// marker so the registry can store it.
-fn make_start_job_launch(
-    shell_type: ShellType,
-    job_command: &str,
-    marker: &str,
-) -> String {
+fn make_start_job_launch(shell_type: ShellType, job_command: &str, marker: &str) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => {
             let marker_q = shell_quote(marker, shell_type);
@@ -266,8 +262,14 @@ mod tests {
         assert!(cmd.contains("nohup sh -lc"), "expected nohup: {cmd}");
         // shell_quote wraps the marker in single quotes; .out / .err
         // are appended after the closing quote (valid shell concatenation).
-        assert!(cmd.contains(".status'.out"), "expected .out redirect: {cmd}");
-        assert!(cmd.contains(".status'.err"), "expected .err redirect: {cmd}");
+        assert!(
+            cmd.contains(".status'.out"),
+            "expected .out redirect: {cmd}"
+        );
+        assert!(
+            cmd.contains(".status'.err"),
+            "expected .err redirect: {cmd}"
+        );
     }
 
     #[test]
@@ -319,7 +321,11 @@ mod tests {
     #[test]
     fn parses_stopped_job_poll_output() {
         let job_id = AgentJobId::new();
-        let result = parse_poll_output(job_id.clone(), "status=stopped\nstdout<<EOF\npartial\nEOF\nstderr<<EOF\n\nEOF").unwrap();
+        let result = parse_poll_output(
+            job_id.clone(),
+            "status=stopped\nstdout<<EOF\npartial\nEOF\nstderr<<EOF\n\nEOF",
+        )
+        .unwrap();
 
         assert_eq!(result.job_id, job_id);
         assert_eq!(result.status, JobStatus::Stopped);
@@ -346,10 +352,22 @@ mod tests {
             "/tmp/miaominal-agent-ps.status",
         );
         assert!(cmd.contains("Start-Job"), "expected Start-Job: {cmd}");
-        assert!(cmd.contains("[ScriptBlock]::Create"), "expected ScriptBlock: {cmd}");
-        assert!(cmd.contains("Set-Location $env:USERPROFILE"), "expected cd prefix: {cmd}");
-        assert!(!cmd.contains("nohup"), "PowerShell must not use nohup: {cmd}");
-        assert!(!cmd.contains(">/dev/null"), "PowerShell must not use posix redirects: {cmd}");
+        assert!(
+            cmd.contains("[ScriptBlock]::Create"),
+            "expected ScriptBlock: {cmd}"
+        );
+        assert!(
+            cmd.contains("Set-Location $env:USERPROFILE"),
+            "expected cd prefix: {cmd}"
+        );
+        assert!(
+            !cmd.contains("nohup"),
+            "PowerShell must not use nohup: {cmd}"
+        );
+        assert!(
+            !cmd.contains(">/dev/null"),
+            "PowerShell must not use posix redirects: {cmd}"
+        );
     }
 
     #[test]
@@ -359,21 +377,36 @@ mod tests {
             "Set-Location 'C:\\'; Start-Job -Name '/tmp/j.status' -ScriptBlock ([ScriptBlock]::Create('whoami'))",
             "/tmp/j.status",
         );
-        assert!(launch.contains("Write-Output"), "expected Write-Output: {launch}");
-        assert!(!launch.contains("&"), "PowerShell launch must not use posix &: {launch}");
+        assert!(
+            launch.contains("Write-Output"),
+            "expected Write-Output: {launch}"
+        );
+        assert!(
+            !launch.contains("&"),
+            "PowerShell launch must not use posix &: {launch}"
+        );
     }
 
     #[test]
     fn powershell_poll_command_outputs_structured_format() {
         let cmd = make_poll_command("/tmp/j.status", ShellType::PowerShell);
         assert!(cmd.contains("Get-Job"), "expected Get-Job: {cmd}");
-        assert!(cmd.contains("status=not_found"), "expected not_found: {cmd}");
+        assert!(
+            cmd.contains("status=not_found"),
+            "expected not_found: {cmd}"
+        );
         assert!(cmd.contains("status=running"), "expected running: {cmd}");
         assert!(cmd.contains("status=exited"), "expected exited: {cmd}");
         assert!(cmd.contains("Receive-Job"), "expected Receive-Job: {cmd}");
         assert!(cmd.contains("Remove-Job"), "expected Remove-Job: {cmd}");
-        assert!(cmd.contains("stdout<<EOF"), "expected stdout heredoc: {cmd}");
-        assert!(cmd.contains("stderr<<EOF"), "expected stderr heredoc: {cmd}");
+        assert!(
+            cmd.contains("stdout<<EOF"),
+            "expected stdout heredoc: {cmd}"
+        );
+        assert!(
+            cmd.contains("stderr<<EOF"),
+            "expected stderr heredoc: {cmd}"
+        );
     }
 
     #[test]
@@ -381,7 +414,10 @@ mod tests {
         let cmd = make_stop_command("/tmp/j.status", ShellType::PowerShell);
         assert!(cmd.contains("Stop-Job"), "expected Stop-Job: {cmd}");
         assert!(cmd.contains("Remove-Job"), "expected Remove-Job: {cmd}");
-        assert!(cmd.contains("Write-Output 'stopped'"), "expected stopped output: {cmd}");
+        assert!(
+            cmd.contains("Write-Output 'stopped'"),
+            "expected stopped output: {cmd}"
+        );
     }
 
     // ── CMD ──
@@ -394,11 +430,23 @@ mod tests {
             "dir",
             "/tmp/miaominal-agent-cmd.status",
         );
-        assert!(cmd.contains("start \"/tmp/miaominal-agent-cmd.status\" /b"), "expected start /b with title: {cmd}");
-        assert!(cmd.contains("cmd /v:on /c"), "expected delayed expansion: {cmd}");
-        assert!(cmd.contains("!ERRORLEVEL!"), "expected delayed ERRORLEVEL: {cmd}");
+        assert!(
+            cmd.contains("start \"/tmp/miaominal-agent-cmd.status\" /b"),
+            "expected start /b with title: {cmd}"
+        );
+        assert!(
+            cmd.contains("cmd /v:on /c"),
+            "expected delayed expansion: {cmd}"
+        );
+        assert!(
+            cmd.contains("!ERRORLEVEL!"),
+            "expected delayed ERRORLEVEL: {cmd}"
+        );
         // Backslash conversion for CMD built-ins
-        assert!(cmd.contains("\\tmp\\miaominal-agent-cmd.status"), "expected backslash marker: {cmd}");
+        assert!(
+            cmd.contains("\\tmp\\miaominal-agent-cmd.status"),
+            "expected backslash marker: {cmd}"
+        );
     }
 
     #[test]
@@ -408,27 +456,48 @@ mod tests {
             "start ... /b cmd /c \"...\"",
             "/tmp/marker.status",
         );
-        assert!(launch.contains("& echo /tmp/marker.status"), "expected echo marker: {launch}");
+        assert!(
+            launch.contains("& echo /tmp/marker.status"),
+            "expected echo marker: {launch}"
+        );
     }
 
     #[test]
     fn cmd_poll_command_outputs_structured_format() {
         let cmd = make_poll_command("/tmp/j.status", ShellType::Cmd);
-        assert!(cmd.contains("cmd /v:on /c"), "expected delayed expansion wrapper: {cmd}");
-        assert!(cmd.contains("status=not_found"), "expected not_found: {cmd}");
+        assert!(
+            cmd.contains("cmd /v:on /c"),
+            "expected delayed expansion wrapper: {cmd}"
+        );
+        assert!(
+            cmd.contains("status=not_found"),
+            "expected not_found: {cmd}"
+        );
         assert!(cmd.contains("status=running"), "expected running: {cmd}");
         assert!(cmd.contains("status=exited"), "expected exited: {cmd}");
         assert!(cmd.contains("status=stopped"), "expected stopped: {cmd}");
-        assert!(cmd.contains("stdout<<EOF"), "expected stdout heredoc: {cmd}");
-        assert!(cmd.contains("stderr<<EOF"), "expected stderr heredoc: {cmd}");
+        assert!(
+            cmd.contains("stdout<<EOF"),
+            "expected stdout heredoc: {cmd}"
+        );
+        assert!(
+            cmd.contains("stderr<<EOF"),
+            "expected stderr heredoc: {cmd}"
+        );
     }
 
     #[test]
     fn cmd_stop_job_command_uses_taskkill() {
         let cmd = make_stop_command("/tmp/j.status", ShellType::Cmd);
         assert!(cmd.contains("taskkill"), "expected taskkill: {cmd}");
-        assert!(cmd.contains("WINDOWTITLE eq /tmp/j.status"), "expected WINDOWTITLE filter: {cmd}");
-        assert!(cmd.contains("echo stopped"), "expected stopped output: {cmd}");
+        assert!(
+            cmd.contains("WINDOWTITLE eq /tmp/j.status"),
+            "expected WINDOWTITLE filter: {cmd}"
+        );
+        assert!(
+            cmd.contains("echo stopped"),
+            "expected stopped output: {cmd}"
+        );
     }
 
     // ── Cross-shell parse compat ──

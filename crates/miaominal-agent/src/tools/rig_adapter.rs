@@ -56,11 +56,22 @@ impl AgentToolSet {
             .iter()
             .copied()
             .filter(|name| *name != "web_search" || self.channel.web_search_enabled());
-        
+
         match self.mode {
-            AgentMode::Ask => all.filter(|name| {
-                matches!(*name, "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch")
-            }).collect(),
+            AgentMode::Ask => all
+                .filter(|name| {
+                    matches!(
+                        *name,
+                        "workspace_info"
+                            | "read"
+                            | "list"
+                            | "glob"
+                            | "grep"
+                            | "web_search"
+                            | "web_fetch"
+                    )
+                })
+                .collect(),
             _ => all.collect(),
         }
     }
@@ -88,7 +99,10 @@ impl Tool for JsonAgentTool {
         tool_definition(&self.name)
     }
 
-    fn call(&self, args: Self::Args) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend {
+    fn call(
+        &self,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend {
         let channel = self.channel.clone();
         let name = self.name.clone();
         let approved = match self.mode {
@@ -285,7 +299,10 @@ fn tool_parameters(name: &str) -> Value {
                     "max_bytes",
                     integer_schema("Maximum stdout/stderr bytes.", 1),
                 ),
-                ("shell", string_schema("Shell label; use posix-sh, fish, powershell, or cmd.")),
+                (
+                    "shell",
+                    string_schema("Shell label; use posix-sh, fish, powershell, or cmd."),
+                ),
             ],
             &["command"],
         ),
@@ -351,7 +368,9 @@ mod tests {
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-tools")),
         );
-        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute).definitions().await;
+        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute)
+            .definitions()
+            .await;
 
         assert_eq!(definitions.len(), TOOL_NAMES.len() - 1);
         for name in TOOL_NAMES {
@@ -393,7 +412,9 @@ mod tests {
             Some("tvly-test".into()),
         );
 
-        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute).definitions().await;
+        let definitions = AgentToolSet::for_channel(channel, AgentMode::Execute)
+            .definitions()
+            .await;
         let web_search = definitions
             .iter()
             .find(|definition| definition.name == "web_search")

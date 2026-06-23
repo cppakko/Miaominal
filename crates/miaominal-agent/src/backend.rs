@@ -62,30 +62,26 @@ pub struct SshBackend;
 impl SshBackend {
     pub async fn execute(&self, request: SshExecRequest) -> AgentResult<String> {
         match request.mode {
-            ExecMode::Raw => {
-                ssh::execute_profile_command(
-                    request.profile,
-                    request.all_profiles,
-                    request.secrets,
-                    request.known_hosts,
-                    request.command,
-                )
-                .await
-                .map_err(AgentError::from)
-            }
-            ExecMode::Pty { columns, lines } => {
-                ssh::execute_profile_pty_command(
-                    request.profile,
-                    request.all_profiles,
-                    request.secrets,
-                    request.known_hosts,
-                    request.command,
-                    columns,
-                    lines,
-                )
-                .await
-                .map_err(AgentError::from)
-            }
+            ExecMode::Raw => ssh::execute_profile_command(
+                request.profile,
+                request.all_profiles,
+                request.secrets,
+                request.known_hosts,
+                request.command,
+            )
+            .await
+            .map_err(AgentError::from),
+            ExecMode::Pty { columns, lines } => ssh::execute_profile_pty_command(
+                request.profile,
+                request.all_profiles,
+                request.secrets,
+                request.known_hosts,
+                request.command,
+                columns,
+                lines,
+            )
+            .await
+            .map_err(AgentError::from),
         }
     }
 }

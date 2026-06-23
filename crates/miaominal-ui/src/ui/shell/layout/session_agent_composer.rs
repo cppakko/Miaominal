@@ -1,5 +1,6 @@
 use super::super::*;
 use super::session_agent_utils::*;
+use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::{Animation, AnimationExt as _};
 use std::time::Duration;
@@ -94,8 +95,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     .bg(rgb(roles.surface_container_high)),
                             ),
                         )
-                        .child(icon_button(
+                        .child(icon_button_with_tooltip(
                             AppIcon::LaptopMinimal,
+                            i18n::string(if app.session_agent.exec_mode.is_pty() {
+                                "workspace.panel.agent.tooltips.disable_pty"
+                            } else {
+                                "workspace.panel.agent.tooltips.enable_pty"
+                            }),
                             24.0,
                             8.0,
                             Some(if app.session_agent.exec_mode.is_pty() {
@@ -135,12 +141,17 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                         .child(
                             div()
                                 .id("session-agent-send-action")
-                                .child(icon_button(
+                                .child(icon_button_with_tooltip(
                                     if waiting {
                                         AppIcon::Pause
                                     } else {
                                         AppIcon::ChevronUp
                                     },
+                                    i18n::string(if waiting {
+                                        "workspace.panel.agent.tooltips.stop_response"
+                                    } else {
+                                        "workspace.panel.agent.tooltips.send_message"
+                                    }),
                                     26.0,
                                     8.0,
                                     Some(if waiting {

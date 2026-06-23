@@ -42,9 +42,7 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
     let shell_type = channel.shell_type();
 
     let command = match shell_type {
-        ShellType::PowerShell => {
-            build_powershell_grep(&args, &root, max_results, max_bytes)
-        }
+        ShellType::PowerShell => build_powershell_grep(&args, &root, max_results, max_bytes),
         ShellType::Cmd => build_cmd_grep(&args, &root, max_results),
         _ => {
             // Posix (bash/zsh) and Fish — keep existing rg/grep/find fallback chain
@@ -303,10 +301,7 @@ mod tests {
             cmd.contains("findstr"),
             "CMD command should use findstr, got: {cmd}"
         );
-        assert!(
-            cmd.contains("/s"),
-            "Should recurse with /s, got: {cmd}"
-        );
+        assert!(cmd.contains("/s"), "Should recurse with /s, got: {cmd}");
         assert!(
             cmd.contains("/n"),
             "Should show line numbers with /n, got: {cmd}"
