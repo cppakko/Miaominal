@@ -12,6 +12,7 @@ pub enum ChatMessageRole {
     Assistant,
     ToolCall,
     Thinking,
+    Error,
 }
 
 impl ChatMessageRole {
@@ -21,6 +22,7 @@ impl ChatMessageRole {
             Self::Assistant => "assistant",
             Self::ToolCall => "tool_call",
             Self::Thinking => "thinking",
+            Self::Error => "error",
         }
     }
 
@@ -30,6 +32,7 @@ impl ChatMessageRole {
             "assistant" => Ok(Self::Assistant),
             "tool_call" => Ok(Self::ToolCall),
             "thinking" => Ok(Self::Thinking),
+            "error" => Ok(Self::Error),
             _ => Err(anyhow!("unknown chat message role: {value}")),
         }
     }
@@ -51,6 +54,7 @@ pub struct ChatMessageRecord {
     pub content: String,
     pub tool_name: Option<String>,
     pub tool_summary: Option<String>,
+    pub tool_status: Option<String>,
     pub sort_order: i64,
     pub created_at: i64,
 }
@@ -129,8 +133,8 @@ impl ChatStore {
         self.0
             .execute(
                 "INSERT OR REPLACE INTO chat_messages
-                 (id, session_id, role, content, tool_name, tool_summary, sort_order, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     record.id,
                     record.session_id,
@@ -138,6 +142,7 @@ impl ChatStore {
                     encrypted_content,
                     record.tool_name,
                     encrypted_tool_summary,
+                    record.tool_status,
                     record.sort_order,
                     record.created_at,
                 ],
@@ -162,7 +167,7 @@ impl ChatStore {
         let mut statement = self
             .0
             .prepare(
-                "SELECT id, session_id, role, content, tool_name, tool_summary, sort_order, created_at
+                "SELECT id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at
                  FROM chat_messages
                  WHERE session_id = ?1
                  ORDER BY sort_order ASC",
@@ -193,8 +198,9 @@ impl ChatStore {
                     tool_summary: tool_summary.as_deref().map(|cipher| {
                         decrypt_text(key, cipher).unwrap_or_else(|| DECRYPT_FAILED_TEXT.to_string())
                     }),
-                    sort_order: row.get(6)?,
-                    created_at: row.get(7)?,
+                    tool_status: row.get(6)?,
+                    sort_order: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -244,7 +250,24 @@ impl ChatStore {
                      ON chat_messages(session_id, sort_order);",
             )
             .context("failed to migrate chat store")?;
+        if !self.chat_messages_has_column("tool_status")? {
+            self.0
+                .execute("ALTER TABLE chat_messages ADD COLUMN tool_status TEXT", [])
+                .context("failed to add chat_messages.tool_status")?;
+        }
         Ok(())
+    }
+
+    fn chat_messages_has_column(&self, column: &str) -> Result<bool> {
+        let mut statement = self
+            .0
+            .prepare("PRAGMA table_info(chat_messages)")
+            .context("failed to inspect chat_messages columns")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to read chat_messages columns")?;
+        Ok(columns.iter().any(|name| name == column))
     }
 }
 
@@ -279,6 +302,7 @@ mod tests {
                     content: "hello".to_string(),
                     tool_name: Some("read".to_string()),
                     tool_summary: Some("read file".to_string()),
+                    tool_status: Some("completed".to_string()),
                     sort_order: 0,
                     created_at: 11,
                 },
@@ -292,6 +316,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[0].tool_summary.as_deref(), Some("read file"));
+        assert_eq!(messages[0].tool_status.as_deref(), Some("completed"));
 
         let _ = std::fs::remove_file(path);
     }
@@ -314,6 +339,7 @@ mod tests {
                     content: "secret".to_string(),
                     tool_name: None,
                     tool_summary: None,
+                    tool_status: None,
                     sort_order: 0,
                     created_at: 11,
                 },
@@ -332,6 +358,68 @@ mod tests {
             .load_session_messages("session-1", &key)
             .expect("tampered messages should still load");
         assert_eq!(messages[0].content, DECRYPT_FAILED_TEXT);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn chat_store_migrates_old_chat_messages_without_tool_status() {
+        let path = test_db_path("migration");
+        {
+            let connection = Connection::open(&path).expect("old database should open");
+            connection
+                .execute_batch(
+                    "CREATE TABLE chat_sessions (
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    CREATE TABLE chat_messages (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL,
+                        content BLOB NOT NULL,
+                        tool_name TEXT,
+                        tool_summary BLOB,
+                        sort_order INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL
+                    );",
+                )
+                .expect("old schema should be created");
+        }
+
+        let store = ChatStore::open(&path).expect("store should migrate");
+        assert!(
+            store
+                .chat_messages_has_column("tool_status")
+                .expect("columns should be readable")
+        );
+
+        let key = [3u8; 32];
+        store
+            .create_session("session-1", 10)
+            .expect("session should be created");
+        store
+            .insert_message(
+                &ChatMessageRecord {
+                    id: "message-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    role: ChatMessageRole::ToolCall,
+                    content: "{\"path\":\"Cargo.toml\"}".to_string(),
+                    tool_name: Some("read".to_string()),
+                    tool_summary: Some("read Cargo.toml".to_string()),
+                    tool_status: Some("completed".to_string()),
+                    sort_order: 0,
+                    created_at: 11,
+                },
+                &key,
+            )
+            .expect("message should be inserted after migration");
+        let messages = store
+            .load_session_messages("session-1", &key)
+            .expect("messages should load");
+        assert_eq!(messages[0].tool_status.as_deref(), Some("completed"));
 
         let _ = std::fs::remove_file(path);
     }

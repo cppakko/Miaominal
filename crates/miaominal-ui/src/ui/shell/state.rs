@@ -322,7 +322,8 @@ impl SessionAgentState {
             message.tool_call.as_ref().is_some_and(|tool_call| {
                 matches!(
                     tool_call.status,
-                    SessionAgentToolStatus::WaitingForConfirmation
+                    SessionAgentToolStatus::Pending
+                        | SessionAgentToolStatus::WaitingForConfirmation
                         | SessionAgentToolStatus::InProgress
                 )
             })
@@ -513,7 +514,9 @@ impl SessionAgentState {
         {
             if matches!(
                 tool_call.status,
-                SessionAgentToolStatus::WaitingForConfirmation | SessionAgentToolStatus::InProgress
+                SessionAgentToolStatus::Pending
+                    | SessionAgentToolStatus::WaitingForConfirmation
+                    | SessionAgentToolStatus::InProgress
             ) {
                 tool_call.status = SessionAgentToolStatus::Rejected;
                 tool_call.requires_confirmation = false;
@@ -617,6 +620,32 @@ impl SessionAgentState {
 
         self.messages
             .push(SessionAgentMessage::assistant_raw(reply));
+    }
+
+    pub(in crate::ui::shell) fn finish_stopped_turn(&mut self) {
+        self.finish_active_thinking();
+        if let Some(message) = self.messages.last_mut()
+            && message.role == SessionAgentMessageRole::Assistant
+            && message.content.trim().is_empty()
+        {
+            message.content = "Stopped by user.".to_string();
+            return;
+        }
+
+        let turn_has_visible_output = self
+            .messages
+            .iter()
+            .rev()
+            .take_while(|message| message.role != SessionAgentMessageRole::User)
+            .any(|message| {
+                matches!(message.role, SessionAgentMessageRole::ToolCall)
+                    || (message.role == SessionAgentMessageRole::Assistant
+                        && !message.content.trim().is_empty())
+            });
+        if !turn_has_visible_output {
+            self.messages
+                .push(SessionAgentMessage::assistant_raw("Stopped by user."));
+        }
     }
 
     fn finish_active_thinking(&mut self) {
@@ -1705,5 +1734,37 @@ mod tests {
 
         assert!(!session.preserved_history_popup_hidden());
         assert!(session.uses_blocking_placeholder());
+    }
+
+    #[test]
+    fn pending_tool_call_counts_as_active_and_can_be_rejected() {
+        let mut state = SessionAgentState::default();
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "read".to_string(),
+            "{\"path\":\"Cargo.toml\"}".to_string(),
+            SessionAgentToolStatus::Pending,
+        );
+
+        assert!(state.has_active_tool_call());
+        assert!(state.reject_active_tool_calls("Stopped by user."));
+
+        let tool = state.tool_call("tool-1").expect("tool should exist");
+        assert_eq!(tool.status, SessionAgentToolStatus::Rejected);
+        assert_eq!(tool.confirmation_note.as_deref(), Some("Stopped by user."));
+        assert!(!state.has_active_tool_call());
+    }
+
+    #[test]
+    fn stopped_turn_replaces_empty_assistant_placeholder() {
+        let mut state = SessionAgentState::default();
+        state.messages.push(SessionAgentMessage::user("hello"));
+        state.messages.push(SessionAgentMessage::assistant_raw(""));
+
+        state.finish_stopped_turn();
+
+        assert_eq!(state.messages.len(), 2);
+        assert_eq!(state.messages[1].role, SessionAgentMessageRole::Assistant);
+        assert_eq!(state.messages[1].content, "Stopped by user.");
     }
 }

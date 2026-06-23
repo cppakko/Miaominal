@@ -690,8 +690,10 @@ impl AppView {
                 input.set_value(current_title.clone(), window, cx);
             });
 
-        self.dialogs.pending_chat_session_rename =
-            Some(PendingChatSessionRenameState { session_id, current_title });
+        self.dialogs.pending_chat_session_rename = Some(PendingChatSessionRenameState {
+            session_id,
+            current_title,
+        });
         cx.notify();
     }
 
@@ -1116,6 +1118,7 @@ impl AppView {
         }
 
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
+        self.session_agent.finish_stopped_turn();
         self.set_active_session_pty_tap(None);
         for tab in &mut self.workspace_state.tabs {
             if let Some(session) = tab.as_session_mut() {
@@ -1124,6 +1127,7 @@ impl AppView {
         }
         self.status_message = "Agent stopped.".into();
         self.session_agent.last_error = None;
+        self.persist_session_agent_chat();
         cx.notify();
     }
 
@@ -1207,10 +1211,8 @@ impl AppView {
                         let web_search_api_key = secrets
                             .get("web_search", SecretKind::WebSearchApiKey)
                             .map_err(anyhow::Error::from)?;
-                        channel = channel.with_web_search_config(
-                            web_search_config,
-                            web_search_api_key,
-                        );
+                        channel =
+                            channel.with_web_search_config(web_search_config, web_search_api_key);
                     }
                     if let Some(ref pty_handle) = pty_handle {
                         channel = channel.with_terminal_exec(pty_handle.clone());
@@ -1227,8 +1229,7 @@ impl AppView {
                         .await
                         .map_err(anyhow::Error::from)
                         .and_then(|response| {
-                            serde_json::to_string(&response)
-                                .map_err(|error| anyhow::anyhow!(error))
+                            serde_json::to_string(&response).map_err(|error| anyhow::anyhow!(error))
                         })
                 })
             });
@@ -1395,7 +1396,7 @@ impl AppView {
                             tool_call,
                             reasoning,
                             result,
-                        tools,
+                            tools,
                             target_guidance,
                         },
                     )
@@ -1491,6 +1492,7 @@ impl AppView {
     ) {
         self.session_agent.reject_tool_call(&tool_id);
         self.status_message = "Tool denied.".into();
+        self.persist_session_agent_chat();
         cx.notify();
     }
 
@@ -1551,7 +1553,10 @@ impl AppView {
                 self.session_agent.complete_tool_call(&id, result);
             }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
-                if matches!(self.session_agent.agent_mode, AgentMode::NonBlocking | AgentMode::FullAuto) {
+                if matches!(
+                    self.session_agent.agent_mode,
+                    AgentMode::NonBlocking | AgentMode::FullAuto
+                ) {
                     self.approve_session_agent_tool_call(id, cx);
                 } else {
                     self.session_agent
@@ -1644,9 +1649,7 @@ impl AppView {
             i18n::string("workspace.panel.agent.reply_ready")
         };
 
-        if !waiting_for_confirmation {
-            self.persist_session_agent_chat();
-        }
+        self.persist_session_agent_chat();
 
         // --- title generation ---
         if self.session_agent.title.is_none() && !waiting_for_confirmation {
@@ -1751,6 +1754,7 @@ impl AppView {
         self.session_agent.last_error = Some(message.clone());
         self.push_session_agent_message(SessionAgentMessage::error(message.clone()), cx);
         self.status_message = message;
+        self.persist_session_agent_chat();
         cx.notify();
     }
 
@@ -2194,7 +2198,7 @@ fn chat_record_from_session_agent_message(
         SessionAgentMessageRole::Assistant => ChatMessageRole::Assistant,
         SessionAgentMessageRole::Thinking => ChatMessageRole::Thinking,
         SessionAgentMessageRole::ToolCall => ChatMessageRole::ToolCall,
-        SessionAgentMessageRole::Error => return None,
+        SessionAgentMessageRole::Error => ChatMessageRole::Error,
     };
     let tool_call = message.tool_call.as_ref();
     let content = tool_call
@@ -2210,6 +2214,7 @@ fn chat_record_from_session_agent_message(
         tool_summary: tool_call
             .and_then(|tool| tool.confirmation_note.clone())
             .or_else(|| tool_call.map(|tool| tool.summary.clone())),
+        tool_status: tool_call.map(|tool| tool_status_as_str(tool.status).to_string()),
         sort_order: index as i64,
         created_at: now,
     })
@@ -2220,12 +2225,15 @@ fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentM
         ChatMessageRole::User => SessionAgentMessage::user(record.content),
         ChatMessageRole::Assistant => SessionAgentMessage::assistant_raw(record.content),
         ChatMessageRole::Thinking => SessionAgentMessage::thinking_from_history(record.content),
+        ChatMessageRole::Error => SessionAgentMessage::error(record.content),
         ChatMessageRole::ToolCall => {
             let summary = record
                 .tool_summary
                 .clone()
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or_else(|| record.content.clone());
+            let (status, confirmation_note) =
+                restored_tool_status_and_note(record.tool_status.as_deref(), record.tool_summary);
             SessionAgentMessage::tool_call(SessionAgentToolCall {
                 id: record.id,
                 name: record
@@ -2234,12 +2242,38 @@ fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentM
                     .unwrap_or_else(|| "tool".to_string()),
                 arguments: record.content,
                 summary,
-                status: SessionAgentToolStatus::Completed,
+                status,
                 requires_confirmation: false,
-                confirmation_note: record.tool_summary,
+                confirmation_note,
                 expanded: false,
             })
         }
+    }
+}
+
+fn tool_status_as_str(status: SessionAgentToolStatus) -> &'static str {
+    match status {
+        SessionAgentToolStatus::Pending => "pending",
+        SessionAgentToolStatus::WaitingForConfirmation => "waiting_for_confirmation",
+        SessionAgentToolStatus::InProgress => "in_progress",
+        SessionAgentToolStatus::Completed => "completed",
+        SessionAgentToolStatus::Failed => "failed",
+        SessionAgentToolStatus::Rejected => "rejected",
+    }
+}
+
+fn restored_tool_status_and_note(
+    status: Option<&str>,
+    note: Option<String>,
+) -> (SessionAgentToolStatus, Option<String>) {
+    match status.unwrap_or("completed") {
+        "pending" | "waiting_for_confirmation" | "in_progress" => (
+            SessionAgentToolStatus::Rejected,
+            Some("This tool call was interrupted before completion.".to_string()),
+        ),
+        "failed" => (SessionAgentToolStatus::Failed, note),
+        "rejected" => (SessionAgentToolStatus::Rejected, note),
+        _ => (SessionAgentToolStatus::Completed, note),
     }
 }
 
@@ -2248,4 +2282,65 @@ fn unix_timestamp() -> i64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_status_strings_round_trip_completed_failed_and_rejected() {
+        assert_eq!(
+            restored_tool_status_and_note(
+                Some(tool_status_as_str(SessionAgentToolStatus::Completed)),
+                Some("done".to_string()),
+            ),
+            (SessionAgentToolStatus::Completed, Some("done".to_string()))
+        );
+        assert_eq!(
+            restored_tool_status_and_note(
+                Some(tool_status_as_str(SessionAgentToolStatus::Failed)),
+                Some("boom".to_string()),
+            ),
+            (SessionAgentToolStatus::Failed, Some("boom".to_string()))
+        );
+        assert_eq!(
+            restored_tool_status_and_note(
+                Some(tool_status_as_str(SessionAgentToolStatus::Rejected)),
+                Some("nope".to_string()),
+            ),
+            (SessionAgentToolStatus::Rejected, Some("nope".to_string()))
+        );
+    }
+
+    #[test]
+    fn unfinished_tool_statuses_restore_as_interrupted_rejected_tools() {
+        for status in [
+            SessionAgentToolStatus::Pending,
+            SessionAgentToolStatus::WaitingForConfirmation,
+            SessionAgentToolStatus::InProgress,
+        ] {
+            assert_eq!(
+                restored_tool_status_and_note(
+                    Some(tool_status_as_str(status)),
+                    Some("old note".to_string()),
+                ),
+                (
+                    SessionAgentToolStatus::Rejected,
+                    Some("This tool call was interrupted before completion.".to_string()),
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn missing_tool_status_keeps_legacy_tool_calls_completed() {
+        assert_eq!(
+            restored_tool_status_and_note(None, Some("legacy result".to_string())),
+            (
+                SessionAgentToolStatus::Completed,
+                Some("legacy result".to_string()),
+            )
+        );
+    }
 }
