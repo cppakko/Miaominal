@@ -356,6 +356,14 @@ impl SessionAgentState {
         })
     }
 
+    pub(in crate::ui::shell) fn has_tool_call_waiting_for_confirmation(&self) -> bool {
+        self.messages.iter().rev().any(|message| {
+            message.tool_call.as_ref().is_some_and(|tool_call| {
+                tool_call.status == SessionAgentToolStatus::WaitingForConfirmation
+            })
+        })
+    }
+
     pub(in crate::ui::shell) fn next_request_id(&mut self) -> u64 {
         self.request_counter = self.request_counter.wrapping_add(1).max(1);
         self.request_counter
@@ -1766,6 +1774,24 @@ mod tests {
         assert_eq!(tool.status, SessionAgentToolStatus::Rejected);
         assert_eq!(tool.confirmation_note.as_deref(), Some("Stopped by user."));
         assert!(!state.has_active_tool_call());
+    }
+
+    #[test]
+    fn waiting_confirmation_tool_call_is_detected_separately() {
+        let mut state = SessionAgentState::default();
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "run_shell".to_string(),
+            "{\"command\":\"cargo test\"}".to_string(),
+            SessionAgentToolStatus::InProgress,
+        );
+
+        assert!(!state.has_tool_call_waiting_for_confirmation());
+
+        state.require_tool_call_confirmation("tool-1", "approval required".to_string());
+
+        assert!(state.has_active_tool_call());
+        assert!(state.has_tool_call_waiting_for_confirmation());
     }
 
     #[test]

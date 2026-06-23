@@ -166,6 +166,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                         material.palettes.neutral_variant,
                                         if material.dark { 65 } else { 50 },
                                     );
+                                    let warning_color = material.extended.warning.color;
+                                    let warning_on_color = material.extended.warning.on_color;
                                     let view_entity = view_entity.clone();
                                     let current_sid = current_sid.clone();
                                     let filtered_ix = filtered_ix.clone();
@@ -184,6 +186,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                             let rename_session_id = session.id.clone();
                                             let is_current = current_sid.as_deref()
                                                 == Some(session.id.as_str());
+                                            let needs_approval = this
+                                                .session_agent_session_needs_approval(&session.id);
                                             let is_busy =
                                                 this.session_agent_session_is_busy(&session.id);
                                             let title = if session.title.trim().is_empty() {
@@ -199,7 +203,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                             let rename_title = title.clone();
                                             let updated_at =
                                                 format_relative_chat_time(session.updated_at);
-                                            let status_label = if is_busy {
+                                            let status_label = if needs_approval {
+                                                Some("Needs approval")
+                                            } else if is_busy {
                                                 Some("Working")
                                             } else if is_current {
                                                 Some("Current")
@@ -279,7 +285,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                             .rounded(px(999.0))
                                                             .px_2()
                                                             .py_1()
-                                                            .bg(rgb(if is_busy {
+                                                            .bg(rgb(if needs_approval {
+                                                                warning_color
+                                                            } else if is_busy {
                                                                 roles.primary
                                                             } else {
                                                                 roles.surface_container_highest
@@ -289,7 +297,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                                     .scaled(),
                                                             )
                                                             .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(rgb(if is_busy {
+                                                            .text_color(rgb(if needs_approval {
+                                                                warning_on_color
+                                                            } else if is_busy {
                                                                 roles.on_primary
                                                             } else {
                                                                 roles.on_surface_variant

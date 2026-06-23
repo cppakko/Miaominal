@@ -771,6 +771,18 @@ impl AppView {
             .is_some_and(SessionAgentState::is_busy)
     }
 
+    pub(in crate::ui::shell) fn session_agent_session_needs_approval(
+        &self,
+        session_id: &str,
+    ) -> bool {
+        if self.session_agent.session_id.as_deref() == Some(session_id) {
+            return self.session_agent.has_tool_call_waiting_for_confirmation();
+        }
+        self.session_agent_sessions
+            .get(session_id)
+            .is_some_and(SessionAgentState::has_tool_call_waiting_for_confirmation)
+    }
+
     fn with_session_agent_state(&mut self, session_id: &str, f: impl FnOnce(&mut Self)) -> bool {
         if self.session_agent.session_id.as_deref() == Some(session_id) {
             f(self);
