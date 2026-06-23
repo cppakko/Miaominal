@@ -664,7 +664,7 @@ fn render_session_agent_tool_status_indicator(
     color: u32,
 ) -> gpui::AnyElement {
     let dot = div()
-        .size(px(7.0))
+        .size(px(6.0))
         .rounded(px(999.0))
         .bg(rgb(color))
         .flex_shrink_0();
@@ -692,6 +692,42 @@ fn render_session_agent_tool_status_indicator(
     }
 }
 
+fn render_session_agent_tool_header_leading(
+    expanded: bool,
+    tool_id: &str,
+    status: SessionAgentToolStatus,
+    status_color: u32,
+    text_muted: u32,
+) -> gpui::AnyElement {
+    h_flex()
+        .w(px(30.0))
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(5.0))
+        .child(render_session_agent_tool_status_indicator(
+            tool_id,
+            status,
+            status_color,
+        ))
+        .child(
+            div()
+                .size(px(14.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(text_muted))
+                .child(
+                    Icon::from(if expanded {
+                        AppIcon::ChevronDown
+                    } else {
+                        AppIcon::Next
+                    })
+                    .size(px(14.0)),
+                ),
+        )
+        .into_any_element()
+}
+
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     app: &AppView,
     message_column_width: f32,
@@ -710,14 +746,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
         return div().into_any_element();
     };
 
-    let status_label = match tool_call.status {
-        SessionAgentToolStatus::Pending => "Pending",
-        SessionAgentToolStatus::WaitingForConfirmation => "Waiting for confirmation",
-        SessionAgentToolStatus::InProgress => "Running",
-        SessionAgentToolStatus::Completed => "Completed",
-        SessionAgentToolStatus::Failed => "Failed",
-        SessionAgentToolStatus::Rejected => "Rejected",
-    };
     let needs_confirmation = matches!(
         tool_call.status,
         SessionAgentToolStatus::WaitingForConfirmation
@@ -779,16 +807,12 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                             cx.notify();
                         });
                     })
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(if expanded { "v" } else { ">" }),
-                    )
-                    .child(render_session_agent_tool_status_indicator(
+                    .child(render_session_agent_tool_header_leading(
+                        expanded,
                         &tool_call.id,
                         tool_call.status,
                         status_color,
+                        text_muted,
                     ))
                     .child(
                         div()
@@ -798,12 +822,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(roles.on_surface))
                             .child(tool_call.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(status_label),
                     )
                     .child(
                         div()
