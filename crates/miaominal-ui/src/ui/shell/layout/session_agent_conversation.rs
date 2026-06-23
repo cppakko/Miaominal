@@ -883,7 +883,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                                         this.approve_session_agent_tool_call(tool_id, cx);
                                     });
                                 })
-                                .child("Allow"),
+                                .child(i18n::string("workspace.panel.agent.tool_actions.approve")),
                         )
                         .child(
                             div()
@@ -901,7 +901,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                                         this.deny_session_agent_tool_call(tool_id, cx);
                                     });
                                 })
-                                .child("Deny"),
+                                .child(i18n::string("workspace.panel.agent.tool_actions.deny")),
                         ),
                 )
             }),
