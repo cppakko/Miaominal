@@ -411,7 +411,7 @@ impl AppView {
     fn push_session_agent_message(&mut self, message: SessionAgentMessage, cx: &mut Context<Self>) {
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.messages.push(message);
+        self.session_agent.push_message_with_enter_motion(message);
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -456,6 +456,10 @@ impl AppView {
             ..Default::default()
         };
         self.session_agent.panel_view = ChatPanelView::SessionList;
+        self.workspace_forms.chat_search.session_filter_open = false;
+        self.workspace_forms.chat_search.session_filter_visible = false;
+        self.workspace_forms.chat_search.session_filter_visibility = 0.0;
+        self.workspace_forms.chat_search.session_filter_animation = None;
         self.reset_session_agent_scroll();
         self.workspace_forms.agent.editing_title = false;
         cx.notify();
@@ -474,6 +478,8 @@ impl AppView {
         let chat_search = &mut self.workspace_forms.chat_search;
         chat_search.conversation_search_open = false;
         chat_search.conversation_search_visible = false;
+        chat_search.conversation_search_visibility = 0.0;
+        chat_search.conversation_search_animation = None;
         chat_search.match_count = 0;
         chat_search.current_match = None;
         chat_search.status = None;
@@ -497,6 +503,8 @@ impl AppView {
         let chat_search = &mut self.workspace_forms.chat_search;
         chat_search.conversation_search_open = false;
         chat_search.conversation_search_visible = false;
+        chat_search.conversation_search_visibility = 0.0;
+        chat_search.conversation_search_animation = None;
         chat_search.match_count = 0;
         chat_search.current_match = None;
         chat_search.status = None;
@@ -1370,7 +1378,7 @@ impl AppView {
         self.session_agent.last_error = None;
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply(cx);
+        self.session_agent.start_assistant_reply();
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -1531,11 +1539,11 @@ impl AppView {
         );
         match event {
             AgentChatEvent::TextDelta(delta) => {
-                self.session_agent.append_assistant_delta(delta, cx);
+                self.session_agent.append_assistant_delta(delta);
                 self.session_agent.last_error = None;
             }
             AgentChatEvent::ThinkingDelta(delta) => {
-                self.session_agent.append_thinking_delta(delta, cx);
+                self.session_agent.append_thinking_delta(delta);
                 self.status_message = i18n::string("workspace.panel.agent.thinking");
             }
             AgentChatEvent::ToolCallStarted(tool) => {
@@ -1854,7 +1862,7 @@ impl AppView {
         self.session_agent.active_request_id = request_id;
         let previous_message_count = self.session_agent.messages.len();
         let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply(cx);
+        self.session_agent.start_assistant_reply();
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,
             was_scrolled_to_bottom,
@@ -2342,5 +2350,36 @@ mod tests {
                 Some("legacy result".to_string()),
             )
         );
+    }
+
+    #[test]
+    fn restored_chat_messages_do_not_receive_enter_motion_keys() {
+        let message = session_agent_message_from_record(ChatMessageRecord {
+            id: "message-1".to_string(),
+            session_id: "session-1".to_string(),
+            role: ChatMessageRole::Assistant,
+            content: "hello".to_string(),
+            tool_name: None,
+            tool_summary: None,
+            tool_status: None,
+            sort_order: 0,
+            created_at: 1,
+        });
+
+        assert_eq!(message.motion.enter_key, None);
+
+        let tool_message = session_agent_message_from_record(ChatMessageRecord {
+            id: "tool-1".to_string(),
+            session_id: "session-1".to_string(),
+            role: ChatMessageRole::ToolCall,
+            content: "{\"path\":\"Cargo.toml\"}".to_string(),
+            tool_name: Some("read".to_string()),
+            tool_summary: Some("read Cargo.toml".to_string()),
+            tool_status: Some(tool_status_as_str(SessionAgentToolStatus::Completed).to_string()),
+            sort_order: 1,
+            created_at: 2,
+        });
+
+        assert_eq!(tool_message.motion.enter_key, None);
     }
 }

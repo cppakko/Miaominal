@@ -125,7 +125,8 @@ pub(in crate::ui::shell) struct WorkspaceAgentForms {
     pub(in crate::ui::shell) title_input: Entity<InputState>,
     pub(in crate::ui::shell) rename_title_input: Entity<InputState>,
     pub(in crate::ui::shell) editing_title: bool,
-    pub(in crate::ui::shell) agent_mode_select: Entity<SelectState<Vec<SelectOption<miaominal_agent::AgentMode>>>>,
+    pub(in crate::ui::shell) agent_mode_select:
+        Entity<SelectState<Vec<SelectOption<miaominal_agent::AgentMode>>>>,
 }
 
 pub(in crate::ui::shell) struct WorkspaceSnippetsForms {
@@ -309,6 +310,9 @@ impl KeyBindingSlot {
 pub(in crate::ui::shell) struct ChatSearchForms {
     pub(in crate::ui::shell) session_filter_input: Entity<InputState>,
     pub(in crate::ui::shell) session_filter_open: bool,
+    pub(in crate::ui::shell) session_filter_visible: bool,
+    pub(in crate::ui::shell) session_filter_visibility: f32,
+    pub(in crate::ui::shell) session_filter_animation: Option<TerminalSearchAnimation>,
     pub(in crate::ui::shell) conversation_search_input: Entity<InputState>,
     pub(in crate::ui::shell) conversation_search_open: bool,
     pub(in crate::ui::shell) conversation_search_visible: bool,

@@ -205,6 +205,9 @@ impl AppView {
             chat_search: ChatSearchForms {
                 session_filter_input,
                 session_filter_open: false,
+                session_filter_visible: false,
+                session_filter_visibility: 0.0,
+                session_filter_animation: None,
                 conversation_search_input,
                 conversation_search_open: false,
                 conversation_search_visible: false,

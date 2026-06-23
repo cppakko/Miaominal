@@ -4,6 +4,7 @@ use super::session_agent_conversation;
 use super::session_agent_history;
 use super::session_agent_mentions;
 use crate::ui::i18n;
+use gpui::AnimationExt as _;
 use std::time::Duration;
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
@@ -337,9 +338,8 @@ impl AppView {
     }
 
     pub(in crate::ui::shell::layout) fn render_session_agent_sidebar(
-        &self,
+        &mut self,
         entity: Entity<Self>,
-        _session: &SessionTabState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -386,7 +386,7 @@ impl AppView {
     }
 
     pub(in crate::ui::shell::layout) fn render_session_agent_panel(
-        &self,
+        &mut self,
         entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -417,6 +417,8 @@ impl AppView {
         let search_match_count = self.workspace_forms.chat_search.match_count;
         let search_current_match = self.workspace_forms.chat_search.current_match;
         let search_status = self.workspace_forms.chat_search.status.clone();
+        let search_visibility = self.advance_conversation_search_bar(window);
+        let agent_title_input = self.workspace_forms.agent.title_input.clone();
 
         let search_button_entity = entity.clone();
         let close_search_entity = entity.clone();
@@ -474,20 +476,17 @@ impl AppView {
                                             .text_color(rgb(roles.on_surface))
                                             .when(
                                                 self.workspace_forms.agent.editing_title,
+                                                {
+                                                    let title_input = agent_title_input.clone();
                                                 move |this| {
                                                     this.child(
                                                         div().flex_1().child(
-                                                            Input::new(
-                                                                &self
-                                                                    .workspace_forms
-                                                                    .agent
-                                                                    .title_input
-                                                                    .clone(),
-                                                            )
+                                                            Input::new(&title_input)
                                                             .appearance(false)
                                                             .w_full(),
                                                         ),
                                                     )
+                                                }
                                                 },
                                             )
                                             .when(!self.workspace_forms.agent.editing_title, {
@@ -559,7 +558,7 @@ impl AppView {
                                     )),
                             )
                             // Search overlay bar
-                            .when(is_search_open, {
+                            .when_some(search_visibility, {
                                 let search_input = search_input_entity.clone();
                                 let close_ent = close_search_entity.clone();
                                 let next_ent = next_entity.clone();
@@ -567,12 +566,14 @@ impl AppView {
                                 let match_count = search_match_count;
                                 let current_match = search_current_match;
                                 let status_text = search_status.clone();
-                                move |this| {
+                                move |this, visibility| {
                                     this.child(
                                         v_flex()
                                             .w_full()
                                             .gap_1()
                                             .py_1()
+                                            .opacity(visibility)
+                                            .top(px((1.0 - visibility) * 8.0))
                                             .child(search_filter_input(
                                                 &search_input.clone(),
                                                 SearchInputStyle::Compact,
@@ -746,6 +747,11 @@ impl AppView {
                     )
                     .child(self.render_session_agent_composer(entity.clone())),
             )
+            .with_animation(
+                "session-agent-conversation-view",
+                container_transition_animation(),
+                |element, delta| element.opacity(delta).top(px((1.0 - delta) * 8.0)),
+            )
             .into_any_element()
     }
 
@@ -754,12 +760,19 @@ impl AppView {
     }
 
     fn render_session_agent_history_panel(
-        &self,
+        &mut self,
         entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        session_agent_history::render_session_agent_history_panel(self, entity, window, cx)
+        let search_visibility = self.advance_session_filter_bar(window);
+        session_agent_history::render_session_agent_history_panel(
+            self,
+            entity,
+            window,
+            cx,
+            search_visibility,
+        )
     }
 
     /// Renders the @-mention candidate popup as a window-root-level absolute overlay.
@@ -796,5 +809,81 @@ impl AppView {
             window,
             cx,
         )
+    }
+}
+
+impl AppView {
+    fn advance_conversation_search_bar(&mut self, window: &mut Window) -> Option<f32> {
+        let forms = &mut self.workspace_forms.chat_search;
+        if let Some(animation) = forms.conversation_search_animation {
+            let duration_seconds = animation.duration.as_secs_f32();
+            if duration_seconds <= f32::EPSILON {
+                forms.conversation_search_visibility = animation.to;
+                forms.conversation_search_animation = None;
+            } else {
+                let elapsed = Instant::now().saturating_duration_since(animation.started_at);
+                let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+                let eased = progress * progress * (3.0 - 2.0 * progress);
+                forms.conversation_search_visibility =
+                    animation.from + (animation.to - animation.from) * eased;
+
+                if progress >= 1.0 {
+                    forms.conversation_search_visibility = animation.to;
+                    forms.conversation_search_animation = None;
+                } else {
+                    window.request_animation_frame();
+                }
+            }
+        }
+
+        if forms.conversation_search_visibility <= f32::EPSILON && !forms.conversation_search_open {
+            forms.conversation_search_visible = false;
+            return None;
+        }
+
+        if forms.conversation_search_open || forms.conversation_search_visibility > f32::EPSILON {
+            forms.conversation_search_visible = true;
+            return Some(forms.conversation_search_visibility.clamp(0.0, 1.0));
+        }
+
+        forms.conversation_search_visible = false;
+        None
+    }
+
+    fn advance_session_filter_bar(&mut self, window: &mut Window) -> Option<f32> {
+        let forms = &mut self.workspace_forms.chat_search;
+        if let Some(animation) = forms.session_filter_animation {
+            let duration_seconds = animation.duration.as_secs_f32();
+            if duration_seconds <= f32::EPSILON {
+                forms.session_filter_visibility = animation.to;
+                forms.session_filter_animation = None;
+            } else {
+                let elapsed = Instant::now().saturating_duration_since(animation.started_at);
+                let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+                let eased = progress * progress * (3.0 - 2.0 * progress);
+                forms.session_filter_visibility =
+                    animation.from + (animation.to - animation.from) * eased;
+
+                if progress >= 1.0 {
+                    forms.session_filter_visibility = animation.to;
+                    forms.session_filter_animation = None;
+                } else {
+                    window.request_animation_frame();
+                }
+            }
+        }
+
+        if forms.session_filter_visibility <= f32::EPSILON && !forms.session_filter_open {
+            forms.session_filter_visible = false;
+            return None;
+        }
+
+        if forms.session_filter_open || forms.session_filter_visibility > f32::EPSILON {
+            forms.session_filter_visible = true;
+            return Some(forms.session_filter_visibility.clamp(0.0, 1.0));
+        }
+
+        forms.session_filter_visible = false;
+        None
     }
 }

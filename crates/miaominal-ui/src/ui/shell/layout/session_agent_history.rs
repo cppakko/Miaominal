@@ -2,6 +2,7 @@ use super::super::*;
 use super::session_agent_composer;
 use super::session_agent_utils::format_relative_chat_time;
 use crate::ui::i18n;
+use gpui::AnimationExt as _;
 use gpui::{Size, size};
 use gpui_component::v_virtual_list;
 use std::rc::Rc;
@@ -11,6 +12,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
     entity: Entity<AppView>,
     _window: &mut Window,
     _cx: &mut Context<AppView>,
+    search_visibility: Option<f32>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
@@ -87,12 +89,18 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                     )),
                 )
                 // Search bar
-                .when(is_search_open, move |this| {
-                    this.child(search_filter_input(
-                        &search_filter_input_entity.clone(),
-                        SearchInputStyle::Compact,
-                        None,
-                    ))
+                .when_some(search_visibility, move |this, visibility| {
+                    this.child(
+                        div()
+                            .w_full()
+                            .opacity(visibility)
+                            .top(px((1.0 - visibility) * 8.0))
+                            .child(search_filter_input(
+                                &search_filter_input_entity.clone(),
+                                SearchInputStyle::Compact,
+                                None,
+                            )),
+                    )
                 })
                 .child(if !has_sessions {
                     div()
@@ -335,5 +343,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                 }),
         )
         .child(session_agent_composer::render_session_agent_composer(app, entity.clone()))
+        .with_animation(
+            "session-agent-history-view",
+            container_transition_animation(),
+            |element, delta| element.opacity(delta).top(px((1.0 - delta) * 8.0)),
+        )
         .into_any_element()
 }

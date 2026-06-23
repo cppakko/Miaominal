@@ -112,17 +112,17 @@ pub(in crate::ui::shell) use state::{
     DialogState, DraggedTab, ExitingDialogState, HostEditorEnvironmentVariableRow,
     InlineRenameState, LocalSftpEntry, MonitorChartPoint, OnboardingState, PanelState,
     PendingAiProviderPopupState, PendingChatSessionDeleteState, PendingChatSessionRenameState,
-    PendingKnownHostDeleteState,
-    PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
-    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
-    PendingSyncDirectionState, PendingSyncPassphrasePopupState, PendingSyncPullConfirmState,
-    SecretVisibilityState, SessionAgentAutoScrollState, SessionAgentMessage,
-    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall,
-    SessionAgentToolStatus, SessionConnectionState, SessionMonitoringState, SessionPurpose,
-    SessionTabState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
-    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
-    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
-    split_message_into_blocks, trailing_at_mention_query,
+    PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
+    PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
+    PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
+    PendingSyncPullConfirmState, SecretVisibilityState, SessionAgentAutoScrollState,
+    SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
+    SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
+    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
+    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
+    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
+    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
+    trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -132,10 +132,11 @@ use workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
 pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
 use support::{
     OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase,
-    TerminalScrollbarMetrics, classify_terminal_key, new_input_state, render_basic_dialog,
+    TerminalScrollbarMetrics, classify_terminal_key, container_transition_animation,
+    list_enter_animation, new_input_state, overlay_enter_animation, render_basic_dialog,
     render_basic_dialog_with_config, render_bottom_popup, render_terminal_canvas_for_pane,
-    set_input_placeholder, set_input_value, terminal_cell_width, terminal_line_height,
-    terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
+    set_input_placeholder, set_input_value, short_feedback_animation, terminal_cell_width,
+    terminal_line_height, terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
 };
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {

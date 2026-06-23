@@ -1601,19 +1601,20 @@ impl AppView {
                     )
                 })
         });
-        let agent_panel = show_agent_panel.and_then(|visibility| {
-            session_index
-                .and_then(|index| self.workspace_state.tabs.get(index))
-                .and_then(TabState::as_session)
-                .map(|session| {
-                    render_workspace_side_panel(
-                        self.render_session_agent_sidebar(entity.clone(), session, window, cx),
-                        agent_panel_width,
-                        visibility,
-                        WorkspaceSidePanelDock::Right,
-                    )
-                })
-        });
+        let has_agent_session = session_index
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(TabState::as_session)
+            .is_some();
+        let agent_panel = show_agent_panel
+            .filter(|_| has_agent_session)
+            .map(|visibility| {
+                render_workspace_side_panel(
+                    self.render_session_agent_sidebar(entity.clone(), window, cx),
+                    agent_panel_width,
+                    visibility,
+                    WorkspaceSidePanelDock::Right,
+                )
+            });
 
         h_flex()
             .size_full()

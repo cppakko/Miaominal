@@ -1,6 +1,10 @@
 use super::super::*;
 use super::session_agent_utils::*;
 use crate::ui::i18n;
+use gpui::{Animation, AnimationExt as _};
+use std::time::Duration;
+
+const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);
 
 pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     app: &AppView,
@@ -118,8 +122,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                             div().w(px(80.0)).child(
                                 md3_select(&app.workspace_forms.agent.agent_mode_select)
                                     .small()
-                                    .w_full()
-                            )
+                                    .w_full(),
+                            ),
                         )
                         .child(div().flex_1())
                         .child(render_session_agent_token_usage(
@@ -128,36 +132,59 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                             text_muted,
                         ))
                         .child(div().min_w(px(4.0)))
-                        .child(icon_button(
-                            if waiting {
-                                AppIcon::Pause
-                            } else {
-                                AppIcon::ChevronUp
-                            },
-                            26.0,
-                            8.0,
-                            Some(if waiting {
-                                roles.error_container
-                            } else {
-                                roles.primary
-                            }),
-                            Some(if waiting {
-                                roles.on_error_container
-                            } else {
-                                roles.on_primary
-                            }),
-                            None,
-                            move |window, cx| {
-                                let entity = send_entity.clone();
-                                entity.update(cx, |this, cx| {
-                                    if this.session_agent.is_busy() {
-                                        this.stop_session_agent_stream(cx);
+                        .child(
+                            div()
+                                .id("session-agent-send-action")
+                                .child(icon_button(
+                                    if waiting {
+                                        AppIcon::Pause
                                     } else {
-                                        this.submit_session_agent_prompt(window, cx);
-                                    }
-                                });
-                            },
-                        )),
+                                        AppIcon::ChevronUp
+                                    },
+                                    26.0,
+                                    8.0,
+                                    Some(if waiting {
+                                        roles.error_container
+                                    } else {
+                                        roles.primary
+                                    }),
+                                    Some(if waiting {
+                                        roles.on_error_container
+                                    } else {
+                                        roles.on_primary
+                                    }),
+                                    None,
+                                    move |window, cx| {
+                                        let entity = send_entity.clone();
+                                        entity.update(cx, |this, cx| {
+                                            if this.session_agent.is_busy() {
+                                                this.stop_session_agent_stream(cx);
+                                            } else {
+                                                this.submit_session_agent_prompt(window, cx);
+                                            }
+                                        });
+                                    },
+                                ))
+                                .with_animation(
+                                    SharedString::from(format!(
+                                        "session-agent-send-state-{waiting}"
+                                    )),
+                                    if waiting {
+                                        Animation::new(SESSION_AGENT_SEND_PULSE_DURATION)
+                                            .repeat()
+                                            .with_easing(gpui::bounce(gpui::ease_in_out))
+                                    } else {
+                                        short_feedback_animation()
+                                    },
+                                    move |element, delta| {
+                                        if waiting {
+                                            element.opacity(0.72 + delta * 0.28)
+                                        } else {
+                                            element.opacity(0.64 + delta * 0.36)
+                                        }
+                                    },
+                                ),
+                        ),
                 ),
         )
         .into_any_element()

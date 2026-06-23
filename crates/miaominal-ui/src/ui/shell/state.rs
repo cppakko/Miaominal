@@ -119,11 +119,17 @@ pub(in crate::ui::shell) struct SessionAgentThinking {
     pub(in crate::ui::shell) expanded: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::ui::shell) struct SessionAgentMessageMotion {
+    pub(in crate::ui::shell) enter_key: Option<u64>,
+}
+
 pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) role: SessionAgentMessageRole,
     pub(in crate::ui::shell) content: String,
     pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
     pub(in crate::ui::shell) thinking: Option<SessionAgentThinking>,
+    pub(in crate::ui::shell) motion: SessionAgentMessageMotion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +152,7 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 
@@ -155,6 +162,7 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 
@@ -168,6 +176,7 @@ impl SessionAgentMessage {
                 elapsed_ms: None,
                 expanded: false,
             }),
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 
@@ -184,6 +193,7 @@ impl SessionAgentMessage {
                 elapsed_ms: Some(0),
                 expanded: false,
             }),
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 
@@ -194,6 +204,7 @@ impl SessionAgentMessage {
             content: tool_call.summary.clone(),
             tool_call: Some(tool_call),
             thinking: None,
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 
@@ -203,6 +214,7 @@ impl SessionAgentMessage {
             content: content.into(),
             tool_call: None,
             thinking: None,
+            motion: SessionAgentMessageMotion::default(),
         }
     }
 }
@@ -231,6 +243,7 @@ impl AgentExecMode {
 pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) session_id: Option<String>,
     pub(in crate::ui::shell) messages: Vec<SessionAgentMessage>,
+    pub(in crate::ui::shell) next_message_motion_key: u64,
     pub(in crate::ui::shell) pending_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) active_request_id: u64,
     pub(in crate::ui::shell) request_counter: u64,
@@ -309,6 +322,19 @@ pub(in crate::ui::shell) fn split_message_into_blocks(content: &str) -> Vec<Stri
 }
 
 impl SessionAgentState {
+    pub(in crate::ui::shell) fn assign_enter_motion(&mut self, message: &mut SessionAgentMessage) {
+        self.next_message_motion_key = self.next_message_motion_key.wrapping_add(1).max(1);
+        message.motion.enter_key = Some(self.next_message_motion_key);
+    }
+
+    pub(in crate::ui::shell) fn push_message_with_enter_motion(
+        &mut self,
+        mut message: SessionAgentMessage,
+    ) {
+        self.assign_enter_motion(&mut message);
+        self.messages.push(message);
+    }
+
     pub(in crate::ui::shell) fn has_pending_task(&self) -> bool {
         self.pending_task.is_some()
     }
@@ -335,11 +361,7 @@ impl SessionAgentState {
         self.request_counter
     }
 
-    pub(in crate::ui::shell) fn append_assistant_delta(
-        &mut self,
-        delta: impl AsRef<str>,
-        _cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
+    pub(in crate::ui::shell) fn append_assistant_delta(&mut self, delta: impl AsRef<str>) {
         self.finish_active_thinking();
         let delta = delta.as_ref();
 
@@ -358,28 +380,20 @@ impl SessionAgentState {
             if delta.trim().is_empty() {
                 return;
             }
-            self.messages
-                .push(SessionAgentMessage::assistant_raw(delta));
+            self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(delta));
         }
     }
 
-    pub(in crate::ui::shell) fn start_assistant_reply(
-        &mut self,
-        _cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
+    pub(in crate::ui::shell) fn start_assistant_reply(&mut self) {
         self.finish_active_thinking();
         if !self.messages.last().is_some_and(|message| {
             message.role == SessionAgentMessageRole::Assistant && message.content.is_empty()
         }) {
-            self.messages.push(SessionAgentMessage::assistant_raw(""));
+            self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(""));
         }
     }
 
-    pub(in crate::ui::shell) fn append_thinking_delta(
-        &mut self,
-        delta: impl AsRef<str>,
-        _cx: &mut gpui::Context<super::app_view::AppView>,
-    ) {
+    pub(in crate::ui::shell) fn append_thinking_delta(&mut self, delta: impl AsRef<str>) {
         let delta = delta.as_ref();
         if delta.trim().is_empty() {
             return;
@@ -390,7 +404,7 @@ impl SessionAgentState {
         {
             message.content.push_str(delta);
         } else {
-            self.messages.push(SessionAgentMessage::thinking_raw(delta));
+            self.push_message_with_enter_motion(SessionAgentMessage::thinking_raw(delta));
         }
     }
 
@@ -407,17 +421,16 @@ impl SessionAgentState {
         } else {
             arguments
         };
-        self.messages
-            .push(SessionAgentMessage::tool_call(SessionAgentToolCall {
-                id,
-                name,
-                arguments: summary.clone(),
-                summary,
-                status,
-                requires_confirmation: false,
-                confirmation_note: None,
-                expanded: false,
-            }));
+        self.push_message_with_enter_motion(SessionAgentMessage::tool_call(SessionAgentToolCall {
+            id,
+            name,
+            arguments: summary.clone(),
+            summary,
+            status,
+            requires_confirmation: false,
+            confirmation_note: None,
+            expanded: false,
+        }));
     }
 
     pub(in crate::ui::shell) fn append_tool_call_delta(&mut self, id: &str, delta: String) {
@@ -618,8 +631,7 @@ impl SessionAgentState {
             return;
         }
 
-        self.messages
-            .push(SessionAgentMessage::assistant_raw(reply));
+        self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(reply));
     }
 
     pub(in crate::ui::shell) fn finish_stopped_turn(&mut self) {
@@ -643,8 +655,9 @@ impl SessionAgentState {
                         && !message.content.trim().is_empty())
             });
         if !turn_has_visible_output {
-            self.messages
-                .push(SessionAgentMessage::assistant_raw("Stopped by user."));
+            self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(
+                "Stopped by user.",
+            ));
         }
     }
 
@@ -1753,6 +1766,49 @@ mod tests {
         assert_eq!(tool.status, SessionAgentToolStatus::Rejected);
         assert_eq!(tool.confirmation_note.as_deref(), Some("Stopped by user."));
         assert!(!state.has_active_tool_call());
+    }
+
+    #[test]
+    fn realtime_session_agent_messages_receive_enter_motion_keys() {
+        let mut state = SessionAgentState::default();
+
+        state.push_message_with_enter_motion(SessionAgentMessage::user("hello"));
+        state.append_assistant_delta("hi");
+        state.append_thinking_delta("checking");
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "read".to_string(),
+            "{\"path\":\"Cargo.toml\"}".to_string(),
+            SessionAgentToolStatus::InProgress,
+        );
+
+        let keys = state
+            .messages
+            .iter()
+            .map(|message| message.motion.enter_key)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec![Some(1), Some(2), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn session_agent_streaming_deltas_reuse_existing_message_enter_motion_key() {
+        let mut state = SessionAgentState::default();
+
+        state.append_assistant_delta("hello");
+        let assistant_key = state.messages[0].motion.enter_key;
+        state.append_assistant_delta(" world");
+
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].content, "hello world");
+        assert_eq!(state.messages[0].motion.enter_key, assistant_key);
+
+        state.append_thinking_delta("reason");
+        let thinking_key = state.messages[1].motion.enter_key;
+        state.append_thinking_delta("ing");
+
+        assert_eq!(state.messages.len(), 2);
+        assert_eq!(state.messages[1].content, "reasoning");
+        assert_eq!(state.messages[1].motion.enter_key, thinking_key);
     }
 
     #[test]

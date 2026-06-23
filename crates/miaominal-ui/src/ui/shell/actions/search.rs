@@ -176,6 +176,13 @@ impl AppView {
             return;
         }
         forms.session_filter_open = true;
+        forms.session_filter_visible = true;
+        forms.session_filter_animation = Some(TerminalSearchAnimation {
+            started_at: Instant::now(),
+            duration: OVERLAY_ENTER_DURATION,
+            from: forms.session_filter_visibility,
+            to: 1.0,
+        });
         set_input_value(&forms.session_filter_input, "", window, cx);
         forms
             .session_filter_input
@@ -189,6 +196,13 @@ impl AppView {
             return;
         }
         forms.session_filter_open = false;
+        forms.session_filter_visible = true;
+        forms.session_filter_animation = Some(TerminalSearchAnimation {
+            started_at: Instant::now(),
+            duration: OVERLAY_ENTER_DURATION,
+            from: forms.session_filter_visibility,
+            to: 0.0,
+        });
         self.session_agent.search_query = None;
         cx.notify();
     }

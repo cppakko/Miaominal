@@ -14,8 +14,10 @@ mod terminal;
 mod terminal_element;
 
 pub(in crate::ui::shell) use animation::{
-    BasicDialogConfig, CONTAINER_TRANSITION_DURATION, OVERLAY_ENTER_DURATION, render_basic_dialog,
-    render_basic_dialog_with_config, render_bottom_popup, render_sidebar_page_container,
+    BasicDialogConfig, CONTAINER_TRANSITION_DURATION, OVERLAY_ENTER_DURATION,
+    container_transition_animation, list_enter_animation, overlay_enter_animation,
+    render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
+    render_sidebar_page_container, short_feedback_animation,
 };
 pub(in crate::ui::shell) use group_accent::{GroupAccentPalette, group_accent_palette};
 pub(in crate::ui::shell) use inputs::{

@@ -1,5 +1,6 @@
 use super::super::*;
 use super::session_agent_panel::clamp_session_agent_panel_width;
+use gpui::AnimationExt as _;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_overlay(
     app: &AppView,
@@ -21,6 +22,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_overlay(
         .child(render_session_agent_at_mention_menu(
             entity, candidates, query,
         ))
+        .with_animation(
+            "session-agent-at-mention-popup",
+            overlay_enter_animation(),
+            |element, delta| element.opacity(delta).top(px((1.0 - delta) * 8.0)),
+        )
         .into_any_element()
 }
 
@@ -91,6 +97,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(
                             )
                             .id("session-agent-target-remove"),
                         ),
+                )
+                .with_animation(
+                    SharedString::from(format!("session-agent-target-chip-{name}")),
+                    list_enter_animation(),
+                    |element, delta| element.opacity(delta).top(px((1.0 - delta) * 6.0)),
                 )
                 .into_any_element()
         }))
@@ -186,6 +197,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
                             .child("offline"),
                     )
                 })
+                .with_animation(
+                    SharedString::from(format!("agent-at-mention-row-enter-{id_name}")),
+                    list_enter_animation(),
+                    |element, delta| element.opacity(delta).top(px((1.0 - delta) * 6.0)),
+                )
                 .into_any_element()
         }))
         .into_any_element()
