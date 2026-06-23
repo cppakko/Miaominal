@@ -479,6 +479,22 @@ you = "你"
 assistant = "Assistant"
 error = "错误"
 
+[workspace.panel.agent.tool_titles]
+workspace_info = "工作区信息"
+read = "读取文件"
+list = "列出文件"
+glob = "查找文件"
+grep = "搜索文本"
+apply_patch = "编辑文件"
+run_shell = "运行命令"
+start_job = "启动任务"
+list_jobs = "列出任务"
+poll_job = "检查任务"
+stop_job = "停止任务"
+web_search = "搜索网页"
+web_fetch = "读取网页"
+ask_user = "询问用户"
+
 [workspace.panel.agent.notifications]
 tool_approval_title = "需要工具执行权限"
 tool_approval = "{chat} 需要批准才能运行 `{tool}`。"

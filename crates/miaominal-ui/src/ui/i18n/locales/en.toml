@@ -618,6 +618,22 @@ you = "You"
 assistant = "Assistant"
 error = "Error"
 
+[workspace.panel.agent.tool_titles]
+workspace_info = "Workspace info"
+read = "Read file"
+list = "List files"
+glob = "Find files"
+grep = "Search text"
+apply_patch = "Edit files"
+run_shell = "Run command"
+start_job = "Start job"
+list_jobs = "List jobs"
+poll_job = "Check job"
+stop_job = "Stop job"
+web_search = "Search web"
+web_fetch = "Read web page"
+ask_user = "Ask user"
+
 [workspace.panel.agent.notifications]
 tool_approval_title = "Tool approval needed"
 tool_approval = "{chat} needs approval to run `{tool}`."

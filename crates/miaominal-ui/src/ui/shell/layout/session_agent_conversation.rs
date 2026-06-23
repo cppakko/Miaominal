@@ -728,6 +728,26 @@ fn render_session_agent_tool_header_leading(
         .into_any_element()
 }
 
+fn session_agent_tool_title(tool_name: &str) -> String {
+    match tool_name {
+        "workspace_info" => i18n::string("workspace.panel.agent.tool_titles.workspace_info"),
+        "read" => i18n::string("workspace.panel.agent.tool_titles.read"),
+        "list" => i18n::string("workspace.panel.agent.tool_titles.list"),
+        "glob" => i18n::string("workspace.panel.agent.tool_titles.glob"),
+        "grep" => i18n::string("workspace.panel.agent.tool_titles.grep"),
+        "apply_patch" => i18n::string("workspace.panel.agent.tool_titles.apply_patch"),
+        "run_shell" => i18n::string("workspace.panel.agent.tool_titles.run_shell"),
+        "start_job" => i18n::string("workspace.panel.agent.tool_titles.start_job"),
+        "list_jobs" => i18n::string("workspace.panel.agent.tool_titles.list_jobs"),
+        "poll_job" => i18n::string("workspace.panel.agent.tool_titles.poll_job"),
+        "stop_job" => i18n::string("workspace.panel.agent.tool_titles.stop_job"),
+        "web_search" => i18n::string("workspace.panel.agent.tool_titles.web_search"),
+        "web_fetch" => i18n::string("workspace.panel.agent.tool_titles.web_fetch"),
+        "ask_user" | "approval" => i18n::string("workspace.panel.agent.tool_titles.ask_user"),
+        _ => tool_name.to_string(),
+    }
+}
+
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     app: &AppView,
     message_column_width: f32,
@@ -821,7 +841,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                             .text_size(miaominal_settings::FontSize::Input.scaled())
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(roles.on_surface))
-                            .child(tool_call.name.clone()),
+                            .child(session_agent_tool_title(&tool_call.name)),
                     )
                     .child(
                         div()
