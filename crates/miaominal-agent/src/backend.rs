@@ -29,7 +29,10 @@ impl BackendRoute {
 pub enum ExecMode {
     #[default]
     Raw,
-    Pty { columns: u32, lines: u32 },
+    Pty {
+        columns: u32,
+        lines: u32,
+    },
 }
 
 impl ExecMode {

@@ -477,8 +477,8 @@ impl AgentExecChannel {
                         }
                     }
                     if collected.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
-                        let drain_to =
-                            collected.ceil_char_boundary(collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2);
+                        let drain_to = collected
+                            .ceil_char_boundary(collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2);
                         collected.drain(..drain_to);
                     }
                 }
@@ -674,6 +674,10 @@ mod tests {
         assert!(compacted.is_ok());
         assert!(collected.len() <= DEFAULT_MAX_OUTPUT_BYTES * 2);
         assert!(collected.is_char_boundary(collected.len()));
-        assert!(collected.chars().all(|character| character == '🚀' || character == '你'));
+        assert!(
+            collected
+                .chars()
+                .all(|character| character == '🚀' || character == '你')
+        );
     }
 }

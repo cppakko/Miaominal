@@ -136,54 +136,22 @@ fn build_posix_non_terminal(
 
 /// Build a PowerShell non-terminal wrapper.
 ///
-/// Uses `New-TemporaryFile` for temp files, `$LASTEXITCODE` for exit code,
-/// `Get-Content -Raw` with `.Substring()` for byte truncation.  Wrapped with
-/// `powershell.exe -NoProfile -Command "..."` so it works over SSH exec even
-/// when the remote default shell is cmd.exe.
+/// Uses an outer PowerShell process to launch the actual shell command with
+/// redirected temp files, byte-limited output replay, and a hard timeout.
 fn build_powershell_non_terminal(
     user_command: &str,
     cwd: &str,
-    _timeout_secs: u64,
+    timeout_secs: u64,
     max_bytes: usize,
-    shell_type: ShellType,
+    _shell_type: ShellType,
 ) -> String {
-    let cd = cd_prefix(shell_type, cwd);
-    let env = env_setup(shell_type);
-    let quoted_cmd = shell_quote(user_command, shell_type);
-
-    // PowerShell wrapper avoids double-quotes so it nests cleanly inside
-    // the outer `powershell.exe -NoProfile -Command "..."` call.
-    let ps_script = format!(
-        "{cd}; {env}; \
-         $out=(New-TemporaryFile).FullName; $err=(New-TemporaryFile).FullName; \
-         try{{& {{{quoted_cmd}}} 1>$out 2>$err}}catch{{}}; \
-         $ec=if($LASTEXITCODE -ne $null){{$LASTEXITCODE}}else{{0}}; \
-         Write-Output MIAOMINAL_STATUS=$ec; \
-         Write-Output MIAOMINAL_STDOUT_BEGIN; \
-         $s=Get-Content -Path $out -Raw; \
-         if($s.Length -gt {max_bytes}){{$s=$s.Substring(0,{max_bytes})}}; \
-         Write-Output $s; \
-         Write-Output MIAOMINAL_STDOUT_END; \
-         Write-Output MIAOMINAL_STDERR_BEGIN; \
-         $e=Get-Content -Path $err -Raw; \
-         if($e.Length -gt {max_bytes}){{$e=$e.Substring(0,{max_bytes})}}; \
-         Write-Output $e; \
-         Write-Output MIAOMINAL_STDERR_END; \
-         $so=(Get-Item $out).Length; $se=(Get-Item $err).Length; \
-         if($so -gt {max_bytes} -or $se -gt {max_bytes}){{ \
-           Write-Output MIAOMINAL_TRUNCATED=1 \
-         }}else{{ \
-           Write-Output MIAOMINAL_TRUNCATED=0 \
-         }}; \
-         Remove-Item $out,$err",
-        cd = cd,
-        env = env,
-        quoted_cmd = quoted_cmd,
-        max_bytes = max_bytes,
-    );
-
-    // Outer wrapping for SSH exec (remote may start as cmd.exe).
-    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
+    build_windows_non_terminal(
+        "powershell.exe",
+        &["-NoProfile", "-Command", user_command],
+        cwd,
+        timeout_secs,
+        max_bytes,
+    )
 }
 
 /// Build a PowerShell terminal-mode wrapper (WinkTerm sentinel style).
@@ -206,38 +174,100 @@ fn build_powershell_terminal(
     )
 }
 
-/// Build a CMD non-terminal wrapper with %TEMP%-based temp files.
+/// Build a CMD non-terminal wrapper.
 ///
-/// CMD has no built-in byte truncation and cannot separate stdout/stderr natively.
-/// Both streams are merged; truncation is handled by the Rust parsing layer.
+/// CMD cannot enforce timeouts or byte caps itself, so an outer PowerShell
+/// wrapper launches `cmd.exe` and replays bounded stdout/stderr sentinels.
 fn build_cmd_non_terminal(
     user_command: &str,
     cwd: &str,
-    _timeout_secs: u64,
+    timeout_secs: u64,
     max_bytes: usize,
-    shell_type: ShellType,
+    _shell_type: ShellType,
 ) -> String {
-    let cd = cd_prefix(shell_type, cwd);
-    let env = env_setup(shell_type);
-    let quoted_cmd = shell_quote(user_command, shell_type);
-    // CMD cannot truncate at byte level; max_bytes unused here.
-    let _ = max_bytes;
-    format!(
-        "{cd} & {env} & \
-         set \"_mo=%TEMP%\\miaominal-%RANDOM%.tmp\" & \
-         {quoted_cmd} > \"%_mo%\" 2>&1 & \
-         echo MIAOMINAL_STATUS=%ERRORLEVEL% & \
-         echo MIAOMINAL_STDOUT_BEGIN & \
-         type \"%_mo%\" & \
-         echo MIAOMINAL_STDOUT_END & \
-         echo MIAOMINAL_STDERR_BEGIN & \
-         echo MIAOMINAL_STDERR_END & \
-         echo MIAOMINAL_TRUNCATED=0 & \
-         del \"%_mo%\"",
+    build_windows_non_terminal(
+        "cmd.exe",
+        &["/d", "/c", user_command],
+        cwd,
+        timeout_secs,
+        max_bytes,
+    )
+}
+
+fn build_windows_non_terminal(
+    program: &str,
+    arguments: &[&str],
+    cwd: &str,
+    timeout_secs: u64,
+    max_bytes: usize,
+) -> String {
+    let cd = cd_prefix(ShellType::PowerShell, cwd);
+    let env = env_setup(ShellType::PowerShell);
+    let quoted_program = shell_quote(program, ShellType::PowerShell);
+    let argument_list = arguments
+        .iter()
+        .map(|argument| shell_quote(argument, ShellType::PowerShell))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let timeout_ms = timeout_secs.saturating_mul(1000);
+
+    let ps_script = format!(
+        concat!(
+            "{cd}; {env}; ",
+            "$out=(New-TemporaryFile).FullName; $err=(New-TemporaryFile).FullName; ",
+            "function Read-MiaominalOutput([string]$path,[int]$limit){{ ",
+            "$bytes=[System.IO.File]::ReadAllBytes($path); ",
+            "$length=$bytes.Length; ",
+            "if($limit -le 0 -or $length -eq 0){{ ",
+            "$slice=[byte[]]::new(0) ",
+            "}}elseif($length -gt $limit){{ ",
+            "$slice=$bytes[0..($limit-1)] ",
+            "}}else{{ ",
+            "$slice=$bytes ",
+            "}}; ",
+            "[pscustomobject]@{{Text=[System.Text.Encoding]::UTF8.GetString($slice); ",
+            "Truncated=$length -gt $limit}} ",
+            "}}; ",
+            "try{{ ",
+            "$process=Start-Process -FilePath {program} -ArgumentList @({argument_list}) ",
+            "-RedirectStandardOutput $out -RedirectStandardError $err ",
+            "-WorkingDirectory (Get-Location).Path -PassThru; ",
+            "if($process.WaitForExit({timeout_ms})){{ ",
+            "$ec=$process.ExitCode ",
+            "}}else{{ ",
+            "taskkill /t /f /pid $process.Id *> $null; ",
+            "$process.WaitForExit(); ",
+            "$ec=124 ",
+            "}} ",
+            "}}catch{{ ",
+            "$_ | Out-String | Set-Content -Path $err -Encoding utf8; ",
+            "$ec=1 ",
+            "}}; ",
+            "$stdout=Read-MiaominalOutput $out {max_bytes}; ",
+            "$stderr=Read-MiaominalOutput $err {max_bytes}; ",
+            "Write-Output MIAOMINAL_STATUS=$ec; ",
+            "Write-Output MIAOMINAL_STDOUT_BEGIN; ",
+            "Write-Output $stdout.Text; ",
+            "Write-Output MIAOMINAL_STDOUT_END; ",
+            "Write-Output MIAOMINAL_STDERR_BEGIN; ",
+            "Write-Output $stderr.Text; ",
+            "Write-Output MIAOMINAL_STDERR_END; ",
+            "if($stdout.Truncated -or $stderr.Truncated){{ ",
+            "Write-Output MIAOMINAL_TRUNCATED=1 ",
+            "}}else{{ ",
+            "Write-Output MIAOMINAL_TRUNCATED=0 ",
+            "}}; ",
+            "Remove-Item $out,$err -ErrorAction SilentlyContinue"
+        ),
         cd = cd,
         env = env,
-        quoted_cmd = quoted_cmd,
-    )
+        program = quoted_program,
+        argument_list = argument_list,
+        timeout_ms = timeout_ms,
+        max_bytes = max_bytes,
+    );
+
+    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
 }
 
 /// Build a CMD terminal-mode wrapper (WinkTerm sentinel style).
@@ -653,7 +683,9 @@ mod tests {
         );
         assert!(wrapper.contains("New-TemporaryFile"));
         assert!(!wrapper.contains("mktemp"));
-        assert!(wrapper.contains("$LASTEXITCODE"));
+        assert!(wrapper.contains("Start-Process -FilePath 'powershell.exe'"));
+        assert!(wrapper.contains("WaitForExit(30000)"));
+        assert!(wrapper.contains("taskkill /t /f /pid $process.Id"));
         assert!(wrapper.contains("MIAOMINAL_STATUS="));
         assert!(wrapper.contains("MIAOMINAL_STDOUT_BEGIN"));
         assert!(wrapper.contains("MIAOMINAL_STDERR_BEGIN"));
@@ -661,10 +693,20 @@ mod tests {
     }
 
     #[test]
-    fn powershell_run_shell_wrapper_truncation_uses_substring() {
+    fn powershell_run_shell_wrapper_uses_byte_limited_replay() {
         let wrapper = build_powershell_non_terminal("dir", ".", 30, 4096, ShellType::PowerShell);
-        assert!(wrapper.contains(".Substring"));
+        assert!(wrapper.contains("ReadAllBytes"));
         assert!(wrapper.contains("4096"));
+    }
+
+    #[test]
+    fn cmd_run_shell_wrapper_uses_timeout_and_byte_limit() {
+        let wrapper = build_cmd_non_terminal("dir", ".", 30, 4096, ShellType::Cmd);
+        assert!(wrapper.contains("Start-Process -FilePath 'cmd.exe'"));
+        assert!(wrapper.contains("@('/d', '/c', 'dir')"));
+        assert!(wrapper.contains("WaitForExit(30000)"));
+        assert!(wrapper.contains("ReadAllBytes"));
+        assert!(wrapper.contains("MIAOMINAL_TRUNCATED=1"));
     }
 
     #[test]
@@ -708,9 +750,11 @@ mod tests {
         assert!(result.stdout.len() <= DEFAULT_MAX_OUTPUT_BYTES);
         assert!(result.stdout.is_char_boundary(result.stdout.len()));
         assert!(long_stdout.starts_with(&result.stdout));
-        assert!(result
-            .stdout
-            .chars()
-            .all(|character| character == '你' || character == '🚀'));
+        assert!(
+            result
+                .stdout
+                .chars()
+                .all(|character| character == '你' || character == '🚀')
+        );
     }
 }
