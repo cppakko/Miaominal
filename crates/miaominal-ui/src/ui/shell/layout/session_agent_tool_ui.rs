@@ -20,7 +20,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
 ) -> gpui::AnyElement {
     if content.trim().is_empty() {
         let empty_content = div()
-            .font_family("JetBrains Mono")
+            .font_family(miaominal_settings::font_family())
             .text_size(miaominal_settings::FontSize::Body.scaled())
             .line_height(miaominal_settings::scaled_line_height(18.0))
             .text_color(rgb(if error {
@@ -44,7 +44,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
     let markdown_code = if language.is_empty() {
         // For plain text or unknown content, use plain div
         let highlighted_content = div()
-            .font_family("JetBrains Mono")
+            .font_family(miaominal_settings::font_family())
             .text_size(miaominal_settings::FontSize::Body.scaled())
             .line_height(miaominal_settings::scaled_line_height(18.0))
             .text_color(rgb(if error {
@@ -170,7 +170,7 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
     if command.trim().is_empty() {
         let base_color = gpui::Hsla::from(rgb(colors.on_surface));
         let content = div()
-            .font_family("JetBrains Mono")
+            .font_family(miaominal_settings::font_family())
             .text_size(miaominal_settings::FontSize::Body.scaled())
             .line_height(miaominal_settings::scaled_line_height(18.0))
             .text_color(base_color)
