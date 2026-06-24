@@ -938,6 +938,8 @@ mod tests {
                 has_api_key: true,
                 enabled: true,
                 context_window: None,
+                temperature: None,
+                max_tokens: None,
             }],
             ..AppSettings::default()
         };
@@ -986,6 +988,8 @@ mod tests {
                 has_api_key: false,
                 enabled: true,
                 context_window: None,
+                temperature: None,
+                max_tokens: None,
             }],
             ..AppSettings::default()
         };

@@ -20,6 +20,12 @@ impl AgentJobId {
     }
 }
 
+impl Default for AgentJobId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {

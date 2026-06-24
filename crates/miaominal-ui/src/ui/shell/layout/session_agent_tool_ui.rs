@@ -5,7 +5,6 @@ use crate::ui::i18n;
 pub(in crate::ui::shell::layout) struct ToolTerminalColors {
     pub(in crate::ui::shell::layout) surface: u32,
     pub(in crate::ui::shell::layout) surface_container_lowest: u32,
-    pub(in crate::ui::shell::layout) outline_variant: u32,
     pub(in crate::ui::shell::layout) on_surface: u32,
     pub(in crate::ui::shell::layout) error: u32,
     pub(in crate::ui::shell::layout) text_muted: u32,

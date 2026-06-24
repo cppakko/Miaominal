@@ -526,12 +526,11 @@ impl AppView {
         );
         let session_agent_prompt_subscription = cx.subscribe(
             &agent_prompt_input,
-            |this: &mut AppView, _, event: &InputEvent, cx| match event {
-                InputEvent::Change => {
+            |this: &mut AppView, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
                     this.reset_session_agent_prompt_history_cursor();
                     this.update_session_agent_at_mention_state(cx);
                 }
-                _ => {}
             },
         );
         let session_agent_title_subscription = cx.subscribe(

@@ -470,12 +470,11 @@ impl AppView {
                     .as_deref()
                     .unwrap_or(""),
             )
+            && let Some(ref id) = selected_provider_id
         {
-            if let Some(ref id) = selected_provider_id {
-                self.settings_store.update(|settings| {
-                    settings.selected_ai_provider_id = Some(id.clone());
-                });
-            }
+            self.settings_store.update(|settings| {
+                settings.selected_ai_provider_id = Some(id.clone());
+            });
         }
         let ai_provider_select = self.panel_forms.settings.ai_provider_select.clone();
         let provider_id = selected_provider_id.clone();

@@ -36,6 +36,7 @@ pub(crate) fn icon_button(
     .child(Icon::new(icon).small())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn icon_button_with_tooltip(
     icon: AppIcon,
     tooltip: impl Into<SharedString>,

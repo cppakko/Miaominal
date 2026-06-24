@@ -48,18 +48,14 @@ impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
     }
 
     fn display_title(&self) -> Option<AnyElement> {
-        if let Some(icon) = self.icon {
-            Some(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(Icon::new(icon).small())
-                    .child(self.title.clone())
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
+        self.icon.map(|icon| {
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(Icon::new(icon).small())
+                .child(self.title.clone())
+                .into_any_element()
+        })
     }
 
     fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {

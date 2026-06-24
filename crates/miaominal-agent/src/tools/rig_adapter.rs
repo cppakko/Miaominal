@@ -47,7 +47,7 @@ impl AgentToolSet {
     pub async fn definitions(&self) -> Vec<ToolDefinition> {
         self.enabled_tool_names()
             .into_iter()
-            .map(|name| tool_definition(name))
+            .map(tool_definition)
             .collect()
     }
 

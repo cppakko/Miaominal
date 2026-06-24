@@ -210,6 +210,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
         .into_any_element()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_session_agent_markdown_block(
     app: &AppView,
     id: SharedString,
@@ -237,6 +238,7 @@ fn render_session_agent_markdown_block(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_session_agent_search_block(
     app: &AppView,
     message_column_width: f32,
@@ -319,6 +321,7 @@ fn render_session_agent_search_block(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::ui::shell::layout) fn render_session_agent_message(
     app: &AppView,
     message_column_width: f32,
@@ -782,7 +785,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     let tool_colors = ToolTerminalColors {
         surface: roles.surface,
         surface_container_lowest: roles.surface_container_lowest,
-        outline_variant: roles.outline_variant,
         on_surface: roles.on_surface,
         error: roles.error,
         text_muted,

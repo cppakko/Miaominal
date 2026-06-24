@@ -222,9 +222,9 @@ cap_powershell=1";
         assert!(!probe.capabilities.sed);
         // PowerShell is always true for powershell probe
         assert!(probe.capabilities.powershell);
-        assert_eq!(probe.capabilities.exec, true);
-        assert_eq!(probe.capabilities.sftp, false);
-        assert_eq!(probe.capabilities.pty, false);
+        assert!(probe.capabilities.exec);
+        assert!(!probe.capabilities.sftp);
+        assert!(!probe.capabilities.pty);
     }
 
     #[test]
@@ -262,9 +262,9 @@ cap_powershell=0";
         assert!(!probe.capabilities.sed);
         // powershell=true because pwsh is available (via has_cap OR)
         assert!(probe.capabilities.powershell);
-        assert_eq!(probe.capabilities.exec, true);
-        assert_eq!(probe.capabilities.sftp, false);
-        assert_eq!(probe.capabilities.pty, false);
+        assert!(probe.capabilities.exec);
+        assert!(!probe.capabilities.sftp);
+        assert!(!probe.capabilities.pty);
     }
 
     #[test]

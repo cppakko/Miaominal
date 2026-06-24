@@ -658,9 +658,10 @@ fn build_line_text_and_runs(
 
     for (column, cell) in cells.iter().enumerate() {
         let start = text.len();
-        let character = if cell.spacer || cell.character == '\0' {
-            ' '
-        } else if custom_glyphs::is_custom_glyph(cell.character) {
+        let character = if cell.spacer
+            || cell.character == '\0'
+            || custom_glyphs::is_custom_glyph(cell.character)
+        {
             ' '
         } else {
             cell.character

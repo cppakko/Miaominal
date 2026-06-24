@@ -25,16 +25,11 @@ impl BackendRoute {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecMode {
+    #[default]
     Raw,
     Pty { columns: u32, lines: u32 },
-}
-
-impl Default for ExecMode {
-    fn default() -> Self {
-        Self::Raw
-    }
 }
 
 impl ExecMode {

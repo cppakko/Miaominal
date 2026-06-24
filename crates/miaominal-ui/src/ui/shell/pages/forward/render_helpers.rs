@@ -2,6 +2,7 @@ use super::super::super::*;
 use super::utils::rule_summary;
 use crate::ui::i18n;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_forward_rule_context_menu(
     menu: PopupMenu,
     entity: Entity<AppView>,

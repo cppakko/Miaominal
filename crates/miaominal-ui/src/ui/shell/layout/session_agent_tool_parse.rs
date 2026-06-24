@@ -78,11 +78,6 @@ pub(in crate::ui::shell::layout) fn tool_output_value(
 ) -> Option<serde_json::Value> {
     let response = tool_response_value(tool_call)?;
     let output = response.get("output")?;
-    if let Some(kind) = output.get("kind").and_then(serde_json::Value::as_str) {
-        if kind == "patch" {
-            return Some(output.clone());
-        }
-    }
     Some(output.clone())
 }
 

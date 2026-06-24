@@ -1255,8 +1255,7 @@ impl AppView {
                     );
                     if web_search_config.enabled {
                         let web_search_api_key = secrets
-                            .get("web_search", SecretKind::WebSearchApiKey)
-                            .map_err(anyhow::Error::from)?;
+                            .get("web_search", SecretKind::WebSearchApiKey)?;
                         channel =
                             channel.with_web_search_config(web_search_config, web_search_api_key);
                     }
@@ -2281,16 +2280,15 @@ impl AppView {
 
         let unresolved = targets
             .iter()
-            .cloned()
-            .into_iter()
             .filter(|name| {
                 !resolved_names.iter().any(|resolved| {
-                    resolved == name
+                    resolved == *name
                         || resolved
-                            .strip_prefix(name)
+                            .strip_prefix(*name)
                             .is_some_and(|suffix| suffix.starts_with(' '))
                 })
             })
+            .cloned()
             .collect::<Vec<_>>();
         let guidance = (!guidance_lines.is_empty()).then(|| {
             format!(
@@ -2349,22 +2347,12 @@ pub(in crate::ui::shell) struct SessionAgentTargetCandidate {
     pub(in crate::ui::shell) resolved: bool,
 }
 
+#[derive(Default)]
 struct ResolvedSessionAgentMentions {
     aux_channels: HashMap<String, AgentExecChannel>,
     guidance: Option<String>,
     unresolved: Vec<String>,
     pty_tap_tab_ids: Vec<usize>,
-}
-
-impl Default for ResolvedSessionAgentMentions {
-    fn default() -> Self {
-        Self {
-            aux_channels: HashMap::new(),
-            guidance: None,
-            unresolved: Vec::new(),
-            pty_tap_tab_ids: Vec::new(),
-        }
-    }
 }
 
 fn parse_tool_arguments(arguments: &str) -> Value {

@@ -877,19 +877,14 @@ pub(in crate::ui::shell) struct PendingKnownHostDeleteState {
     pub(in crate::ui::shell) port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::ui::shell) enum TrustedHostFilter {
+    #[default]
     All,
     Linked,
     Orphaned,
     DefaultPort,
     CustomPort,
-}
-
-impl Default for TrustedHostFilter {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 #[derive(Debug, Clone)]

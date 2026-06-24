@@ -33,22 +33,17 @@ pub enum AgentChatProviderKind {
     Custom,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AgentMode {
     /// Only read-only tools, full policy review, every tool call requires confirmation.
     Ask,
     /// All tools, full policy review, sensitive operations require confirmation. (default)
+    #[default]
     Execute,
     /// All tools, policy enforced, but tool calls are auto-approved (no confirmation prompts).
     NonBlocking,
     /// All tools, policy bypassed entirely, all tool calls auto-executed.
     FullAuto,
-}
-
-impl Default for AgentMode {
-    fn default() -> Self {
-        Self::Execute
-    }
 }
 
 #[derive(Clone, Debug)]
