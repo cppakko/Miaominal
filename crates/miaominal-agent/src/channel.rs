@@ -477,7 +477,8 @@ impl AgentExecChannel {
                         }
                     }
                     if collected.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
-                        let drain_to = collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2;
+                        let drain_to =
+                            collected.ceil_char_boundary(collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2);
                         collected.drain(..drain_to);
                     }
                 }
@@ -653,5 +654,26 @@ mod tests {
         ));
         request.approved = true;
         assert!(channel.enforce_context_policy(&request).is_ok());
+    }
+
+    #[test]
+    fn terminal_output_compaction_handles_multibyte_boundaries() {
+        let mut collected = "🚀".repeat(DEFAULT_MAX_OUTPUT_BYTES);
+        collected.push('你');
+
+        assert!(collected.len() > DEFAULT_MAX_OUTPUT_BYTES * 4);
+
+        let target_boundary = collected.len() - DEFAULT_MAX_OUTPUT_BYTES * 2;
+        assert!(!collected.is_char_boundary(target_boundary));
+
+        let compacted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let drain_to = collected.ceil_char_boundary(target_boundary);
+            collected.drain(..drain_to);
+        }));
+
+        assert!(compacted.is_ok());
+        assert!(collected.len() <= DEFAULT_MAX_OUTPUT_BYTES * 2);
+        assert!(collected.is_char_boundary(collected.len()));
+        assert!(collected.chars().all(|character| character == '🚀' || character == '你'));
     }
 }

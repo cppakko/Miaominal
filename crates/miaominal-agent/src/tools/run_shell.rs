@@ -387,7 +387,7 @@ pub fn parse_terminal_shell_result(
         .to_string();
     let truncated = stdout.len() > DEFAULT_MAX_OUTPUT_BYTES;
     if truncated {
-        stdout.truncate(DEFAULT_MAX_OUTPUT_BYTES);
+        stdout.truncate(stdout.floor_char_boundary(DEFAULT_MAX_OUTPUT_BYTES));
     }
     Ok(ShellCommandResult {
         stdout,
@@ -691,5 +691,26 @@ mod tests {
         assert!(wrapper.contains("head -c 65536"));
         assert!(wrapper.contains("wc -c"));
         assert!(wrapper.contains("timeout 30"));
+    }
+
+    #[test]
+    fn terminal_parser_truncates_multibyte_output_on_char_boundary() {
+        let sentinel = "MIAOMINAL_utf8boundary_";
+        let long_stdout = format!("你{}", "🚀".repeat(DEFAULT_MAX_OUTPUT_BYTES / 4));
+
+        assert!(long_stdout.len() > DEFAULT_MAX_OUTPUT_BYTES);
+        assert!(!long_stdout.is_char_boundary(DEFAULT_MAX_OUTPUT_BYTES));
+
+        let output = format!("{long_stdout}\n{sentinel}0:/home/user\nuser@host:~$ ");
+        let result = parse_terminal_shell_result(&output, sentinel).unwrap();
+
+        assert!(result.truncated);
+        assert!(result.stdout.len() <= DEFAULT_MAX_OUTPUT_BYTES);
+        assert!(result.stdout.is_char_boundary(result.stdout.len()));
+        assert!(long_stdout.starts_with(&result.stdout));
+        assert!(result
+            .stdout
+            .chars()
+            .all(|character| character == '你' || character == '🚀'));
     }
 }
