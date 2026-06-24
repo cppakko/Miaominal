@@ -1254,8 +1254,8 @@ impl AppView {
                         known_hosts,
                     );
                     if web_search_config.enabled {
-                        let web_search_api_key = secrets
-                            .get("web_search", SecretKind::WebSearchApiKey)?;
+                        let web_search_api_key =
+                            secrets.get("web_search", SecretKind::WebSearchApiKey)?;
                         channel =
                             channel.with_web_search_config(web_search_config, web_search_api_key);
                     }

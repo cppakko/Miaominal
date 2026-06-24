@@ -348,6 +348,9 @@ deleted_message = "Deleted AI provider and cleared its saved API key."
 [settings.ai_providers.validation]
 name_required = "Display name is required."
 api_key_required = "API key is required."
+temperature_range = "Temperature must be between {min} and {max}."
+max_tokens_range = "Max tokens must be at least {min}."
+context_window_range = "Context window must be at least {min}."
 
 [settings.web_search.group]
 title = "Web Search"

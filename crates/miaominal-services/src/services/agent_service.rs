@@ -126,10 +126,7 @@ mod tests {
         let service = service();
 
         service
-            .channel_for_profile(
-                "session-1",
-                &[profile("session-1", ShellType::PowerShell)],
-            )
+            .channel_for_profile("session-1", &[profile("session-1", ShellType::PowerShell)])
             .expect("PowerShell profile should be accepted");
     }
 

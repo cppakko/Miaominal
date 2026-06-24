@@ -66,6 +66,10 @@ impl AiProviderKind {
     }
 }
 
+pub const AI_PROVIDER_TEMPERATURE_MIN: f64 = 0.0;
+pub const AI_PROVIDER_TEMPERATURE_MAX: f64 = 2.0;
+pub const AI_PROVIDER_POSITIVE_INTEGER_MIN: u64 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiProviderConfig {
     pub id: String,
@@ -147,6 +151,25 @@ impl AiProviderConfig {
         }
         self.base_url = self.base_url.trim().trim_end_matches('/').to_string();
         self.api_key_env = self.api_key_env.trim().to_string();
+        if self.temperature.is_some_and(|temperature| {
+            !temperature.is_finite()
+                || !(AI_PROVIDER_TEMPERATURE_MIN..=AI_PROVIDER_TEMPERATURE_MAX)
+                    .contains(&temperature)
+        }) {
+            self.temperature = None;
+        }
+        if self
+            .context_window
+            .is_some_and(|context_window| context_window < AI_PROVIDER_POSITIVE_INTEGER_MIN)
+        {
+            self.context_window = None;
+        }
+        if self
+            .max_tokens
+            .is_some_and(|max_tokens| max_tokens < AI_PROVIDER_POSITIVE_INTEGER_MIN)
+        {
+            self.max_tokens = None;
+        }
     }
 }
 
@@ -1004,6 +1027,29 @@ mod tests {
         );
         assert_eq!(settings.ai_providers[0].base_url, "https://api.example.com");
         assert_eq!(settings.ai_providers[0].api_key_env, "ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn ai_provider_sanitize_clears_invalid_optional_limits() {
+        let mut provider = AiProviderConfig {
+            id: "provider-1".into(),
+            name: "OpenAI".into(),
+            kind: AiProviderKind::OpenAi,
+            model: "gpt-4o".into(),
+            base_url: String::new(),
+            api_key_env: String::new(),
+            has_api_key: true,
+            enabled: true,
+            context_window: Some(0),
+            temperature: Some(-0.1),
+            max_tokens: Some(0),
+        };
+
+        provider.sanitize();
+
+        assert_eq!(provider.context_window, None);
+        assert_eq!(provider.temperature, None);
+        assert_eq!(provider.max_tokens, None);
     }
 
     #[test]

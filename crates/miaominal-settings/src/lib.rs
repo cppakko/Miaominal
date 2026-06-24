@@ -10,6 +10,7 @@ pub use global::{
     sync_component_theme,
 };
 pub use model::{
+    AI_PROVIDER_POSITIVE_INTEGER_MIN, AI_PROVIDER_TEMPERATURE_MAX, AI_PROVIDER_TEMPERATURE_MIN,
     AiProviderConfig, AiProviderKind, AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION,
     FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,

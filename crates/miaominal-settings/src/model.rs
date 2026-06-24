@@ -1,6 +1,7 @@
 use crate::theme::{self as material_theme, MaterialTheme};
 
 pub use crate::data::{
+    AI_PROVIDER_POSITIVE_INTEGER_MIN, AI_PROVIDER_TEMPERATURE_MAX, AI_PROVIDER_TEMPERATURE_MIN,
     AiProviderConfig, AiProviderKind, AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION,
     FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,

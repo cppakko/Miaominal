@@ -110,6 +110,83 @@ fn normalize_github_gist_id(value: &str) -> String {
         .to_string()
 }
 
+fn parse_optional_ai_provider_temperature(value: &str) -> Result<Option<f64>, ValidationFailure> {
+    let trimmed_value = value.trim();
+    if trimmed_value.is_empty() {
+        return Ok(None);
+    }
+
+    let temperature = trimmed_value.parse::<f64>().map_err(|_| {
+        ValidationFailure::invalid(i18n::string_args(
+            "settings.ai_providers.validation.temperature_range",
+            &[
+                (
+                    "min",
+                    &miaominal_settings::AI_PROVIDER_TEMPERATURE_MIN.to_string(),
+                ),
+                (
+                    "max",
+                    &miaominal_settings::AI_PROVIDER_TEMPERATURE_MAX.to_string(),
+                ),
+            ],
+        ))
+    })?;
+
+    if !temperature.is_finite()
+        || !(miaominal_settings::AI_PROVIDER_TEMPERATURE_MIN
+            ..=miaominal_settings::AI_PROVIDER_TEMPERATURE_MAX)
+            .contains(&temperature)
+    {
+        return Err(ValidationFailure::invalid(i18n::string_args(
+            "settings.ai_providers.validation.temperature_range",
+            &[
+                (
+                    "min",
+                    &miaominal_settings::AI_PROVIDER_TEMPERATURE_MIN.to_string(),
+                ),
+                (
+                    "max",
+                    &miaominal_settings::AI_PROVIDER_TEMPERATURE_MAX.to_string(),
+                ),
+            ],
+        )));
+    }
+
+    Ok(Some(temperature))
+}
+
+fn parse_optional_ai_provider_positive_u64(
+    value: &str,
+    validation_key: &'static str,
+) -> Result<Option<u64>, ValidationFailure> {
+    let trimmed_value = value.trim();
+    if trimmed_value.is_empty() {
+        return Ok(None);
+    }
+
+    let number = trimmed_value.parse::<u64>().map_err(|_| {
+        ValidationFailure::invalid(i18n::string_args(
+            validation_key,
+            &[(
+                "min",
+                &miaominal_settings::AI_PROVIDER_POSITIVE_INTEGER_MIN.to_string(),
+            )],
+        ))
+    })?;
+
+    if number < miaominal_settings::AI_PROVIDER_POSITIVE_INTEGER_MIN {
+        return Err(ValidationFailure::invalid(i18n::string_args(
+            validation_key,
+            &[(
+                "min",
+                &miaominal_settings::AI_PROVIDER_POSITIVE_INTEGER_MIN.to_string(),
+            )],
+        )));
+    }
+
+    Ok(Some(number))
+}
+
 struct LocalVaultSyncSecretInputs {
     github_token: String,
     webdav_password: String,
@@ -1623,30 +1700,69 @@ impl AppView {
             .read(cx)
             .value()
             .to_string();
-        provider.temperature = self
+        let temperature_value = self
             .panel_forms
             .settings
             .ai_provider_temperature_input
             .read(cx)
-            .value()
-            .parse::<f64>()
-            .ok();
-        provider.max_tokens = self
+            .value();
+        let temperature = match parse_optional_ai_provider_temperature(&temperature_value) {
+            Ok(temperature) => temperature,
+            Err(validation_error) => {
+                self.notify_validation_failure_in_window(
+                    window,
+                    validation_error.kind,
+                    validation_error.message,
+                    cx,
+                );
+                return;
+            }
+        };
+        provider.temperature = temperature;
+        let max_tokens_value = self
             .panel_forms
             .settings
             .ai_provider_max_tokens_input
             .read(cx)
-            .value()
-            .parse::<u64>()
-            .ok();
-        provider.context_window = self
+            .value();
+        let max_tokens = match parse_optional_ai_provider_positive_u64(
+            &max_tokens_value,
+            "settings.ai_providers.validation.max_tokens_range",
+        ) {
+            Ok(max_tokens) => max_tokens,
+            Err(validation_error) => {
+                self.notify_validation_failure_in_window(
+                    window,
+                    validation_error.kind,
+                    validation_error.message,
+                    cx,
+                );
+                return;
+            }
+        };
+        provider.max_tokens = max_tokens;
+        let context_window_value = self
             .panel_forms
             .settings
             .ai_provider_context_window_input
             .read(cx)
-            .value()
-            .parse::<u64>()
-            .ok();
+            .value();
+        let context_window = match parse_optional_ai_provider_positive_u64(
+            &context_window_value,
+            "settings.ai_providers.validation.context_window_range",
+        ) {
+            Ok(context_window) => context_window,
+            Err(validation_error) => {
+                self.notify_validation_failure_in_window(
+                    window,
+                    validation_error.kind,
+                    validation_error.message,
+                    cx,
+                );
+                return;
+            }
+        };
+        provider.context_window = context_window;
         if api_key.is_empty() && !existing_has_api_key {
             // Not an existing provider with a stored key and no new key → keep env var fallback when set
             provider.api_key_env = provider.api_key_env.trim().to_string();
@@ -5173,7 +5289,10 @@ impl AppView {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_github_gist_id;
+    use super::{
+        normalize_github_gist_id, parse_optional_ai_provider_positive_u64,
+        parse_optional_ai_provider_temperature,
+    };
 
     #[test]
     fn normalize_github_gist_id_extracts_id_from_url() {
@@ -5185,5 +5304,43 @@ mod tests {
         );
         assert_eq!(normalize_github_gist_id("abc123def456"), "abc123def456");
         assert_eq!(normalize_github_gist_id("   "), "");
+    }
+
+    #[test]
+    fn parse_optional_ai_provider_temperature_rejects_out_of_range_values() {
+        assert!(parse_optional_ai_provider_temperature("-0.1").is_err());
+        assert!(parse_optional_ai_provider_temperature("2.1").is_err());
+        assert_eq!(
+            parse_optional_ai_provider_temperature("0.7").unwrap(),
+            Some(0.7)
+        );
+        assert_eq!(parse_optional_ai_provider_temperature("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_optional_ai_provider_positive_u64_rejects_zero() {
+        assert!(
+            parse_optional_ai_provider_positive_u64(
+                "0",
+                "settings.ai_providers.validation.max_tokens_range",
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse_optional_ai_provider_positive_u64(
+                "42",
+                "settings.ai_providers.validation.max_tokens_range",
+            )
+            .unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            parse_optional_ai_provider_positive_u64(
+                "   ",
+                "settings.ai_providers.validation.max_tokens_range",
+            )
+            .unwrap(),
+            None
+        );
     }
 }
