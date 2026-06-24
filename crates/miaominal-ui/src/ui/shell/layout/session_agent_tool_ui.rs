@@ -104,8 +104,6 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
                 .w_full()
                 .px_2()
                 .py_1()
-                .border_b_1()
-                .border_color(rgb(colors.outline_variant))
                 .text_size(miaominal_settings::FontSize::Body.scaled())
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(colors.text_muted))
@@ -118,7 +116,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
                 .max_h(px(220.0))
                 .overflow_y_scrollbar()
                 .px_2()
-                .py_2()
+                .pb_2()
                 .child(content),
         )
         .into_any_element()
