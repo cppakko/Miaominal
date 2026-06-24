@@ -443,6 +443,8 @@ mod tests {
             has_api_key: true,
             enabled: true,
             context_window: None,
+            temperature: Some(0.7),
+            max_tokens: Some(1280000),
         };
         let settings = AppSettings {
             ai_providers: vec![provider],
