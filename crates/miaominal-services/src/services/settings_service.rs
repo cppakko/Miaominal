@@ -588,6 +588,9 @@ mod tests {
         keyring_secrets
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
             .expect("AI provider key should save");
+        keyring_secrets
+            .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
+            .expect("web search API key should save");
         keyring_sync_engine
             .config_store
             .set_github_token("gh-token")
@@ -634,6 +637,12 @@ mod tests {
             keyring_secrets
                 .get("provider-1", SecretKind::AiProviderApiKey)
                 .expect("AI provider key should be readable after reset"),
+            None
+        );
+        assert_eq!(
+            keyring_secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .expect("web search API key should be readable after reset"),
             None
         );
         assert_eq!(

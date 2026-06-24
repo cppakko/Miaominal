@@ -42,6 +42,9 @@ where
             target_secrets.set(provider_id, SecretKind::AiProviderApiKey, &api_key)?;
         }
     }
+    if let Some(api_key) = source_secrets.get("web_search", SecretKind::WebSearchApiKey)? {
+        target_secrets.set("web_search", SecretKind::WebSearchApiKey, &api_key)?;
+    }
 
     let sync_secrets = source_sync_config.get_secrets()?;
 
@@ -81,6 +84,7 @@ pub fn delete_keyring_secrets<S, K>(
     for provider_id in ai_provider_ids {
         source_secrets.delete_ai_provider_api_key(provider_id);
     }
+    source_secrets.delete_web_search_api_key();
 
     if let Err(error) = source_sync_config.delete_github_token() {
         log::warn!("failed to delete migrated GitHub token from keyring: {error:?}");
@@ -172,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn copies_session_password_passphrase_and_managed_key() {
+    fn copies_session_password_passphrase_managed_key_and_web_search_key() {
         let fixture = Fixture::new("copy-basic");
         let source_secrets = vault_secret_store("source", fixture.source_secrets_path.clone());
         let target_secrets = vault_secret_store("target", fixture.target_secrets_path.clone());
@@ -201,6 +205,9 @@ mod tests {
             .unwrap();
         source_secrets
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .unwrap();
+        source_secrets
+            .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
             .unwrap();
         source_sync.set_github_token("gh-token").unwrap();
         source_sync.set_webdav_password("dav-pass").unwrap();
@@ -259,6 +266,13 @@ mod tests {
             Some("sk-test"),
         );
         assert_eq!(
+            target_secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("web-search-key"),
+        );
+        assert_eq!(
             target_sync.get_github_token().unwrap().as_deref(),
             Some("gh-token"),
         );
@@ -310,6 +324,12 @@ mod tests {
             None,
         );
         assert_eq!(
+            target_secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
             target_sync.get_github_token().unwrap().as_deref(),
             Some("only-gh"),
         );
@@ -340,6 +360,9 @@ mod tests {
             .unwrap();
         source_secrets
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
+            .unwrap();
+        source_secrets
+            .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
             .unwrap();
         source_sync.set_github_token("gh").unwrap();
         source_sync.set_webdav_password("dav").unwrap();
@@ -374,6 +397,12 @@ mod tests {
         assert_eq!(
             source_secrets
                 .get("provider-1", SecretKind::AiProviderApiKey)
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            source_secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
                 .unwrap(),
             None,
         );
