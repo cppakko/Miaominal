@@ -276,7 +276,9 @@ impl AppView {
                             .iter()
                             .find(|profile| profile.id == session.profile_id)
                             .map(|profile| format!("{}@{}", profile.username, profile.host))
-                            .unwrap_or_else(|| "terminal session".to_string());
+                            .unwrap_or_else(|| {
+                                i18n::string("workspace.panel.agent.messages.terminal_session")
+                            });
                         SessionAgentTargetCandidate {
                             name: tab.title.clone(),
                             detail,
@@ -527,13 +529,14 @@ impl AppView {
             state.panel_view = ChatPanelView::Conversation;
             self.session_agent = state;
             self.reset_session_agent_scroll();
-            self.status_message = "Chat restored.".into();
+            self.status_message = i18n::string("workspace.panel.agent.messages.restored");
             cx.notify();
             return;
         }
 
         let Some(chat_service) = self.services.chat_service.as_ref() else {
-            self.status_message = "Chat history is unavailable.".into();
+            self.status_message =
+                i18n::string("workspace.panel.agent.messages.history_unavailable");
             cx.notify();
             return;
         };
@@ -541,7 +544,10 @@ impl AppView {
         let messages = match chat_service.load_session_messages(&session_id) {
             Ok(messages) => messages,
             Err(error) => {
-                let message = format!("Failed to load chat history: {error}");
+                let message = i18n::string_args(
+                    "workspace.panel.agent.messages.load_failed",
+                    &[("error", &error.to_string())],
+                );
                 self.session_agent.last_error = Some(message.clone());
                 self.status_message = message;
                 cx.notify();
@@ -570,7 +576,7 @@ impl AppView {
         self.session_agent.active_at_targets.clear();
         self.session_agent.panel_view = ChatPanelView::Conversation;
         self.reset_session_agent_scroll();
-        self.status_message = "Chat history loaded.".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.history_loaded");
         cx.notify();
     }
 
@@ -580,19 +586,23 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if self.session_agent_session_is_busy(&session_id) {
-            self.status_message = "Stop the current chat before deleting it.".into();
+            self.status_message = i18n::string("workspace.panel.agent.messages.stop_before_delete");
             cx.notify();
             return;
         }
 
         let Some(chat_service) = self.services.chat_service.as_ref() else {
-            self.status_message = "Chat history is unavailable.".into();
+            self.status_message =
+                i18n::string("workspace.panel.agent.messages.history_unavailable");
             cx.notify();
             return;
         };
 
         if let Err(error) = chat_service.delete_session(&session_id) {
-            self.status_message = format!("Failed to delete chat: {error}");
+            self.status_message = i18n::string_args(
+                "workspace.panel.agent.messages.delete_failed",
+                &[("error", &error.to_string())],
+            );
             cx.notify();
             return;
         }
@@ -604,7 +614,7 @@ impl AppView {
         }
         self.session_agent_sessions.remove(&session_id);
         self.refresh_chat_sessions();
-        self.status_message = "Chat deleted.".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.deleted");
         cx.notify();
     }
 
@@ -615,7 +625,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if self.session_agent_session_is_busy(&session_id) {
-            self.status_message = "Stop the current chat before deleting it.".into();
+            self.status_message = i18n::string("workspace.panel.agent.messages.stop_before_delete");
             cx.notify();
             return;
         }
@@ -665,13 +675,17 @@ impl AppView {
         }
 
         let Some(chat_service) = self.services.chat_service.as_ref() else {
-            self.status_message = "Chat history is unavailable.".into();
+            self.status_message =
+                i18n::string("workspace.panel.agent.messages.history_unavailable");
             cx.notify();
             return;
         };
 
         if let Err(error) = chat_service.update_session_title(&session_id, &new_title) {
-            self.status_message = format!("Failed to rename chat: {error}");
+            self.status_message = i18n::string_args(
+                "workspace.panel.agent.messages.rename_failed",
+                &[("error", &error.to_string())],
+            );
             cx.notify();
             return;
         }
@@ -682,7 +696,7 @@ impl AppView {
         }
 
         self.refresh_chat_sessions();
-        self.status_message = "Chat renamed.".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.renamed");
         cx.notify();
     }
 
@@ -921,14 +935,15 @@ impl AppView {
         let mentions = self.resolve_session_agent_mentions(&target_names);
         if !mentions.unresolved.is_empty() {
             self.clear_session_pty_taps_by_tab_id(&mentions.pty_tap_tab_ids);
-            let message = format!(
-                "Unknown @ target: {}",
-                mentions
-                    .unresolved
-                    .iter()
-                    .map(|name| format!("@{name}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            let targets = mentions
+                .unresolved
+                .iter()
+                .map(|name| format!("@{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let message = i18n::string_args(
+                "workspace.panel.agent.messages.unknown_target",
+                &[("targets", &targets)],
             );
             self.session_agent.last_error = Some(message.clone());
             self.status_message = message;
@@ -1091,7 +1106,8 @@ impl AppView {
         let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
         let pty_commands = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
-                let message = "PTY mode requires an active terminal session.".to_string();
+                let message =
+                    i18n::string("workspace.panel.agent.messages.pty_requires_active_session");
                 self.session_agent.last_error = Some(message.clone());
                 self.status_message = message;
                 cx.notify();
@@ -1104,7 +1120,8 @@ impl AppView {
                 .and_then(TabState::as_session)
                 .and_then(|session| session.commands.clone())
             else {
-                let message = "PTY mode requires a connected terminal session.".to_string();
+                let message =
+                    i18n::string("workspace.panel.agent.messages.pty_requires_connected_session");
                 self.session_agent.last_error = Some(message.clone());
                 self.status_message = message;
                 cx.notify();
@@ -1136,9 +1153,9 @@ impl AppView {
 
     pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
         let had_pending_task = self.session_agent.pending_task.take().is_some();
-        let had_active_tool = self
-            .session_agent
-            .reject_active_tool_calls("Stopped by user.");
+        let had_active_tool = self.session_agent.reject_active_tool_calls(&i18n::string(
+            "workspace.panel.agent.messages.stopped_by_user",
+        ));
         if !had_pending_task && !had_active_tool {
             return;
         }
@@ -1151,7 +1168,7 @@ impl AppView {
                 session.pty_output_tap = None;
             }
         }
-        self.status_message = "Agent stopped.".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.stopped");
         self.session_agent.last_error = None;
         self.persist_session_agent_chat();
         cx.notify();
@@ -1163,12 +1180,13 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let Some(tool_call) = self.session_agent.tool_call(&tool_id) else {
-            self.status_message = "Tool call was not found.".into();
+            self.status_message = i18n::string("workspace.panel.agent.messages.tool_not_found");
             cx.notify();
             return;
         };
         let Some(profile) = self.active_profile().cloned() else {
-            self.status_message = "No active session for tool approval.".into();
+            self.status_message =
+                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
             cx.notify();
             return;
         };
@@ -1176,13 +1194,14 @@ impl AppView {
         let arguments = parse_tool_arguments(&tool_call.arguments);
         let reasoning = self.session_agent.reasoning_before_tool_call(&tool_id);
         self.session_agent.approve_tool_call(&tool_id);
-        self.status_message = "Tool approved. Running...".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.tool_approved_running");
         let approval_session_id = self.ensure_session_agent_session();
 
         let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
         let pty_handle = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
-                let message = "PTY mode requires an active terminal session.".to_string();
+                let message =
+                    i18n::string("workspace.panel.agent.messages.pty_requires_active_session");
                 self.session_agent.fail_tool_call(&tool_id, message.clone());
                 self.status_message = message;
                 cx.notify();
@@ -1195,7 +1214,8 @@ impl AppView {
                 .and_then(TabState::as_session)
                 .and_then(|session| session.commands.clone())
             else {
-                let message = "PTY mode requires a connected terminal session.".to_string();
+                let message =
+                    i18n::string("workspace.panel.agent.messages.pty_requires_connected_session");
                 self.session_agent.fail_tool_call(&tool_id, message.clone());
                 self.status_message = message;
                 cx.notify();
@@ -1282,13 +1302,16 @@ impl AppView {
                                     .map(|tool_call| tool_call.status),
                                 Some(SessionAgentToolStatus::InProgress)
                             ) {
-                                this.status_message = "Agent stopped.".into();
+                                this.status_message =
+                                    i18n::string("workspace.panel.agent.messages.stopped");
                                 cx.notify();
                                 return;
                             }
                             this.session_agent
                                 .complete_tool_call(&tool_id, result.clone());
-                            this.status_message = "Approved tool finished. Continuing...".into();
+                            this.status_message = i18n::string(
+                                "workspace.panel.agent.messages.tool_finished_continuing",
+                            );
                             (result, false)
                         }
                         Err(error) => {
@@ -1298,13 +1321,16 @@ impl AppView {
                                     .map(|tool_call| tool_call.status),
                                 Some(SessionAgentToolStatus::InProgress)
                             ) {
-                                this.status_message = "Agent stopped.".into();
+                                this.status_message =
+                                    i18n::string("workspace.panel.agent.messages.stopped");
                                 cx.notify();
                                 return;
                             }
                             let result = format!("tool failed after approval: {error}");
                             this.session_agent.fail_tool_call(&tool_id, result.clone());
-                            this.status_message = "Approved tool failed. Continuing...".into();
+                            this.status_message = i18n::string(
+                                "workspace.panel.agent.messages.tool_failed_continuing",
+                            );
                             (result, true)
                         }
                     };
@@ -1342,10 +1368,13 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if self.session_agent.has_pending_task() {
-            self.push_session_agent_message(SessionAgentMessage::error(
-                "Agent is already processing another response; approved tool result was not sent to the model.",
-            ), cx);
-            self.status_message = "Agent is already processing.".into();
+            self.push_session_agent_message(
+                SessionAgentMessage::error(i18n::string(
+                    "workspace.panel.agent.messages.approved_tool_result_skipped",
+                )),
+                cx,
+            );
+            self.status_message = i18n::string("workspace.panel.agent.messages.already_processing");
             return;
         }
 
@@ -1517,19 +1546,22 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.session_agent.reject_tool_call(&tool_id);
-        self.status_message = "Tool denied.".into();
+        self.status_message = i18n::string("workspace.panel.agent.messages.tool_denied");
         self.persist_session_agent_chat();
         cx.notify();
     }
 
     pub(in crate::ui::shell) fn copy_session_agent_text(
         &mut self,
-        label: &str,
+        label: String,
         text: String,
         cx: &mut Context<Self>,
     ) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.status_message = format!("Copied {label}.");
+        self.status_message = i18n::string_args(
+            "workspace.panel.agent.messages.copy_success",
+            &[("label", &label)],
+        );
         cx.notify();
     }
 
@@ -1551,15 +1583,24 @@ impl AppView {
             return truncate_with_ellipsis(title, 48);
         }
 
+        let fallback_title = i18n::string("workspace.panel.agent.sidebar_title");
         self.session_agent
             .messages
             .iter()
             .find(|message| message.role == SessionAgentMessageRole::User)
             .map(|message| {
-                truncate_with_ellipsis(message.content.lines().next().unwrap_or("Chat").trim(), 48)
+                truncate_with_ellipsis(
+                    message
+                        .content
+                        .lines()
+                        .next()
+                        .unwrap_or(fallback_title.as_str())
+                        .trim(),
+                    48,
+                )
             })
             .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"))
+            .unwrap_or_else(|| fallback_title.clone())
     }
 
     fn notify_background_session_agent(
@@ -1667,7 +1708,7 @@ impl AppView {
                         .session_agent
                         .tool_call(&id)
                         .map(|tool_call| tool_call.name)
-                        .unwrap_or_else(|| "tool".to_string());
+                        .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool"));
                     self.session_agent
                         .require_tool_call_confirmation(&id, message);
                     self.finish_session_agent_stream(request_id, cx);
@@ -1776,7 +1817,7 @@ impl AppView {
                 })
             });
         self.status_message = if waiting_for_confirmation {
-            "Waiting for tool approval.".into()
+            i18n::string("workspace.panel.agent.messages.waiting_for_tool_approval")
         } else {
             i18n::string("workspace.panel.agent.reply_ready")
         };
@@ -1959,12 +2000,14 @@ impl AppView {
         self.session_agent.active_request_id = 0;
         self.session_agent.last_error = None;
         self.push_session_agent_message(
-            SessionAgentMessage::error(format!(
-                "Agent tool-loop error returned to model: {message}"
+            SessionAgentMessage::error(i18n::string_args(
+                "workspace.panel.agent.messages.tool_loop_error_message",
+                &[("message", &message)],
             )),
             cx,
         );
-        self.status_message = "Agent tool-loop error returned to model.".into();
+        self.status_message =
+            i18n::string("workspace.panel.agent.messages.tool_loop_error_returned");
 
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {
             self.session_agent.last_error = Some(message.clone());
@@ -2395,7 +2438,7 @@ fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentM
                 name: record
                     .tool_name
                     .filter(|name| !name.trim().is_empty())
-                    .unwrap_or_else(|| "tool".to_string()),
+                    .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool")),
                 arguments: record.content,
                 summary,
                 status,
@@ -2425,7 +2468,9 @@ fn restored_tool_status_and_note(
     match status.unwrap_or("completed") {
         "pending" | "waiting_for_confirmation" | "in_progress" => (
             SessionAgentToolStatus::Rejected,
-            Some("This tool call was interrupted before completion.".to_string()),
+            Some(i18n::string(
+                "workspace.panel.agent.messages.tool_interrupted_before_completion",
+            )),
         ),
         "failed" => (SessionAgentToolStatus::Failed, note),
         "rejected" => (SessionAgentToolStatus::Rejected, note),
@@ -2471,6 +2516,8 @@ mod tests {
 
     #[test]
     fn unfinished_tool_statuses_restore_as_interrupted_rejected_tools() {
+        let interrupted =
+            i18n::string("workspace.panel.agent.messages.tool_interrupted_before_completion");
         for status in [
             SessionAgentToolStatus::Pending,
             SessionAgentToolStatus::WaitingForConfirmation,
@@ -2481,10 +2528,7 @@ mod tests {
                     Some(tool_status_as_str(status)),
                     Some("old note".to_string()),
                 ),
-                (
-                    SessionAgentToolStatus::Rejected,
-                    Some("This tool call was interrupted before completion.".to_string()),
-                )
+                (SessionAgentToolStatus::Rejected, Some(interrupted.clone()),)
             );
         }
     }

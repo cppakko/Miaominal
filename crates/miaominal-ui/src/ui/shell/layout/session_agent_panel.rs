@@ -102,13 +102,17 @@ fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
 impl AppView {
     pub(in crate::ui::shell::layout) fn copy_session_agent_message_or_selection(
         &mut self,
-        fallback_label: &str,
+        fallback_label: String,
         fallback_text: String,
         selected_text: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(selected_text) = selected_text {
-            self.copy_session_agent_text("selection", selected_text, cx);
+            self.copy_session_agent_text(
+                i18n::string("workspace.panel.agent.labels.selection"),
+                selected_text,
+                cx,
+            );
         } else {
             self.copy_session_agent_text(fallback_label, fallback_text, cx);
         }

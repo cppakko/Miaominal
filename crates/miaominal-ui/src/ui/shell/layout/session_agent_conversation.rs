@@ -428,7 +428,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                                 let selected_text = selected_text.clone();
                                 entity.update(cx, |this, cx| {
                                     this.copy_session_agent_message_or_selection(
-                                        "message",
+                                        i18n::string("workspace.panel.agent.labels.message"),
                                         text,
                                         selected_text,
                                         cx,
@@ -460,7 +460,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
         SessionAgentMessageRole::User => i18n::string("workspace.panel.agent.you"),
         SessionAgentMessageRole::Assistant => i18n::string("workspace.panel.agent.assistant"),
         SessionAgentMessageRole::Thinking => i18n::string("workspace.panel.agent.thinking"),
-        SessionAgentMessageRole::ToolCall => "Tool".into(),
+        SessionAgentMessageRole::ToolCall => i18n::string("workspace.panel.agent.tool"),
         SessionAgentMessageRole::Error => i18n::string("workspace.panel.agent.error"),
     };
 
@@ -544,7 +544,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                             let selected_text = selected_text.clone();
                             entity.update(cx, |this, cx| {
                                 this.copy_session_agent_message_or_selection(
-                                    "message",
+                                    i18n::string("workspace.panel.agent.labels.message"),
                                     text,
                                     selected_text,
                                     cx,
@@ -857,7 +857,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                                 move |_window, cx| {
                                     let text = copy_all_text.clone();
                                     copy_all_entity.update(cx, |this, cx| {
-                                        this.copy_session_agent_text("tool call", text, cx);
+                                        this.copy_session_agent_text(
+                                            i18n::string("workspace.panel.agent.labels.tool_call"),
+                                            text,
+                                            cx,
+                                        );
                                     });
                                 },
                             )),

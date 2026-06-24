@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ui::i18n;
 
 #[derive(Clone, Copy)]
 pub(in crate::ui::shell::layout) struct ToolTerminalColors {
@@ -13,7 +14,8 @@ pub(in crate::ui::shell::layout) struct ToolTerminalColors {
 
 pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
     tool_call_id: &str,
-    label: &str,
+    label: String,
+    language: Option<&str>,
     content: String,
     colors: ToolTerminalColors,
     error: bool,
@@ -28,20 +30,16 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
             } else {
                 colors.on_surface
             }))
-            .child("(no output)")
+            .child(i18n::string(
+                "workspace.panel.agent.tool_result.empty_output",
+            ))
             .into_any_element();
         return render_tool_terminal_block_content(label, empty_content, colors);
     }
 
-    // Use markdown code block for syntax highlighting via tree-sitter
-    // Try to infer language from label
-    let language = match label {
-        "Diff" | "Patch Output" => "diff",
-        "Command" => "bash",
-        _ => "", // Plain text, no highlighting
-    };
-
-    let markdown_code = if language.is_empty() {
+    let markdown_code = if let Some(language) = language {
+        format!("```{}\n{}\n```", language, content)
+    } else {
         // For plain text or unknown content, use plain div
         let highlighted_content = div()
             .font_family(miaominal_settings::font_family())
@@ -55,15 +53,13 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
             .child(content.clone())
             .into_any_element();
         return render_tool_terminal_block_content(label, highlighted_content, colors);
-    } else {
-        format!("```{}\n{}\n```", language, content)
     };
 
     let highlighted_content = div()
         .w_full()
         .child(
             gpui_component::text::TextView::markdown(
-                tool_terminal_markdown_id(tool_call_id, label, language),
+                tool_terminal_markdown_id(tool_call_id, &label, language.unwrap_or_default()),
                 markdown_code,
             )
             .selectable(colors.selectable),
@@ -83,7 +79,7 @@ pub(in crate::ui::shell::layout) fn tool_terminal_markdown_id(
 }
 
 pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
-    label: &str,
+    label: String,
     content: gpui::AnyElement,
     colors: ToolTerminalColors,
 ) -> gpui::AnyElement {
@@ -107,7 +103,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
                 .text_size(miaominal_settings::FontSize::Body.scaled())
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(colors.text_muted))
-                .child(label.to_string()),
+                .child(label),
         )
         .child(
             div()
@@ -160,7 +156,7 @@ pub(in crate::ui::shell::layout) fn render_tool_field_grid(
 /// Renders a terminal-style block with syntax-highlighted bash command text.
 pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
     tool_call_id: &str,
-    label: &str,
+    label: String,
     command: &str,
     colors: ToolTerminalColors,
     _syntax_theme: &::theme::SyntaxTheme,
@@ -172,7 +168,9 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
             .text_size(miaominal_settings::FontSize::Body.scaled())
             .line_height(miaominal_settings::scaled_line_height(18.0))
             .text_color(base_color)
-            .child("(no command)")
+            .child(i18n::string(
+                "workspace.panel.agent.tool_result.empty_command",
+            ))
             .into_any_element();
         return render_tool_terminal_block_content(label, content, colors);
     }
@@ -183,7 +181,7 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
         .w_full()
         .child(
             gpui_component::text::TextView::markdown(
-                tool_terminal_markdown_id(tool_call_id, label, "bash"),
+                tool_terminal_markdown_id(tool_call_id, &label, "bash"),
                 markdown_code,
             )
             .selectable(colors.selectable),

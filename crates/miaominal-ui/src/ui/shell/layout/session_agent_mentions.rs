@@ -142,7 +142,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
                     .py_2()
                     .text_size(miaominal_settings::FontSize::Body.scaled())
                     .text_color(rgb(roles.on_surface_variant))
-                    .child("No targets"),
+                    .child(i18n::string("workspace.panel.agent.targets.empty")),
             )
         })
         .children(filtered.into_iter().map(|candidate| {
@@ -197,7 +197,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
                         div()
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(roles.error))
-                            .child("offline"),
+                            .child(i18n::string("workspace.panel.agent.targets.offline")),
                     )
                 })
                 .with_animation(

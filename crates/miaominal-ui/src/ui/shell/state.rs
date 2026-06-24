@@ -508,7 +508,9 @@ impl SessionAgentState {
         {
             tool_call.status = SessionAgentToolStatus::InProgress;
             tool_call.requires_confirmation = false;
-            tool_call.confirmation_note = Some("Approved. Running tool...".into());
+            tool_call.confirmation_note = Some(i18n::string(
+                "workspace.panel.agent.messages.tool_approved_running",
+            ));
         }
     }
 
@@ -522,7 +524,8 @@ impl SessionAgentState {
         {
             tool_call.status = SessionAgentToolStatus::Rejected;
             tool_call.requires_confirmation = false;
-            tool_call.confirmation_note = Some("Denied by user.".into());
+            tool_call.confirmation_note =
+                Some(i18n::string("workspace.panel.agent.messages.tool_denied"));
         }
     }
 
@@ -648,7 +651,7 @@ impl SessionAgentState {
             && message.role == SessionAgentMessageRole::Assistant
             && message.content.trim().is_empty()
         {
-            message.content = "Stopped by user.".to_string();
+            message.content = i18n::string("workspace.panel.agent.messages.stopped_by_user");
             return;
         }
 
@@ -663,9 +666,9 @@ impl SessionAgentState {
                         && !message.content.trim().is_empty())
             });
         if !turn_has_visible_output {
-            self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(
-                "Stopped by user.",
-            ));
+            self.push_message_with_enter_motion(SessionAgentMessage::assistant_raw(i18n::string(
+                "workspace.panel.agent.messages.stopped_by_user",
+            )));
         }
     }
 
@@ -1768,11 +1771,15 @@ mod tests {
         );
 
         assert!(state.has_active_tool_call());
-        assert!(state.reject_active_tool_calls("Stopped by user."));
+        let stopped_by_user = i18n::string("workspace.panel.agent.messages.stopped_by_user");
+        assert!(state.reject_active_tool_calls(&stopped_by_user));
 
         let tool = state.tool_call("tool-1").expect("tool should exist");
         assert_eq!(tool.status, SessionAgentToolStatus::Rejected);
-        assert_eq!(tool.confirmation_note.as_deref(), Some("Stopped by user."));
+        assert_eq!(
+            tool.confirmation_note.as_deref(),
+            Some(stopped_by_user.as_str())
+        );
         assert!(!state.has_active_tool_call());
     }
 
@@ -1847,6 +1854,9 @@ mod tests {
 
         assert_eq!(state.messages.len(), 2);
         assert_eq!(state.messages[1].role, SessionAgentMessageRole::Assistant);
-        assert_eq!(state.messages[1].content, "Stopped by user.");
+        assert_eq!(
+            state.messages[1].content,
+            i18n::string("workspace.panel.agent.messages.stopped_by_user")
+        );
     }
 }

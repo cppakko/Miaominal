@@ -66,7 +66,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                             .text_size(miaominal_settings::FontSize::Subheading.scaled())
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(roles.on_surface))
-                            .child("AI Chat"),
+                            .child(i18n::string("workspace.panel.agent.chat")),
                     )
                     .child(icon_button_with_tooltip(
                         AppIcon::Search,
@@ -120,7 +120,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                         .text_center()
                         .text_size(miaominal_settings::FontSize::Input.scaled())
                         .text_color(rgb(text_muted))
-                        .child("No saved chats")
+                        .child(i18n::string("workspace.panel.agent.history.empty"))
                         .into_any_element()
                 } else if filtered_indices.is_empty() {
                     // Empty state: no matching sessions
@@ -192,9 +192,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                 this.session_agent_session_is_busy(&session.id);
                                             let title = if session.title.trim().is_empty() {
                                                 if is_current {
-                                                    "Current chat".to_string()
+                                                    i18n::string("workspace.panel.agent.history.current_chat")
                                                 } else {
-                                                    "Untitled chat".to_string()
+                                                    i18n::string("workspace.panel.agent.history.untitled_chat")
                                                 }
                                             } else {
                                                 session.title.clone()
@@ -204,11 +204,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                             let updated_at =
                                                 format_relative_chat_time(session.updated_at);
                                             let status_label = if needs_approval {
-                                                Some("Needs approval")
+                                                Some(i18n::string("workspace.panel.agent.history.needs_approval"))
                                             } else if is_busy {
-                                                Some("Working")
+                                                Some(i18n::string("workspace.panel.agent.history.working"))
                                             } else if is_current {
-                                                Some("Current")
+                                                Some(i18n::string("workspace.panel.agent.history.current"))
                                             } else {
                                                 None
                                             };

@@ -59,7 +59,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                             let focus = state.focus_handle(cx);
                             menu.action_context(focus)
                                 .menu_with_disabled(
-                                    "Cut",
+                                    i18n::string("workspace.menu.cut"),
                                     Box::new(gpui_component::input::Cut),
                                     !has_selection,
                                 )
@@ -75,7 +75,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 )
                                 .item(PopupMenuItem::separator())
                                 .menu_with_disabled(
-                                    "Select All",
+                                    i18n::string("workspace.menu.select_all"),
                                     Box::new(gpui_component::input::SelectAll),
                                     !has_text,
                                 )

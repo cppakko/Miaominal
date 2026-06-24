@@ -377,8 +377,20 @@ impl AppView {
                 .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
-        let agent_title_input = new_input_state("Chat", "", false, window, cx);
-        let agent_rename_title_input = new_input_state("New title", "", false, window, cx);
+        let agent_title_input = new_input_state(
+            i18n::string("workspace.panel.agent.sidebar_title"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let agent_rename_title_input = new_input_state(
+            i18n::string("dialogs.chat_rename.title_label"),
+            "",
+            false,
+            window,
+            cx,
+        );
         let filter_input = new_input_state(
             i18n::string("placeholders.hosts.filter"),
             "",

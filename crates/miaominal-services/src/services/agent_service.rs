@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use miaominal_agent::{
     AgentExecChannel, AgentJobRegistry, AgentToolCallRequest, AgentToolCallResponse,
 };
-use miaominal_core::profile::{SessionProfile, ShellType};
+use miaominal_core::profile::SessionProfile;
 use miaominal_secrets::SecretKind;
 use miaominal_secrets::SecretStore;
 use miaominal_settings::WebSearchConfig;
@@ -45,12 +45,6 @@ impl AgentService {
             .cloned()
             .ok_or_else(|| anyhow!("profile `{profile_id}` was not found"))?;
 
-        if !matches!(profile.shell_type, ShellType::Posix | ShellType::Fish) {
-            return Err(anyhow!(
-                "agent exec channel v1 only supports POSIX-like remote shells"
-            ));
-        }
-
         let mut channel = AgentExecChannel::for_profile_with_jobs(
             profile,
             sessions.to_vec(),
@@ -92,7 +86,7 @@ impl AgentService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_core::profile::SessionProfile;
+    use miaominal_core::profile::{SessionProfile, ShellType};
 
     fn service() -> AgentService {
         let runtime = tokio::runtime::Runtime::new().expect("runtime should start");
@@ -128,16 +122,23 @@ mod tests {
     }
 
     #[test]
-    fn non_posix_profile_returns_error() {
+    fn powershell_profile_is_accepted() {
         let service = service();
 
-        let error = match service
-            .channel_for_profile("session-1", &[profile("session-1", ShellType::PowerShell)])
-        {
-            Ok(_) => panic!("non-posix profile should fail"),
-            Err(error) => error,
-        };
+        service
+            .channel_for_profile(
+                "session-1",
+                &[profile("session-1", ShellType::PowerShell)],
+            )
+            .expect("PowerShell profile should be accepted");
+    }
 
-        assert!(error.to_string().contains("POSIX-like"));
+    #[test]
+    fn cmd_profile_is_accepted() {
+        let service = service();
+
+        service
+            .channel_for_profile("session-1", &[profile("session-1", ShellType::Cmd)])
+            .expect("Cmd profile should be accepted");
     }
 }

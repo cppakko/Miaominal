@@ -168,9 +168,18 @@ fn build_profile_import_dialog(source: ImportSourceKind) -> FileDialog {
                 dialog
             }
         }
-        ImportSourceKind::PuttyRegistry => dialog.add_filter("PuTTY registry export", &["reg"]),
-        ImportSourceKind::SecureCrtXml => dialog.add_filter("SecureCRT XML export", &["xml"]),
-        ImportSourceKind::FinalShellJson => dialog.add_filter("FinalShell export", &["json"]),
+        ImportSourceKind::PuttyRegistry => dialog.add_filter(
+            i18n::string("settings.connections.import_messages.putty_filter"),
+            &["reg"],
+        ),
+        ImportSourceKind::SecureCrtXml => dialog.add_filter(
+            i18n::string("settings.connections.import_messages.securecrt_filter"),
+            &["xml"],
+        ),
+        ImportSourceKind::FinalShellJson => dialog.add_filter(
+            i18n::string("settings.connections.import_messages.finalshell_filter"),
+            &["json"],
+        ),
     }
 }
 

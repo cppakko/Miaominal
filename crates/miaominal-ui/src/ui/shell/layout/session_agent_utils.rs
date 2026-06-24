@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ui::i18n;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_token_usage(
     agent: &SessionAgentState,
@@ -91,13 +92,22 @@ pub(in crate::ui::shell::layout) fn format_relative_chat_time(timestamp: i64) ->
     let elapsed = now.saturating_sub(timestamp).max(0);
 
     if elapsed < 60 {
-        "Just now".to_string()
+        i18n::string("workspace.panel.agent.time.just_now")
     } else if elapsed < 3_600 {
-        format!("{}m ago", elapsed / 60)
+        i18n::string_args(
+            "workspace.panel.agent.time.minutes_ago",
+            &[("count", &(elapsed / 60).to_string())],
+        )
     } else if elapsed < 86_400 {
-        format!("{}h ago", elapsed / 3_600)
+        i18n::string_args(
+            "workspace.panel.agent.time.hours_ago",
+            &[("count", &(elapsed / 3_600).to_string())],
+        )
     } else if elapsed < 604_800 {
-        format!("{}d ago", elapsed / 86_400)
+        i18n::string_args(
+            "workspace.panel.agent.time.days_ago",
+            &[("count", &(elapsed / 86_400).to_string())],
+        )
     } else {
         format_local_timestamp(Some(
             SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp.max(0) as u64),

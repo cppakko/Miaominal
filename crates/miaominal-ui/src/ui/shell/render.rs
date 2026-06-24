@@ -1569,11 +1569,11 @@ impl AppView {
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
         let title = if prompt.title.trim().is_empty() {
-            "Untitled chat"
+            i18n::string("workspace.panel.agent.history.untitled_chat")
         } else {
-            prompt.title.as_str()
+            prompt.title.clone()
         };
-        let subtitle = format!("Delete \"{title}\"? This will remove the chat and its messages.");
+        let subtitle = i18n::string_args("dialogs.chat_delete.message", &[("title", &title)]);
 
         let entity_cancel = entity.clone();
         let entity_confirm = entity.clone();
@@ -1584,7 +1584,7 @@ impl AppView {
             .child(
                 basic_dialog_action_button(
                     "chat-session-delete-cancel",
-                    "Cancel",
+                    i18n::string("dialogs.chat_delete.cancel"),
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
@@ -1596,7 +1596,7 @@ impl AppView {
             .child(
                 basic_dialog_action_button(
                     "chat-session-delete-confirm",
-                    "Delete",
+                    i18n::string("dialogs.chat_delete.confirm"),
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
@@ -1608,7 +1608,7 @@ impl AppView {
 
         render_basic_dialog(
             "chat-session-delete",
-            "Delete chat".to_string(),
+            i18n::string("dialogs.chat_delete.title"),
             Some(subtitle),
             None,
             actions.into_any_element(),
@@ -1624,12 +1624,12 @@ impl AppView {
     ) -> gpui::AnyElement {
         let title_input = self.workspace_forms.agent.rename_title_input.clone();
         let current_title = if prompt.current_title.trim().is_empty() {
-            "Untitled chat"
+            i18n::string("workspace.panel.agent.history.untitled_chat")
         } else {
-            prompt.current_title.as_str()
+            prompt.current_title.clone()
         };
         let subtitle =
-            i18n::string_args("dialogs.chat_rename.message", &[("title", current_title)]);
+            i18n::string_args("dialogs.chat_rename.message", &[("title", &current_title)]);
 
         let entity_cancel = entity.clone();
         let entity_confirm = entity.clone();

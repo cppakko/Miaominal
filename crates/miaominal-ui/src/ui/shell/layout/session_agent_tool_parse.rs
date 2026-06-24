@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ui::i18n;
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell::layout) struct RunShellDisplayResult {
@@ -19,10 +20,14 @@ impl RunShellDisplayResult {
             lines.push(self.stderr.clone());
         }
         if self.timed_out {
-            lines.push("Command timed out.".to_string());
+            lines.push(i18n::string(
+                "workspace.panel.agent.tool_result.command_timed_out",
+            ));
         }
         if self.truncated {
-            lines.push("Output truncated.".to_string());
+            lines.push(i18n::string(
+                "workspace.panel.agent.tool_result.output_truncated",
+            ));
         }
         lines.join("\n")
     }
@@ -133,12 +138,24 @@ pub(in crate::ui::shell::layout) fn pending_result_text(
     tool_call: &crate::ui::shell::state::SessionAgentToolCall,
 ) -> String {
     match tool_call.status {
-        SessionAgentToolStatus::Pending => "Preparing request...".to_string(),
-        SessionAgentToolStatus::WaitingForConfirmation => "Waiting for approval...".to_string(),
-        SessionAgentToolStatus::InProgress => "Waiting for result...".to_string(),
-        SessionAgentToolStatus::Completed => "No output".to_string(),
-        SessionAgentToolStatus::Failed => "Tool failed before returning output.".to_string(),
-        SessionAgentToolStatus::Rejected => "Tool was rejected.".to_string(),
+        SessionAgentToolStatus::Pending => {
+            i18n::string("workspace.panel.agent.tool_status.preparing_request")
+        }
+        SessionAgentToolStatus::WaitingForConfirmation => {
+            i18n::string("workspace.panel.agent.tool_status.waiting_for_approval")
+        }
+        SessionAgentToolStatus::InProgress => {
+            i18n::string("workspace.panel.agent.tool_status.waiting_for_result")
+        }
+        SessionAgentToolStatus::Completed => {
+            i18n::string("workspace.panel.agent.tool_status.no_output")
+        }
+        SessionAgentToolStatus::Failed => {
+            i18n::string("workspace.panel.agent.tool_status.tool_failed")
+        }
+        SessionAgentToolStatus::Rejected => {
+            i18n::string("workspace.panel.agent.tool_status.tool_rejected")
+        }
     }
 }
 
@@ -157,18 +174,22 @@ pub(in crate::ui::shell::layout) fn arguments_are_streaming(
 
 pub(in crate::ui::shell::layout) fn preparing_tool_text(tool_name: &str) -> String {
     match tool_name {
-        "read" => "Preparing file read...".to_string(),
-        "list" => "Preparing directory listing...".to_string(),
-        "glob" => "Preparing file search...".to_string(),
-        "grep" => "Preparing text search...".to_string(),
-        "start_job" => "Preparing background job...".to_string(),
-        "poll_job" => "Preparing job status request...".to_string(),
-        "stop_job" => "Preparing job stop request...".to_string(),
-        "web_search" => "Preparing web search...".to_string(),
-        "web_fetch" => "Preparing web fetch...".to_string(),
-        "workspace_info" => "Preparing workspace info request...".to_string(),
-        "ask_user" | "approval" => "Preparing approval prompt...".to_string(),
-        _ => "Preparing request...".to_string(),
+        "read" => i18n::string("workspace.panel.agent.tool_status.preparing_file_read"),
+        "list" => i18n::string("workspace.panel.agent.tool_status.preparing_directory_listing"),
+        "glob" => i18n::string("workspace.panel.agent.tool_status.preparing_file_search"),
+        "grep" => i18n::string("workspace.panel.agent.tool_status.preparing_text_search"),
+        "start_job" => i18n::string("workspace.panel.agent.tool_status.preparing_background_job"),
+        "poll_job" => i18n::string("workspace.panel.agent.tool_status.preparing_job_status"),
+        "stop_job" => i18n::string("workspace.panel.agent.tool_status.preparing_job_stop"),
+        "web_search" => i18n::string("workspace.panel.agent.tool_status.preparing_web_search"),
+        "web_fetch" => i18n::string("workspace.panel.agent.tool_status.preparing_web_fetch"),
+        "workspace_info" => {
+            i18n::string("workspace.panel.agent.tool_status.preparing_workspace_info")
+        }
+        "ask_user" | "approval" => {
+            i18n::string("workspace.panel.agent.tool_status.preparing_approval_prompt")
+        }
+        _ => i18n::string("workspace.panel.agent.tool_status.preparing_request"),
     }
 }
 
@@ -264,18 +285,18 @@ pub(in crate::ui::shell::layout) fn display_json_value(value: &serde_json::Value
 
 pub(in crate::ui::shell::layout) fn title_case_key(key: &str) -> String {
     match key {
-        "path" => "Path".to_string(),
-        "root" => "Root".to_string(),
-        "pattern" => "Pattern".to_string(),
-        "query" => "Query".to_string(),
-        "url" => "Url".to_string(),
-        "command" => "Command".to_string(),
-        "cwd" => "Cwd".to_string(),
-        "job_id" => "Job".to_string(),
-        "base_dir" => "Base".to_string(),
-        "content" => "Content".to_string(),
-        "summary" => "Summary".to_string(),
-        "message" => "Message".to_string(),
+        "path" => i18n::string("workspace.panel.agent.tool_fields.path"),
+        "root" => i18n::string("workspace.panel.agent.tool_fields.root"),
+        "pattern" => i18n::string("workspace.panel.agent.tool_fields.pattern"),
+        "query" => i18n::string("workspace.panel.agent.tool_fields.query"),
+        "url" => i18n::string("workspace.panel.agent.tool_fields.url"),
+        "command" => i18n::string("workspace.panel.agent.tool_fields.command"),
+        "cwd" => i18n::string("workspace.panel.agent.tool_fields.cwd"),
+        "job_id" => i18n::string("workspace.panel.agent.tool_fields.job"),
+        "base_dir" => i18n::string("workspace.panel.agent.tool_fields.base"),
+        "content" => i18n::string("workspace.panel.agent.tool_fields.content"),
+        "summary" => i18n::string("workspace.panel.agent.tool_fields.summary"),
+        "message" => i18n::string("workspace.panel.agent.tool_fields.message"),
         _ => key.replace('_', " "),
     }
 }
@@ -306,12 +327,25 @@ pub(in crate::ui::shell::layout) fn patch_paths(patch: &str) -> Vec<String> {
 pub(in crate::ui::shell::layout) fn format_tool_call_copy_text(
     tool_call: &crate::ui::shell::state::SessionAgentToolCall,
 ) -> String {
+    let arguments = if tool_call.arguments.trim() == "No arguments" {
+        i18n::string("workspace.panel.agent.tool_placeholders.no_arguments")
+    } else {
+        tool_call.arguments.clone()
+    };
     let mut text = format!(
-        "Tool: {}\nStatus: {:?}\nArguments:\n{}",
-        tool_call.name, tool_call.status, tool_call.arguments
+        "{}: {}\n{}: {:?}\n{}:\n{}",
+        i18n::string("workspace.panel.agent.tool_copy.header_tool"),
+        tool_call.name,
+        i18n::string("workspace.panel.agent.tool_copy.header_status"),
+        tool_call.status,
+        i18n::string("workspace.panel.agent.tool_copy.header_arguments"),
+        arguments
     );
     if let Some(result) = tool_call.confirmation_note.as_ref() {
-        text.push_str("\n\nResult:\n");
+        text.push_str(&format!(
+            "\n\n{}:\n",
+            i18n::string("workspace.panel.agent.tool_copy.header_result")
+        ));
         text.push_str(result);
     }
     text
