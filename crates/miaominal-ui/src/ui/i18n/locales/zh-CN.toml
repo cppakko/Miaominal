@@ -407,6 +407,16 @@ connected = "已连接"
 offline = "离线"
 traffic = "上:{upload}  下:{download}"
 
+[session.footer.tooltips]
+connection_status = "连接状态：{status}"
+monitor_panel = "切换左侧面板"
+status_message = "最新状态：{message}"
+status_message_empty = "最新状态"
+terminal_size = "终端尺寸：{size}"
+traffic = "会话流量：{traffic}"
+agent_panel = "切换聊天面板"
+connection_target = "连接目标：{target}"
+
 [session.workspace]
 connecting_forwarding_rule = "正在连接转发规则"
 connecting_to_host = "正在连接主机"

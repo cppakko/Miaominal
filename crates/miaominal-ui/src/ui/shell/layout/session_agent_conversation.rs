@@ -815,10 +815,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                     .items_center()
                     .gap_2()
                     .px_3()
-                    .py_2()
-                    .when(expanded, |this| {
-                        this.border_b_1().border_color(rgb(roles.outline_variant))
-                    })
+                    .when(!expanded, |this| this.py_2())
+                    .when(expanded, |this| this.pt_2())
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();

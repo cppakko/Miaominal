@@ -546,6 +546,16 @@ connected = "CONNECTED"
 offline = "OFFLINE"
 traffic = "U:{upload}  D:{download}"
 
+[session.footer.tooltips]
+connection_status = "Connection status: {status}"
+monitor_panel = "Toggle left panel"
+status_message = "Latest status: {message}"
+status_message_empty = "Latest status"
+terminal_size = "Terminal size: {size}"
+traffic = "Session traffic: {traffic}"
+agent_panel = "Toggle chat panel"
+connection_target = "Connection target: {target}"
+
 [session.workspace]
 connecting_forwarding_rule = "Connecting forwarding rule"
 connecting_to_host = "Connecting to host"

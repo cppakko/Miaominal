@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui::{StyleRefinement, WindowControlArea, point};
+use gpui::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_TITLE_CHARS: usize = 20;
@@ -30,6 +30,14 @@ fn window_controls_on_left() -> bool {
 
 fn show_macos_traffic_light_space(window: &Window) -> bool {
     cfg!(target_os = "macos") && !window.is_fullscreen()
+}
+
+fn footer_tooltip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    let text = text.into();
+
+    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 #[derive(Clone)]
@@ -1249,6 +1257,10 @@ impl AppView {
                 (label, tab_status_color(tab))
             })
             .unwrap_or_else(|| (i18n::string("session.footer.offline"), text_muted));
+        let connection_tooltip = i18n::string_args(
+            "session.footer.tooltips.connection_status",
+            &[("status", &connection_label)],
+        );
         let connection_target = self
             .active_profile()
             .map(|profile| {
@@ -1277,6 +1289,14 @@ impl AppView {
                 ],
             )
         });
+        let status_message_tooltip = if self.status_message.trim().is_empty() {
+            i18n::string("session.footer.tooltips.status_message_empty")
+        } else {
+            i18n::string_args(
+                "session.footer.tooltips.status_message",
+                &[("message", &self.status_message)],
+            )
+        };
         let monitor_toggle_entity = entity.clone();
         let agent_toggle_entity = entity.clone();
 
@@ -1294,8 +1314,10 @@ impl AppView {
                     .gap_3()
                     .child(
                         h_flex()
+                            .id("status-footer-connection-status")
                             .items_center()
                             .gap_2()
+                            .tooltip(footer_tooltip(connection_tooltip))
                             .child(
                                 div()
                                     .size(px(6.0))
@@ -1312,8 +1334,9 @@ impl AppView {
                     .when(panel_session.is_some(), |this| {
                         this.child(
                             div().id("session-monitor-panel-toggle").child(
-                                icon_button(
+                                icon_button_with_tooltip(
                                     AppIcon::Computer,
+                                    i18n::string("session.footer.tooltips.monitor_panel"),
                                     24.0,
                                     8.0,
                                     Some(roles.surface_container),
@@ -1336,35 +1359,52 @@ impl AppView {
                     })
                     .child(
                         div()
+                            .id("status-footer-status-message")
                             .flex_1()
                             .min_w(px(0.0))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
+                            .tooltip(footer_tooltip(status_message_tooltip))
                             .child(self.status_message.clone()),
                     )
                     .when_some(pty_label, |this, label| {
+                        let tooltip = i18n::string_args(
+                            "session.footer.tooltips.terminal_size",
+                            &[("size", &label)],
+                        );
+
                         this.child(
                             div()
+                                .id("status-footer-terminal-size")
                                 .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(text_muted))
+                                .tooltip(footer_tooltip(tooltip))
                                 .child(label),
                         )
                     })
                     .when_some(traffic_label, |this, label| {
+                        let tooltip = i18n::string_args(
+                            "session.footer.tooltips.traffic",
+                            &[("traffic", &label)],
+                        );
+
                         this.child(
                             div()
+                                .id("status-footer-traffic")
                                 .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(text_muted))
+                                .tooltip(footer_tooltip(tooltip))
                                 .child(label),
                         )
                     })
                     .when(panel_session.is_some(), |this| {
                         this.child(
                             div().id("session-agent-panel-toggle").child(
-                                icon_button(
+                                icon_button_with_tooltip(
                                     AppIcon::Sparkles,
+                                    i18n::string("session.footer.tooltips.agent_panel"),
                                     24.0,
                                     8.0,
                                     Some(roles.surface_container),
@@ -1387,8 +1427,13 @@ impl AppView {
                     })
                     .child(
                         div()
+                            .id("status-footer-connection-target")
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(roles.on_surface_variant))
+                            .tooltip(footer_tooltip(i18n::string_args(
+                                "session.footer.tooltips.connection_target",
+                                &[("target", &connection_target)],
+                            )))
                             .child(connection_target),
                     ),
             )

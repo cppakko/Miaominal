@@ -77,9 +77,9 @@ pub(crate) use crate::ui::components::{
     EDITOR_FOOTER_ACTION_HEIGHT, IconTileTone, SearchInputStyle, TextInputSurface, badge,
     basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
     editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button, field_label,
-    icon_button, icon_tile, list_item_card, md3_select, page_muted_icon_tile,
-    page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item, pill_label,
-    search_filter_input, setting_field_with_reset_action, surface_secret_text_input,
+    icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
+    page_muted_icon_tile, page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
+    pill_label, search_filter_input, setting_field_with_reset_action, surface_secret_text_input,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
     surface_text_input, surface_text_input_stack,
 };
