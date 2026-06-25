@@ -22,6 +22,8 @@ mod search;
 mod session;
 #[path = "actions/session_agent.rs"]
 mod session_agent;
+#[path = "actions/session_agent_attachments.rs"]
+mod session_agent_attachments;
 #[path = "actions/session_sftp.rs"]
 mod session_sftp;
 #[path = "actions/session_sftp_edit.rs"]
