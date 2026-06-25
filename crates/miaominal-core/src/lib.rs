@@ -1,3 +1,4 @@
+pub mod chat_attachment;
 pub mod forwarding;
 pub mod keychain;
 pub mod known_host;

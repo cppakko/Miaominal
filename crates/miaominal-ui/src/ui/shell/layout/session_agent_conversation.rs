@@ -230,6 +230,7 @@ fn render_session_agent_markdown_block(
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         },
         fg,
         entity,

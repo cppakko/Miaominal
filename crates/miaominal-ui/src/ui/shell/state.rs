@@ -130,6 +130,7 @@ pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
     pub(in crate::ui::shell) thinking: Option<SessionAgentThinking>,
     pub(in crate::ui::shell) motion: SessionAgentMessageMotion,
+    pub(in crate::ui::shell) attachments: Vec<miaominal_core::chat_attachment::ChatAttachment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +154,21 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
+        }
+    }
+
+    pub(in crate::ui::shell) fn user_with_attachments(
+        content: impl Into<String>,
+        attachments: Vec<miaominal_core::chat_attachment::ChatAttachment>,
+    ) -> Self {
+        Self {
+            role: SessionAgentMessageRole::User,
+            content: content.into(),
+            tool_call: None,
+            thinking: None,
+            motion: SessionAgentMessageMotion::default(),
+            attachments,
         }
     }
 
@@ -163,6 +179,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         }
     }
 
@@ -177,6 +194,7 @@ impl SessionAgentMessage {
                 expanded: false,
             }),
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         }
     }
 
@@ -194,6 +212,7 @@ impl SessionAgentMessage {
                 expanded: false,
             }),
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         }
     }
 
@@ -205,6 +224,7 @@ impl SessionAgentMessage {
             tool_call: Some(tool_call),
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         }
     }
 
@@ -215,6 +235,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
+            attachments: Vec::new(),
         }
     }
 }
@@ -270,6 +291,9 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) search_scroll_target: Option<(usize, usize)>,
     /// Agent mode controlling tool availability, policy enforcement, and confirmation behavior.
     pub(in crate::ui::shell) agent_mode: AgentMode,
+    /// Attachments staged in the composer but not yet sent.
+    pub(in crate::ui::shell) pending_attachments:
+        Vec<miaominal_core::chat_attachment::ChatAttachment>,
 }
 
 /// Split message content into logical blocks for per-block search matching.
