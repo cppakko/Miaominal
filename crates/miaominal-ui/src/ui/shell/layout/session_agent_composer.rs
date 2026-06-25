@@ -2,7 +2,7 @@ use super::super::*;
 use super::session_agent_utils::*;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
-use gpui::{Animation, AnimationExt as _, ClipboardEntry, ImageFormat};
+use gpui::{Animation, AnimationExt as _, ClipboardEntry};
 use std::time::Duration;
 
 const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);

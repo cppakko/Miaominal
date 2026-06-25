@@ -2,11 +2,12 @@ use crate::error::{AgentError, AgentResult};
 use crate::tools::AgentToolSet;
 use anyhow::Context as _;
 use futures::StreamExt as _;
+use miaominal_core::chat_attachment::ChatImage;
 use rig_core::OneOrMany;
 use rig_core::agent::{Agent, AgentBuilder, MultiTurnStreamItem, StreamingError};
 use rig_core::client::CompletionClient;
 use rig_core::completion::{AssistantContent, CompletionModel, GetTokenUsage, Message};
-use rig_core::message::{ReasoningContent, ToolResultContent};
+use rig_core::message::{ImageMediaType, MimeType, ReasoningContent, ToolResultContent, UserContent};
 use rig_core::providers::{
     anthropic, cohere, deepseek, gemini, huggingface, mistral, openai, openrouter, together, xai,
 };
@@ -68,6 +69,10 @@ pub enum AgentChatRole {
 pub struct AgentChatMessage {
     pub role: AgentChatRole,
     pub content: String,
+    /// Images attached to this message (empty for assistant messages and
+    /// text-only user messages). Text file attachments are embedded into
+    /// `content` by the UI layer before conversion.
+    pub images: Vec<ChatImage>,
 }
 
 #[derive(Clone)]
@@ -75,6 +80,9 @@ pub struct AgentChatRequest {
     pub provider: AgentChatProvider,
     pub messages: Vec<AgentChatMessage>,
     pub prompt: String,
+    /// Images attached to the current prompt (sent as multimodal content to
+    /// vision-capable providers, or as a text marker fallback otherwise).
+    pub prompt_images: Vec<ChatImage>,
     pub tools: Option<AgentToolSet>,
     pub target_guidance: Option<String>,
 }
@@ -125,15 +133,60 @@ pub enum AgentChatEvent {
 const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
 const SESSION_AGENT_MAX_TURNS: usize = 40;
 
-fn chat_history(messages: Vec<AgentChatMessage>) -> Vec<Message> {
+fn chat_history(messages: Vec<AgentChatMessage>, vision_supported: bool) -> Vec<Message> {
     messages
         .into_iter()
-        .filter(|message| !message.content.trim().is_empty())
+        .filter(|message| {
+            !message.content.trim().is_empty() || !message.images.is_empty()
+        })
         .map(|message| match message.role {
-            AgentChatRole::User => Message::user(message.content),
+            AgentChatRole::User => build_user_message(&message.content, &message.images, vision_supported),
             AgentChatRole::Assistant => Message::assistant(message.content),
         })
         .collect::<Vec<_>>()
+}
+
+/// Returns `true` when the provider kind is known to support image content
+/// blocks in user messages. Providers not in this list receive a text marker
+/// fallback so the chat still works without crashing.
+fn provider_supports_vision(kind: AgentChatProviderKind) -> bool {
+    matches!(
+        kind,
+        AgentChatProviderKind::OpenAi
+            | AgentChatProviderKind::Anthropic
+            | AgentChatProviderKind::Gemini
+            | AgentChatProviderKind::OpenRouter
+            | AgentChatProviderKind::Xai
+    )
+}
+
+/// Builds a user `Message` from text and optional images. When the provider
+/// supports vision, images become `UserContent::Image` blocks alongside the
+/// text. Otherwise, a `[Image attached: N image(s)]` marker is appended to the
+/// text so the model is at least aware that images were shared.
+fn build_user_message(text: &str, images: &[ChatImage], vision_supported: bool) -> Message {
+    if images.is_empty() {
+        return Message::user(text);
+    }
+    if !vision_supported {
+        let marker = format!("[Image attached: {} image(s)]", images.len());
+        let combined = if text.trim().is_empty() {
+            marker
+        } else {
+            format!("{text}\n\n{marker}")
+        };
+        return Message::user(combined);
+    }
+    let mut content = OneOrMany::one(UserContent::text(text));
+    for image in images {
+        let media_type = ImageMediaType::from_mime_type(&image.mime_type);
+        content.push(UserContent::image_base64(
+            &image.data_base64,
+            media_type,
+            None,
+        ));
+    }
+    Message::User { content }
 }
 
 /// Generate a concise title (3-8 words) from the first user-assistant exchange.
@@ -150,6 +203,7 @@ pub async fn generate_title(
         provider,
         messages: Vec::new(),
         prompt,
+        prompt_images: Vec::new(),
         tools: None,
         target_guidance: None,
     };
@@ -204,10 +258,12 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
 pub async fn stream_chat(
     request: AgentChatRequest,
 ) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
+    let vision_supported = provider_supports_vision(request.provider.kind);
+    let prompt = build_user_message(&request.prompt, &request.prompt_images, vision_supported);
     stream_chat_with_history(
         request.provider,
-        chat_history(request.messages),
-        Message::user(request.prompt),
+        chat_history(request.messages, vision_supported),
+        prompt,
         request.tools,
         request.target_guidance,
     )
@@ -218,7 +274,8 @@ pub async fn stream_chat_after_tool_result(
     request: AgentToolResultContinuationRequest,
 ) -> AgentResult<mpsc::Receiver<AgentResult<AgentChatEvent>>> {
     let provider = request.provider;
-    let mut history = chat_history(request.messages);
+    let vision_supported = provider_supports_vision(provider.kind);
+    let mut history = chat_history(request.messages, vision_supported);
     let tool_arguments = serde_json::from_str(&request.tool_call.arguments)
         .unwrap_or_else(|_| serde_json::Value::String(request.tool_call.arguments.clone()));
     let tool_call_content = AssistantContent::tool_call(

@@ -76,9 +76,10 @@ pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u
     Ok(ChatAttachment {
         id: uuid::Uuid::new_v4().to_string(),
         filename: filename.to_string(),
-        mime_type,
+        mime_type: mime_type.clone(),
         size_bytes,
         content: ChatAttachmentContent::Image(ChatImage {
+            mime_type,
             data_base64,
             thumbnail_base64: thumbnail_b64,
             width,

@@ -52,6 +52,29 @@ fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
 
 impl From<&SessionAgentMessage> for AgentChatMessage {
     fn from(message: &SessionAgentMessage) -> Self {
+        let mut content = message.content.clone();
+        let images: Vec<miaominal_core::chat_attachment::ChatImage> = message
+            .attachments
+            .iter()
+            .filter_map(|attachment| {
+                match &attachment.content {
+                    miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
+                        Some(image.clone())
+                    }
+                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(text_file) => {
+                        let language = text_file.language.as_deref().unwrap_or("");
+                        let fence = if language.is_empty() { String::new() } else { format!("\n```{language}") };
+                        let close_fence = if language.is_empty() { String::new() } else { "\n```".to_string() };
+                        let block = format!(
+                            "\n\n[Attached file: {}]{fence}\n{}\n{close_fence}",
+                            attachment.filename, text_file.text
+                        );
+                        content.push_str(&block);
+                        None
+                    }
+                }
+            })
+            .collect();
         Self {
             role: match message.role {
                 SessionAgentMessageRole::User => AgentChatRole::User,
@@ -60,7 +83,8 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
                 | SessionAgentMessageRole::ToolCall
                 | SessionAgentMessageRole::Error => AgentChatRole::Assistant,
             },
-            content: message.content.clone(),
+            content,
+            images,
         }
     }
 }
@@ -975,6 +999,11 @@ impl AppView {
         let model_prompt = format!("{target_prefix}{prompt}");
         let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
+        let attachments = std::mem::take(&mut self.session_agent.pending_attachments);
+        let prompt_images: Vec<miaominal_core::chat_attachment::ChatImage> = attachments
+            .iter()
+            .filter_map(|attachment| attachment.as_image().cloned())
+            .collect();
         let history = self
             .session_agent
             .messages
@@ -988,7 +1017,10 @@ impl AppView {
             .map(AgentChatMessage::from)
             .collect::<Vec<_>>();
 
-        self.push_session_agent_message(SessionAgentMessage::user(model_prompt.clone()), cx);
+        self.push_session_agent_message(
+            SessionAgentMessage::user_with_attachments(model_prompt.clone(), attachments),
+            cx,
+        );
         self.record_session_agent_prompt_history(&prompt);
         self.persist_session_agent_chat();
         self.session_agent.active_request_id = request_id;
@@ -1013,6 +1045,7 @@ impl AppView {
                         provider,
                         messages: history,
                         prompt: model_prompt,
+                        prompt_images,
                         tools,
                         target_guidance,
                     })
@@ -2071,6 +2104,7 @@ impl AppView {
                         provider,
                         messages: history,
                         prompt,
+                        prompt_images: Vec::new(),
                         tools: None,
                         target_guidance: None,
                     })

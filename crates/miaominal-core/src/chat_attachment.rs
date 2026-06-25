@@ -62,6 +62,8 @@ impl ChatAttachment {
 /// bytes plus a small base64 thumbnail for preview rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatImage {
+    /// MIME type of the encoded image data, e.g. `image/png`, `image/jpeg`.
+    pub mime_type: String,
     /// Base64-encoded image bytes (already scaled/compressed at ingestion time).
     pub data_base64: String,
     /// Base64-encoded small thumbnail used for preview rows and message bubbles.
@@ -290,6 +292,7 @@ mod tests {
             mime_type: "image/png".into(),
             size_bytes: 100,
             content: ChatAttachmentContent::Image(ChatImage {
+                mime_type: "image/png".into(),
                 data_base64: "AAAA".into(),
                 thumbnail_base64: "BBBB".into(),
                 width: 10,
@@ -342,6 +345,7 @@ mod tests {
             mime_type: "image/png".into(),
             size_bytes: 4096,
             content: ChatAttachmentContent::Image(ChatImage {
+                mime_type: "image/png".into(),
                 data_base64: "iVBORw0KGgo=".into(),
                 thumbnail_base64: "iVBOR=".into(),
                 width: 800,
