@@ -534,6 +534,12 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                                     )
                                 }),
                         )
+                    })
+                    .when(is_user && !message.attachments.is_empty(), |this| {
+                        this.child(render_session_agent_message_attachments(
+                            &message.attachments,
+                            roles,
+                        ))
                     }),
             )
             .context_menu(move |menu, window, cx| {
@@ -932,6 +938,62 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
             }),
         message.motion.enter_key,
     )
+}
+
+/// Renders inline image attachments and text-file filename chips inside a
+/// user message bubble. Images are shown via `img()` with the full-resolution
+/// base64 data URI, capped to 400px height. Text files show a filename chip.
+fn render_session_agent_message_attachments(
+    attachments: &[miaominal_core::chat_attachment::ChatAttachment],
+    roles: miaominal_settings::theme::Md3Roles,
+) -> gpui::AnyElement {
+    v_flex()
+        .w_full()
+        .gap_1()
+        .children(
+            attachments
+                .iter()
+                .filter_map(|attachment| match &attachment.content {
+                    miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
+                        let data_uri =
+                            format!("data:{};base64,{}", attachment.mime_type, image.thumbnail_base64);
+                        Some(
+                            gpui::img(data_uri)
+                                .w_full()
+                                .max_w(px(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH))
+                                .max_h(px(400.0))
+                                .rounded(px(6.0))
+                                .object_fit(gpui::ObjectFit::Contain)
+                                .into_any_element(),
+                        )
+                    }
+                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
+                        let filename = &attachment.filename;
+                        Some(
+                            h_flex()
+                                .gap_1()
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.0))
+                                .bg(rgb(roles.surface_container))
+                                .items_center()
+                                .child(
+                                    Icon::new(AppIcon::File)
+                                        .small()
+                                        .text_color(rgb(roles.primary)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                                        .text_color(rgb(roles.on_surface))
+                                        .child(truncate_with_ellipsis(filename, 24)),
+                                )
+                                .into_any_element(),
+                        )
+                    }
+                }),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
