@@ -530,6 +530,11 @@ tool_interrupted_before_completion = "该工具调用在完成前已被中断。
 unknown_target = "未知的 @ 目标：{targets}"
 copy_success = "已复制{label}。"
 terminal_session = "终端会话"
+attachment_load_failed = "加载文件失败：{filename}"
+image_decode_failed = "无法解码图片：{filename}"
+too_many_attachments = "每条消息最多只能附加 {limit} 个文件。"
+attachments_added = "已添加 {count} 个附件。"
+attachment_removed = "附件已移除。"
 
 [workspace.panel.agent.labels]
 message = "消息"
@@ -581,6 +586,7 @@ search_history = "搜索聊天历史"
 close_history_search = "关闭聊天历史搜索"
 rename_chat = "重命名聊天"
 delete_chat = "删除聊天"
+attach_file = "附加文件"
 
 [workspace.panel.agent.history]
 empty = "还没有已保存的聊天"

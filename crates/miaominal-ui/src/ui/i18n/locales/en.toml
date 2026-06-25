@@ -672,6 +672,11 @@ tool_interrupted_before_completion = "This tool call was interrupted before comp
 unknown_target = "Unknown @ target: {targets}"
 copy_success = "Copied {label}."
 terminal_session = "Terminal session"
+attachment_load_failed = "Failed to load file: {filename}"
+image_decode_failed = "Could not decode image: {filename}"
+too_many_attachments = "You can attach at most {limit} files per message."
+attachments_added = "Added {count} attachment(s)."
+attachment_removed = "Attachment removed."
 
 [workspace.panel.agent.labels]
 message = "message"
@@ -723,6 +728,7 @@ search_history = "Search chat history"
 close_history_search = "Close chat history search"
 rename_chat = "Rename chat"
 delete_chat = "Delete chat"
+attach_file = "Attach files"
 
 [workspace.panel.agent.history]
 empty = "No saved chats"
