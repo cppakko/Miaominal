@@ -953,43 +953,39 @@ fn render_session_agent_message_attachments(
         .children(
             attachments
                 .iter()
-                .filter_map(|attachment| match &attachment.content {
+                .map(|attachment| match &attachment.content {
                     miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
                         let data_uri =
                             format!("data:{};base64,{}", attachment.mime_type, image.thumbnail_base64);
-                        Some(
-                            gpui::img(data_uri)
-                                .w_full()
-                                .max_w(px(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH))
-                                .max_h(px(400.0))
-                                .rounded(px(6.0))
-                                .object_fit(gpui::ObjectFit::Contain)
-                                .into_any_element(),
-                        )
+                        gpui::img(data_uri)
+                            .w_full()
+                            .max_w(px(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH))
+                            .max_h(px(400.0))
+                            .rounded(px(6.0))
+                            .object_fit(gpui::ObjectFit::Contain)
+                            .into_any_element()
                     }
                     miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
                         let filename = &attachment.filename;
-                        Some(
-                            h_flex()
-                                .gap_1()
-                                .px_2()
-                                .py_1()
-                                .rounded(px(6.0))
-                                .bg(rgb(roles.surface_container))
-                                .items_center()
-                                .child(
-                                    Icon::new(AppIcon::File)
-                                        .small()
-                                        .text_color(rgb(roles.primary)),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                                        .text_color(rgb(roles.on_surface))
-                                        .child(truncate_with_ellipsis(filename, 24)),
-                                )
-                                .into_any_element(),
-                        )
+                        h_flex()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(6.0))
+                            .bg(rgb(roles.surface_container))
+                            .items_center()
+                            .child(
+                                Icon::new(AppIcon::File)
+                                    .small()
+                                    .text_color(rgb(roles.primary)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(truncate_with_ellipsis(filename, 24)),
+                            )
+                            .into_any_element()
                     }
                 }),
         )

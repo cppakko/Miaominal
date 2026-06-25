@@ -137,12 +137,16 @@ fn encode_scaled_image(image: &image::DynamicImage) -> (String, Vec<u8>) {
     if has_alpha {
         let mut buffer = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
-        let _ = image.write_with_encoder(encoder);
+        if let Err(error) = image.write_with_encoder(encoder) {
+            log::warn!("failed to encode PNG attachment: {error:?}");
+        }
         ("image/png".to_string(), buffer)
     } else {
         let mut buffer = Vec::new();
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 85);
-        let _ = image.write_with_encoder(encoder);
+        if let Err(error) = image.write_with_encoder(encoder) {
+            log::warn!("failed to encode JPEG attachment: {error:?}");
+        }
         ("image/jpeg".to_string(), buffer)
     }
 }
@@ -152,7 +156,9 @@ fn make_thumbnail(image: &image::DynamicImage, size: u32) -> Vec<u8> {
     let thumb = image.resize(size, size, image::imageops::FilterType::Nearest);
     let mut buffer = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
-    let _ = thumb.write_with_encoder(encoder);
+    if let Err(error) = thumb.write_with_encoder(encoder) {
+        log::warn!("failed to encode attachment thumbnail: {error:?}");
+    }
     buffer
 }
 
@@ -221,7 +227,6 @@ impl AppView {
         if self.session_agent.is_busy() {
             return;
         }
-        let entity = cx.entity();
         cx.spawn(async move |this, cx| {
             let files = rfd::FileDialog::new()
                 .add_filter(
@@ -246,7 +251,6 @@ impl AppView {
                 this.ingest_attachment_paths(files, cx);
             })
             .ok();
-            let _ = entity;
         })
         .detach();
     }
