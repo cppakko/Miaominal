@@ -7,10 +7,12 @@ publish = false
 [dependencies]
 alacritty_terminal.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 log.workspace = true
 miaominal-agent = { path = "../miaominal-agent" }
 miaominal-core = { path = "../miaominal-core" }

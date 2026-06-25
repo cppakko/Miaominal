@@ -55,6 +55,7 @@ pub enum AppIcon {
     Sliders,
     Send,
     Copy,
+    Paperclip,
 }
 
 impl IconNamed for AppIcon {
@@ -103,6 +104,7 @@ impl IconNamed for AppIcon {
             Self::Sliders => "icons/sliders-horizontal.svg",
             Self::Send => "icons/send.svg",
             Self::Copy => "icons/copy.svg",
+            Self::Paperclip => "icons/paperclip.svg",
         }
         .into()
     }
