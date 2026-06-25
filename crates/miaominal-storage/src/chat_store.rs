@@ -57,6 +57,9 @@ pub struct ChatMessageRecord {
     pub tool_status: Option<String>,
     pub sort_order: i64,
     pub created_at: i64,
+    /// JSON-serialized `Vec<ChatAttachment>` (encrypted at rest), or `None`
+    /// for messages without attachments or pre-migration rows.
+    pub attachments: Option<String>,
 }
 
 pub struct ChatStore(Connection);
@@ -129,12 +132,17 @@ impl ChatStore {
             .as_deref()
             .map(|summary| encrypt_text(key, summary))
             .transpose()?;
+        let encrypted_attachments = record
+            .attachments
+            .as_deref()
+            .map(|attachments| encrypt_text(key, attachments))
+            .transpose()?;
 
         self.0
             .execute(
                 "INSERT OR REPLACE INTO chat_messages
-                 (id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at, attachments)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     record.id,
                     record.session_id,
@@ -145,6 +153,7 @@ impl ChatStore {
                     record.tool_status,
                     record.sort_order,
                     record.created_at,
+                    encrypted_attachments,
                 ],
             )
             .context("failed to insert chat message")?;
@@ -167,7 +176,7 @@ impl ChatStore {
         let mut statement = self
             .0
             .prepare(
-                "SELECT id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at
+                "SELECT id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at, attachments
                  FROM chat_messages
                  WHERE session_id = ?1
                  ORDER BY sort_order ASC",
@@ -179,6 +188,7 @@ impl ChatStore {
                 let role_text: String = row.get(2)?;
                 let content: Vec<u8> = row.get(3)?;
                 let tool_summary: Option<Vec<u8>> = row.get(5)?;
+                let attachments_cipher: Option<Vec<u8>> = row.get(9)?;
                 Ok(ChatMessageRecord {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
@@ -201,6 +211,9 @@ impl ChatStore {
                     tool_status: row.get(6)?,
                     sort_order: row.get(7)?,
                     created_at: row.get(8)?,
+                    attachments: attachments_cipher
+                        .as_deref()
+                        .and_then(|cipher| decrypt_text(key, cipher)),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -255,6 +268,11 @@ impl ChatStore {
                 .execute("ALTER TABLE chat_messages ADD COLUMN tool_status TEXT", [])
                 .context("failed to add chat_messages.tool_status")?;
         }
+        if !self.chat_messages_has_column("attachments")? {
+            self.0
+                .execute("ALTER TABLE chat_messages ADD COLUMN attachments BLOB", [])
+                .context("failed to add chat_messages.attachments")?;
+        }
         Ok(())
     }
 
@@ -305,6 +323,7 @@ mod tests {
                     tool_status: Some("completed".to_string()),
                     sort_order: 0,
                     created_at: 11,
+                    attachments: None,
                 },
                 &key,
             )
@@ -317,6 +336,7 @@ mod tests {
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[0].tool_summary.as_deref(), Some("read file"));
         assert_eq!(messages[0].tool_status.as_deref(), Some("completed"));
+        assert_eq!(messages[0].attachments, None);
 
         let _ = std::fs::remove_file(path);
     }
@@ -342,6 +362,7 @@ mod tests {
                     tool_status: None,
                     sort_order: 0,
                     created_at: 11,
+                    attachments: None,
                 },
                 &key,
             )
@@ -412,6 +433,7 @@ mod tests {
                     tool_status: Some("completed".to_string()),
                     sort_order: 0,
                     created_at: 11,
+                    attachments: None,
                 },
                 &key,
             )
@@ -420,6 +442,129 @@ mod tests {
             .load_session_messages("session-1", &key)
             .expect("messages should load");
         assert_eq!(messages[0].tool_status.as_deref(), Some("completed"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn chat_store_round_trips_attachments() {
+        let path = test_db_path("attachments-round-trip");
+        let store = ChatStore::open(&path).expect("store should open");
+        let key = [5u8; 32];
+
+        store
+            .create_session("session-1", 10)
+            .expect("session should be created");
+        let attachments_json = serde_json::json!([
+            {
+                "id": "att-1",
+                "filename": "screenshot.png",
+                "mime_type": "image/png",
+                "size_bytes": 4096,
+                "content": {
+                    "Image": {
+                        "data_base64": "iVBORw0KGgo=",
+                        "thumbnail_base64": "iVBOR=",
+                        "width": 800,
+                        "height": 600
+                    }
+                }
+            }
+        ])
+        .to_string();
+        store
+            .insert_message(
+                &ChatMessageRecord {
+                    id: "message-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    role: ChatMessageRole::User,
+                    content: "look at this".to_string(),
+                    tool_name: None,
+                    tool_summary: None,
+                    tool_status: None,
+                    sort_order: 0,
+                    created_at: 11,
+                    attachments: Some(attachments_json.clone()),
+                },
+                &key,
+            )
+            .expect("message with attachments should be inserted");
+
+        let messages = store
+            .load_session_messages("session-1", &key)
+            .expect("messages should load");
+        assert_eq!(messages.len(), 1);
+        let restored = messages[0].attachments.as_deref().expect("attachments present");
+        let restored_value: serde_json::Value =
+            serde_json::from_str(restored).expect("attachments JSON parses");
+        assert_eq!(
+            restored_value[0]["filename"].as_str(),
+            Some("screenshot.png")
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn chat_store_migrates_old_chat_messages_without_attachments() {
+        let path = test_db_path("attachments-migration");
+        {
+            let connection = Connection::open(&path).expect("old database should open");
+            connection
+                .execute_batch(
+                    "CREATE TABLE chat_sessions (
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    CREATE TABLE chat_messages (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL,
+                        content BLOB NOT NULL,
+                        tool_name TEXT,
+                        tool_summary BLOB,
+                        sort_order INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        tool_status TEXT
+                    );",
+                )
+                .expect("old schema with tool_status should be created");
+        }
+
+        let store = ChatStore::open(&path).expect("store should migrate");
+        assert!(
+            store
+                .chat_messages_has_column("attachments")
+                .expect("columns should be readable")
+        );
+
+        let key = [4u8; 32];
+        store
+            .create_session("session-1", 10)
+            .expect("session should be created");
+        store
+            .insert_message(
+                &ChatMessageRecord {
+                    id: "message-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    role: ChatMessageRole::User,
+                    content: "plain text".to_string(),
+                    tool_name: None,
+                    tool_summary: None,
+                    tool_status: None,
+                    sort_order: 0,
+                    created_at: 11,
+                    attachments: None,
+                },
+                &key,
+            )
+            .expect("message should be inserted after migration");
+        let messages = store
+            .load_session_messages("session-1", &key)
+            .expect("messages should load");
+        assert_eq!(messages[0].attachments, None);
 
         let _ = std::fs::remove_file(path);
     }

@@ -2404,6 +2404,7 @@ fn chat_record_from_session_agent_message(
         tool_status: tool_call.map(|tool| tool_status_as_str(tool.status).to_string()),
         sort_order: index as i64,
         created_at: now,
+        attachments: None,
     })
 }
 
@@ -2544,6 +2545,7 @@ mod tests {
             tool_status: None,
             sort_order: 0,
             created_at: 1,
+            attachments: None,
         });
 
         assert_eq!(message.motion.enter_key, None);
@@ -2558,6 +2560,7 @@ mod tests {
             tool_status: Some(tool_status_as_str(SessionAgentToolStatus::Completed).to_string()),
             sort_order: 1,
             created_at: 2,
+            attachments: None,
         });
 
         assert_eq!(tool_message.motion.enter_key, None);
