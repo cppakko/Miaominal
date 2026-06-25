@@ -2438,13 +2438,34 @@ fn chat_record_from_session_agent_message(
         tool_status: tool_call.map(|tool| tool_status_as_str(tool.status).to_string()),
         sort_order: index as i64,
         created_at: now,
-        attachments: None,
+        attachments: serialize_message_attachments(message),
     })
 }
 
+/// Serializes a message's attachments to JSON for persistence. Only user
+/// messages with non-empty attachments are serialized; all other roles and
+/// empty-attachment messages return `None` so the DB column stays NULL.
+fn serialize_message_attachments(message: &SessionAgentMessage) -> Option<String> {
+    if message.role != SessionAgentMessageRole::User || message.attachments.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&message.attachments).ok()
+}
+
 fn session_agent_message_from_record(record: ChatMessageRecord) -> SessionAgentMessage {
+    let attachments: Vec<miaominal_core::chat_attachment::ChatAttachment> = record
+        .attachments
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
     match record.role {
-        ChatMessageRole::User => SessionAgentMessage::user(record.content),
+        ChatMessageRole::User => {
+            if attachments.is_empty() {
+                SessionAgentMessage::user(record.content)
+            } else {
+                SessionAgentMessage::user_with_attachments(record.content, attachments)
+            }
+        }
         ChatMessageRole::Assistant => SessionAgentMessage::assistant_raw(record.content),
         ChatMessageRole::Thinking => SessionAgentMessage::thinking_from_history(record.content),
         ChatMessageRole::Error => SessionAgentMessage::error(record.content),
@@ -2598,5 +2619,54 @@ mod tests {
         });
 
         assert_eq!(tool_message.motion.enter_key, None);
+    }
+
+    #[test]
+    fn user_message_with_attachments_round_trips_through_record() {
+        let attachment = miaominal_core::chat_attachment::ChatAttachment {
+            id: "att-1".to_string(),
+            filename: "main.rs".to_string(),
+            mime_type: "text/plain".to_string(),
+            size_bytes: 42,
+            content: miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(
+                miaominal_core::chat_attachment::ChatTextFile {
+                    text: "fn main() {}".to_string(),
+                    language: Some("rust".to_string()),
+                },
+            ),
+        };
+        let original = SessionAgentMessage::user_with_attachments(
+            "look at this",
+            vec![attachment.clone()],
+        );
+        let record = chat_record_from_session_agent_message("session-1", 0, 100, &original)
+            .expect("record should be produced");
+        assert_eq!(record.role, ChatMessageRole::User);
+        assert!(record.attachments.is_some());
+
+        let restored = session_agent_message_from_record(record);
+        assert_eq!(restored.role, SessionAgentMessageRole::User);
+        assert_eq!(restored.content, "look at this");
+        assert_eq!(restored.attachments.len(), 1);
+        assert_eq!(restored.attachments[0].filename, "main.rs");
+    }
+
+    #[test]
+    fn plain_text_user_message_has_no_attachments_in_record() {
+        let original = SessionAgentMessage::user("hello");
+        let record = chat_record_from_session_agent_message("session-1", 0, 100, &original)
+            .expect("record should be produced");
+        assert!(record.attachments.is_none());
+
+        let restored = session_agent_message_from_record(record);
+        assert!(restored.attachments.is_empty());
+    }
+
+    #[test]
+    fn assistant_message_has_no_attachments_in_record() {
+        let original = SessionAgentMessage::assistant_raw("sure");
+        let record = chat_record_from_session_agent_message("session-1", 0, 100, &original)
+            .expect("record should be produced");
+        assert!(record.attachments.is_none());
     }
 }
