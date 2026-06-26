@@ -949,6 +949,7 @@ fn render_session_agent_message_attachments(
 ) -> gpui::AnyElement {
     v_flex()
         .w_full()
+        .items_start()
         .gap_1()
         .children(
             attachments
@@ -968,6 +969,7 @@ fn render_session_agent_message_attachments(
                     miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
                         let filename = &attachment.filename;
                         h_flex()
+                            .flex_shrink_0()
                             .gap_1()
                             .px_2()
                             .py_1()

@@ -3,7 +3,7 @@ use crate::ui::i18n;
 use base64::Engine as _;
 use gpui_component::WindowExt as _;
 use miaominal_core::chat_attachment::{
-    self, ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
+    ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
     MAX_IMAGE_DIMENSION, MAX_IMAGE_SIZE_BYTES, MAX_TEXT_FILE_SIZE_BYTES,
 };
 use std::path::Path;
@@ -69,16 +69,16 @@ pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
     let bytes = std::fs::read(path)
         .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
 
-    if let Some(detected_ext) = chat_attachment::detect_image_format_from_bytes(&bytes) {
+    if let Some(detected_ext) = detect_image_format_from_bytes(&bytes) {
         return build_image_attachment(&filename, detected_ext, &bytes);
     }
 
-    let is_image_ext = chat_attachment::is_image_extension(&extension);
+    let is_image_ext = miaominal_core::chat_attachment::is_image_extension(&extension);
     if is_image_ext {
         return build_image_attachment(&filename, &extension, &bytes);
     }
 
-    let is_text_ext = chat_attachment::is_text_extension(&extension);
+    let is_text_ext = miaominal_core::chat_attachment::is_text_extension(&extension);
     if is_text_ext {
         if disk_size > MAX_TEXT_FILE_SIZE_BYTES {
             return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
@@ -140,8 +140,8 @@ pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u
 pub(crate) fn build_text_attachment(filename: &str, extension: &str, bytes: &[u8]) -> IngestResult {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::InvalidText))?;
-    let language = chat_attachment::extension_to_language(extension);
-    let mime_type = chat_attachment::extension_to_mime(extension);
+    let language = miaominal_core::chat_attachment::extension_to_language(extension);
+    let mime_type = miaominal_core::chat_attachment::extension_to_mime(extension);
     let size_bytes = text.len() as u64;
     Ok(ChatAttachment {
         id: uuid::Uuid::new_v4().to_string(),
@@ -176,6 +176,26 @@ fn scale_image(image: image::DynamicImage, max_dimension: u32) -> image::Dynamic
     let new_width = (width as f32 * scale).round() as u32;
     let new_height = (height as f32 * scale).round() as u32;
     image.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
+}
+
+/// Detects supported image formats from file-header magic bytes.
+fn detect_image_format_from_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
+        return Some("png");
+    }
+    if bytes.len() >= 3 && &bytes[0..3] == b"\xff\xd8\xff" {
+        return Some("jpeg");
+    }
+    if bytes.len() >= 4 && bytes[0..4] == *b"GIF8" {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if bytes.len() >= 2 && &bytes[0..2] == b"BM" {
+        return Some("bmp");
+    }
+    None
 }
 
 /// Encodes the scaled image for storage. Opaque images use JPEG at 85%

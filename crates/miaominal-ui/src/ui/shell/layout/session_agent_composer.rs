@@ -297,6 +297,7 @@ fn render_composer_badge_row(
                             .is_some_and(|suffix| suffix.starts_with(' '))
                 });
                 div()
+                    .flex_none()
                     .px_2()
                     .py_1()
                     .rounded(px(999.0))
@@ -367,6 +368,7 @@ fn render_composer_badge_row(
                 let bg = roles.secondary_container;
                 let fg = roles.on_secondary_container;
                 div()
+                    .flex_none()
                     .px_2()
                     .py_1()
                     .rounded(px(999.0))
@@ -379,6 +381,7 @@ fn render_composer_badge_row(
                             .child(Icon::new(icon).small().text_color(rgb(fg)))
                             .child(
                                 div()
+                                    .min_w(px(0.0))
                                     .text_color(rgb(fg))
                                     .child(truncate_with_ellipsis(filename.as_ref(), 24)),
                             )
