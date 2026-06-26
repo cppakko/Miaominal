@@ -36,10 +36,17 @@ impl AttachmentError {
 
 /// Reads, validates, and builds a `ChatAttachment` from a local file path.
 ///
+/// Detection order:
+/// 1. Magic bytes in the file header — if an image signature is found the
+///    file is treated as an image regardless of its extension.
+/// 2. Extension-based classification — fallback when no magic bytes match.
+/// 3. UTF-8 validity — files with unknown extensions that happen to be valid
+///    UTF-8 are accepted as plain text.
+///
 /// Images are decoded, scaled to at most 2048px on the longest edge, and
 /// re-encoded (JPEG 85% for opaque images, PNG when an alpha channel is
 /// present). Text files are read as UTF-8 and validated against the 512KB
-/// limit. Unsupported extensions produce an error.
+/// limit.
 pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
     let filename = path
         .file_name()
@@ -51,46 +58,60 @@ pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
         .unwrap_or_default();
-    let is_image = chat_attachment::is_image_extension(&extension);
-    let is_text = chat_attachment::is_text_extension(&extension);
-    if !is_image && !is_text {
-        return Err(AttachmentError::new(filename, AttachmentErrorKind::UnsupportedType));
-    }
 
     let metadata = std::fs::metadata(path)
         .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
-    let size_bytes = metadata.len();
-    if is_image {
-        if size_bytes > MAX_IMAGE_SIZE_BYTES {
-            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
-        }
-        let bytes = std::fs::read(path)
-            .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
-        build_image_attachment(&filename, &extension, &bytes)
-    } else {
-        if size_bytes > MAX_TEXT_FILE_SIZE_BYTES {
-            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
-        }
-        let bytes = std::fs::read(path)
-            .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
-        build_text_attachment(&filename, &extension, &bytes)
+    let disk_size = metadata.len();
+    if disk_size > MAX_IMAGE_SIZE_BYTES {
+        return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
     }
+
+    let bytes = std::fs::read(path)
+        .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
+
+    if let Some(detected_ext) = chat_attachment::detect_image_format_from_bytes(&bytes) {
+        return build_image_attachment(&filename, detected_ext, &bytes);
+    }
+
+    let is_image_ext = chat_attachment::is_image_extension(&extension);
+    if is_image_ext {
+        return build_image_attachment(&filename, &extension, &bytes);
+    }
+
+    let is_text_ext = chat_attachment::is_text_extension(&extension);
+    if is_text_ext {
+        if disk_size > MAX_TEXT_FILE_SIZE_BYTES {
+            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
+        }
+        return build_text_attachment(&filename, &extension, &bytes);
+    }
+
+    if String::from_utf8(bytes.to_vec()).is_ok() {
+        if disk_size > MAX_TEXT_FILE_SIZE_BYTES {
+            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
+        }
+        return build_text_attachment(&filename, &extension, &bytes);
+    }
+
+    Err(AttachmentError::new(filename, AttachmentErrorKind::UnsupportedType))
 }
 
 /// Builds a `ChatAttachment` from raw image bytes (e.g. clipboard image data).
-/// The `format_hint` is a lowercase extension ("png", "jpeg", ...) used to
-/// pick the decoder; the image is scaled and re-encoded at ingestion time.
+/// The `format_hint` is a lowercase extension ("png", "jpeg", ...) used as a
+/// fallback decoder when content-based auto-detection fails.
 pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u8]) -> IngestResult {
-    let format = match extension {
-        "png" => image::ImageFormat::Png,
-        "jpg" | "jpeg" => image::ImageFormat::Jpeg,
-        "gif" => image::ImageFormat::Gif,
-        "webp" => image::ImageFormat::WebP,
-        "bmp" => image::ImageFormat::Bmp,
-        _ => return Err(AttachmentError::new(filename.to_string(), AttachmentErrorKind::UnsupportedType)),
-    };
-    let decoded = image::load_from_memory_with_format(bytes, format)
-        .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::ImageDecodeFailed))?;
+    let decoded = image::load_from_memory(bytes).or_else(|err| {
+        let format = match extension {
+            "png" => image::ImageFormat::Png,
+            "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+            "gif" => image::ImageFormat::Gif,
+            "webp" => image::ImageFormat::WebP,
+            "bmp" => image::ImageFormat::Bmp,
+            _ => return Err(err),
+        };
+        image::load_from_memory_with_format(bytes, format)
+    })
+    .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::ImageDecodeFailed))?;
     let scaled = scale_image(decoded, MAX_IMAGE_DIMENSION);
     let (mime_type, encoded) = encode_scaled_image(&scaled);
     let thumbnail = make_thumbnail(&scaled, 64);

@@ -169,6 +169,28 @@ pub fn is_text_extension(extension: &str) -> bool {
     )
 }
 
+/// Detects image format from file header magic bytes, returning the lowercase
+/// extension (e.g. `"png"`, `"jpeg"`) when the signature is recognised, or
+/// `None` when the bytes do not match any supported image format.
+pub fn detect_image_format_from_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
+        return Some("png");
+    }
+    if bytes.len() >= 3 && &bytes[0..3] == b"\xff\xd8\xff" {
+        return Some("jpeg");
+    }
+    if bytes.len() >= 4 && bytes[0..4] == *b"GIF8" {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if bytes.len() >= 2 && &bytes[0..2] == b"BM" {
+        return Some("bmp");
+    }
+    None
+}
+
 /// Maps a lowercase file extension (no dot) to a syntax language identifier
 /// suitable for code-fence hints and `rig`/markdown rendering.
 pub fn extension_to_language(extension: &str) -> Option<String> {
@@ -355,6 +377,33 @@ mod tests {
         let json = serde_json::to_string(&original).expect("serialize");
         let restored: ChatAttachment = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn detect_image_format_from_magic_bytes() {
+        assert_eq!(
+            detect_image_format_from_bytes(b"\x89PNG\r\n\x1a\nrest"),
+            Some("png")
+        );
+        assert_eq!(
+            detect_image_format_from_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF"),
+            Some("jpeg")
+        );
+        assert_eq!(
+            detect_image_format_from_bytes(b"GIF89a...."),
+            Some("gif")
+        );
+        assert_eq!(
+            detect_image_format_from_bytes(b"RIFF....WEBP...."),
+            Some("webp")
+        );
+        assert_eq!(
+            detect_image_format_from_bytes(b"BM...."),
+            Some("bmp")
+        );
+        assert_eq!(detect_image_format_from_bytes(b"not an image"), None);
+        assert_eq!(detect_image_format_from_bytes(b""), None);
+        assert_eq!(detect_image_format_from_bytes(b"\x89PN"), None);
     }
 
     #[test]
