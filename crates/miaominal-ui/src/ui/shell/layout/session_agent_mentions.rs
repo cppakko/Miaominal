@@ -1,6 +1,5 @@
 use super::super::*;
 use super::session_agent_panel::clamp_session_agent_panel_width;
-use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::AnimationExt as _;
 
@@ -29,85 +28,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_overlay(
             overlay_enter_animation(),
             |element, delta| element.opacity(delta).top(px((1.0 - delta) * 8.0)),
         )
-        .into_any_element()
-}
-
-pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(
-    app: &AppView,
-    entity: Entity<AppView>,
-) -> gpui::AnyElement {
-    let roles = miaominal_settings::current_theme().material.roles;
-    let candidates = app.session_agent_target_candidates();
-    let names = app.session_agent.selected_at_targets.clone();
-    if names.is_empty() {
-        return div().hidden().into_any_element();
-    }
-
-    h_flex()
-        .w_full()
-        .gap_1()
-        .flex_wrap()
-        .children(names.into_iter().map(|name| {
-            let remove_name = name.clone();
-            let remove_entity = entity.clone();
-            let resolved = candidates.iter().any(|candidate| {
-                candidate.name == name
-                    || candidate
-                        .name
-                        .strip_prefix(&name)
-                        .is_some_and(|suffix| suffix.starts_with(' '))
-            });
-            div()
-                .px_2()
-                .py_1()
-                .rounded(px(999.0))
-                .bg(rgb(if resolved {
-                    roles.secondary_container
-                } else {
-                    roles.error_container
-                }))
-                .text_color(rgb(if resolved {
-                    roles.on_secondary_container
-                } else {
-                    roles.on_error_container
-                }))
-                .text_size(miaominal_settings::FontSize::Body.scaled())
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_1()
-                        .child(format!("@{name}"))
-                        .child(
-                            icon_button_with_tooltip(
-                                AppIcon::Close,
-                                i18n::string("workspace.panel.agent.tooltips.remove_target"),
-                                16.0,
-                                4.0,
-                                None,
-                                Some(if resolved {
-                                    roles.on_secondary_container
-                                } else {
-                                    roles.on_error_container
-                                }),
-                                None,
-                                move |_window, cx| {
-                                    let entity = remove_entity.clone();
-                                    let name = remove_name.clone();
-                                    entity.update(cx, |this, cx| {
-                                        this.remove_session_agent_at_target(name, cx);
-                                    });
-                                },
-                            )
-                            .id("session-agent-target-remove"),
-                        ),
-                )
-                .with_animation(
-                    SharedString::from(format!("session-agent-target-chip-{name}")),
-                    list_enter_animation(),
-                    |element, delta| element.opacity(delta).top(px((1.0 - delta) * 6.0)),
-                )
-                .into_any_element()
-        }))
         .into_any_element()
 }
 

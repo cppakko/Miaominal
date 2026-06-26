@@ -23,9 +23,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     let pty_toggle_entity = entity.clone();
     let attach_entity = entity.clone();
     let paste_entity = entity.clone();
+    let badge_entity = entity.clone();
     let send_entity = entity;
     let waiting = app.session_agent.is_busy();
     let has_attachments = !app.session_agent.pending_attachments.is_empty();
+    let has_targets = !app.session_agent.selected_at_targets.is_empty();
 
     div()
         .flex_shrink_0()
@@ -47,12 +49,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                 .rounded(px(8.0))
                 .bg(rgb(roles.surface_container_high))
                 .p_2()
-                .child(app.render_session_agent_target_chips(pty_toggle_entity.clone()))
-                .when(has_attachments, |this| {
-                    this.child(render_attachment_preview_row(
-                        &app.session_agent.pending_attachments,
+                .when(has_targets || has_attachments, |this| {
+                    this.child(render_composer_badge_row(
+                        app,
+                        badge_entity.clone(),
                         roles,
-                        send_entity.clone(),
+                        has_targets,
+                        has_attachments,
                     ))
                 })
                 .child(
@@ -265,144 +268,153 @@ fn handle_paste_key(event: &KeyDownEvent, entity: Entity<AppView>, cx: &mut gpui
     }
 }
 
-/// Renders the horizontal attachment preview row shown above the prompt input.
-fn render_attachment_preview_row(
-    attachments: &[miaominal_core::chat_attachment::ChatAttachment],
-    roles: miaominal_settings::theme::Md3Roles,
+/// Renders target-chips and attachment badges in a single flex-wrap row
+/// using the same pill style (`.rounded(px(999.0))`). Attachment badges
+/// show a filename with a Close button; target chips show `@name` with
+/// a Close button.
+fn render_composer_badge_row(
+    app: &AppView,
     entity: Entity<AppView>,
+    roles: miaominal_settings::theme::Md3Roles,
+    has_targets: bool,
+    has_attachments: bool,
 ) -> gpui::AnyElement {
     h_flex()
-        .id("session-agent-attachment-preview")
         .w_full()
-        .gap_2()
-        .overflow_x_scroll()
-        .children(
-            attachments
-                .iter()
-                .map(|attachment| render_attachment_chip(attachment, roles, entity.clone())),
-        )
+        .gap_1()
+        .flex_wrap()
+        .when(has_targets, |this| {
+            let candidates = app.session_agent_target_candidates();
+            let names = app.session_agent.selected_at_targets.clone();
+            this.children(names.into_iter().map(|name| {
+                let remove_name = name.clone();
+                let remove_entity = entity.clone();
+                let resolved = candidates.iter().any(|candidate| {
+                    candidate.name == name
+                        || candidate
+                            .name
+                            .strip_prefix(&name)
+                            .is_some_and(|suffix| suffix.starts_with(' '))
+                });
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(999.0))
+                    .bg(rgb(if resolved {
+                        roles.secondary_container
+                    } else {
+                        roles.error_container
+                    }))
+                    .text_color(rgb(if resolved {
+                        roles.on_secondary_container
+                    } else {
+                        roles.on_error_container
+                    }))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(format!("@{name}"))
+                            .child(
+                                div()
+                                    .id("session-agent-target-remove")
+                                    .size(px(16.0))
+                                    .rounded(px(4.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        move |_, _window, cx| {
+                                            let entity = remove_entity.clone();
+                                            let name = remove_name.clone();
+                                            entity.update(cx, |this, cx| {
+                                                this.remove_session_agent_at_target(name, cx);
+                                            });
+                                        },
+                                    )
+                                    .child(
+                                        Icon::new(AppIcon::Close)
+                                            .size(px(12.0))
+                                            .text_color(rgb(if resolved {
+                                                roles.on_secondary_container
+                                            } else {
+                                                roles.on_error_container
+                                            })),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            }))
+        })
+        .when(has_attachments, |this| {
+            let attachments = app.session_agent.pending_attachments.clone();
+            this.children(attachments.iter().map(|attachment| {
+                let attachment_id = attachment.id.clone();
+                let filename = SharedString::from(attachment.filename.clone());
+                let remove_entity = entity.clone();
+                let remove_id = attachment_id.clone();
+                let icon = match &attachment.content {
+                    miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => {
+                        AppIcon::Upload
+                    }
+                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
+                        AppIcon::File
+                    }
+                };
+                let bg = roles.secondary_container;
+                let fg = roles.on_secondary_container;
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(999.0))
+                    .bg(rgb(bg))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(Icon::new(icon).small().text_color(rgb(fg)))
+                            .child(
+                                div()
+                                    .text_color(rgb(fg))
+                                    .child(truncate_with_ellipsis(filename.as_ref(), 24)),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "attachment-badge-remove-{attachment_id}"
+                                    )))
+                                    .size(px(16.0))
+                                    .rounded(px(4.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        move |_, _window, cx| {
+                                            let entity = remove_entity.clone();
+                                            let id = remove_id.clone();
+                                            entity.update(cx, |this, cx| {
+                                                this.remove_pending_attachment(
+                                                    id.as_ref(),
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    )
+                                    .child(
+                                        Icon::new(AppIcon::Close)
+                                            .size(px(12.0))
+                                            .text_color(rgb(fg)),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            }))
+        })
         .into_any_element()
-}
-
-fn attachment_tooltip(text: SharedString) -> impl Fn(&mut Window, &mut gpui::App) -> gpui::AnyView {
-    move |window, cx| {
-        gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
-    }
-}
-
-fn render_attachment_chip(
-    attachment: &miaominal_core::chat_attachment::ChatAttachment,
-    roles: miaominal_settings::theme::Md3Roles,
-    entity: Entity<AppView>,
-) -> gpui::AnyElement {
-    let attachment_id = SharedString::from(attachment.id.clone());
-    let filename = SharedString::from(attachment.filename.clone());
-
-    match &attachment.content {
-        miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
-            let data_uri = format!(
-                "data:{};base64,{}",
-                attachment.mime_type, image.thumbnail_base64
-            );
-            h_flex()
-                .id(SharedString::from(format!("attachment-chip-{}", attachment.id)))
-                .relative()
-                .size(px(64.0))
-                .rounded(px(6.0))
-                .overflow_hidden()
-                .bg(rgb(roles.surface_container))
-                .child(
-                    gpui::img(data_uri)
-                        .w(px(64.0))
-                        .h(px(64.0))
-                        .object_fit(gpui::ObjectFit::Cover),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "attachment-remove-{}",
-                            attachment.id
-                        )))
-                        .absolute()
-                        .top(px(2.0))
-                        .right(px(2.0))
-                        .size(px(18.0))
-                        .rounded_full()
-                        .bg(rgb(roles.surface_container_highest))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .tooltip(attachment_tooltip(filename.clone()))
-                        .on_mouse_down(gpui::MouseButton::Left, {
-                            let entity = entity.clone();
-                            let id = attachment_id.clone();
-                            move |_, _window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.remove_pending_attachment(id.as_ref(), cx);
-                                });
-                            }
-                        })
-                        .child(Icon::new(AppIcon::Close).size(px(12.0))),
-                )
-                .into_any_element()
-        }
-        miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_text_file) => {
-            h_flex()
-                .id(SharedString::from(format!("attachment-chip-{}", attachment.id)))
-                .relative()
-                .h(px(64.0))
-                .min_w(px(120.0))
-                .max_w(px(200.0))
-                .rounded(px(6.0))
-                .gap_1()
-                .px_2()
-                .items_center()
-                .bg(rgb(roles.surface_container))
-                .child(
-                    div().flex_shrink_0().child(
-                        Icon::new(AppIcon::File)
-                            .small()
-                            .text_color(rgb(roles.primary)),
-                    ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(roles.on_surface))
-                        .child(truncate_with_ellipsis(filename.as_ref(), 20)),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "attachment-remove-{}",
-                            attachment.id
-                        )))
-                        .absolute()
-                        .top(px(2.0))
-                        .right(px(2.0))
-                        .size(px(18.0))
-                        .rounded_full()
-                        .bg(rgb(roles.surface_container_highest))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .tooltip(attachment_tooltip(filename.clone()))
-                        .on_mouse_down(gpui::MouseButton::Left, {
-                            let entity = entity.clone();
-                            let id = attachment_id.clone();
-                            move |_, _window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.remove_pending_attachment(id.as_ref(), cx);
-                                });
-                            }
-                        })
-                        .child(Icon::new(AppIcon::Close).size(px(12.0))),
-                )
-                .into_any_element()
-        }
-    }
 }

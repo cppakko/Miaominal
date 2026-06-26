@@ -229,6 +229,7 @@ impl AppView {
         }
         cx.spawn(async move |this, cx| {
             let files = rfd::FileDialog::new()
+                .add_filter("All files", &["*"])
                 .add_filter(
                     "Images",
                     &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
@@ -241,7 +242,6 @@ impl AppView {
                         "bash", "sql", "csv", "log", "ini", "cfg", "env", "diff", "patch",
                     ],
                 )
-                .add_filter("All files", &["*"])
                 .pick_files();
             let files = match files {
                 Some(paths) if !paths.is_empty() => paths,

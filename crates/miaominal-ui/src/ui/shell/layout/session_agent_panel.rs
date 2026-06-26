@@ -810,13 +810,6 @@ impl AppView {
         session_agent_mentions::render_session_agent_at_mention_overlay(self, entity, query)
     }
 
-    pub(in crate::ui::shell::layout) fn render_session_agent_target_chips(
-        &self,
-        entity: Entity<Self>,
-    ) -> gpui::AnyElement {
-        session_agent_mentions::render_session_agent_target_chips(self, entity)
-    }
-
     fn render_session_agent_messages(
         &self,
         message_column_width: f32,
