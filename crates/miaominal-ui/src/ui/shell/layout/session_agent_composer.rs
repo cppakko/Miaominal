@@ -49,37 +49,45 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                 .rounded(px(8.0))
                 .bg(rgb(roles.surface_container_high))
                 .p_2()
-                .when(has_targets || has_attachments, |this| {
-                    this.child(render_composer_badge_row(
-                        app,
-                        badge_entity.clone(),
-                        roles,
-                        has_targets,
-                        has_attachments,
-                    ))
-                })
                 .child(
-                    div()
-                        .w_full()
+                    v_flex()
+                        .flex_1()
                         .min_h(px(86.0))
                         .max_h(px(190.0))
                         .rounded(px(6.0))
                         .relative()
                         .overflow_hidden()
                         .id("session-agent-prompt-input-menu")
+                        .when(has_targets || has_attachments, |this| {
+                            this.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .child(render_composer_badge_row(
+                                        app,
+                                        badge_entity.clone(),
+                                        roles,
+                                        has_targets,
+                                        has_attachments,
+                                    )),
+                            )
+                        })
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(
+                                    Input::new(&prompt_input)
+                                        .w_full()
+                                        .appearance(false)
+                                        .focus_bordered(false)
+                                        .p_1(),
+                                ),
+                        )
                         .on_key_down({
                             let entity = paste_entity.clone();
                             move |event: &KeyDownEvent, _window, cx| {
                                 handle_paste_key(event, entity.clone(), cx);
                             }
                         })
-                        .child(
-                            Input::new(&prompt_input)
-                                .w_full()
-                                .appearance(false)
-                                .focus_bordered(false)
-                                .p_1(),
-                        )
                         .context_menu(move |menu, _window, cx| {
                             let state = prompt_menu_input.read(cx);
                             let has_selection = !state.selected_range().is_empty();
