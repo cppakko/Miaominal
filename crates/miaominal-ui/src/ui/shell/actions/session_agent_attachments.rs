@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::ui::i18n;
 use base64::Engine as _;
+use gpui_component::WindowExt as _;
 use miaominal_core::chat_attachment::{
     self, ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
     MAX_IMAGE_DIMENSION, MAX_IMAGE_SIZE_BYTES, MAX_TEXT_FILE_SIZE_BYTES,
@@ -8,8 +9,30 @@ use miaominal_core::chat_attachment::{
 use std::path::Path;
 
 /// Result of ingesting a single candidate file/bytes into a `ChatAttachment`.
-/// On error the message is a user-facing i18n key argument string.
-type IngestResult = std::result::Result<ChatAttachment, String>;
+type IngestResult = std::result::Result<ChatAttachment, AttachmentError>;
+
+/// Discriminated attachment ingestion error so the UI can show a specific
+/// i18n message instead of a generic one.
+#[derive(Debug, Clone)]
+pub(crate) struct AttachmentError {
+    pub filename: String,
+    pub kind: AttachmentErrorKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttachmentErrorKind {
+    UnsupportedType,
+    TooLarge,
+    ReadFailed,
+    ImageDecodeFailed,
+    InvalidText,
+}
+
+impl AttachmentError {
+    fn new(filename: String, kind: AttachmentErrorKind) -> Self {
+        Self { filename, kind }
+    }
+}
 
 /// Reads, validates, and builds a `ChatAttachment` from a local file path.
 ///
@@ -31,22 +54,25 @@ pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
     let is_image = chat_attachment::is_image_extension(&extension);
     let is_text = chat_attachment::is_text_extension(&extension);
     if !is_image && !is_text {
-        return Err(filename);
+        return Err(AttachmentError::new(filename, AttachmentErrorKind::UnsupportedType));
     }
 
-    let metadata = std::fs::metadata(path).map_err(|_| filename.clone())?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
     let size_bytes = metadata.len();
     if is_image {
         if size_bytes > MAX_IMAGE_SIZE_BYTES {
-            return Err(filename);
+            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
         }
-        let bytes = std::fs::read(path).map_err(|_| filename.clone())?;
+        let bytes = std::fs::read(path)
+            .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
         build_image_attachment(&filename, &extension, &bytes)
     } else {
         if size_bytes > MAX_TEXT_FILE_SIZE_BYTES {
-            return Err(filename);
+            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
         }
-        let bytes = std::fs::read(path).map_err(|_| filename.clone())?;
+        let bytes = std::fs::read(path)
+            .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
         build_text_attachment(&filename, &extension, &bytes)
     }
 }
@@ -61,10 +87,10 @@ pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u
         "gif" => image::ImageFormat::Gif,
         "webp" => image::ImageFormat::WebP,
         "bmp" => image::ImageFormat::Bmp,
-        _ => return Err(filename.to_string()),
+        _ => return Err(AttachmentError::new(filename.to_string(), AttachmentErrorKind::UnsupportedType)),
     };
     let decoded = image::load_from_memory_with_format(bytes, format)
-        .map_err(|_| filename.to_string())?;
+        .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::ImageDecodeFailed))?;
     let scaled = scale_image(decoded, MAX_IMAGE_DIMENSION);
     let (mime_type, encoded) = encode_scaled_image(&scaled);
     let thumbnail = make_thumbnail(&scaled, 64);
@@ -91,7 +117,8 @@ pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u
 /// Builds a `ChatAttachment` from raw text file bytes. The bytes must be valid
 /// UTF-8; otherwise an error is returned.
 pub(crate) fn build_text_attachment(filename: &str, extension: &str, bytes: &[u8]) -> IngestResult {
-    let text = String::from_utf8(bytes.to_vec()).map_err(|_| filename.to_string())?;
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::InvalidText))?;
     let language = chat_attachment::extension_to_language(extension);
     let mime_type = chat_attachment::extension_to_mime(extension);
     let size_bytes = text.len() as u64;
@@ -256,7 +283,7 @@ impl AppView {
     }
 
     /// Ingests a list of local file paths into pending attachments, reporting
-    /// per-file errors via the status message.
+    /// per-file errors via a notification toast and the status message.
     pub(in crate::ui::shell) fn ingest_attachment_paths(
         &mut self,
         paths: Vec<std::path::PathBuf>,
@@ -266,21 +293,19 @@ impl AppView {
             return;
         }
         let mut attachments = Vec::new();
-        let mut last_error_filename: Option<String> = None;
+        let mut errors: Vec<AttachmentError> = Vec::new();
         for path in &paths {
             match build_attachment_from_path(path) {
                 Ok(attachment) => attachments.push(attachment),
-                Err(filename) => last_error_filename = Some(filename),
+                Err(error) => errors.push(error),
             }
         }
-        if let Some(filename) = last_error_filename
-            && attachments.is_empty()
-        {
-            self.status_message = i18n::string_args(
-                "workspace.panel.agent.messages.attachment_load_failed",
-                &[("filename", &filename)],
-            );
-            cx.notify();
+        if let Some(error) = errors.first() {
+            let message = attachment_error_status_message(error);
+            self.status_message = message.clone();
+            self.notify_attachment_error(message, cx);
+        }
+        if attachments.is_empty() {
             return;
         }
         self.add_pending_attachments(attachments, cx);
@@ -303,13 +328,46 @@ impl AppView {
             Ok(attachment) => {
                 self.add_pending_attachments(vec![attachment], cx);
             }
-            Err(_) => {
-                self.status_message = i18n::string_args(
-                    "workspace.panel.agent.messages.image_decode_failed",
-                    &[("filename", &filename)],
-                );
-                cx.notify();
+            Err(error) => {
+                let message = attachment_error_status_message(&error);
+                self.status_message = message.clone();
+                self.notify_attachment_error(message, cx);
             }
         }
+    }
+
+    /// Pushes a notification toast for an attachment ingestion error.
+    fn notify_attachment_error(&mut self, message: String, cx: &mut Context<Self>) {
+        let title = i18n::string("notifications.attachment.title");
+        let notification = Self::error_notification(title, message);
+        self.with_active_window(cx, move |window, cx| {
+            window.push_notification(notification, cx);
+        });
+    }
+}
+
+/// Maps an `AttachmentError` to a localised status message string.
+fn attachment_error_status_message(error: &AttachmentError) -> String {
+    match error.kind {
+        AttachmentErrorKind::UnsupportedType => i18n::string_args(
+            "workspace.panel.agent.messages.unsupported_file_type",
+            &[("filename", &error.filename)],
+        ),
+        AttachmentErrorKind::TooLarge => i18n::string_args(
+            "workspace.panel.agent.messages.file_too_large",
+            &[("filename", &error.filename)],
+        ),
+        AttachmentErrorKind::ReadFailed => i18n::string_args(
+            "workspace.panel.agent.messages.attachment_load_failed",
+            &[("filename", &error.filename)],
+        ),
+        AttachmentErrorKind::ImageDecodeFailed => i18n::string_args(
+            "workspace.panel.agent.messages.image_decode_failed",
+            &[("filename", &error.filename)],
+        ),
+        AttachmentErrorKind::InvalidText => i18n::string_args(
+            "workspace.panel.agent.messages.invalid_text_file",
+            &[("filename", &error.filename)],
+        ),
     }
 }

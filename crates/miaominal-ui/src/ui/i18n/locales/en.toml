@@ -677,6 +677,9 @@ image_decode_failed = "Could not decode image: {filename}"
 too_many_attachments = "You can attach at most {limit} files per message."
 attachments_added = "Added {count} attachment(s)."
 attachment_removed = "Attachment removed."
+unsupported_file_type = "Unsupported file type: {filename}"
+file_too_large = "File is too large: {filename}"
+invalid_text_file = "File is not valid UTF-8: {filename}"
 
 [workspace.panel.agent.labels]
 message = "message"
@@ -1281,6 +1284,9 @@ script_required = "Script is required."
 [notifications.validation]
 required_input_missing = "Required input missing"
 invalid_input = "Invalid input"
+
+[notifications.attachment]
+title = "Attachment failed"
 
 [navigation.section.hosts]
 title = "Hosts"

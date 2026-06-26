@@ -535,6 +535,9 @@ image_decode_failed = "无法解码图片：{filename}"
 too_many_attachments = "每条消息最多只能附加 {limit} 个文件。"
 attachments_added = "已添加 {count} 个附件。"
 attachment_removed = "附件已移除。"
+unsupported_file_type = "不支持的文件类型：{filename}"
+file_too_large = "文件过大：{filename}"
+invalid_text_file = "文件不是有效的 UTF-8 文本：{filename}"
 
 [workspace.panel.agent.labels]
 message = "消息"
@@ -1139,6 +1142,9 @@ script_required = "必须填写脚本。"
 [notifications.validation]
 required_input_missing = "缺少必填输入"
 invalid_input = "输入无效"
+
+[notifications.attachment]
+title = "附加失败"
 
 [navigation.section.hosts]
 title = "主机"
