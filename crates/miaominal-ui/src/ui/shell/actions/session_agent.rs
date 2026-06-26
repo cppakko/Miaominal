@@ -61,15 +61,8 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
                     miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
                         Some(image.clone())
                     }
-                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(text_file) => {
-                        let language = text_file.language.as_deref().unwrap_or("");
-                        let fence = if language.is_empty() { String::new() } else { format!("\n```{language}") };
-                        let close_fence = if language.is_empty() { String::new() } else { "\n```".to_string() };
-                        let block = format!(
-                            "\n\n[Attached file: {}]{fence}\n{}\n{close_fence}",
-                            attachment.filename, text_file.text
-                        );
-                        content.push_str(&block);
+                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_text_file) => {
+                        embed_text_attachments_into_content(&mut content, std::slice::from_ref(attachment));
                         None
                     }
                 }
@@ -85,6 +78,37 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
             },
             content,
             images,
+        }
+    }
+}
+
+/// Appends text-file attachment content blocks into the given string
+/// using fenced code blocks (e.g. ```` ```rust\n...\n``` ````).
+/// Image attachments are ignored — callers must handle those separately.
+fn embed_text_attachments_into_content(
+    content: &mut String,
+    attachments: &[miaominal_core::chat_attachment::ChatAttachment],
+) {
+    for attachment in attachments {
+        if let miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(text_file) =
+            &attachment.content
+        {
+            let language = text_file.language.as_deref().unwrap_or("");
+            let fence = if language.is_empty() {
+                String::new()
+            } else {
+                format!("\n```{language}")
+            };
+            let close_fence = if language.is_empty() {
+                String::new()
+            } else {
+                "\n```".to_string()
+            };
+            let block = format!(
+                "\n\n[Attached file: {}]{fence}\n{}\n{close_fence}",
+                attachment.filename, text_file.text
+            );
+            content.push_str(&block);
         }
     }
 }
@@ -1004,6 +1028,8 @@ impl AppView {
             .iter()
             .filter_map(|attachment| attachment.as_image().cloned())
             .collect();
+        let mut llm_prompt = model_prompt.clone();
+        embed_text_attachments_into_content(&mut llm_prompt, &attachments);
         let history = self
             .session_agent
             .messages
@@ -1044,7 +1070,7 @@ impl AppView {
                     miaominal_agent::stream_chat(AgentChatRequest {
                         provider,
                         messages: history,
-                        prompt: model_prompt,
+                        prompt: llm_prompt,
                         prompt_images,
                         tools,
                         target_guidance,
