@@ -178,6 +178,7 @@ fn build_user_message(text: &str, images: &[ChatImage], vision_supported: bool) 
         return Message::user(combined);
     }
     let mut content = OneOrMany::one(UserContent::text(text));
+    let image_count = images.len();
     for image in images {
         let media_type = ImageMediaType::from_mime_type(&image.mime_type);
         content.push(UserContent::image_base64(
@@ -186,6 +187,11 @@ fn build_user_message(text: &str, images: &[ChatImage], vision_supported: bool) 
             None,
         ));
     }
+    let prefix = format!(
+        "[The user attached {} image(s) below. Analyze them as visual input.]\n\n",
+        image_count
+    );
+    content.insert(0, UserContent::text(prefix));
     Message::User { content }
 }
 

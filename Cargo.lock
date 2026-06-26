@@ -5500,10 +5500,12 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "base64",
  "futures",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
+ "image",
  "log",
  "miaominal-agent",
  "miaominal-core",
