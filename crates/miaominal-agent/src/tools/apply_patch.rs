@@ -1,6 +1,7 @@
 use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::{AgentError, AgentResult};
 use crate::path_guard::{cd_prefix, resolve_workspace_path, shell_quote};
+use base64::Engine as _;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
@@ -71,19 +72,22 @@ pub async fn apply_patch(
 
 fn build_patch_command(shell: ShellType, base_dir: &str, patch: &str) -> AgentResult<String> {
     match shell {
-        ShellType::Posix | ShellType::Fish => Ok(format!(
+        ShellType::Posix => Ok(format!(
             "cd \"$HOME\" && cd {base_dir} && patch -p0 <<'MIAOMINAL_AGENT_PATCH'\n{patch}\nMIAOMINAL_AGENT_PATCH",
-            base_dir = shell_quote(base_dir, shell),
+            base_dir = shell_quote(base_dir, ShellType::Posix),
             patch = patch,
         )),
+        ShellType::Fish => Ok(build_fish_patch_command(base_dir, patch)),
         ShellType::PowerShell => {
+            let patch_base64 = base64::engine::general_purpose::STANDARD.encode(patch.as_bytes());
             let ps_script = format!(
-                "{cd_prefix}\n@'\n{patch}\n'@ | & patch -p0",
+                "{cd_prefix}\n$patch = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{patch_base64}'))\n$patch | & patch -p0",
                 cd_prefix = cd_prefix(shell, base_dir),
-                patch = patch,
+                patch_base64 = patch_base64,
             );
             Ok(format!(
-                "powershell.exe -NoProfile -Command \"{ps_script}\""
+                "powershell.exe -NoProfile -EncodedCommand {}",
+                powershell_encoded_command(&ps_script)
             ))
         }
         ShellType::Cmd => Err(AgentError::PosixOnly(
@@ -92,6 +96,38 @@ fn build_patch_command(shell: ShellType, base_dir: &str, patch: &str) -> AgentRe
                 .into(),
         )),
     }
+}
+
+fn build_fish_patch_command(base_dir: &str, patch: &str) -> String {
+    let patch_args = patch.lines().map(fish_double_quote_arg).collect::<Vec<_>>();
+    let patch_args = if patch_args.is_empty() {
+        fish_double_quote_arg("")
+    } else {
+        patch_args.join(" ")
+    };
+    format!(
+        "cd \"$HOME\"; and cd {base_dir}; and printf '%s\\n' {patch_args} | patch -p0",
+        base_dir = fish_double_quote_arg(base_dir),
+        patch_args = patch_args,
+    )
+}
+
+fn fish_double_quote_arg(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+    )
+}
+
+fn powershell_encoded_command(script: &str) -> String {
+    let mut bytes = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn default_dot() -> String {
@@ -141,34 +177,34 @@ mod tests {
         .unwrap();
 
         assert!(
-            cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"),
-            "Fish should use heredoc"
+            !cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"),
+            "Fish should not use POSIX heredoc"
         );
+        assert!(cmd.contains("printf '%s\\n'"), "Fish should pipe printf");
         assert!(cmd.contains("patch -p0"), "Fish should call patch -p0");
-        assert!(cmd.contains("cd \"$HOME\""), "Fish should cd to HOME first");
+        assert!(
+            cmd.contains("cd \"$HOME\"; and cd"),
+            "Fish should use fish command chaining"
+        );
     }
 
     #[test]
     fn powershell_patch_unavailable_error() {
-        // Test that PowerShell command uses here-string and patch invocation
+        // Test that PowerShell command uses EncodedCommand and patch invocation.
         let cmd = build_patch_command(
             ShellType::PowerShell,
             "C:\\Users\\user\\project",
-            "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new",
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-\"old\"\n+\"new\"",
         )
         .unwrap();
 
         assert!(
-            cmd.contains("@'\n"),
-            "PowerShell should use here-string (@')"
+            cmd.starts_with("powershell.exe -NoProfile -EncodedCommand "),
+            "PowerShell should use EncodedCommand"
         );
         assert!(
-            cmd.contains("\n'@ | & patch -p0"),
-            "PowerShell should pipe to patch"
-        );
-        assert!(
-            cmd.contains("Set-Location $env:USERPROFILE"),
-            "PowerShell should use Set-Location to user profile"
+            !cmd.contains("\"old\""),
+            "raw patch content should not be embedded in the outer command"
         );
         assert!(
             !cmd.contains("<<'MIAOMINAL_AGENT_PATCH'"),
@@ -198,13 +234,12 @@ mod tests {
 
     #[test]
     fn powershell_here_string_contains_patch_content() {
-        let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n-foo\n+bar";
+        let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n-'@\n+\"bar\"";
         let cmd = build_patch_command(ShellType::PowerShell, "C:\\project", patch).unwrap();
 
-        // The patch content should appear verbatim between @' and '@
         assert!(
-            cmd.contains(patch),
-            "PowerShell here-string should contain patch content verbatim"
+            !cmd.contains(patch),
+            "PowerShell outer command should not contain raw patch content"
         );
     }
 
@@ -223,9 +258,35 @@ mod tests {
         let cmd = build_patch_command(ShellType::PowerShell, "C:\\Users\\user\\my project", "diff")
             .unwrap();
 
-        assert!(
-            cmd.contains("'C:\\Users\\user\\my project'"),
-            "PowerShell should single-quote paths with spaces"
-        );
+        assert!(cmd.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+    }
+
+    #[test]
+    fn powershell_encoded_command_round_trips_utf16le() {
+        let script = "Set-Location 'C:\\Users\\user\\my project'\n$patch = '\"quoted\"'";
+        let encoded = powershell_encoded_command(script);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("encoded command decodes");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+
+        assert_eq!(String::from_utf16(&units).unwrap(), script);
+    }
+
+    #[test]
+    fn fish_patch_command_escapes_expansions_in_patch_lines() {
+        let cmd = build_patch_command(
+            ShellType::Fish,
+            "/home/user/$project",
+            "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-$old \"value\" \\ path\n+$new",
+        )
+        .unwrap();
+
+        assert!(cmd.contains("\"/home/user/\\$project\""));
+        assert!(cmd.contains("\"-\\$old \\\"value\\\" \\\\ path\""));
+        assert!(cmd.contains("\"+\\$new\""));
     }
 }
