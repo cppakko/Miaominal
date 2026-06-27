@@ -17,15 +17,6 @@ pub struct RunShellArgs {
 
 pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentResult<ToolOutput> {
     let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, true)?;
-    if matches!(
-        channel.policy().decide_command(&args.command, true),
-        crate::policy::AgentPolicyDecision::Deny { .. }
-    ) {
-        channel.policy().enforce_command(&args.command, true)?;
-    }
     let timeout_secs = args.timeout_seconds.unwrap_or(20).max(1);
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let shell = args.shell.as_deref().unwrap_or(channel.shell_label());

@@ -149,15 +149,6 @@ fn make_stop_command(marker: &str, shell_type: ShellType) -> String {
 
 pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentResult<ToolOutput> {
     let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &cwd, true)?;
-    if matches!(
-        channel.policy().decide_command(&args.command, true),
-        crate::policy::AgentPolicyDecision::Deny { .. }
-    ) {
-        channel.policy().enforce_command(&args.command, true)?;
-    }
     let job_id = AgentJobId::new();
     let marker = job_id.remote_marker()?;
     let st = channel.shell_type();

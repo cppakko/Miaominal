@@ -107,12 +107,25 @@ impl Tool for JsonAgentTool {
         let channel = self.channel.clone();
         let name = self.name.clone();
         let approved = match self.mode {
-            AgentMode::NonBlocking | AgentMode::FullAuto => true,
-            AgentMode::Ask => false,
+            AgentMode::FullAuto => true,
+            AgentMode::Ask | AgentMode::NonBlocking => false,
             AgentMode::Execute => auto_approve_rig_tool(&name),
         };
-        let skip_policy = matches!(self.mode, AgentMode::FullAuto);
+        let skip_policy = matches!(self.mode, AgentMode::NonBlocking | AgentMode::FullAuto);
+        let mode = self.mode;
         async move {
+            if mode == AgentMode::NonBlocking {
+                let response = AgentToolCallResponse {
+                    tool_name: name.clone(),
+                    route: BackendRoute::SshExec,
+                    output: ToolOutput::Approval {
+                        message: format!("tool `{name}` requires user approval"),
+                        operation_hash: None,
+                    },
+                };
+                return serde_json::to_string(&response)
+                    .map_err(|error| AgentError::InvalidArguments(error.to_string()));
+            }
             let response = match call_tool_on_worker(
                 channel,
                 AgentToolCallRequest {

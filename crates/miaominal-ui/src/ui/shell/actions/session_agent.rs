@@ -1351,6 +1351,8 @@ impl AppView {
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
         let web_search_config = self.settings_store.settings().web_search.clone();
+        let skip_policy =
+            self.session_agent.agent_mode == AgentMode::NonBlocking;
         let tool_name = tool_call.name.clone();
         let tool_arguments = tool_call.arguments.clone();
         let task = cx.spawn(async move |this, cx| {
@@ -1383,7 +1385,7 @@ impl AppView {
                             arguments,
                             approved: true,
                             route: None,
-                            skip_policy: false,
+                            skip_policy,
                         })
                         .await
                         .map_err(anyhow::Error::from)
@@ -1801,7 +1803,7 @@ impl AppView {
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
                 if matches!(
                     self.session_agent.agent_mode,
-                    AgentMode::NonBlocking | AgentMode::FullAuto
+                    AgentMode::FullAuto
                 ) {
                     self.approve_session_agent_tool_call(id, cx);
                     None

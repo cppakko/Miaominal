@@ -44,7 +44,7 @@ pub enum AgentMode {
     /// All tools, full policy review, sensitive operations require confirmation. (default)
     #[default]
     Execute,
-    /// All tools, policy enforced, but tool calls are auto-approved (no confirmation prompts).
+    /// All tools, policy bypassed entirely, tool calls require user approval before execution.
     NonBlocking,
     /// All tools, policy bypassed entirely, all tool calls auto-executed.
     FullAuto,
