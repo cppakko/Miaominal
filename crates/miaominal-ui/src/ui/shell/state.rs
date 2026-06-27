@@ -494,16 +494,9 @@ impl SessionAgentState {
             .filter_map(|message| message.tool_call.as_mut())
             .find(|tool_call| tool_call.id == id)
         {
-            if result.contains("requires user approval") {
-                tool_call.status = SessionAgentToolStatus::WaitingForConfirmation;
-                tool_call.requires_confirmation = true;
+            tool_call.status = SessionAgentToolStatus::Completed;
+            if !result.trim().is_empty() {
                 tool_call.confirmation_note = Some(result);
-                tool_call.expanded = true;
-            } else {
-                tool_call.status = SessionAgentToolStatus::Completed;
-                if !result.trim().is_empty() {
-                    tool_call.confirmation_note = Some(result);
-                }
             }
         }
     }

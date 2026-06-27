@@ -635,15 +635,27 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
                             })
                             .child(
                                 div()
-                                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                                    .child(if expanded { "v" } else { ">" }),
+                                    .size(px(14.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(if expanded {
+                                            AppIcon::ChevronDown
+                                        } else {
+                                            AppIcon::Next
+                                        })
+                                        .size(px(14.0)),
+                                    ),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Thinking"),
+                                    .child(i18n::string(
+                                        "workspace.panel.agent.thinking_title",
+                                    )),
                             )
                             .when(is_active_thinking, |this| {
                                 this.child(format_duration_ms(elapsed_ms))
@@ -940,9 +952,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     )
 }
 
-/// Renders inline image attachments and text-file filename chips inside a
-/// user message bubble. Images are shown via `img()` with the full-resolution
-/// base64 data URI, capped to 400px height. Text files show a filename chip.
+/// Renders attachment filename chips inside a user message bubble.
 fn render_session_agent_message_attachments(
     attachments: &[miaominal_core::chat_attachment::ChatAttachment],
     roles: miaominal_settings::theme::Md3Roles,
@@ -954,43 +964,35 @@ fn render_session_agent_message_attachments(
         .children(
             attachments
                 .iter()
-                .map(|attachment| match &attachment.content {
-                    miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
-                        let data_uri = format!(
-                            "data:{};base64,{}",
-                            attachment.mime_type, image.thumbnail_base64
-                        );
-                        gpui::img(data_uri)
-                            .w_full()
-                            .max_w(px(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH))
-                            .max_h(px(400.0))
-                            .rounded(px(6.0))
-                            .object_fit(gpui::ObjectFit::Contain)
-                            .into_any_element()
-                    }
-                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
-                        let filename = &attachment.filename;
-                        h_flex()
-                            .flex_shrink_0()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded(px(6.0))
-                            .bg(rgb(roles.surface_container))
-                            .items_center()
-                            .child(
-                                Icon::new(AppIcon::File)
-                                    .small()
-                                    .text_color(rgb(roles.primary)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                                    .text_color(rgb(roles.on_surface))
-                                    .child(truncate_with_ellipsis(filename, 24)),
-                            )
-                            .into_any_element()
-                    }
+                .map(|attachment| {
+                    let icon = match &attachment.content {
+                        miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => {
+                            AppIcon::Upload
+                        }
+                        miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
+                            AppIcon::File
+                        }
+                    };
+                    h_flex()
+                        .flex_shrink_0()
+                        .gap_1()
+                        .px_2()
+                        .py_1()
+                        .rounded(px(6.0))
+                        .bg(rgb(roles.surface_container))
+                        .items_center()
+                        .child(
+                            Icon::new(icon)
+                                .small()
+                                .text_color(rgb(roles.primary)),
+                        )
+                        .child(
+                            div()
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .text_color(rgb(roles.on_surface))
+                                .child(truncate_with_ellipsis(&attachment.filename, 24)),
+                        )
+                        .into_any_element()
                 }),
         )
         .into_any_element()

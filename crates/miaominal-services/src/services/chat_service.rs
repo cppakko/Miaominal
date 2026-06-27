@@ -35,6 +35,15 @@ impl ChatService {
         self.store.insert_message(record, &self.key)
     }
 
+    pub fn replace_session_messages(
+        &self,
+        session_id: &str,
+        records: &[ChatMessageRecord],
+    ) -> Result<()> {
+        self.store
+            .replace_session_messages(session_id, records, &self.key)
+    }
+
     pub fn load_session_messages(&self, session_id: &str) -> Result<Vec<ChatMessageRecord>> {
         self.store.load_session_messages(session_id, &self.key)
     }

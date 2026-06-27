@@ -1,3 +1,4 @@
+use crate::channel::{AgentToolCallResponse, ToolOutput};
 use crate::error::{AgentError, AgentResult};
 use crate::tools::AgentToolSet;
 use anyhow::Context as _;
@@ -749,10 +750,10 @@ fn chat_event_from_user_content(
                 internal_call_id,
                 result
             );
-            if result.contains("requires user approval") {
+            if let Some(message) = structured_approval_message(&result) {
                 Some(Ok(AgentChatEvent::ToolCallApprovalRequired {
                     id: internal_call_id,
-                    message: result,
+                    message,
                 }))
             } else {
                 Some(Ok(AgentChatEvent::ToolCallCompleted {
@@ -761,6 +762,14 @@ fn chat_event_from_user_content(
                 }))
             }
         }
+    }
+}
+
+fn structured_approval_message(result: &str) -> Option<String> {
+    let response: AgentToolCallResponse = serde_json::from_str(result).ok()?;
+    match response.output {
+        ToolOutput::Approval { message, .. } => Some(message),
+        _ => None,
     }
 }
 
@@ -795,4 +804,33 @@ fn tool_result_content_text(content: &rig_core::OneOrMany<ToolResultContent>) ->
 
 fn streaming_error(error: StreamingError) -> AgentError {
     AgentError::Backend(anyhow::Error::new(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::BackendRoute;
+
+    #[test]
+    fn structured_approval_message_reads_tool_output_approval() {
+        let response = AgentToolCallResponse {
+            tool_name: "apply_patch".to_string(),
+            route: BackendRoute::SshExec,
+            output: ToolOutput::Approval {
+                message: "approval required".to_string(),
+                operation_hash: Some("op-1".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&response).expect("response serializes");
+
+        assert_eq!(
+            structured_approval_message(&json).as_deref(),
+            Some("approval required")
+        );
+    }
+
+    #[test]
+    fn structured_approval_message_ignores_plain_text() {
+        assert_eq!(structured_approval_message("tool `x` requires user approval"), None);
+    }
 }

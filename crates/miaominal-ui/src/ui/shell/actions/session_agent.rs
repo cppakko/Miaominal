@@ -19,6 +19,8 @@ use tokio::sync::{Mutex, mpsc};
 const SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_FOLLOW_BOTTOM_TICKS: usize = 50;
 const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::from_millis(1000);
+const SESSION_AGENT_CONTEXT_MAX_MESSAGES: usize = 40;
+const SESSION_AGENT_CONTEXT_MAX_CHARS: usize = 80_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PromptHistoryDirection {
@@ -52,22 +54,11 @@ fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
 
 impl From<&SessionAgentMessage> for AgentChatMessage {
     fn from(message: &SessionAgentMessage) -> Self {
-        let mut content = message.content.clone();
+        let content = content_with_text_attachments(&message.content, &message.attachments);
         let images: Vec<miaominal_core::chat_attachment::ChatImage> = message
             .attachments
             .iter()
-            .filter_map(|attachment| match &attachment.content {
-                miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
-                    Some(image.clone())
-                }
-                miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_text_file) => {
-                    embed_text_attachments_into_content(
-                        &mut content,
-                        std::slice::from_ref(attachment),
-                    );
-                    None
-                }
-            })
+            .filter_map(|attachment| attachment.as_image().cloned())
             .collect();
         Self {
             role: match message.role {
@@ -86,7 +77,7 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
 /// Appends text-file attachment content blocks into the given string
 /// using fenced code blocks (e.g. ```` ```rust\n...\n``` ````).
 /// Image attachments are ignored — callers must handle those separately.
-fn embed_text_attachments_into_content(
+fn append_text_attachments_to_content(
     content: &mut String,
     attachments: &[miaominal_core::chat_attachment::ChatAttachment],
 ) {
@@ -112,6 +103,69 @@ fn embed_text_attachments_into_content(
             content.push_str(&block);
         }
     }
+}
+
+fn content_with_text_attachments(
+    content: &str,
+    attachments: &[miaominal_core::chat_attachment::ChatAttachment],
+) -> String {
+    let mut content = content.to_string();
+    append_text_attachments_to_content(&mut content, attachments);
+    content
+}
+
+fn agent_provider_supports_vision(kind: AgentChatProviderKind) -> bool {
+    matches!(
+        kind,
+        AgentChatProviderKind::OpenAi
+            | AgentChatProviderKind::Anthropic
+            | AgentChatProviderKind::Gemini
+            | AgentChatProviderKind::OpenRouter
+            | AgentChatProviderKind::Xai
+    )
+}
+
+fn session_agent_history_cost(message: &AgentChatMessage) -> usize {
+    message.content.len()
+        + message
+            .images
+            .iter()
+            .map(|image| image.data_base64.len())
+            .sum::<usize>()
+}
+
+fn build_session_agent_history(messages: &[SessionAgentMessage]) -> Vec<AgentChatMessage> {
+    let mut selected = Vec::new();
+    let mut total_chars = 0usize;
+
+    for message in messages.iter().rev().filter(|message| {
+        matches!(
+            message.role,
+            SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
+        )
+    }) {
+        if selected.len() >= SESSION_AGENT_CONTEXT_MAX_MESSAGES {
+            break;
+        }
+
+        let chat_message = AgentChatMessage::from(message);
+        if chat_message.content.trim().is_empty() && chat_message.images.is_empty() {
+            continue;
+        }
+
+        let cost = session_agent_history_cost(&chat_message);
+        if !selected.is_empty()
+            && total_chars.saturating_add(cost) > SESSION_AGENT_CONTEXT_MAX_CHARS
+        {
+            break;
+        }
+
+        total_chars = total_chars.saturating_add(cost);
+        selected.push(chat_message);
+    }
+
+    selected.reverse();
+    selected
 }
 
 impl AppView {
@@ -923,11 +977,9 @@ impl AppView {
             })
             .collect::<Vec<_>>();
 
-        for record in records {
-            if let Err(error) = chat_service.insert_message(&record) {
-                log::warn!("failed to persist chat message: {error:?}");
-                return;
-            }
+        if let Err(error) = chat_service.replace_session_messages(&session_id, &records) {
+            log::warn!("failed to persist chat messages: {error:?}");
+            return;
         }
 
         if let Some(title) = self.session_agent.title.as_deref()
@@ -955,7 +1007,8 @@ impl AppView {
             .value()
             .trim()
             .to_string();
-        if prompt.is_empty() {
+        let has_pending_attachments = !self.session_agent.pending_attachments.is_empty();
+        if prompt.is_empty() && !has_pending_attachments {
             self.status_message = i18n::string("workspace.panel.agent.empty_prompt");
             cx.notify();
             return;
@@ -1009,6 +1062,11 @@ impl AppView {
         let target_guidance = mentions.guidance;
         self.session_agent.panel_view = ChatPanelView::Conversation;
         self.session_agent.active_at_targets = target_names.clone();
+        let prompt_for_message = if prompt.is_empty() && has_pending_attachments {
+            i18n::string("workspace.panel.agent.attachment_only_prompt")
+        } else {
+            prompt.clone()
+        };
         let target_prefix = if target_names.is_empty() {
             String::new()
         } else {
@@ -1021,7 +1079,7 @@ impl AppView {
                     .join(", ")
             )
         };
-        let model_prompt = format!("{target_prefix}{prompt}");
+        let model_prompt = format!("{target_prefix}{prompt_for_message}");
         let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
         let attachments = std::mem::take(&mut self.session_agent.pending_attachments);
@@ -1029,30 +1087,26 @@ impl AppView {
             .iter()
             .filter_map(|attachment| attachment.as_image().cloned())
             .collect();
-        let mut llm_prompt = model_prompt.clone();
-        embed_text_attachments_into_content(&mut llm_prompt, &attachments);
-        let history = self
-            .session_agent
-            .messages
-            .iter()
-            .filter(|message| {
-                matches!(
-                    message.role,
-                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
-                )
-            })
-            .map(AgentChatMessage::from)
-            .collect::<Vec<_>>();
+        let llm_prompt = content_with_text_attachments(&model_prompt, &attachments);
+        let images_as_text_fallback = !prompt_images.is_empty()
+            && !agent_provider_supports_vision(provider.kind);
+        let history = build_session_agent_history(&self.session_agent.messages);
 
         self.push_session_agent_message(
             SessionAgentMessage::user_with_attachments(model_prompt.clone(), attachments),
             cx,
         );
-        self.record_session_agent_prompt_history(&prompt);
+        if !prompt.is_empty() {
+            self.record_session_agent_prompt_history(&prompt);
+        }
         self.persist_session_agent_chat();
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
-        self.status_message = i18n::string("workspace.panel.agent.send_pending");
+        self.status_message = if images_as_text_fallback {
+            i18n::string("workspace.panel.agent.messages.image_attachments_text_fallback")
+        } else {
+            i18n::string("workspace.panel.agent.send_pending")
+        };
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
@@ -1467,18 +1521,7 @@ impl AppView {
         };
         let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
-        let history = self
-            .session_agent
-            .messages
-            .iter()
-            .filter(|message| {
-                matches!(
-                    message.role,
-                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
-                )
-            })
-            .map(AgentChatMessage::from)
-            .collect::<Vec<_>>();
+        let history = build_session_agent_history(&self.session_agent.messages);
 
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
@@ -2086,18 +2129,7 @@ impl AppView {
             }
         };
 
-        let history = self
-            .session_agent
-            .messages
-            .iter()
-            .filter(|message| {
-                matches!(
-                    message.role,
-                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
-                )
-            })
-            .map(AgentChatMessage::from)
-            .collect::<Vec<_>>();
+        let history = build_session_agent_history(&self.session_agent.messages);
         let tool_guidance = if message.contains("UnknownToolCall") {
             "\nTool correction: use only the listed Miaominal tools. There is no `write`, `edit`, or `replace` tool. For file creation or modification, use `apply_patch` with a unified patch."
         } else {
@@ -2693,5 +2725,48 @@ mod tests {
         let record = chat_record_from_session_agent_message("session-1", 0, 100, &original)
             .expect("record should be produced");
         assert!(record.attachments.is_none());
+    }
+
+    #[test]
+    fn text_attachments_are_embedded_for_model_content() {
+        let attachment = miaominal_core::chat_attachment::ChatAttachment {
+            id: "att-1".to_string(),
+            filename: "main.rs".to_string(),
+            mime_type: "text/plain".to_string(),
+            size_bytes: 12,
+            content: miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(
+                miaominal_core::chat_attachment::ChatTextFile {
+                    text: "fn main() {}".to_string(),
+                    language: Some("rust".to_string()),
+                },
+            ),
+        };
+
+        let content = content_with_text_attachments("review this", &[attachment]);
+
+        assert!(content.contains("[Attached file: main.rs]"));
+        assert!(content.contains("```rust"));
+        assert!(content.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn session_agent_history_is_limited_to_recent_context() {
+        let messages = (0..50)
+            .flat_map(|index| {
+                [
+                    SessionAgentMessage::user(format!("user {index}")),
+                    SessionAgentMessage::assistant_raw(format!("assistant {index}")),
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        let history = build_session_agent_history(&messages);
+
+        assert_eq!(history.len(), SESSION_AGENT_CONTEXT_MAX_MESSAGES);
+        assert_eq!(history.first().map(|message| message.content.as_str()), Some("user 30"));
+        assert_eq!(
+            history.last().map(|message| message.content.as_str()),
+            Some("assistant 49")
+        );
     }
 }

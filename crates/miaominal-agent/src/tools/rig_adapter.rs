@@ -1,5 +1,6 @@
 use super::{TOOL_NAMES, tool_description};
-use crate::channel::{AgentExecChannel, AgentToolCallRequest};
+use crate::backend::BackendRoute;
+use crate::channel::{AgentExecChannel, AgentToolCallRequest, AgentToolCallResponse, ToolOutput};
 use crate::chat::AgentMode;
 use crate::error::AgentError;
 use rig_core::completion::ToolDefinition;
@@ -112,17 +113,29 @@ impl Tool for JsonAgentTool {
         };
         let skip_policy = matches!(self.mode, AgentMode::FullAuto);
         async move {
-            let response = call_tool_on_worker(
+            let response = match call_tool_on_worker(
                 channel,
                 AgentToolCallRequest {
-                    tool_name: name,
+                    tool_name: name.clone(),
                     arguments: normalize_tool_arguments(args),
                     approved,
                     route: None,
                     skip_policy,
                 },
             )
-            .await?;
+            .await
+            {
+                Ok(response) => response,
+                Err(AgentError::ApprovalRequired { tool_name }) => AgentToolCallResponse {
+                    tool_name: tool_name.clone(),
+                    route: BackendRoute::SshExec,
+                    output: ToolOutput::Approval {
+                        message: format!("tool `{tool_name}` requires user approval"),
+                        operation_hash: None,
+                    },
+                },
+                Err(error) => return Err(error),
+            };
             serde_json::to_string(&response)
                 .map_err(|error| AgentError::InvalidArguments(error.to_string()))
         }

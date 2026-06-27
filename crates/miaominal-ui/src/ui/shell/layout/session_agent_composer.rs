@@ -8,6 +8,27 @@ use std::time::Duration;
 
 const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);
 
+fn ai_provider_kind_supports_vision(kind: miaominal_settings::AiProviderKind) -> bool {
+    matches!(
+        kind,
+        miaominal_settings::AiProviderKind::OpenAi
+            | miaominal_settings::AiProviderKind::Anthropic
+            | miaominal_settings::AiProviderKind::Gemini
+            | miaominal_settings::AiProviderKind::OpenRouter
+            | miaominal_settings::AiProviderKind::Xai
+    )
+}
+
+fn selected_ai_provider_kind(app: &AppView) -> Option<miaominal_settings::AiProviderKind> {
+    let settings = app.settings_store.settings();
+    let selected_id = settings.selected_ai_provider_id.as_deref()?;
+    settings
+        .ai_providers
+        .iter()
+        .find(|provider| provider.id == selected_id && provider.enabled)
+        .map(|provider| provider.kind)
+}
+
 pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     app: &AppView,
     entity: Entity<AppView>,
@@ -29,8 +50,17 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     let send_entity = entity;
     let waiting = app.session_agent.is_busy();
     let has_attachments = !app.session_agent.pending_attachments.is_empty();
+    let has_pending_images = app
+        .session_agent
+        .pending_attachments
+        .iter()
+        .any(|attachment| attachment.is_image());
     let has_targets = !app.session_agent.selected_at_targets.is_empty();
     let at_mention_query = app.session_agent.at_mention_query.clone();
+    let selected_provider_kind = selected_ai_provider_kind(app);
+    let has_provider = selected_provider_kind.is_some();
+    let image_text_fallback = has_pending_images
+        && selected_provider_kind.is_some_and(|kind| !ai_provider_kind_supports_vision(kind));
 
     div()
         .flex_shrink_0()
@@ -82,6 +112,22 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                             has_attachments,
                                         ),
                                     ))
+                                })
+                                .when(image_text_fallback, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .items_center()
+                                            .px_1()
+                                            .py_1()
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(text_muted))
+                                            .child(Icon::new(AppIcon::Sparkles).small())
+                                            .child(i18n::string(
+                                                "workspace.panel.agent.messages.image_attachments_text_fallback",
+                                            )),
+                                    )
                                 })
                                 .child(
                                     div().flex_1().child(
@@ -208,20 +254,30 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                             } else {
                                                 AppIcon::ChevronUp
                                             },
-                                            i18n::string(if waiting {
+                                            if !has_provider && !waiting {
+                                                i18n::string(
+                                                    "workspace.panel.agent.no_provider_configured",
+                                                )
+                                            } else {
+                                                i18n::string(if waiting {
                                                 "workspace.panel.agent.tooltips.stop_response"
                                             } else {
                                                 "workspace.panel.agent.tooltips.send_message"
-                                            }),
+                                                })
+                                            },
                                             26.0,
                                             8.0,
                                             Some(if waiting {
                                                 roles.error_container
+                                            } else if !has_provider {
+                                                roles.surface_container_highest
                                             } else {
                                                 roles.primary
                                             }),
                                             Some(if waiting {
                                                 roles.on_error_container
+                                            } else if !has_provider {
+                                                text_muted
                                             } else {
                                                 roles.on_primary
                                             }),

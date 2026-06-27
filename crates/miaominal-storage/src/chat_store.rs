@@ -168,6 +168,77 @@ impl ChatStore {
         Ok(())
     }
 
+    pub fn replace_session_messages(
+        &self,
+        session_id: &str,
+        records: &[ChatMessageRecord],
+        key: &[u8; 32],
+    ) -> Result<()> {
+        if records.iter().any(|record| record.session_id != session_id) {
+            return Err(anyhow!(
+                "cannot replace chat messages with records from another session"
+            ));
+        }
+
+        let transaction = self
+            .0
+            .unchecked_transaction()
+            .context("failed to start chat message replacement transaction")?;
+        transaction
+            .execute("DELETE FROM chat_messages WHERE session_id = ?1", [session_id])
+            .context("failed to delete existing chat messages")?;
+
+        for record in records {
+            let encrypted_content = encrypt_text(key, &record.content)?;
+            let encrypted_tool_summary = record
+                .tool_summary
+                .as_deref()
+                .map(|summary| encrypt_text(key, summary))
+                .transpose()?;
+            let encrypted_attachments = record
+                .attachments
+                .as_deref()
+                .map(|attachments| encrypt_text(key, attachments))
+                .transpose()?;
+
+            transaction
+                .execute(
+                    "INSERT INTO chat_messages
+                     (id, session_id, role, content, tool_name, tool_summary, tool_status, sort_order, created_at, attachments)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        record.id,
+                        record.session_id,
+                        record.role.as_str(),
+                        encrypted_content,
+                        record.tool_name,
+                        encrypted_tool_summary,
+                        record.tool_status,
+                        record.sort_order,
+                        record.created_at,
+                        encrypted_attachments,
+                    ],
+                )
+                .context("failed to insert replacement chat message")?;
+        }
+
+        if let Some(updated_at) = records.iter().map(|record| record.created_at).max() {
+            transaction
+                .execute(
+                    "UPDATE chat_sessions
+                     SET updated_at = MAX(updated_at, ?2)
+                     WHERE id = ?1",
+                    params![session_id, updated_at],
+                )
+                .context("failed to update chat session timestamp")?;
+        }
+
+        transaction
+            .commit()
+            .context("failed to commit chat message replacement")?;
+        Ok(())
+    }
+
     pub fn load_session_messages(
         &self,
         session_id: &str,
@@ -504,6 +575,59 @@ mod tests {
             restored_value[0]["filename"].as_str(),
             Some("screenshot.png")
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn chat_store_replaces_session_messages_transactionally() {
+        let path = test_db_path("replace-session-messages");
+        let store = ChatStore::open(&path).expect("store should open");
+        let key = [6u8; 32];
+
+        store
+            .create_session("session-1", 10)
+            .expect("session should be created");
+        store
+            .insert_message(
+                &ChatMessageRecord {
+                    id: "old-message".to_string(),
+                    session_id: "session-1".to_string(),
+                    role: ChatMessageRole::User,
+                    content: "old".to_string(),
+                    tool_name: None,
+                    tool_summary: None,
+                    tool_status: None,
+                    sort_order: 0,
+                    created_at: 11,
+                    attachments: None,
+                },
+                &key,
+            )
+            .expect("old message should be inserted");
+
+        let replacement = vec![ChatMessageRecord {
+            id: "new-message".to_string(),
+            session_id: "session-1".to_string(),
+            role: ChatMessageRole::Assistant,
+            content: "new".to_string(),
+            tool_name: None,
+            tool_summary: None,
+            tool_status: None,
+            sort_order: 0,
+            created_at: 12,
+            attachments: None,
+        }];
+        store
+            .replace_session_messages("session-1", &replacement, &key)
+            .expect("messages should be replaced");
+
+        let messages = store
+            .load_session_messages("session-1", &key)
+            .expect("messages should load");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, "new-message");
+        assert_eq!(messages[0].content, "new");
 
         let _ = std::fs::remove_file(path);
     }
