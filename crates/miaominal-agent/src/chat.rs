@@ -677,6 +677,7 @@ where
 {
     match content {
         StreamedAssistantContent::Text(text) => {
+            #[cfg(debug_assertions)]
             log::info!("agent llm text delta: {:?}", text.text);
             final_reply.push_str(&text.text);
             Some(Ok(AgentChatEvent::TextDelta(text.text)))
@@ -687,10 +688,12 @@ where
                 .iter()
                 .map(reasoning_content_text)
                 .collect::<String>();
+            #[cfg(debug_assertions)]
             log::info!("agent llm reasoning block: {:?}", text);
             (!text.is_empty()).then_some(Ok(AgentChatEvent::ThinkingDelta(text)))
         }
         StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+            #[cfg(debug_assertions)]
             log::info!("agent llm reasoning delta: {:?}", reasoning);
             (!reasoning.is_empty()).then_some(Ok(AgentChatEvent::ThinkingDelta(reasoning)))
         }
@@ -698,6 +701,7 @@ where
             tool_call,
             internal_call_id,
         } => {
+            #[cfg(debug_assertions)]
             log::info!(
                 "agent llm tool call: id={} name={} arguments={}",
                 internal_call_id,
@@ -719,6 +723,7 @@ where
                 rig_core::streaming::ToolCallDeltaContent::Name(name) => name,
                 rig_core::streaming::ToolCallDeltaContent::Delta(delta) => delta,
             };
+            #[cfg(debug_assertions)]
             log::info!(
                 "agent llm tool call delta: id={} delta={:?}",
                 internal_call_id,
@@ -730,6 +735,7 @@ where
             }))
         }
         StreamedAssistantContent::Final(_) => {
+            #[cfg(debug_assertions)]
             log::info!("agent llm assistant final marker");
             None
         }
