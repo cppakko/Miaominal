@@ -296,6 +296,7 @@ impl AgentExecChannel {
             return Box::pin(channel.call_tool(routed_request)).await;
         }
 
+        #[cfg(debug_assertions)]
         log::info!(
             "agent tool call requested: tool={} approved={} arguments={}",
             request.tool_name,

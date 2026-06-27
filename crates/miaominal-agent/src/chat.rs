@@ -597,6 +597,7 @@ fn spawn_stream_chat<M>(
                         continue; // skip Finished, let the loop drain the stream
                     }
                     let response = response.response().to_string();
+                    #[cfg(debug_assertions)]
                     log::info!("agent llm final response: {:?}", response);
                     Some(Ok(AgentChatEvent::Finished(response)))
                 }
@@ -645,6 +646,7 @@ fn spawn_stream_chat<M>(
             }
         }
 
+        #[cfg(debug_assertions)]
         log::info!(
             "agent llm stream ended; accumulated_text_delta={:?}",
             final_reply
@@ -751,6 +753,7 @@ fn chat_event_from_user_content(
             internal_call_id,
         } => {
             let result = tool_result_content_text(&tool_result.content);
+            #[cfg(debug_assertions)]
             log::info!(
                 "agent llm tool result returned to model: id={} result={:?}",
                 internal_call_id,
