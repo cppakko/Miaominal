@@ -185,7 +185,10 @@ impl ChatStore {
             .unchecked_transaction()
             .context("failed to start chat message replacement transaction")?;
         transaction
-            .execute("DELETE FROM chat_messages WHERE session_id = ?1", [session_id])
+            .execute(
+                "DELETE FROM chat_messages WHERE session_id = ?1",
+                [session_id],
+            )
             .context("failed to delete existing chat messages")?;
 
         for record in records {

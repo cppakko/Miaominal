@@ -837,6 +837,9 @@ mod tests {
 
     #[test]
     fn structured_approval_message_ignores_plain_text() {
-        assert_eq!(structured_approval_message("tool `x` requires user approval"), None);
+        assert_eq!(
+            structured_approval_message("tool `x` requires user approval"),
+            None
+        );
     }
 }

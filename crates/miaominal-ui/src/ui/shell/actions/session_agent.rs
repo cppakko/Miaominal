@@ -1088,8 +1088,8 @@ impl AppView {
             .filter_map(|attachment| attachment.as_image().cloned())
             .collect();
         let llm_prompt = content_with_text_attachments(&model_prompt, &attachments);
-        let images_as_text_fallback = !prompt_images.is_empty()
-            && !agent_provider_supports_vision(provider.kind);
+        let images_as_text_fallback =
+            !prompt_images.is_empty() && !agent_provider_supports_vision(provider.kind);
         let history = build_session_agent_history(&self.session_agent.messages);
 
         self.push_session_agent_message(
@@ -2763,7 +2763,10 @@ mod tests {
         let history = build_session_agent_history(&messages);
 
         assert_eq!(history.len(), SESSION_AGENT_CONTEXT_MAX_MESSAGES);
-        assert_eq!(history.first().map(|message| message.content.as_str()), Some("user 30"));
+        assert_eq!(
+            history.first().map(|message| message.content.as_str()),
+            Some("user 30")
+        );
         assert_eq!(
             history.last().map(|message| message.content.as_str()),
             Some("assistant 49")

@@ -653,9 +653,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
                                     .flex_1()
                                     .min_w_0()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(i18n::string(
-                                        "workspace.panel.agent.thinking_title",
-                                    )),
+                                    .child(i18n::string("workspace.panel.agent.thinking_title")),
                             )
                             .when(is_active_thinking, |this| {
                                 this.child(format_duration_ms(elapsed_ms))
@@ -961,40 +959,30 @@ fn render_session_agent_message_attachments(
         .w_full()
         .items_start()
         .gap_1()
-        .children(
-            attachments
-                .iter()
-                .map(|attachment| {
-                    let icon = match &attachment.content {
-                        miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => {
-                            AppIcon::Upload
-                        }
-                        miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
-                            AppIcon::File
-                        }
-                    };
-                    h_flex()
-                        .flex_shrink_0()
-                        .gap_1()
-                        .px_2()
-                        .py_1()
-                        .rounded(px(6.0))
-                        .bg(rgb(roles.surface_container))
-                        .items_center()
-                        .child(
-                            Icon::new(icon)
-                                .small()
-                                .text_color(rgb(roles.primary)),
-                        )
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(roles.on_surface))
-                                .child(truncate_with_ellipsis(&attachment.filename, 24)),
-                        )
-                        .into_any_element()
-                }),
-        )
+        .children(attachments.iter().map(|attachment| {
+            let icon = match &attachment.content {
+                miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => AppIcon::Upload,
+                miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
+                    AppIcon::File
+                }
+            };
+            h_flex()
+                .flex_shrink_0()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .rounded(px(6.0))
+                .bg(rgb(roles.surface_container))
+                .items_center()
+                .child(Icon::new(icon).small().text_color(rgb(roles.primary)))
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .text_color(rgb(roles.on_surface))
+                        .child(truncate_with_ellipsis(&attachment.filename, 24)),
+                )
+                .into_any_element()
+        }))
         .into_any_element()
 }
 
