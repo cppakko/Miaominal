@@ -29,6 +29,14 @@ pub async fn apply_patch(
             .enforce_path(crate::policy::AgentPathAccess::Edit, &base_dir, false)?;
     }
 
+    for path in extract_patch_paths(&args.patch) {
+        if crate::policy::is_sensitive_path(&path) {
+            channel
+                .policy()
+                .enforce_path(crate::policy::AgentPathAccess::Edit, &path, false)?;
+        }
+    }
+
     let shell = channel.shell_type();
     let command = build_patch_command(shell, &base_dir, &args.patch)?;
 
@@ -128,6 +136,22 @@ fn powershell_encoded_command(script: &str) -> String {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn extract_patch_paths(patch: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        let rest = line
+            .strip_prefix("--- ")
+            .or_else(|| line.strip_prefix("+++ "));
+        let Some(rest) = rest else { continue };
+        let path = rest.split('\t').next().unwrap_or("");
+        if path.is_empty() || path == "/dev/null" {
+            continue;
+        }
+        paths.push(path.to_string());
+    }
+    paths
 }
 
 fn default_dot() -> String {
