@@ -56,15 +56,16 @@ impl From<&SessionAgentMessage> for AgentChatMessage {
         let images: Vec<miaominal_core::chat_attachment::ChatImage> = message
             .attachments
             .iter()
-            .filter_map(|attachment| {
-                match &attachment.content {
-                    miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
-                        Some(image.clone())
-                    }
-                    miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_text_file) => {
-                        embed_text_attachments_into_content(&mut content, std::slice::from_ref(attachment));
-                        None
-                    }
+            .filter_map(|attachment| match &attachment.content {
+                miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
+                    Some(image.clone())
+                }
+                miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_text_file) => {
+                    embed_text_attachments_into_content(
+                        &mut content,
+                        std::slice::from_ref(attachment),
+                    );
+                    None
                 }
             })
             .collect();
@@ -2661,10 +2662,8 @@ mod tests {
                 },
             ),
         };
-        let original = SessionAgentMessage::user_with_attachments(
-            "look at this",
-            vec![attachment.clone()],
-        );
+        let original =
+            SessionAgentMessage::user_with_attachments("look at this", vec![attachment.clone()]);
         let record = chat_record_from_session_agent_message("session-1", 0, 100, &original)
             .expect("record should be produced");
         assert_eq!(record.role, ChatMessageRole::User);

@@ -7,7 +7,9 @@ use rig_core::OneOrMany;
 use rig_core::agent::{Agent, AgentBuilder, MultiTurnStreamItem, StreamingError};
 use rig_core::client::CompletionClient;
 use rig_core::completion::{AssistantContent, CompletionModel, GetTokenUsage, Message};
-use rig_core::message::{ImageMediaType, MimeType, ReasoningContent, ToolResultContent, UserContent};
+use rig_core::message::{
+    ImageMediaType, MimeType, ReasoningContent, ToolResultContent, UserContent,
+};
 use rig_core::providers::{
     anthropic, cohere, deepseek, gemini, huggingface, mistral, openai, openrouter, together, xai,
 };
@@ -136,11 +138,11 @@ const SESSION_AGENT_MAX_TURNS: usize = 40;
 fn chat_history(messages: Vec<AgentChatMessage>, vision_supported: bool) -> Vec<Message> {
     messages
         .into_iter()
-        .filter(|message| {
-            !message.content.trim().is_empty() || !message.images.is_empty()
-        })
+        .filter(|message| !message.content.trim().is_empty() || !message.images.is_empty())
         .map(|message| match message.role {
-            AgentChatRole::User => build_user_message(&message.content, &message.images, vision_supported),
+            AgentChatRole::User => {
+                build_user_message(&message.content, &message.images, vision_supported)
+            }
             AgentChatRole::Assistant => Message::assistant(message.content),
         })
         .collect::<Vec<_>>()

@@ -63,7 +63,10 @@ pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
         .map_err(|_| AttachmentError::new(filename.clone(), AttachmentErrorKind::ReadFailed))?;
     let disk_size = metadata.len();
     if disk_size > MAX_IMAGE_SIZE_BYTES {
-        return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
+        return Err(AttachmentError::new(
+            filename,
+            AttachmentErrorKind::TooLarge,
+        ));
     }
 
     let bytes = std::fs::read(path)
@@ -81,37 +84,53 @@ pub(crate) fn build_attachment_from_path(path: &Path) -> IngestResult {
     let is_text_ext = miaominal_core::chat_attachment::is_text_extension(&extension);
     if is_text_ext {
         if disk_size > MAX_TEXT_FILE_SIZE_BYTES {
-            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
+            return Err(AttachmentError::new(
+                filename,
+                AttachmentErrorKind::TooLarge,
+            ));
         }
         return build_text_attachment(&filename, &extension, &bytes);
     }
 
     if String::from_utf8(bytes.to_vec()).is_ok() {
         if disk_size > MAX_TEXT_FILE_SIZE_BYTES {
-            return Err(AttachmentError::new(filename, AttachmentErrorKind::TooLarge));
+            return Err(AttachmentError::new(
+                filename,
+                AttachmentErrorKind::TooLarge,
+            ));
         }
         return build_text_attachment(&filename, &extension, &bytes);
     }
 
-    Err(AttachmentError::new(filename, AttachmentErrorKind::UnsupportedType))
+    Err(AttachmentError::new(
+        filename,
+        AttachmentErrorKind::UnsupportedType,
+    ))
 }
 
 /// Builds a `ChatAttachment` from raw image bytes (e.g. clipboard image data).
 /// The `format_hint` is a lowercase extension ("png", "jpeg", ...) used as a
 /// fallback decoder when content-based auto-detection fails.
-pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u8]) -> IngestResult {
-    let decoded = image::load_from_memory(bytes).or_else(|err| {
-        let format = match extension {
-            "png" => image::ImageFormat::Png,
-            "jpg" | "jpeg" => image::ImageFormat::Jpeg,
-            "gif" => image::ImageFormat::Gif,
-            "webp" => image::ImageFormat::WebP,
-            "bmp" => image::ImageFormat::Bmp,
-            _ => return Err(err),
-        };
-        image::load_from_memory_with_format(bytes, format)
-    })
-    .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::ImageDecodeFailed))?;
+pub(crate) fn build_image_attachment(
+    filename: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> IngestResult {
+    let decoded = image::load_from_memory(bytes)
+        .or_else(|err| {
+            let format = match extension {
+                "png" => image::ImageFormat::Png,
+                "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+                "gif" => image::ImageFormat::Gif,
+                "webp" => image::ImageFormat::WebP,
+                "bmp" => image::ImageFormat::Bmp,
+                _ => return Err(err),
+            };
+            image::load_from_memory_with_format(bytes, format)
+        })
+        .map_err(|_| {
+            AttachmentError::new(filename.to_string(), AttachmentErrorKind::ImageDecodeFailed)
+        })?;
     let scaled = scale_image(decoded, MAX_IMAGE_DIMENSION);
     let (mime_type, encoded) = encode_scaled_image(&scaled);
     let thumbnail = make_thumbnail(&scaled, 64);
@@ -138,8 +157,9 @@ pub(crate) fn build_image_attachment(filename: &str, extension: &str, bytes: &[u
 /// Builds a `ChatAttachment` from raw text file bytes. The bytes must be valid
 /// UTF-8; otherwise an error is returned.
 pub(crate) fn build_text_attachment(filename: &str, extension: &str, bytes: &[u8]) -> IngestResult {
-    let text = String::from_utf8(bytes.to_vec())
-        .map_err(|_| AttachmentError::new(filename.to_string(), AttachmentErrorKind::InvalidText))?;
+    let text = String::from_utf8(bytes.to_vec()).map_err(|_| {
+        AttachmentError::new(filename.to_string(), AttachmentErrorKind::InvalidText)
+    })?;
     let language = miaominal_core::chat_attachment::extension_to_language(extension);
     let mime_type = miaominal_core::chat_attachment::extension_to_mime(extension);
     let size_bytes = text.len() as u64;
@@ -279,8 +299,7 @@ impl AppView {
             .pending_attachments
             .retain(|attachment| attachment.id != attachment_id);
         if self.session_agent.pending_attachments.len() != before {
-            self.status_message =
-                i18n::string("workspace.panel.agent.messages.attachment_removed");
+            self.status_message = i18n::string("workspace.panel.agent.messages.attachment_removed");
             cx.notify();
         }
     }
@@ -298,10 +317,7 @@ impl AppView {
         cx.spawn(async move |this, cx| {
             let files = rfd::FileDialog::new()
                 .add_filter("All files", &["*"])
-                .add_filter(
-                    "Images",
-                    &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-                )
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
                 .add_filter(
                     "Text files",
                     &[

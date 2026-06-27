@@ -248,15 +248,6 @@ impl Render for AppView {
             .child(self.render_top_bar(entity.clone(), window))
             .child(shell_body)
             .child(self.render_status_footer(entity.clone()))
-            .when_some(
-                self.session_agent
-                    .at_mention_query
-                    .clone()
-                    .filter(|_| self.panels.session_agent_panel_open),
-                |this, query| {
-                    this.child(self.render_session_agent_at_mention_overlay(entity.clone(), query))
-                },
-            )
             .when_some(pending_host_key, |this, prompt| {
                 this.child(self.render_trusted_host_key_prompt(
                     entity.clone(),

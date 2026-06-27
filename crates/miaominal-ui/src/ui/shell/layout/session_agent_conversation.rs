@@ -956,8 +956,10 @@ fn render_session_agent_message_attachments(
                 .iter()
                 .map(|attachment| match &attachment.content {
                     miaominal_core::chat_attachment::ChatAttachmentContent::Image(image) => {
-                        let data_uri =
-                            format!("data:{};base64,{}", attachment.mime_type, image.thumbnail_base64);
+                        let data_uri = format!(
+                            "data:{};base64,{}",
+                            attachment.mime_type, image.thumbnail_base64
+                        );
                         gpui::img(data_uri)
                             .w_full()
                             .max_w(px(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH))

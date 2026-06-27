@@ -89,7 +89,11 @@ pub struct ChatTextFile {
 /// Returns `Some(true)` for image extensions, `Some(false)` for text extensions,
 /// and `None` for unsupported extensions.
 pub fn classify_extension(filename: &str) -> Option<bool> {
-    let lower = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let lower = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if is_image_extension(&lower) {
         Some(true)
     } else if is_text_extension(&lower) {
@@ -101,10 +105,7 @@ pub fn classify_extension(filename: &str) -> Option<bool> {
 
 /// Returns `true` when `extension` (lowercase, no dot) is a supported image format.
 pub fn is_image_extension(extension: &str) -> bool {
-    matches!(
-        extension,
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
-    )
+    matches!(extension, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
 }
 
 /// Returns `true` when `extension` (lowercase, no dot) is a supported text file format.
@@ -389,18 +390,12 @@ mod tests {
             detect_image_format_from_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF"),
             Some("jpeg")
         );
-        assert_eq!(
-            detect_image_format_from_bytes(b"GIF89a...."),
-            Some("gif")
-        );
+        assert_eq!(detect_image_format_from_bytes(b"GIF89a...."), Some("gif"));
         assert_eq!(
             detect_image_format_from_bytes(b"RIFF....WEBP...."),
             Some("webp")
         );
-        assert_eq!(
-            detect_image_format_from_bytes(b"BM...."),
-            Some("bmp")
-        );
+        assert_eq!(detect_image_format_from_bytes(b"BM...."), Some("bmp"));
         assert_eq!(detect_image_format_from_bytes(b"not an image"), None);
         assert_eq!(detect_image_format_from_bytes(b""), None);
         assert_eq!(detect_image_format_from_bytes(b"\x89PN"), None);

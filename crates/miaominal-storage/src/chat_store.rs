@@ -494,7 +494,10 @@ mod tests {
             .load_session_messages("session-1", &key)
             .expect("messages should load");
         assert_eq!(messages.len(), 1);
-        let restored = messages[0].attachments.as_deref().expect("attachments present");
+        let restored = messages[0]
+            .attachments
+            .as_deref()
+            .expect("attachments present");
         let restored_value: serde_json::Value =
             serde_json::from_str(restored).expect("attachments JSON parses");
         assert_eq!(

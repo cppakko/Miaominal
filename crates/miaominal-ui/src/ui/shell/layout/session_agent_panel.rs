@@ -2,7 +2,6 @@ use super::super::*;
 use super::session_agent_composer;
 use super::session_agent_conversation;
 use super::session_agent_history;
-use super::session_agent_mentions;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::AnimationExt as _;
@@ -797,17 +796,6 @@ impl AppView {
             cx,
             search_visibility,
         )
-    }
-
-    /// Renders the @-mention candidate popup as a window-root-level absolute overlay.
-    /// Must be called from `Render::render()` so the absolute positioning escapes all
-    /// overflow-hidden containers inside the sidebar panel hierarchy.
-    pub(in crate::ui::shell) fn render_session_agent_at_mention_overlay(
-        &self,
-        entity: Entity<Self>,
-        query: String,
-    ) -> gpui::AnyElement {
-        session_agent_mentions::render_session_agent_at_mention_overlay(self, entity, query)
     }
 
     fn render_session_agent_messages(

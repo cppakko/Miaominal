@@ -1,24 +1,20 @@
 use super::super::*;
-use super::session_agent_panel::clamp_session_agent_panel_width;
 use crate::ui::i18n;
 use gpui::AnimationExt as _;
 
-pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_overlay(
+pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_popup(
     app: &AppView,
     entity: Entity<AppView>,
     query: String,
 ) -> gpui::AnyElement {
-    let agent_panel_width =
-        clamp_session_agent_panel_width(app.workspace_state.session_agent_panel_width);
-    let popup_width = (agent_panel_width - 16.0).max(200.0);
     let candidates = app.session_agent_target_candidates();
 
     div()
-        .id("agent-at-mention-overlay")
-        .absolute()
-        .right(px(8.0))
-        .bottom(px(STATUS_BAR_HEIGHT + 154.0))
-        .w(px(popup_width))
+        .id("agent-at-mention-popup")
+        .w_full()
+        .min_h(px(96.0))
+        .max_h(px(360.0))
+        .overflow_y_scroll()
         .occlude()
         .child(render_session_agent_at_mention_menu(
             entity, candidates, query,
@@ -43,14 +39,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
         .filter(|candidate| {
             query.is_empty() || candidate.name.to_ascii_lowercase().contains(&query)
         })
-        .take(8)
         .collect::<Vec<_>>();
 
     v_flex()
         .w_full()
-        .min_h(px(96.0))
-        .max_h(px(306.0))
-        .overflow_y_scrollbar()
+        .gap_1()
         .rounded(px(8.0))
         .bg(rgb(roles.surface_container_lowest))
         .p_1()
