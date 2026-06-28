@@ -17,8 +17,9 @@ pub fn resolve_workspace_path(path: &str) -> AgentResult<String> {
         ));
     }
 
+    let normalized = trimmed.replace('\\', "/");
     let mut parts = Vec::new();
-    for part in trimmed.split('/') {
+    for part in normalized.split('/') {
         match part {
             "" | "." => {}
             ".." => {
@@ -30,7 +31,7 @@ pub fn resolve_workspace_path(path: &str) -> AgentResult<String> {
         }
     }
 
-    let prefix = if trimmed.starts_with('/') { "/" } else { "" };
+    let prefix = if normalized.starts_with('/') { "/" } else { "" };
     if parts.is_empty() {
         Ok(".".into())
     } else if prefix.is_empty() {
@@ -171,6 +172,25 @@ mod tests {
         assert!(resolve_workspace_path("src/../../secret").is_err());
         assert_eq!(resolve_workspace_path("/etc//nginx").unwrap(), "/etc/nginx");
         assert!(resolve_workspace_path("~/secret").is_err());
+    }
+
+    #[test]
+    fn windows_backslash_parent_traversal_rejected() {
+        assert!(resolve_workspace_path("..\\secret").is_err());
+        assert!(resolve_workspace_path("src\\..\\..\\secret").is_err());
+        assert!(resolve_workspace_path("..\\..\\Windows\\System32").is_err());
+    }
+
+    #[test]
+    fn windows_backslash_paths_normalized() {
+        assert_eq!(
+            resolve_workspace_path("src\\main.rs").unwrap(),
+            "src/main.rs"
+        );
+        assert_eq!(
+            resolve_workspace_path("src\\lib\\mod.rs").unwrap(),
+            "src/lib/mod.rs"
+        );
     }
 
     // ── shell_quote tests ──
