@@ -68,7 +68,7 @@ fn render_template(template: &str, arguments: &[(&str, &str)]) -> String {
 }
 
 fn load_catalog(contents: &str, language_code: &str) -> HashMap<String, String> {
-    let parsed = match contents.parse::<toml::Value>() {
+    let parsed = match toml::from_str::<toml::Value>(contents) {
         Ok(value) => value,
         Err(error) => {
             log::error!("failed to parse {language_code} locale catalog: {error}");
@@ -170,5 +170,21 @@ mod tests {
         let rendered = render_template("Language: {language}", &[("language", "English")]);
 
         assert_eq!(rendered, "Language: English");
+    }
+
+    #[test]
+    fn catalog_loader_parses_toml_document_tables() {
+        let catalog = load_catalog(
+            r#"
+[settings.pages.appearance]
+title = "Appearance"
+"#,
+            "test",
+        );
+
+        assert_eq!(
+            catalog.get("settings.pages.appearance.title"),
+            Some(&"Appearance".to_string())
+        );
     }
 }

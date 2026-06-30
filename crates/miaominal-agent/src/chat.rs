@@ -567,14 +567,13 @@ fn spawn_stream_chat<M>(
                     chat_event_from_user_content(content)
                 }
                 Ok(MultiTurnStreamItem::CompletionCall(completion_call)) => {
-                    if let Some(usage) = completion_call.usage {
-                        let _ = sender
-                            .send(Ok(AgentChatEvent::TokenUsage {
-                                input_tokens: usage.input_tokens,
-                                output_tokens: usage.output_tokens,
-                            }))
-                            .await;
-                    }
+                    let usage = completion_call.usage;
+                    let _ = sender
+                        .send(Ok(AgentChatEvent::TokenUsage {
+                            input_tokens: usage.input_tokens,
+                            output_tokens: usage.output_tokens,
+                        }))
+                        .await;
                     #[cfg(debug_assertions)]
                     log::info!("agent llm completion call boundary");
                     None
