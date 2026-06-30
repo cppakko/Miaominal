@@ -128,6 +128,10 @@ pub enum AgentChatEvent {
         id: String,
         message: String,
     },
+    ToolCallUserInputRequired {
+        id: String,
+        message: String,
+    },
     Finished(String),
     /// Token usage for the most recent completion request.
     TokenUsage {
@@ -136,7 +140,7 @@ pub enum AgentChatEvent {
     },
 }
 
-const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Treat `workspace_info.shell` as the command syntax used by `run_shell` on the exec channel, even if the SSH login/default shell is different. If it is `cmd`, use CMD syntax such as `dir` and `type`; do not use POSIX commands or bare PowerShell syntax unless you explicitly invoke `powershell.exe -NoProfile -Command ...`.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
+const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Treat `workspace_info.shell` as the command syntax used by `run_shell` on the exec channel, even if the SSH login/default shell is different. If it is `cmd`, use CMD syntax such as `dir` and `type`; do not use POSIX commands or bare PowerShell syntax unless you explicitly invoke `powershell.exe -NoProfile -Command ...`.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- Use `ask_user` when you need user input before continuing. Provide a clear message and at most three concise choices; the user can also enter a custom response.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
 const SESSION_AGENT_MAX_TURNS: usize = 40;
 
 fn chat_history(messages: Vec<AgentChatMessage>, vision_supported: bool) -> Vec<Message> {
@@ -262,6 +266,7 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
             | AgentChatEvent::ToolCallCompleted { .. }
             | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
             | AgentChatEvent::ToolCallApprovalRequired { .. }
+            | AgentChatEvent::ToolCallUserInputRequired { .. }
             | AgentChatEvent::TokenUsage { .. } => {}
         }
     }
@@ -603,6 +608,7 @@ fn spawn_stream_chat<M>(
             let approval_required = matches!(
                 event.as_ref(),
                 Some(Ok(AgentChatEvent::ToolCallApprovalRequired { .. }))
+                    | Some(Ok(AgentChatEvent::ToolCallUserInputRequired { .. }))
             );
             if let Some(event) = event
                 && sender.send(event).await.is_err()
@@ -780,25 +786,38 @@ fn chat_event_from_user_content(
                 internal_call_id,
                 result
             );
-            if let Some(message) = structured_approval_message(&result) {
-                Some(Ok(AgentChatEvent::ToolCallApprovalRequired {
-                    id: internal_call_id,
-                    message,
-                }))
-            } else {
-                Some(Ok(AgentChatEvent::ToolCallCompleted {
+            match structured_tool_pause(&result) {
+                Some(ToolPause::ApprovalRequired { message }) => {
+                    Some(Ok(AgentChatEvent::ToolCallApprovalRequired {
+                        id: internal_call_id,
+                        message,
+                    }))
+                }
+                Some(ToolPause::UserInputRequired { message }) => {
+                    Some(Ok(AgentChatEvent::ToolCallUserInputRequired {
+                        id: internal_call_id,
+                        message,
+                    }))
+                }
+                None => Some(Ok(AgentChatEvent::ToolCallCompleted {
                     id: internal_call_id,
                     result,
-                }))
+                })),
             }
         }
     }
 }
 
-fn structured_approval_message(result: &str) -> Option<String> {
+enum ToolPause {
+    ApprovalRequired { message: String },
+    UserInputRequired { message: String },
+}
+
+fn structured_tool_pause(result: &str) -> Option<ToolPause> {
     let response: AgentToolCallResponse = serde_json::from_str(result).ok()?;
     match response.output {
-        ToolOutput::Approval { message, .. } => Some(message),
+        ToolOutput::Approval { message, .. } => Some(ToolPause::ApprovalRequired { message }),
+        ToolOutput::UserQuestion { message, .. } => Some(ToolPause::UserInputRequired { message }),
         _ => None,
     }
 }
@@ -842,7 +861,7 @@ mod tests {
     use crate::backend::BackendRoute;
 
     #[test]
-    fn structured_approval_message_reads_tool_output_approval() {
+    fn structured_tool_pause_reads_tool_output_approval() {
         let response = AgentToolCallResponse {
             tool_name: "apply_patch".to_string(),
             route: BackendRoute::SshExec,
@@ -853,18 +872,39 @@ mod tests {
         };
         let json = serde_json::to_string(&response).expect("response serializes");
 
-        assert_eq!(
-            structured_approval_message(&json).as_deref(),
-            Some("approval required")
-        );
+        match structured_tool_pause(&json) {
+            Some(ToolPause::ApprovalRequired { message }) => {
+                assert_eq!(message, "approval required")
+            }
+            _ => panic!("expected approval pause"),
+        }
     }
 
     #[test]
-    fn structured_approval_message_ignores_plain_text() {
-        assert_eq!(
-            structured_approval_message("tool `x` requires user approval"),
-            None
-        );
+    fn structured_tool_pause_reads_user_question() {
+        let response = AgentToolCallResponse {
+            tool_name: "ask_user".to_string(),
+            route: BackendRoute::SshExec,
+            output: ToolOutput::UserQuestion {
+                message: "Which branch?".to_string(),
+                choices: Vec::new(),
+                allow_custom: true,
+                operation_hash: None,
+            },
+        };
+        let json = serde_json::to_string(&response).expect("response serializes");
+
+        match structured_tool_pause(&json) {
+            Some(ToolPause::UserInputRequired { message }) => {
+                assert_eq!(message, "Which branch?")
+            }
+            _ => panic!("expected user input pause"),
+        }
+    }
+
+    #[test]
+    fn structured_tool_pause_ignores_plain_text() {
+        assert!(structured_tool_pause("tool `x` requires user approval").is_none());
     }
 
     #[tokio::test]

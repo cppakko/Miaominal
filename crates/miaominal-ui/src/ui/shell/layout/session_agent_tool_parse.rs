@@ -137,7 +137,11 @@ pub(in crate::ui::shell::layout) fn pending_result_text(
             i18n::string("workspace.panel.agent.tool_status.preparing_request")
         }
         SessionAgentToolStatus::WaitingForConfirmation => {
-            i18n::string("workspace.panel.agent.tool_status.waiting_for_approval")
+            if tool_call.name == "ask_user" {
+                i18n::string("workspace.panel.agent.tool_status.waiting_for_answer")
+            } else {
+                i18n::string("workspace.panel.agent.tool_status.waiting_for_approval")
+            }
         }
         SessionAgentToolStatus::InProgress => {
             i18n::string("workspace.panel.agent.tool_status.waiting_for_result")
@@ -181,10 +185,74 @@ pub(in crate::ui::shell::layout) fn preparing_tool_text(tool_name: &str) -> Stri
         "workspace_info" => {
             i18n::string("workspace.panel.agent.tool_status.preparing_workspace_info")
         }
-        "ask_user" | "approval" => {
-            i18n::string("workspace.panel.agent.tool_status.preparing_approval_prompt")
-        }
+        "ask_user" => i18n::string("workspace.panel.agent.tool_status.preparing_question"),
+        "approval" => i18n::string("workspace.panel.agent.tool_status.preparing_approval_prompt"),
         _ => i18n::string("workspace.panel.agent.tool_status.preparing_request"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell::layout) struct AskUserChoiceDisplay {
+    pub(in crate::ui::shell::layout) label: String,
+    pub(in crate::ui::shell::layout) description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell::layout) struct AskUserPromptDisplay {
+    pub(in crate::ui::shell::layout) message: String,
+    pub(in crate::ui::shell::layout) choices: Vec<AskUserChoiceDisplay>,
+    pub(in crate::ui::shell::layout) allow_custom: bool,
+}
+
+pub(in crate::ui::shell::layout) fn parse_ask_user_prompt(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+) -> AskUserPromptDisplay {
+    let args = tool_arguments_value(&tool_call.arguments);
+    let message = (tool_call.status == SessionAgentToolStatus::WaitingForConfirmation)
+        .then(|| tool_call.confirmation_note.clone())
+        .flatten()
+        .or_else(|| string_field(args.as_ref(), "message"))
+        .or_else(|| partial_json_string_field(&tool_call.arguments, "message"))
+        .unwrap_or_else(|| pending_or_note(tool_call));
+    let choices = args
+        .as_ref()
+        .and_then(|value| value.get("choices"))
+        .and_then(serde_json::Value::as_array)
+        .map(|choices| {
+            choices
+                .iter()
+                .filter_map(|choice| {
+                    if let Some(label) = choice.as_str() {
+                        let label = label.trim();
+                        return (!label.is_empty()).then(|| AskUserChoiceDisplay {
+                            label: label.to_string(),
+                            description: None,
+                        });
+                    }
+
+                    let label = choice.get("label")?.as_str()?.trim();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    let description = choice
+                        .get("description")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|description| !description.is_empty())
+                        .map(ToOwned::to_owned);
+                    Some(AskUserChoiceDisplay {
+                        label: label.to_string(),
+                        description,
+                    })
+                })
+                .take(3)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    AskUserPromptDisplay {
+        message,
+        choices,
+        allow_custom: true,
     }
 }
 

@@ -14,7 +14,7 @@ mod windows;
 mod workspace_info;
 
 pub use apply_patch::apply_patch;
-pub use approval::approval;
+pub use approval::{approval, ask_user};
 pub use glob::glob;
 pub use grep::grep;
 pub use job::{list_jobs, poll_job, start_job, stop_job};
@@ -73,7 +73,9 @@ pub fn tool_description(name: &str) -> &'static str {
         "stop_job" => "Stop a remote shell job.",
         "web_search" => "Search the web through the configured local provider.",
         "web_fetch" => "Fetch URL text locally with byte caps.",
-        "ask_user" => "Ask the user for information or approval.",
+        "ask_user" => {
+            "Ask the user a question with up to three suggested choices. The user can also enter a custom response."
+        }
         "approval" => "Record a user approval response.",
         _ => "Miaominal agent tool.",
     }

@@ -577,6 +577,18 @@ impl SessionAgentState {
             .cloned()
     }
 
+    pub(in crate::ui::shell) fn active_ask_user_tool_call(&self) -> Option<SessionAgentToolCall> {
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|message| message.tool_call.as_ref())
+            .find(|tool_call| {
+                tool_call.name == "ask_user"
+                    && tool_call.status == SessionAgentToolStatus::WaitingForConfirmation
+            })
+            .cloned()
+    }
+
     pub(in crate::ui::shell) fn reasoning_before_tool_call(&self, id: &str) -> Option<String> {
         let tool_index = self.messages.iter().position(|message| {
             message

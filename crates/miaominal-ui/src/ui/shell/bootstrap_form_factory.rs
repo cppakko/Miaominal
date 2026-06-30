@@ -34,6 +34,7 @@ pub(in crate::ui::shell) struct WorkspaceFormsArgs {
     pub session_filter_input: Entity<InputState>,
     pub conversation_search_input: Entity<InputState>,
     pub agent_prompt_input: Entity<InputState>,
+    pub agent_ask_user_input: Entity<InputState>,
     pub agent_title_input: Entity<InputState>,
     pub agent_rename_title_input: Entity<InputState>,
     pub agent_mode_select: Entity<SelectState<Vec<SelectOption<miaominal_agent::AgentMode>>>>,
@@ -178,6 +179,7 @@ impl AppView {
             session_filter_input,
             conversation_search_input,
             agent_prompt_input,
+            agent_ask_user_input,
             agent_title_input,
             agent_rename_title_input,
             agent_mode_select,
@@ -219,6 +221,7 @@ impl AppView {
             },
             agent: WorkspaceAgentForms {
                 prompt_input: agent_prompt_input,
+                ask_user_input: agent_ask_user_input,
                 title_input: agent_title_input,
                 rename_title_input: agent_rename_title_input,
                 editing_title: false,

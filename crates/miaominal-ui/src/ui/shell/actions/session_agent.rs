@@ -5,7 +5,8 @@ use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
     AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentToolCallRequest,
-    AgentToolResultContinuationRequest, AgentToolSet, TerminalExecHandle,
+    AgentToolCallResponse, AgentToolResultContinuationRequest, AgentToolSet, BackendRoute,
+    TerminalExecHandle, ToolOutput,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
@@ -31,6 +32,7 @@ pub(in crate::ui::shell) enum PromptHistoryDirection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SessionAgentBackgroundNotificationKind {
     ToolApprovalRequired { tool_name: String },
+    UserInputRequired { tool_name: String },
     ReplyReady,
 }
 
@@ -1487,6 +1489,106 @@ impl AppView {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn submit_active_session_agent_user_answer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = self
+            .workspace_forms
+            .agent
+            .ask_user_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let Some(tool_call) = self.session_agent.active_ask_user_tool_call() else {
+            self.status_message = i18n::string("workspace.panel.agent.messages.tool_not_found");
+            cx.notify();
+            return;
+        };
+        self.submit_session_agent_user_answer(tool_call.id, answer, None, true, window, cx);
+    }
+
+    pub(in crate::ui::shell) fn submit_session_agent_user_answer(
+        &mut self,
+        tool_id: String,
+        answer: String,
+        selected_index: Option<usize>,
+        custom: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = answer.trim().to_string();
+        if answer.is_empty() {
+            self.status_message = i18n::string("workspace.panel.agent.messages.answer_required");
+            cx.notify();
+            return;
+        }
+
+        let Some(tool_call) = self.session_agent.tool_call(&tool_id) else {
+            self.status_message = i18n::string("workspace.panel.agent.messages.tool_not_found");
+            cx.notify();
+            return;
+        };
+        if tool_call.name != "ask_user"
+            || tool_call.status != SessionAgentToolStatus::WaitingForConfirmation
+        {
+            self.status_message = i18n::string("workspace.panel.agent.messages.tool_not_found");
+            cx.notify();
+            return;
+        }
+
+        let arguments = parse_tool_arguments(&tool_call.arguments);
+        let operation_hash = arguments
+            .get("operation_hash")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let reasoning = self.session_agent.reasoning_before_tool_call(&tool_id);
+        let tool_name = tool_call.name.clone();
+        let tool_arguments = tool_call.arguments.clone();
+        let response = AgentToolCallResponse {
+            tool_name: tool_name.clone(),
+            route: BackendRoute::SshExec,
+            output: ToolOutput::UserResponse {
+                answer,
+                selected_index,
+                custom,
+                operation_hash,
+            },
+        };
+        let tool_result = match serde_json::to_string(&response) {
+            Ok(result) => result,
+            Err(error) => {
+                self.status_message = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+
+        self.session_agent
+            .complete_tool_call(&tool_id, tool_result.clone());
+        set_input_value(
+            &self.workspace_forms.agent.ask_user_input,
+            String::new(),
+            window,
+            cx,
+        );
+        self.status_message = i18n::string("workspace.panel.agent.messages.user_answer_sent");
+        self.continue_session_agent_after_tool_result(
+            AgentChatToolEvent {
+                id: tool_id,
+                name: tool_name,
+                arguments: tool_arguments,
+            },
+            reasoning,
+            tool_result,
+            false,
+            cx,
+        );
+        cx.notify();
+    }
+
     fn continue_session_agent_after_tool_result(
         &mut self,
         tool_call: AgentChatToolEvent,
@@ -1745,6 +1847,15 @@ impl AppView {
                 let notification = Self::warning_notification(title.clone(), message.clone());
                 (title, message, notification)
             }
+            SessionAgentBackgroundNotificationKind::UserInputRequired { tool_name } => {
+                let title = i18n::string("workspace.panel.agent.notifications.user_input_title");
+                let message = i18n::string_args(
+                    "workspace.panel.agent.notifications.user_input",
+                    &[("chat", &chat_label), ("tool", &tool_name)],
+                );
+                let notification = Self::warning_notification(title.clone(), message.clone());
+                (title, message, notification)
+            }
             SessionAgentBackgroundNotificationKind::ReplyReady => {
                 let title = i18n::string("workspace.panel.agent.notifications.reply_ready_title");
                 let message = i18n::string_args(
@@ -1783,6 +1894,7 @@ impl AppView {
                 | AgentChatEvent::ToolCallCompleted { .. }
                 | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
                 | AgentChatEvent::ToolCallApprovalRequired { .. }
+                | AgentChatEvent::ToolCallUserInputRequired { .. }
                 | AgentChatEvent::Finished(_)
         );
         let notification_kind = match event {
@@ -1830,10 +1942,7 @@ impl AppView {
                 None
             }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
-                if matches!(
-                    self.session_agent.agent_mode,
-                    AgentMode::FullAuto
-                ) {
+                if matches!(self.session_agent.agent_mode, AgentMode::FullAuto) {
                     self.session_agent.pending_task = None;
                     self.session_agent.active_request_id = 0;
                     self.approve_session_agent_tool_call(id, cx);
@@ -1849,6 +1958,17 @@ impl AppView {
                     self.finish_session_agent_stream(request_id, cx);
                     Some(SessionAgentBackgroundNotificationKind::ToolApprovalRequired { tool_name })
                 }
+            }
+            AgentChatEvent::ToolCallUserInputRequired { id, message } => {
+                let tool_name = self
+                    .session_agent
+                    .tool_call(&id)
+                    .map(|tool_call| tool_call.name)
+                    .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool"));
+                self.session_agent
+                    .require_tool_call_confirmation(&id, message);
+                self.finish_session_agent_stream(request_id, cx);
+                Some(SessionAgentBackgroundNotificationKind::UserInputRequired { tool_name })
             }
             AgentChatEvent::Finished(reply) => {
                 self.session_agent.finish_assistant_reply(reply);

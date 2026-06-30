@@ -24,7 +24,8 @@ pub(in crate::ui::shell::layout) fn render_structured_tool_body(
         "web_search" => render_web_search_tool_body(tool_call, colors),
         "web_fetch" => render_web_fetch_tool_body(tool_call, colors),
         "workspace_info" => render_workspace_info_tool_body(tool_call, colors),
-        "ask_user" | "approval" => render_approval_tool_body(tool_call, colors),
+        "ask_user" => render_ask_user_tool_body(tool_call, colors),
+        "approval" => render_approval_tool_body(tool_call, colors),
         _ => render_generic_tool_body(tool_call, colors),
     }
 }
@@ -628,6 +629,41 @@ pub(in crate::ui::shell::layout) fn render_approval_tool_body(
         .into_any_element()
 }
 
+pub(in crate::ui::shell::layout) fn render_ask_user_tool_body(
+    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    colors: ToolTerminalColors,
+) -> gpui::AnyElement {
+    let prompt = parse_ask_user_prompt(tool_call);
+    let output = tool_output_value(tool_call);
+    let answer = output
+        .as_ref()
+        .and_then(|value| string_field(Some(value), "answer"));
+
+    v_flex()
+        .w_full()
+        .gap_2()
+        .p_2()
+        .child(render_tool_terminal_block(
+            &tool_call.id,
+            tool_field_label("question"),
+            None,
+            prompt.message,
+            colors,
+            false,
+        ))
+        .when_some(answer, |this, answer| {
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                tool_field_label("answer"),
+                None,
+                answer,
+                colors,
+                false,
+            ))
+        })
+        .into_any_element()
+}
+
 pub(in crate::ui::shell::layout) fn render_generic_tool_body(
     tool_call: &crate::ui::shell::state::SessionAgentToolCall,
     colors: ToolTerminalColors,
@@ -691,6 +727,7 @@ pub(in crate::ui::shell::layout) fn render_preparing_tool_body(
 
 fn tool_field_label(key: &str) -> String {
     match key {
+        "answer" => i18n::string("workspace.panel.agent.tool_fields.answer"),
         "approval" => i18n::string("workspace.panel.agent.tool_fields.approval"),
         "base" => i18n::string("workspace.panel.agent.tool_fields.base"),
         "command" => i18n::string("workspace.panel.agent.tool_fields.command"),
@@ -708,6 +745,7 @@ fn tool_field_label(key: &str) -> String {
         "path" => i18n::string("workspace.panel.agent.tool_fields.path"),
         "pattern" => i18n::string("workspace.panel.agent.tool_fields.pattern"),
         "query" => i18n::string("workspace.panel.agent.tool_fields.query"),
+        "question" => i18n::string("workspace.panel.agent.tool_fields.question"),
         "request" => i18n::string("workspace.panel.agent.tool_fields.request"),
         "result" => i18n::string("workspace.panel.agent.tool_fields.result"),
         "results" => i18n::string("workspace.panel.agent.tool_fields.results"),
@@ -741,6 +779,7 @@ fn tool_placeholder(key: &str) -> String {
             i18n::string("workspace.panel.agent.tool_placeholders.preparing_patch")
         }
         "query" => i18n::string("workspace.panel.agent.tool_placeholders.query"),
+        "custom_answer" => i18n::string("workspace.panel.agent.tool_placeholders.custom_answer"),
         "unknown_path" => i18n::string("workspace.panel.agent.tool_placeholders.unknown_path"),
         "url" => i18n::string("workspace.panel.agent.tool_placeholders.url"),
         _ => key.to_string(),

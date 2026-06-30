@@ -768,6 +768,193 @@ fn session_agent_tool_title(tool_name: &str) -> String {
     }
 }
 
+fn render_session_agent_text_action_button(
+    label: String,
+    description: Option<String>,
+    primary: bool,
+    full_width: bool,
+    roles: miaominal_settings::theme::Md3Roles,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> gpui::AnyElement {
+    div()
+        .cursor_pointer()
+        .rounded(px(6.0))
+        .px_3()
+        .py_1()
+        .when(full_width, |this| this.w_full())
+        .bg(rgb(if primary {
+            roles.primary
+        } else {
+            roles.surface_container_highest
+        }))
+        .text_color(rgb(if primary {
+            roles.on_primary
+        } else {
+            roles.on_surface
+        }))
+        .text_size(miaominal_settings::FontSize::Body.scaled())
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx);
+        })
+        .child(
+            v_flex()
+                .w_full()
+                .min_w(px(0.0))
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(label),
+                )
+                .when_some(description, |this, description| {
+                    this.child(
+                        div()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(if primary {
+                                roles.on_primary
+                            } else {
+                                roles.on_surface_variant
+                            }))
+                            .child(description),
+                    )
+                }),
+        )
+        .into_any_element()
+}
+
+fn render_session_agent_approval_actions(
+    tool_id: &str,
+    entity: Entity<AppView>,
+    roles: miaominal_settings::theme::Md3Roles,
+) -> gpui::AnyElement {
+    let allow_tool_id = tool_id.to_string();
+    let deny_tool_id = tool_id.to_string();
+    let allow_entity = entity.clone();
+    let deny_entity = entity;
+
+    h_flex()
+        .w_full()
+        .gap_2()
+        .px_3()
+        .pb_3()
+        .child(render_session_agent_text_action_button(
+            i18n::string("workspace.panel.agent.tool_actions.approve"),
+            None,
+            true,
+            false,
+            roles,
+            move |_window, cx| {
+                let tool_id = allow_tool_id.clone();
+                allow_entity.update(cx, |this, cx| {
+                    this.approve_session_agent_tool_call(tool_id, cx);
+                });
+            },
+        ))
+        .child(render_session_agent_text_action_button(
+            i18n::string("workspace.panel.agent.tool_actions.deny"),
+            None,
+            false,
+            false,
+            roles,
+            move |_window, cx| {
+                let tool_id = deny_tool_id.clone();
+                deny_entity.update(cx, |this, cx| {
+                    this.deny_session_agent_tool_call(tool_id, cx);
+                });
+            },
+        ))
+        .into_any_element()
+}
+
+fn render_session_agent_ask_user_actions(
+    app: &AppView,
+    tool_call: &SessionAgentToolCall,
+    entity: Entity<AppView>,
+    roles: miaominal_settings::theme::Md3Roles,
+) -> gpui::AnyElement {
+    let prompt = parse_ask_user_prompt(tool_call);
+    let input = app.workspace_forms.agent.ask_user_input.clone();
+    let submit_entity = entity.clone();
+
+    v_flex()
+        .w_full()
+        .gap_2()
+        .px_3()
+        .pb_3()
+        .when(!prompt.choices.is_empty(), |this| {
+            this.child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .children(prompt.choices.iter().enumerate().map(|(index, choice)| {
+                        let choice_entity = entity.clone();
+                        let tool_id = tool_call.id.clone();
+                        let answer = choice.label.clone();
+                        render_session_agent_text_action_button(
+                            choice.label.clone(),
+                            choice.description.clone(),
+                            false,
+                            true,
+                            roles,
+                            move |window, cx| {
+                                let tool_id = tool_id.clone();
+                                let answer = answer.clone();
+                                choice_entity.update(cx, |this, cx| {
+                                    this.submit_session_agent_user_answer(
+                                        tool_id,
+                                        answer,
+                                        Some(index),
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            },
+                        )
+                    })),
+            )
+        })
+        .when(prompt.allow_custom, |this| {
+            this.child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w(px(0.0)).child(
+                            Input::new(&input)
+                                .w_full()
+                                .border_0()
+                                .rounded(px(6.0))
+                                .bg(rgb(roles.surface_container_highest))
+                                .text_color(rgb(roles.on_surface)),
+                        ),
+                    )
+                    .child(icon_button_with_tooltip(
+                        AppIcon::Send,
+                        i18n::string("workspace.panel.agent.tooltips.submit_answer"),
+                        26.0,
+                        8.0,
+                        Some(roles.primary),
+                        Some(roles.on_primary),
+                        None,
+                        move |window, cx| {
+                            let entity = submit_entity.clone();
+                            entity.update(cx, |this, cx| {
+                                this.submit_active_session_agent_user_answer(window, cx);
+                            });
+                        },
+                    )),
+            )
+        })
+        .into_any_element()
+}
+
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     app: &AppView,
     message_column_width: f32,
@@ -792,11 +979,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     );
     let expanded = tool_call.expanded;
     let is_run_shell = tool_call.name == "run_shell";
+    let is_ask_user = tool_call.name == "ask_user";
     let tool_id = tool_call.id.clone();
-    let allow_tool_id = tool_call.id.clone();
-    let deny_tool_id = tool_call.id.clone();
-    let allow_entity = entity.clone();
-    let deny_entity = entity.clone();
+    let toggle_entity = entity.clone();
     let copy_all_entity = entity.clone();
     let copy_all_text = format_tool_call_copy_text(tool_call);
     let tool_colors = ToolTerminalColors {
@@ -839,7 +1024,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
-                        entity.update(cx, |this, cx| {
+                        toggle_entity.update(cx, |this, cx| {
                             this.session_agent.toggle_tool_call_expanded(&tool_id);
                             cx.notify();
                         });
@@ -902,49 +1087,20 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                 ))
             })
             .when(needs_confirmation && expanded, |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .px_3()
-                        .pb_3()
-                        .child(
-                            div()
-                                .cursor_pointer()
-                                .rounded(px(6.0))
-                                .px_3()
-                                .py_1()
-                                .bg(rgb(roles.primary))
-                                .text_color(rgb(roles.on_primary))
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    let tool_id = allow_tool_id.clone();
-                                    allow_entity.update(cx, |this, cx| {
-                                        this.approve_session_agent_tool_call(tool_id, cx);
-                                    });
-                                })
-                                .child(i18n::string("workspace.panel.agent.tool_actions.approve")),
-                        )
-                        .child(
-                            div()
-                                .cursor_pointer()
-                                .rounded(px(6.0))
-                                .px_3()
-                                .py_1()
-                                .bg(rgb(roles.surface_container_highest))
-                                .text_color(rgb(roles.on_surface))
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    let tool_id = deny_tool_id.clone();
-                                    deny_entity.update(cx, |this, cx| {
-                                        this.deny_session_agent_tool_call(tool_id, cx);
-                                    });
-                                })
-                                .child(i18n::string("workspace.panel.agent.tool_actions.deny")),
-                        ),
-                )
+                if is_ask_user {
+                    this.child(render_session_agent_ask_user_actions(
+                        app,
+                        tool_call,
+                        entity.clone(),
+                        roles,
+                    ))
+                } else {
+                    this.child(render_session_agent_approval_actions(
+                        &tool_call.id,
+                        entity.clone(),
+                        roles,
+                    ))
+                }
             }),
         message.motion.enter_key,
     )

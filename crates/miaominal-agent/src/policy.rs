@@ -28,11 +28,10 @@ pub struct AgentPolicy;
 impl AgentPolicy {
     pub fn decide(&self, tool_name: &str, approved: bool) -> AgentPolicyDecision {
         match tool_name {
-            "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch" => {
-                AgentPolicyDecision::Allow
-            }
+            "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch"
+            | "ask_user" => AgentPolicyDecision::Allow,
             "run_shell" | "start_job" => AgentPolicyDecision::Allow,
-            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "ask_user" | "approval" => {
+            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "approval" => {
                 if approved {
                     AgentPolicyDecision::Allow
                 } else {
@@ -327,7 +326,6 @@ mod tests {
             "list_jobs",
             "poll_job",
             "stop_job",
-            "ask_user",
             "approval",
         ] {
             assert!(matches!(
@@ -350,6 +348,7 @@ mod tests {
             policy.decide("web_fetch", false),
             AgentPolicyDecision::Allow
         );
+        assert_eq!(policy.decide("ask_user", false), AgentPolicyDecision::Allow);
     }
 
     #[test]

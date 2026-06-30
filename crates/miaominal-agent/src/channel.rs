@@ -49,6 +49,13 @@ pub struct AgentToolCallResponse {
     pub output: ToolOutput,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserQuestionChoice {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolOutput {
@@ -107,6 +114,18 @@ pub enum ToolOutput {
     },
     Approval {
         message: String,
+        operation_hash: Option<String>,
+    },
+    UserQuestion {
+        message: String,
+        choices: Vec<UserQuestionChoice>,
+        allow_custom: bool,
+        operation_hash: Option<String>,
+    },
+    UserResponse {
+        answer: String,
+        selected_index: Option<usize>,
+        custom: bool,
         operation_hash: Option<String>,
     },
 }
@@ -345,7 +364,8 @@ impl AgentExecChannel {
             "stop_job" => tools::stop_job(channel, parse_args(request.arguments)?).await?,
             "web_search" => tools::web_search(channel, parse_args(request.arguments)?).await?,
             "web_fetch" => tools::web_fetch(channel, parse_args(request.arguments)?).await?,
-            "ask_user" | "approval" => tools::approval(parse_args(request.arguments)?)?,
+            "ask_user" => tools::ask_user(parse_args(request.arguments)?)?,
+            "approval" => tools::approval(parse_args(request.arguments)?)?,
             other => return Err(AgentError::UnknownTool(other.to_string())),
         };
 

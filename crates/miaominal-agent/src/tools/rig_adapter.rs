@@ -74,6 +74,7 @@ impl AgentToolSet {
                             | "grep"
                             | "web_search"
                             | "web_fetch"
+                            | "ask_user"
                     )
                 })
                 .collect(),
@@ -119,6 +120,21 @@ impl Tool for JsonAgentTool {
         let mode = self.mode;
         async move {
             if mode == AgentMode::NonBlocking {
+                if name == "ask_user" {
+                    let response = call_tool_on_worker(
+                        channel,
+                        AgentToolCallRequest {
+                            tool_name: name.clone(),
+                            arguments: normalize_tool_arguments(args),
+                            approved,
+                            route: None,
+                            skip_policy: true,
+                        },
+                    )
+                    .await?;
+                    return serde_json::to_string(&response)
+                        .map_err(|error| AgentError::InvalidArguments(error.to_string()));
+                }
                 let response = AgentToolCallResponse {
                     tool_name: name.clone(),
                     route: BackendRoute::SshExec,
@@ -228,6 +244,18 @@ fn integer_schema(description: &str, minimum: usize) -> Value {
 
 fn boolean_schema(description: &str) -> Value {
     json!({ "type": "boolean", "description": description })
+}
+
+fn ask_user_choice_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "label": string_schema("Short option label shown as a selectable response."),
+            "description": string_schema("Optional one-sentence explanation of this option.")
+        },
+        "required": ["label"],
+        "additionalProperties": false,
+    })
 }
 
 fn string_array_schema(description: &str) -> Value {
@@ -366,14 +394,23 @@ fn tool_parameters(name: &str) -> Value {
             vec![
                 (
                     "message",
-                    string_schema("Question or request for the user."),
+                    string_schema("Question or request shown to the user."),
+                ),
+                (
+                    "choices",
+                    json!({
+                        "type": "array",
+                        "items": ask_user_choice_schema(),
+                        "maxItems": 3,
+                        "description": "Up to three suggested responses for the user to choose from.",
+                    }),
                 ),
                 (
                     "operation_hash",
                     string_schema("Optional operation identifier."),
                 ),
             ],
-            &[],
+            &["message"],
         ),
         _ => object_schema(Vec::new(), &[]),
     }

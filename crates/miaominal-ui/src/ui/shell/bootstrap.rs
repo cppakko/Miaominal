@@ -377,6 +377,13 @@ impl AppView {
                 .context_menu(false)
                 .placeholder(i18n::string("workspace.panel.agent.placeholder"))
         });
+        let agent_ask_user_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder(i18n::string(
+                    "workspace.panel.agent.tool_placeholders.custom_answer",
+                ))
+        });
         let agent_title_input = new_input_state(
             i18n::string("workspace.panel.agent.sidebar_title"),
             "",
@@ -530,6 +537,14 @@ impl AppView {
                 if let InputEvent::Change = event {
                     this.reset_session_agent_prompt_history_cursor();
                     this.update_session_agent_at_mention_state(cx);
+                }
+            },
+        );
+        let session_agent_ask_user_subscription = cx.subscribe(
+            &agent_ask_user_input,
+            |_this: &mut AppView, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
                 }
             },
         );
@@ -1485,6 +1500,7 @@ impl AppView {
             session_filter_input,
             conversation_search_input,
             agent_prompt_input,
+            agent_ask_user_input,
             agent_title_input,
             agent_rename_title_input,
             agent_mode_select,
@@ -1831,6 +1847,7 @@ impl AppView {
                 conversation_search_subscription,
                 session_snippets_filter_subscription,
                 session_agent_prompt_subscription,
+                session_agent_ask_user_subscription,
                 session_agent_title_subscription,
                 terminal_focus_in_subscription,
                 terminal_focus_out_subscription,
@@ -2138,6 +2155,12 @@ impl AppView {
         set_input_placeholder(
             &self.workspace_forms.agent.prompt_input,
             i18n::string("workspace.panel.agent.placeholder"),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.workspace_forms.agent.ask_user_input,
+            i18n::string("workspace.panel.agent.tool_placeholders.custom_answer"),
             window,
             cx,
         );
