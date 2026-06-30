@@ -23,6 +23,8 @@ const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::fro
 const SESSION_AGENT_CONTEXT_MAX_MESSAGES: usize = 40;
 const SESSION_AGENT_CONTEXT_MAX_CHARS: usize = 80_000;
 
+type SessionAgentTools = Option<(Option<AgentToolSet>, Option<mpsc::UnboundedSender<Vec<u8>>>)>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PromptHistoryDirection {
     Previous,
@@ -1227,7 +1229,7 @@ impl AppView {
         &mut self,
         aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
-    ) -> Option<(Option<AgentToolSet>, Option<mpsc::UnboundedSender<Vec<u8>>>)> {
+    ) -> SessionAgentTools {
         let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
         let pty_commands = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {

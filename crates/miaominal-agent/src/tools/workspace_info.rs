@@ -156,25 +156,21 @@ async fn detect_exec_shell(channel: &AgentExecChannel) -> Option<ShellType> {
     if let Ok(out) = channel
         .exec("if defined ComSpec echo MIAOMINAL_EXEC_SHELL=cmd")
         .await
-    {
-        if out
+        && out
             .lines()
             .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=cmd")
-        {
-            return Some(ShellType::Cmd);
-        }
+    {
+        return Some(ShellType::Cmd);
     }
 
     if let Ok(out) = channel
         .exec("if ($PSVersionTable) { Write-Output 'MIAOMINAL_EXEC_SHELL=powershell' }")
         .await
-    {
-        if out
+        && out
             .lines()
             .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=powershell")
-        {
-            return Some(ShellType::PowerShell);
-        }
+    {
+        return Some(ShellType::PowerShell);
     }
 
     None
@@ -193,8 +189,8 @@ async fn detect_exec_shell(channel: &AgentExecChannel) -> Option<ShellType> {
 fn is_valid_powershell_probe(output: &str) -> bool {
     output.contains("shell=powershell")
         && probe_value(output, "pwd").is_some_and(is_expanded_non_empty)
-        && probe_value(output, "home").map_or(true, is_expanded_or_empty)
-        && probe_value(output, "user").map_or(true, is_expanded_or_empty)
+        && probe_value(output, "home").is_none_or(is_expanded_or_empty)
+        && probe_value(output, "user").is_none_or(is_expanded_or_empty)
 }
 
 fn is_valid_cmd_probe(output: &str) -> bool {
@@ -203,8 +199,8 @@ fn is_valid_cmd_probe(output: &str) -> bool {
     }
     // Real CMD expands %CD%; PowerShell running a CMD probe leaves it literal.
     probe_value(output, "pwd").is_some_and(is_expanded_non_empty)
-        && probe_value(output, "home").map_or(true, is_expanded_or_empty)
-        && probe_value(output, "user").map_or(true, is_expanded_or_empty)
+        && probe_value(output, "home").is_none_or(is_expanded_or_empty)
+        && probe_value(output, "user").is_none_or(is_expanded_or_empty)
 }
 
 fn is_valid_posix_probe(output: &str) -> bool {

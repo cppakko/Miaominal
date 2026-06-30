@@ -71,14 +71,13 @@ pub fn parse_unified_diff(patch: &str) -> PatchResult<Vec<FilePatch>> {
                 file.is_deleted = path == "/dev/null";
             }
         } else if let Some(header) = line.strip_prefix("@@") {
-            if let Some(file) = current_file.as_mut() {
-                if let Some(hunk) = current_hunk.take() {
-                    file.hunks.push(hunk.build()?);
-                }
+            if let Some(file) = current_file.as_mut()
+                && let Some(hunk) = current_hunk.take()
+            {
+                file.hunks.push(hunk.build()?);
             }
             current_hunk = Some(HunkBuilder::parse(header)?);
-        } else if current_hunk.is_some() {
-            let hunk = current_hunk.as_mut().unwrap();
+        } else if let Some(hunk) = current_hunk.as_mut() {
             if line == r"\ No newline at end of file" {
                 hunk.lines.push(HunkLine::NoNewlineAtEof);
             } else if let Some(content) = line.strip_prefix(' ') {
@@ -273,9 +272,7 @@ impl FilePatchBuilder {
         if let Some(hb) = last_hunk {
             self.hunks.push(hb.build()?);
         }
-        let target = if self.is_deleted {
-            self.old_path.clone()
-        } else if self.new_path.is_empty() || self.new_path == "/dev/null" {
+        let target = if self.is_deleted || self.new_path.is_empty() || self.new_path == "/dev/null" {
             self.old_path.clone()
         } else {
             self.new_path.clone()
