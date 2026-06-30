@@ -18,13 +18,19 @@ pub struct GrepArgs {
 }
 
 pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<ToolOutput> {
-    let root = resolve_workspace_path(&args.root)?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
 
-    // Sensitive pattern check — MUST run BEFORE command generation, regardless of shell type
-    if crate::policy::is_sensitive_grep_pattern(&args.pattern) {
+    let root = resolve_workspace_path(&args.root)?;
+    if !channel.policy_bypass_enabled() {
+        channel
+            .policy()
+            .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
+    }
+
+    // Sensitive pattern policy runs before command generation unless policy is bypassed.
+    if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_grep_pattern(&args.pattern) {
         return Err(crate::error::AgentError::Denied {
             tool_name: "grep".into(),
             reason: "grep pattern targets sensitive secret material".into(),

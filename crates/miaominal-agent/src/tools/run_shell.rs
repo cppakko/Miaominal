@@ -16,22 +16,19 @@ pub struct RunShellArgs {
 }
 
 pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentResult<ToolOutput> {
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+
     let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
     let timeout_secs = args.timeout_seconds.unwrap_or(20).max(1);
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
+    let explicit_shell = args.shell.is_some();
     let shell = args.shell.as_deref().unwrap_or(channel.shell_label());
-    let is_fish = shell == "fish" || channel.is_fish_shell();
-    let st = channel.shell_type();
-    if shell != "posix-sh"
-        && shell != "sh"
-        && shell != "fish"
-        && shell != "powershell"
-        && shell != "cmd"
-    {
-        return Err(AgentError::PosixOnly(
-            "run_shell v1 supports posix-sh, sh, fish, powershell, or cmd".into(),
-        ));
-    }
+    let st = shell_type_from_label(shell).ok_or_else(|| {
+        AgentError::PosixOnly("run_shell v1 supports posix-sh, sh, fish, powershell, or cmd".into())
+    })?;
+    let is_fish = matches!(st, ShellType::Fish);
 
     let sentinel = format!(
         "MIAOMINAL_{:016x}_",
@@ -71,18 +68,26 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
         }
     };
 
-    let output = if channel.terminal_exec().is_some() {
-        channel
-            .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
-            .await?
-    } else if channel.uses_pty() {
-        channel
-            .exec_with_mode(BackendRoute::Pty, command, ExecMode::pty_default())
-            .await?
-    } else {
-        channel.exec(command).await?
+    let exec_path = select_exec_path(
+        channel.terminal_exec().is_some(),
+        channel.uses_pty(),
+        explicit_shell,
+    );
+    let output = match exec_path {
+        ShellExecPath::Terminal => {
+            channel
+                .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
+                .await?
+        }
+        ShellExecPath::Pty => {
+            channel
+                .exec_with_mode(BackendRoute::Pty, command, ExecMode::pty_default())
+                .await?
+        }
+        ShellExecPath::Exec => channel.exec(command).await?,
     };
-    let result = if channel.terminal_exec().is_some() {
+
+    let result = if matches!(exec_path, ShellExecPath::Terminal) {
         parse_terminal_shell_result(&output, &sentinel)?
     } else {
         parse_shell_result(&output)?
@@ -91,6 +96,39 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
 }
 
 // ── Command wrapper builders ──
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellExecPath {
+    Terminal,
+    Pty,
+    Exec,
+}
+
+fn select_exec_path(
+    terminal_available: bool,
+    pty_enabled: bool,
+    explicit_shell: bool,
+) -> ShellExecPath {
+    if explicit_shell {
+        ShellExecPath::Exec
+    } else if terminal_available {
+        ShellExecPath::Terminal
+    } else if pty_enabled {
+        ShellExecPath::Pty
+    } else {
+        ShellExecPath::Exec
+    }
+}
+
+fn shell_type_from_label(label: &str) -> Option<ShellType> {
+    match label {
+        "posix-sh" | "sh" => Some(ShellType::Posix),
+        "fish" => Some(ShellType::Fish),
+        "powershell" => Some(ShellType::PowerShell),
+        "cmd" => Some(ShellType::Cmd),
+        _ => None,
+    }
+}
 
 /// Build a POSIX non-terminal wrapper with mktemp, timeout, head -c truncation.
 fn build_posix_non_terminal(
@@ -195,17 +233,15 @@ fn build_windows_non_terminal(
     let cd = cd_prefix(ShellType::PowerShell, cwd);
     let env = env_setup(ShellType::PowerShell);
     let quoted_program = shell_quote(program, ShellType::PowerShell);
-    let argument_list = arguments
-        .iter()
-        .map(|argument| shell_quote(argument, ShellType::PowerShell))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let argument_string = windows_command_line_args(arguments);
+    let quoted_arguments = shell_quote(&argument_string, ShellType::PowerShell);
     let timeout_ms = timeout_secs.saturating_mul(1000);
 
     let ps_script = format!(
         concat!(
             "{cd}; {env}; ",
-            "$out=(New-TemporaryFile).FullName; $err=(New-TemporaryFile).FullName; ",
+            "$out=(New-TemporaryFile).FullName; $err=(New-TemporaryFile).FullName; $caughtError=$null; ",
+            "$outStream=$null; $errStream=$null; $process=$null; ",
             "function Read-MiaominalOutput([string]$path,[int]$limit){{ ",
             "$bytes=[System.IO.File]::ReadAllBytes($path); ",
             "$length=$bytes.Length; ",
@@ -220,23 +256,45 @@ fn build_windows_non_terminal(
             "Truncated=$length -gt $limit}} ",
             "}}; ",
             "try{{ ",
-            "$process=Start-Process -FilePath {program} -ArgumentList @({argument_list}) ",
-            "-RedirectStandardOutput $out -RedirectStandardError $err ",
-            "-WorkingDirectory (Get-Location).Path -PassThru; ",
+            "$psi=[System.Diagnostics.ProcessStartInfo]::new(); ",
+            "$psi.FileName={program}; ",
+            "$psi.Arguments={arguments}; ",
+            "$psi.UseShellExecute=$false; ",
+            "$psi.RedirectStandardOutput=$true; ",
+            "$psi.RedirectStandardError=$true; ",
+            "$psi.WorkingDirectory=(Get-Location).Path; ",
+            "$process=[System.Diagnostics.Process]::new(); ",
+            "$process.StartInfo=$psi; ",
+            "$outStream=[System.IO.File]::Open($out,[System.IO.FileMode]::Create,[System.IO.FileAccess]::Write,[System.IO.FileShare]::Read); ",
+            "$errStream=[System.IO.File]::Open($err,[System.IO.FileMode]::Create,[System.IO.FileAccess]::Write,[System.IO.FileShare]::Read); ",
+            "[void]$process.Start(); ",
+            "$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($outStream); ",
+            "$stderrTask=$process.StandardError.BaseStream.CopyToAsync($errStream); ",
             "if($process.WaitForExit({timeout_ms})){{ ",
+            "$process.WaitForExit(); ",
+            "$stdoutTask.Wait(); ",
+            "$stderrTask.Wait(); ",
             "$ec=$process.ExitCode ",
             "}}else{{ ",
             "taskkill /t /f /pid $process.Id *> $null; ",
             "$process.WaitForExit(); ",
+            "try{{ $stdoutTask.Wait(1000) *> $null }}catch{{}}; ",
+            "try{{ $stderrTask.Wait(1000) *> $null }}catch{{}}; ",
             "$ec=124 ",
             "}} ",
             "}}catch{{ ",
-            "$_ | Out-String | Set-Content -Path $err -Encoding utf8; ",
+            "$caughtError=$_ | Out-String; ",
             "$ec=1 ",
+            "}}finally{{ ",
+            "if($null -ne $outStream){{ $outStream.Dispose() }}; ",
+            "if($null -ne $errStream){{ $errStream.Dispose() }}; ",
+            "if($null -ne $process){{ $process.Dispose() }} ",
             "}}; ",
+            "if($null -ne $caughtError){{ Set-Content -Path $err -Value $caughtError -Encoding utf8 }}; ",
             "$stdout=Read-MiaominalOutput $out {max_bytes}; ",
             "$stderr=Read-MiaominalOutput $err {max_bytes}; ",
-            "Write-Output MIAOMINAL_STATUS=$ec; ",
+            "if($null -eq $ec){{ $ec=1 }}; ",
+            "Write-Output \"MIAOMINAL_STATUS=$ec\"; ",
             "Write-Output MIAOMINAL_STDOUT_BEGIN; ",
             "Write-Output $stdout.Text; ",
             "Write-Output MIAOMINAL_STDOUT_END; ",
@@ -244,24 +302,71 @@ fn build_windows_non_terminal(
             "Write-Output $stderr.Text; ",
             "Write-Output MIAOMINAL_STDERR_END; ",
             "if($stdout.Truncated -or $stderr.Truncated){{ ",
-            "Write-Output MIAOMINAL_TRUNCATED=1 ",
+            "Write-Output \"MIAOMINAL_TRUNCATED=1\" ",
             "}}else{{ ",
-            "Write-Output MIAOMINAL_TRUNCATED=0 ",
+            "Write-Output \"MIAOMINAL_TRUNCATED=0\" ",
             "}}; ",
             "Remove-Item $out,$err -ErrorAction SilentlyContinue"
         ),
         cd = cd,
         env = env,
         program = quoted_program,
-        argument_list = argument_list,
+        arguments = quoted_arguments,
         timeout_ms = timeout_ms,
         max_bytes = max_bytes,
     );
 
-    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
+    format!(
+        "powershell.exe -NoProfile -EncodedCommand {}",
+        super::windows::powershell_encoded_payload(&ps_script)
+    )
+}
+
+fn windows_command_line_args(arguments: &[&str]) -> String {
+    arguments
+        .iter()
+        .map(|argument| windows_command_line_arg(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn windows_command_line_arg(argument: &str) -> String {
+    if argument.is_empty()
+        || argument
+            .chars()
+            .any(|character| matches!(character, ' ' | '\t' | '"'))
+    {
+        let mut quoted = String::from("\"");
+        let mut backslashes = 0;
+        for character in argument.chars() {
+            match character {
+                '\\' => backslashes += 1,
+                '"' => {
+                    quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                    quoted.push('"');
+                    backslashes = 0;
+                }
+                _ => {
+                    quoted.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                    quoted.push(character);
+                }
+            }
+        }
+        quoted.push_str(&"\\".repeat(backslashes * 2));
+        quoted.push('"');
+        quoted
+    } else {
+        argument.to_string()
+    }
 }
 
 /// Build a CMD terminal-mode wrapper (WinkTerm sentinel style).
+///
+/// Uses `setlocal enabledelayedexpansion` so that `!ERRORLEVEL!` and `!CD!`
+/// reflect the values **after** `{user_command}` executes.  Without delayed
+/// expansion, `%ERRORLEVEL%` and `%CD%` are expanded at parse time — before
+/// any command on the line runs — which would report the pre-command state.
 fn build_cmd_terminal(
     user_command: &str,
     cwd: &str,
@@ -271,7 +376,7 @@ fn build_cmd_terminal(
     let cd = cd_prefix(shell_type, cwd);
     let env = env_setup(shell_type);
     format!(
-        "{cd} & {env} & {user_command} & echo( & echo {sentinel}%ERRORLEVEL%:%CD%",
+        "setlocal enabledelayedexpansion & {cd} & {env} & {user_command} & echo( & echo {sentinel}!ERRORLEVEL!:!CD! & endlocal",
         cd = cd,
         env = env,
         user_command = user_command,
@@ -346,6 +451,10 @@ fn sanitize_shell_output(raw: &str) -> String {
 ///
 /// Uses `rfind` (last occurrence) so that wrapper command text displayed by the
 /// line editor in the terminal tap does not shadow the real sentinel output.
+///
+/// Returns 0 when the status value is missing or whitespace-only (e.g. when
+/// PowerShell's `$ec` evaluated to `$null`), so that the agent can still
+/// consume stdout/stderr content.
 fn extract_status(output: &str) -> AgentResult<i32> {
     const MARKER: &str = "MIAOMINAL_STATUS=";
     let search_area = output
@@ -356,7 +465,14 @@ fn extract_status(output: &str) -> AgentResult<i32> {
         .rfind(MARKER)
         .ok_or_else(|| AgentError::Backend(anyhow!("missing shell exit status")))?;
     let after = &search_area[pos + MARKER.len()..];
-    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let after_trimmed = after.trim_start_matches(|c: char| c.is_whitespace());
+    let digits: String = after_trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return Ok(0);
+    }
     digits
         .parse::<i32>()
         .map_err(|_| AgentError::Backend(anyhow!("invalid shell exit status: {digits}")))
@@ -422,6 +538,7 @@ pub fn parse_terminal_shell_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use miaominal_core::profile::ShellType;
     use miaominal_secrets::SecretStore;
     use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -432,6 +549,20 @@ mod tests {
         profile.username = "akko".into();
         profile.shell_type = shell_type;
         profile
+    }
+
+    fn decode_encoded_powershell_command(command: &str) -> String {
+        let encoded = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("encoded PowerShell command prefix");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("encoded command decodes");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).expect("encoded command is UTF-16LE")
     }
 
     #[test]
@@ -661,6 +792,28 @@ mod tests {
         assert_eq!(channel.shell_label(), "cmd");
     }
 
+    #[test]
+    fn shell_type_from_label_accepts_supported_labels() {
+        assert_eq!(shell_type_from_label("posix-sh"), Some(ShellType::Posix));
+        assert_eq!(shell_type_from_label("sh"), Some(ShellType::Posix));
+        assert_eq!(shell_type_from_label("fish"), Some(ShellType::Fish));
+        assert_eq!(
+            shell_type_from_label("powershell"),
+            Some(ShellType::PowerShell)
+        );
+        assert_eq!(shell_type_from_label("cmd"), Some(ShellType::Cmd));
+        assert_eq!(shell_type_from_label("pwsh"), None);
+    }
+
+    #[test]
+    fn explicit_shell_forces_raw_exec_path() {
+        assert_eq!(select_exec_path(true, true, true), ShellExecPath::Exec);
+        assert_eq!(select_exec_path(false, true, true), ShellExecPath::Exec);
+        assert_eq!(select_exec_path(true, true, false), ShellExecPath::Terminal);
+        assert_eq!(select_exec_path(false, true, false), ShellExecPath::Pty);
+        assert_eq!(select_exec_path(false, false, false), ShellExecPath::Exec);
+    }
+
     // ── PowerShell / CMD wrapper tests ──
 
     #[test]
@@ -672,32 +825,72 @@ mod tests {
             65536,
             ShellType::PowerShell,
         );
-        assert!(wrapper.contains("New-TemporaryFile"));
+        let script = decode_encoded_powershell_command(&wrapper);
+
+        assert!(script.contains("New-TemporaryFile"));
         assert!(!wrapper.contains("mktemp"));
-        assert!(wrapper.contains("Start-Process -FilePath 'powershell.exe'"));
-        assert!(wrapper.contains("WaitForExit(30000)"));
-        assert!(wrapper.contains("taskkill /t /f /pid $process.Id"));
-        assert!(wrapper.contains("MIAOMINAL_STATUS="));
-        assert!(wrapper.contains("MIAOMINAL_STDOUT_BEGIN"));
-        assert!(wrapper.contains("MIAOMINAL_STDERR_BEGIN"));
-        assert!(wrapper.starts_with("powershell.exe -NoProfile -Command"));
+        assert!(script.contains("$psi.FileName='powershell.exe'"));
+        assert!(script.contains("$psi.Arguments='-NoProfile -Command \"echo hello\"'"));
+        assert!(script.contains("[System.Diagnostics.ProcessStartInfo]::new()"));
+        assert!(script.contains("WaitForExit(30000)"));
+        assert!(script.contains("taskkill /t /f /pid $process.Id"));
+        assert!(script.contains("$ec=$process.ExitCode"));
+        assert!(script.contains("MIAOMINAL_STATUS="));
+        assert!(script.contains("MIAOMINAL_STDOUT_BEGIN"));
+        assert!(script.contains("MIAOMINAL_STDERR_BEGIN"));
+        assert!(wrapper.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!wrapper.contains("echo hello"));
     }
 
     #[test]
     fn powershell_run_shell_wrapper_uses_byte_limited_replay() {
         let wrapper = build_powershell_non_terminal("dir", ".", 30, 4096, ShellType::PowerShell);
-        assert!(wrapper.contains("ReadAllBytes"));
-        assert!(wrapper.contains("4096"));
+        let script = decode_encoded_powershell_command(&wrapper);
+        assert!(script.contains("ReadAllBytes"));
+        assert!(script.contains("4096"));
     }
 
     #[test]
     fn cmd_run_shell_wrapper_uses_timeout_and_byte_limit() {
         let wrapper = build_cmd_non_terminal("dir", ".", 30, 4096, ShellType::Cmd);
-        assert!(wrapper.contains("Start-Process -FilePath 'cmd.exe'"));
-        assert!(wrapper.contains("@('/d', '/c', 'dir')"));
-        assert!(wrapper.contains("WaitForExit(30000)"));
-        assert!(wrapper.contains("ReadAllBytes"));
-        assert!(wrapper.contains("MIAOMINAL_TRUNCATED=1"));
+        let script = decode_encoded_powershell_command(&wrapper);
+
+        assert!(wrapper.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!wrapper.contains("cmd.exe"));
+        assert!(!wrapper.contains("dir"));
+        assert!(script.contains("$psi.FileName='cmd.exe'"));
+        assert!(script.contains("$psi.Arguments='/d /c dir'"));
+        assert!(script.contains("WaitForExit(30000)"));
+        assert!(script.contains("ReadAllBytes"));
+        assert!(script.contains("MIAOMINAL_TRUNCATED=1"));
+    }
+
+    #[test]
+    fn windows_command_line_arg_quotes_nested_quotes() {
+        let args = windows_command_line_args(&[
+            "/d",
+            "/c",
+            "Remove-Item -Path \"C:\\nope\" -Force -ErrorAction Stop",
+        ]);
+
+        assert_eq!(
+            args,
+            "/d /c \"Remove-Item -Path \\\"C:\\nope\\\" -Force -ErrorAction Stop\""
+        );
+    }
+
+    #[test]
+    fn windows_command_line_arg_only_quotes_ascii_space_tab_and_quotes() {
+        assert_eq!(windows_command_line_arg("hello world"), "\"hello world\"");
+        assert_eq!(windows_command_line_arg("hello\tworld"), "\"hello\tworld\"");
+        assert_eq!(
+            windows_command_line_arg("hello\"world"),
+            "\"hello\\\"world\""
+        );
+        assert_eq!(
+            windows_command_line_arg("hello\u{00a0}world"),
+            "hello\u{00a0}world"
+        );
     }
 
     #[test]

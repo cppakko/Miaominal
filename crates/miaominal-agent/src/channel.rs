@@ -135,6 +135,7 @@ pub struct AgentExecChannel {
     use_pty: bool,
     terminal_exec: Option<TerminalExecHandle>,
     aux_channels: HashMap<String, AgentExecChannel>,
+    policy_bypass: bool,
     /// Override set by workspace_info probe when the actual remote shell differs
     /// from the profile's configured shell_type.  `0` = unset (use profile).
     /// Uses AtomicU8 for lock-free interior mutability across clones.
@@ -178,6 +179,7 @@ impl AgentExecChannel {
             use_pty: false,
             terminal_exec: None,
             aux_channels: HashMap::new(),
+            policy_bypass: false,
             detected_shell: Arc::new(AtomicU8::new(0)),
         }
     }
@@ -188,6 +190,10 @@ impl AgentExecChannel {
 
     pub fn policy(&self) -> &AgentPolicy {
         &self.policy
+    }
+
+    pub fn policy_bypass_enabled(&self) -> bool {
+        self.policy_bypass
     }
 
     pub fn jobs(&self) -> AgentJobRegistry {
@@ -211,14 +217,19 @@ impl AgentExecChannel {
         self.effective_shell_type()
     }
 
-    fn effective_shell_type(&self) -> ShellType {
+    pub fn detected_shell_type(&self) -> Option<ShellType> {
         match self.detected_shell.load(Ordering::Relaxed) {
-            1 => ShellType::Posix,
-            2 => ShellType::Fish,
-            3 => ShellType::PowerShell,
-            4 => ShellType::Cmd,
-            _ => self.profile.shell_type,
+            1 => Some(ShellType::Posix),
+            2 => Some(ShellType::Fish),
+            3 => Some(ShellType::PowerShell),
+            4 => Some(ShellType::Cmd),
+            _ => None,
         }
+    }
+
+    fn effective_shell_type(&self) -> ShellType {
+        self.detected_shell_type()
+            .unwrap_or(self.profile.shell_type)
     }
 
     /// Record the actual shell type detected by workspace_info probing.
@@ -262,6 +273,11 @@ impl AgentExecChannel {
 
     pub fn with_pty(mut self) -> Self {
         self.use_pty = true;
+        self
+    }
+
+    pub fn with_policy_bypass(mut self, bypass: bool) -> Self {
+        self.policy_bypass = bypass;
         self
     }
 
@@ -310,21 +326,25 @@ impl AgentExecChannel {
         let route = request.route.unwrap_or(BackendRoute::SshExec);
         self.backend_router.ensure_supported(route)?;
         self.ensure_posix_supported()?;
+        let bypass_channel = request
+            .skip_policy
+            .then(|| self.clone().with_policy_bypass(true));
+        let channel = bypass_channel.as_ref().unwrap_or(self);
 
         let output = match request.tool_name.as_str() {
-            "workspace_info" => tools::workspace_info(self).await?,
-            "read" => tools::read(self, parse_args(request.arguments)?).await?,
-            "list" => tools::list(self, parse_args(request.arguments)?).await?,
-            "glob" => tools::glob(self, parse_args(request.arguments)?).await?,
-            "grep" => tools::grep(self, parse_args(request.arguments)?).await?,
-            "apply_patch" => tools::apply_patch(self, parse_args(request.arguments)?).await?,
-            "run_shell" => tools::run_shell(self, parse_args(request.arguments)?).await?,
-            "start_job" => tools::start_job(self, parse_args(request.arguments)?).await?,
-            "list_jobs" => tools::list_jobs(self).await?,
-            "poll_job" => tools::poll_job(self, parse_args(request.arguments)?).await?,
-            "stop_job" => tools::stop_job(self, parse_args(request.arguments)?).await?,
-            "web_search" => tools::web_search(self, parse_args(request.arguments)?).await?,
-            "web_fetch" => tools::web_fetch(self, parse_args(request.arguments)?).await?,
+            "workspace_info" => tools::workspace_info(channel).await?,
+            "read" => tools::read(channel, parse_args(request.arguments)?).await?,
+            "list" => tools::list(channel, parse_args(request.arguments)?).await?,
+            "glob" => tools::glob(channel, parse_args(request.arguments)?).await?,
+            "grep" => tools::grep(channel, parse_args(request.arguments)?).await?,
+            "apply_patch" => tools::apply_patch(channel, parse_args(request.arguments)?).await?,
+            "run_shell" => tools::run_shell(channel, parse_args(request.arguments)?).await?,
+            "start_job" => tools::start_job(channel, parse_args(request.arguments)?).await?,
+            "list_jobs" => tools::list_jobs(channel).await?,
+            "poll_job" => tools::poll_job(channel, parse_args(request.arguments)?).await?,
+            "stop_job" => tools::stop_job(channel, parse_args(request.arguments)?).await?,
+            "web_search" => tools::web_search(channel, parse_args(request.arguments)?).await?,
+            "web_fetch" => tools::web_fetch(channel, parse_args(request.arguments)?).await?,
             "ask_user" | "approval" => tools::approval(parse_args(request.arguments)?)?,
             other => return Err(AgentError::UnknownTool(other.to_string())),
         };
@@ -609,6 +629,37 @@ mod tests {
             channel.ensure_posix_supported().is_ok(),
             "Cmd profile should be accepted by ensure_posix_supported",
         );
+    }
+
+    #[test]
+    fn detected_shell_overrides_profile_shell() {
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::PowerShell),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-detected-shell")),
+        );
+
+        assert_eq!(channel.detected_shell_type(), None);
+        assert_eq!(channel.shell_label(), "powershell");
+
+        channel.set_detected_shell(ShellType::Cmd);
+
+        assert_eq!(channel.detected_shell_type(), Some(ShellType::Cmd));
+        assert_eq!(channel.shell_label(), "cmd");
+    }
+
+    #[test]
+    fn policy_bypass_is_explicit() {
+        let channel = AgentExecChannel::for_profile(
+            profile(ShellType::Posix),
+            Vec::new(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(std::env::temp_dir().join("agent-policy-bypass")),
+        );
+
+        assert!(!channel.policy_bypass_enabled());
+        assert!(channel.with_policy_bypass(true).policy_bypass_enabled());
     }
 
     #[test]

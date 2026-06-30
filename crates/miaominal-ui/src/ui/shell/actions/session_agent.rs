@@ -1036,7 +1036,7 @@ impl AppView {
         let target_names = self.session_agent.selected_at_targets.clone();
         let mentions = self.resolve_session_agent_mentions(&target_names);
         if !mentions.unresolved.is_empty() {
-            self.clear_session_pty_taps_by_tab_id(&mentions.pty_tap_tab_ids);
+            self.clear_session_pty_taps_if_same(&mentions.pty_taps);
             let targets = mentions
                 .unresolved
                 .iter()
@@ -1053,8 +1053,8 @@ impl AppView {
             return;
         }
 
-        let pty_target_tap_tab_ids = mentions.pty_tap_tab_ids.clone();
-        let Some((tools, pty_tap_active)) =
+        let pty_target_taps = mentions.pty_taps.clone();
+        let Some((tools, active_pty_tap)) =
             self.build_session_agent_tools(mentions.aux_channels, cx)
         else {
             return;
@@ -1143,6 +1143,8 @@ impl AppView {
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
                 Err(error) => {
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
                     let _ = this.update(cx, move |this, cx| {
                         this.handle_session_agent_stream_error_for_session(
                             &stream_session_id_for_error,
@@ -1150,10 +1152,10 @@ impl AppView {
                             error,
                             cx,
                         );
-                        if pty_tap_active {
-                            this.set_active_session_pty_tap(None);
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_active_session_pty_tap_if_same(tap);
                         }
-                        this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                     });
                     return;
                 }
@@ -1181,6 +1183,8 @@ impl AppView {
                     }
                     Err(error) => {
                         let error_session_id = stream_session_id.clone();
+                        let cleanup_active_pty_tap = active_pty_tap.clone();
+                        let cleanup_pty_target_taps = pty_target_taps.clone();
                         let _ = this
                             .update(cx, move |this, cx| {
                                 this.handle_session_agent_stream_error_for_session(
@@ -1189,7 +1193,10 @@ impl AppView {
                                     anyhow::Error::from(error),
                                     cx,
                                 );
-                                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                                    this.clear_active_session_pty_tap_if_same(tap);
+                                }
+                                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                             })
                             .map_err(|error| {
                                 log::debug!("failed to apply session agent chat error: {error:?}");
@@ -1200,12 +1207,14 @@ impl AppView {
             }
 
             let finish_session_id = stream_session_id.clone();
+            let cleanup_active_pty_tap = active_pty_tap.clone();
+            let cleanup_pty_target_taps = pty_target_taps.clone();
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
-                if pty_tap_active {
-                    this.set_active_session_pty_tap(None);
+                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                    this.clear_active_session_pty_tap_if_same(tap);
                 }
-                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
         });
         self.session_agent.pending_task = Some(task);
@@ -1216,7 +1225,7 @@ impl AppView {
         &mut self,
         aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
-    ) -> Option<(Option<AgentToolSet>, bool)> {
+    ) -> Option<(Option<AgentToolSet>, Option<mpsc::UnboundedSender<Vec<u8>>>)> {
         let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
         let pty_commands = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
@@ -1246,12 +1255,13 @@ impl AppView {
             None
         };
 
-        let pty_tap_active = pty_commands.is_some();
+        let mut active_pty_tap = None;
         let tools = self.active_profile().cloned().map(|profile| {
             let mut channel = self.agent_exec_channel_for_profile(profile);
             if let Some(command_sender) = pty_commands.clone() {
                 let (sender, receiver) = mpsc::unbounded_channel();
-                self.set_active_session_pty_tap(Some(sender));
+                self.set_active_session_pty_tap(Some(sender.clone()));
+                active_pty_tap = Some(sender);
                 channel = channel.with_terminal_exec(TerminalExecHandle {
                     command_sender,
                     output_tap: Arc::new(Mutex::new(Some(receiver))),
@@ -1262,7 +1272,7 @@ impl AppView {
             AgentToolSet::for_channel(channel, mode)
         });
 
-        Some((tools, pty_tap_active))
+        Some((tools, active_pty_tap))
     }
 
     pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
@@ -1312,6 +1322,7 @@ impl AppView {
         let approval_session_id = self.ensure_session_agent_session();
 
         let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
+        let mut active_pty_tap = None;
         let pty_handle = if use_pty {
             let Some(index) = self.active_terminal_session_index() else {
                 let message =
@@ -1336,7 +1347,8 @@ impl AppView {
                 return;
             };
             let (sender, receiver) = mpsc::unbounded_channel();
-            self.set_active_session_pty_tap(Some(sender));
+            self.set_active_session_pty_tap(Some(sender.clone()));
+            active_pty_tap = Some(sender);
             Some(TerminalExecHandle {
                 command_sender,
                 output_tap: Arc::new(Mutex::new(Some(receiver))),
@@ -1344,15 +1356,16 @@ impl AppView {
         } else {
             None
         };
-        let pty_tap_active = pty_handle.is_some();
         let approval_mentions = self.resolve_mentions_from_tool_arguments(&arguments);
-        let approval_pty_target_tap_tab_ids = approval_mentions.pty_tap_tab_ids.clone();
+        let approval_pty_target_taps = approval_mentions.pty_taps.clone();
         let sessions = self.data.sessions.clone();
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
         let web_search_config = self.settings_store.settings().web_search.clone();
-        let skip_policy =
-            self.session_agent.agent_mode == AgentMode::NonBlocking;
+        let skip_policy = matches!(
+            self.session_agent.agent_mode,
+            AgentMode::NonBlocking | AgentMode::FullAuto
+        );
         let tool_name = tool_call.name.clone();
         let tool_arguments = tool_call.arguments.clone();
         let task = cx.spawn(async move |this, cx| {
@@ -1401,10 +1414,10 @@ impl AppView {
             };
 
             let _ = this.update(cx, move |this, cx| {
-                if pty_tap_active {
-                    this.set_active_session_pty_tap(None);
+                if let Some(tap) = active_pty_tap.as_ref() {
+                    this.clear_active_session_pty_tap_if_same(tap);
                 }
-                this.clear_session_pty_taps_by_tab_id(&approval_pty_target_tap_tab_ids);
+                this.clear_session_pty_taps_if_same(&approval_pty_target_taps);
                 let approval_session_id = approval_session_id.clone();
                 this.with_session_agent_state(&approval_session_id, |this| {
                     let previous_message_count = this.session_agent.messages.len();
@@ -1514,9 +1527,9 @@ impl AppView {
 
         let active_targets = self.session_agent.active_at_targets.clone();
         let mentions = self.resolve_session_agent_mentions(&active_targets);
-        let pty_target_tap_tab_ids = mentions.pty_tap_tab_ids.clone();
+        let pty_target_taps = mentions.pty_taps.clone();
         let target_guidance = mentions.guidance;
-        let Some((tools, pty_tap_active)) =
+        let Some((tools, active_pty_tap)) =
             self.build_session_agent_tools(mentions.aux_channels, cx)
         else {
             return;
@@ -1572,6 +1585,8 @@ impl AppView {
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
                 Err(error) => {
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
                     let _ = this.update(cx, move |this, cx| {
                         this.handle_session_agent_stream_error_for_session(
                             &stream_session_id_for_error,
@@ -1579,10 +1594,10 @@ impl AppView {
                             error,
                             cx,
                         );
-                        if pty_tap_active {
-                            this.set_active_session_pty_tap(None);
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_active_session_pty_tap_if_same(tap);
                         }
-                        this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                     });
                     return;
                 }
@@ -1612,6 +1627,8 @@ impl AppView {
                     }
                     Err(error) => {
                         let error_session_id = stream_session_id.clone();
+                        let cleanup_active_pty_tap = active_pty_tap.clone();
+                        let cleanup_pty_target_taps = pty_target_taps.clone();
                         let _ = this
                             .update(cx, move |this, cx| {
                                 this.handle_session_agent_stream_error_for_session(
@@ -1620,7 +1637,10 @@ impl AppView {
                                     anyhow::Error::from(error),
                                     cx,
                                 );
-                                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                                    this.clear_active_session_pty_tap_if_same(tap);
+                                }
+                                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                             })
                             .map_err(|error| {
                                 log::debug!(
@@ -1633,12 +1653,14 @@ impl AppView {
             }
 
             let finish_session_id = stream_session_id.clone();
+            let cleanup_active_pty_tap = active_pty_tap.clone();
+            let cleanup_pty_target_taps = pty_target_taps.clone();
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
-                if pty_tap_active {
-                    this.set_active_session_pty_tap(None);
+                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                    this.clear_active_session_pty_tap_if_same(tap);
                 }
-                this.clear_session_pty_taps_by_tab_id(&pty_target_tap_tab_ids);
+                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
         });
         self.session_agent.pending_task = Some(task);
@@ -1759,6 +1781,7 @@ impl AppView {
                 | AgentChatEvent::ThinkingDelta(_)
                 | AgentChatEvent::ToolCallDelta { .. }
                 | AgentChatEvent::ToolCallCompleted { .. }
+                | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
                 | AgentChatEvent::ToolCallApprovalRequired { .. }
                 | AgentChatEvent::Finished(_)
         );
@@ -1800,11 +1823,19 @@ impl AppView {
                     }
                 })
             }
+            AgentChatEvent::ToolCallAutoExecuteRequired { id } => {
+                self.session_agent.pending_task = None;
+                self.session_agent.active_request_id = 0;
+                self.approve_session_agent_tool_call(id, cx);
+                None
+            }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
                 if matches!(
                     self.session_agent.agent_mode,
                     AgentMode::FullAuto
                 ) {
+                    self.session_agent.pending_task = None;
+                    self.session_agent.active_request_id = 0;
                     self.approve_session_agent_tool_call(id, cx);
                     None
                 } else {
@@ -2298,7 +2329,6 @@ impl AppView {
         let mut aux_channels = HashMap::new();
         let mut guidance_lines = Vec::new();
         let mut resolved_names = Vec::new();
-        let mut pty_tap_tab_ids = Vec::new();
         let mut pending_pty_taps = Vec::new();
 
         match self.session_agent.exec_mode {
@@ -2356,9 +2386,6 @@ impl AppView {
                             output_tap: Arc::new(Mutex::new(Some(receiver))),
                         });
                     aux_channels.insert(marker.clone(), channel);
-                    if !pty_tap_tab_ids.contains(&tab.id) {
-                        pty_tap_tab_ids.push(tab.id);
-                    }
                     pending_pty_taps.push((tab.id, sender));
                     guidance_lines.push(format!(
                         "- {marker}: terminal session \"{}\" (profile: {}, host: {}, user: {})",
@@ -2369,8 +2396,8 @@ impl AppView {
             }
         }
 
-        for (tab_id, sender) in pending_pty_taps {
-            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender));
+        for (tab_id, sender) in &pending_pty_taps {
+            self.set_session_pty_tap_by_tab_id(*tab_id, Some(sender.clone()));
         }
 
         let unresolved = targets
@@ -2396,7 +2423,7 @@ impl AppView {
             aux_channels,
             guidance,
             unresolved,
-            pty_tap_tab_ids,
+            pty_taps: pending_pty_taps,
         }
     }
 
@@ -2447,7 +2474,7 @@ struct ResolvedSessionAgentMentions {
     aux_channels: HashMap<String, AgentExecChannel>,
     guidance: Option<String>,
     unresolved: Vec<String>,
-    pty_tap_tab_ids: Vec<usize>,
+    pty_taps: Vec<(usize, mpsc::UnboundedSender<Vec<u8>>)>,
 }
 
 fn parse_tool_arguments(arguments: &str) -> Value {

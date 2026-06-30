@@ -20,6 +20,10 @@ impl AgentToolSet {
         Self { channel, mode }
     }
 
+    pub fn mode(&self) -> AgentMode {
+        self.mode
+    }
+
     pub fn into_rig_tool_set(self) -> ToolSet {
         let mut toolset = ToolSet::default();
         for name in self.enabled_tool_names() {

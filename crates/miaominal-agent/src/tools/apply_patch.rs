@@ -4,6 +4,7 @@ use crate::path_guard::{cd_prefix, resolve_workspace_path, shell_quote};
 use base64::Engine as _;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct ApplyPatchArgs {
@@ -22,39 +23,45 @@ pub async fn apply_patch(
     channel: &AgentExecChannel,
     args: ApplyPatchArgs,
 ) -> AgentResult<ToolOutput> {
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+
     let base_dir = resolve_workspace_path(&args.base_dir)?;
-    if crate::policy::is_sensitive_path(&base_dir) {
+    if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_path(&base_dir) {
         channel
             .policy()
             .enforce_path(crate::policy::AgentPathAccess::Edit, &base_dir, false)?;
     }
 
     for path in extract_patch_paths(&args.patch) {
-        if crate::policy::is_sensitive_path(&path) {
+        if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_path(&path) {
             channel
                 .policy()
                 .enforce_path(crate::policy::AgentPathAccess::Edit, &path, false)?;
         }
     }
 
-    let shell = channel.shell_type();
-    let command = build_patch_command(shell, &base_dir, &args.patch)?;
+    let original_shell = channel.shell_type();
+    eprintln!(
+        "[apply_patch] original_shell={:?} base_dir={:?} patch_len={}",
+        original_shell,
+        base_dir,
+        args.patch.len(),
+    );
 
-    let patch_output = match channel.exec(command).await {
-        Ok(output) => output,
-        Err(_) if matches!(shell, ShellType::PowerShell) => {
-            return Err(AgentError::PosixOnly(
-                "patch command not found on remote Windows host. \
-                 Install Git for Windows (includes patch.exe) or \
-                 use run_shell to apply changes manually."
-                    .into(),
-            ));
-        }
-        Err(e) => return Err(e),
+    let is_windows = matches!(original_shell, ShellType::PowerShell | ShellType::Cmd);
+
+    let patch_output = if is_windows {
+        apply_patch_windows(channel, original_shell, &base_dir, &args.patch).await?
+    } else {
+        apply_patch_posix(channel, original_shell, &base_dir, &args.patch).await?
     };
 
     if let Some(validator) = args.validator {
-        channel.policy().enforce_command(&validator.command, true)?;
+        if !channel.policy_bypass_enabled() {
+            channel.policy().enforce_command(&validator.command, true)?;
+        }
         let validation = super::run_shell::run_shell(
             channel,
             super::run_shell::RunShellArgs {
@@ -78,6 +85,270 @@ pub async fn apply_patch(
     }
 }
 
+/// POSIX / Fish: delegate to system `patch` command.
+async fn apply_patch_posix(
+    channel: &AgentExecChannel,
+    shell: ShellType,
+    base_dir: &str,
+    patch: &str,
+) -> AgentResult<String> {
+    let command = build_patch_command(shell, base_dir, patch)?;
+    eprintln!(
+        "[apply_patch] posix cmd for {:?} ({} bytes)",
+        shell,
+        command.len(),
+    );
+    channel.exec(command).await.map_err(|e| {
+        eprintln!("[apply_patch] posix exec failed: {:?}", e);
+        e
+    })
+}
+
+/// Windows (PowerShell / CMD): try external `patch.exe` first;
+/// if it is unavailable, fall back to the built-in Rust diff engine.
+///
+/// CMD sessions cannot use `patch.exe` at all (even if it were installed,
+/// there's no heredoc support), so they go straight to the engine.
+async fn apply_patch_windows(
+    channel: &AgentExecChannel,
+    shell: ShellType,
+    base_dir: &str,
+    patch: &str,
+) -> AgentResult<String> {
+    if matches!(shell, ShellType::Cmd) {
+        eprintln!("[apply_patch] CMD shell — using built-in engine directly");
+        return apply_patch_via_engine(channel, base_dir, patch).await;
+    }
+
+    let command = build_patch_command(shell, base_dir, patch)?;
+    eprintln!(
+        "[apply_patch] win cmd for {:?} ({} bytes)",
+        shell,
+        command.len(),
+    );
+
+    match channel.exec(command).await {
+        Ok(output) => {
+            eprintln!("[apply_patch] external patch OK ({} bytes)", output.len());
+            Ok(output)
+        }
+        Err(exec_err) => {
+            eprintln!(
+                "[apply_patch] external patch failed ({:?}), trying built-in engine",
+                exec_err,
+            );
+            apply_patch_via_engine(channel, base_dir, patch).await
+        }
+    }
+}
+
+/// Apply a unified diff using the built-in Rust engine.
+///
+/// Windows fallback reads each target file as bytes, applies hunks locally
+/// with context validation, then writes the new bytes back through an encoded
+/// PowerShell command. This avoids relying on `patch.exe` or remote shell
+/// quoting rules for the diff content.
+async fn apply_patch_via_engine(
+    channel: &AgentExecChannel,
+    base_dir: &str,
+    patch: &str,
+) -> AgentResult<String> {
+    let files = super::patch_engine::parse_unified_diff(patch)
+        .map_err(|e| AgentError::InvalidArguments(e.to_string()))?;
+
+    eprintln!("[apply_patch] engine: {} file(s) to patch", files.len(),);
+
+    let mut results: HashMap<String, super::patch_engine::PatchResult<Vec<u8>>> = HashMap::new();
+
+    for file in &files {
+        let target_key = super::patch_engine::extract_target_path(file).to_string();
+        let target_path = match resolve_patch_target_path(&target_key) {
+            Ok(path) => path,
+            Err(err) => {
+                results.insert(target_key, Err(err));
+                continue;
+            }
+        };
+
+        eprintln!("[apply_patch] engine: processing {target_path:?}");
+
+        let result = apply_windows_file_patch(channel, base_dir, &target_path, file).await;
+        results.insert(target_key, result.map(|_| Vec::new()));
+    }
+
+    let summary = super::patch_engine::build_summary(&files, &results);
+    eprintln!("[apply_patch] engine done:\n{summary}");
+    Ok(summary)
+}
+
+async fn apply_windows_file_patch(
+    channel: &AgentExecChannel,
+    base_dir: &str,
+    target_path: &str,
+    file: &super::patch_engine::FilePatch,
+) -> super::patch_engine::PatchResult<()> {
+    if file.is_new_file {
+        let patched = super::patch_engine::apply_file_patch("", &file.hunks)?;
+        write_windows_file(channel, base_dir, target_path, &patched, true).await
+    } else if file.is_deleted {
+        let original = read_windows_file(channel, base_dir, target_path).await?;
+        let patched = super::patch_engine::apply_file_patch(&original, &file.hunks)?;
+        if !patched.is_empty() {
+            return Err(super::patch_engine::PatchError::Apply(format!(
+                "delete patch for {target_path} did not remove all content"
+            )));
+        }
+        delete_windows_file(channel, base_dir, target_path).await
+    } else {
+        let original = read_windows_file(channel, base_dir, target_path).await?;
+        let patched = super::patch_engine::apply_file_patch(&original, &file.hunks)?;
+        write_windows_file(channel, base_dir, target_path, &patched, false).await
+    }
+}
+
+async fn read_windows_file(
+    channel: &AgentExecChannel,
+    base_dir: &str,
+    target_path: &str,
+) -> super::patch_engine::PatchResult<String> {
+    let command = build_windows_read_file_command(base_dir, target_path);
+    let output = channel.exec(command).await.map_err(|err| {
+        let msg = err.to_string();
+        if msg.contains("file not found:") {
+            super::patch_engine::PatchError::NotFound(target_path.to_string())
+        } else {
+            super::patch_engine::PatchError::Apply(msg)
+        }
+    })?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(output.trim())
+        .map_err(|err| {
+            super::patch_engine::PatchError::Apply(format!(
+                "invalid base64 read response for {target_path}: {err}"
+            ))
+        })?;
+    String::from_utf8(bytes).map_err(|err| {
+        super::patch_engine::PatchError::Apply(format!("{target_path} is not valid UTF-8: {err}"))
+    })
+}
+
+async fn write_windows_file(
+    channel: &AgentExecChannel,
+    base_dir: &str,
+    target_path: &str,
+    content: &str,
+    fail_if_exists: bool,
+) -> super::patch_engine::PatchResult<()> {
+    let content_base64 = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
+    let command =
+        build_windows_write_file_command(base_dir, target_path, &content_base64, fail_if_exists);
+    channel
+        .exec(command)
+        .await
+        .map(|_| ())
+        .map_err(|err| super::patch_engine::PatchError::Apply(err.to_string()))
+}
+
+async fn delete_windows_file(
+    channel: &AgentExecChannel,
+    base_dir: &str,
+    target_path: &str,
+) -> super::patch_engine::PatchResult<()> {
+    let command = build_windows_delete_file_command(base_dir, target_path);
+    channel
+        .exec(command)
+        .await
+        .map(|_| ())
+        .map_err(|err| super::patch_engine::PatchError::Apply(err.to_string()))
+}
+
+fn resolve_patch_target_path(path: &str) -> super::patch_engine::PatchResult<String> {
+    let normalized = resolve_workspace_path(path)
+        .map_err(|err| super::patch_engine::PatchError::Apply(err.to_string()))?;
+    if normalized == "." || normalized.starts_with('/') || has_windows_drive_prefix(&normalized) {
+        return Err(super::patch_engine::PatchError::Apply(format!(
+            "patch target must be relative to the workspace: {path}"
+        )));
+    }
+    Ok(normalized)
+}
+
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+}
+
+fn build_windows_read_file_command(base_dir: &str, target_path: &str) -> String {
+    let script = format!(
+        "{path_setup}; \
+         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {{ \
+             Write-Error ('file not found: ' + $path); exit 2 \
+         }}; \
+         [Convert]::ToBase64String([IO.File]::ReadAllBytes($full))",
+        path_setup = ps_path_setup(base_dir, target_path),
+    );
+    powershell_wrapper(&script)
+}
+
+fn build_windows_write_file_command(
+    base_dir: &str,
+    target_path: &str,
+    content_base64: &str,
+    fail_if_exists: bool,
+) -> String {
+    let exists_guard = if fail_if_exists {
+        "if (Test-Path -LiteralPath $full) { Write-Error ('file already exists: ' + $path); exit 3 }; "
+    } else {
+        ""
+    };
+    let script = format!(
+        "{path_setup}; \
+         {exists_guard}\
+         $parent = Split-Path -Parent $full; \
+         if ($parent -and -not (Test-Path -LiteralPath $parent)) {{ \
+             New-Item -ItemType Directory -Path $parent -Force | Out-Null \
+         }}; \
+         $bytes = [Convert]::FromBase64String('{content_base64}'); \
+         [IO.File]::WriteAllBytes($full, $bytes); \
+         Write-Output ('written: ' + $path)",
+        path_setup = ps_path_setup(base_dir, target_path),
+        exists_guard = exists_guard,
+        content_base64 = content_base64,
+    );
+    powershell_wrapper(&script)
+}
+
+fn build_windows_delete_file_command(base_dir: &str, target_path: &str) -> String {
+    let script = format!(
+        "{path_setup}; \
+         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {{ \
+             Write-Error ('file not found: ' + $path); exit 2 \
+         }}; \
+         Remove-Item -LiteralPath $full -Force -ErrorAction Stop; \
+         Write-Output ('deleted: ' + $path)",
+        path_setup = ps_path_setup(base_dir, target_path),
+    );
+    powershell_wrapper(&script)
+}
+
+fn ps_path_setup(base_dir: &str, target_path: &str) -> String {
+    format!(
+        "{cd}; $path = '{path}'; $full = if ([IO.Path]::IsPathRooted($path)) {{ $path }} else {{ Join-Path (Get-Location).Path $path }}",
+        cd = cd_prefix(ShellType::PowerShell, base_dir),
+        path = ps_escape_single_quoted(target_path),
+    )
+}
+
+fn ps_escape_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+/// Wrap a PowerShell scriptlet in an encoded command so embedded quotes cannot
+/// be reinterpreted by CMD or PowerShell's command-line parser.
+fn powershell_wrapper(script: &str) -> String {
+    super::windows::powershell_encoded_command(script)
+}
+
 fn build_patch_command(shell: ShellType, base_dir: &str, patch: &str) -> AgentResult<String> {
     match shell {
         ShellType::Posix => Ok(format!(
@@ -93,10 +364,7 @@ fn build_patch_command(shell: ShellType, base_dir: &str, patch: &str) -> AgentRe
                 cd_prefix = cd_prefix(shell, base_dir),
                 patch_base64 = patch_base64,
             );
-            Ok(format!(
-                "powershell.exe -NoProfile -EncodedCommand {}",
-                powershell_encoded_command(&ps_script)
-            ))
+            Ok(super::windows::powershell_encoded_command(&ps_script))
         }
         ShellType::Cmd => Err(AgentError::PosixOnly(
             "apply_patch is not supported in CMD sessions. \
@@ -128,14 +396,6 @@ fn fish_double_quote_arg(value: &str) -> String {
             .replace('"', "\\\"")
             .replace('$', "\\$")
     )
-}
-
-fn powershell_encoded_command(script: &str) -> String {
-    let mut bytes = Vec::with_capacity(script.len() * 2);
-    for unit in script.encode_utf16() {
-        bytes.extend_from_slice(&unit.to_le_bytes());
-    }
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn extract_patch_paths(patch: &str) -> Vec<String> {
@@ -288,7 +548,7 @@ mod tests {
     #[test]
     fn powershell_encoded_command_round_trips_utf16le() {
         let script = "Set-Location 'C:\\Users\\user\\my project'\n$patch = '\"quoted\"'";
-        let encoded = powershell_encoded_command(script);
+        let encoded = crate::tools::windows::powershell_encoded_payload(script);
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .expect("encoded command decodes");
@@ -312,5 +572,59 @@ mod tests {
         assert!(cmd.contains("\"/home/user/\\$project\""));
         assert!(cmd.contains("\"-\\$old \\\"value\\\" \\\\ path\""));
         assert!(cmd.contains("\"+\\$new\""));
+    }
+
+    // -- Windows engine command builder tests --
+
+    #[test]
+    fn windows_read_file_command_uses_encoded_command() {
+        let command = build_windows_read_file_command("C:\\project", "src/lib.rs");
+
+        assert!(command.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!command.contains("src/lib.rs"));
+        assert!(!command.contains("ReadAllLines"));
+    }
+
+    #[test]
+    fn windows_write_file_command_hides_quotes_in_encoded_payload() {
+        let content_base64 =
+            base64::engine::general_purpose::STANDARD.encode(b"let value = \"quoted\";\n");
+        let command =
+            build_windows_write_file_command(".", "src/quoted file.rs", &content_base64, true);
+
+        assert!(command.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!command.contains("quoted file"));
+        assert!(!command.contains("\"quoted\""));
+    }
+
+    #[test]
+    fn windows_delete_file_command_uses_literal_path() {
+        let command = build_windows_delete_file_command(".", "src/[literal].rs");
+        let encoded = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("encoded command prefix");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("encoded command decodes");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        let script = String::from_utf16(&units).unwrap();
+
+        assert!(script.contains("Remove-Item -LiteralPath $full"));
+        assert!(script.contains("src/[literal].rs"));
+    }
+
+    #[test]
+    fn patch_target_path_rejects_parent_segments() {
+        let err = resolve_patch_target_path("../outside.txt").unwrap_err();
+        assert!(err.to_string().contains(".."));
+    }
+
+    #[test]
+    fn patch_target_path_rejects_absolute_windows_drive() {
+        let err = resolve_patch_target_path("C:/outside.txt").unwrap_err();
+        assert!(err.to_string().contains("relative"));
     }
 }

@@ -31,6 +31,56 @@ pub struct CapabilityProbeResult {
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityProbe;
 
+const POWERSHELL_NATIVE_PROBE: &str = "\
+         $homePath = $env:USERPROFILE; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = [Environment]::GetFolderPath('UserProfile') }; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = $HOME }; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = (Get-Location).Path }; \
+         $userName = $env:USERNAME; \
+         if ([string]::IsNullOrWhiteSpace($userName)) { $userName = [Environment]::UserName }; \
+         Write-Output ('home=' + $homePath); \
+         Write-Output ('pwd=' + (Get-Location).Path); \
+         Write-Output ('user=' + $userName); \
+         Write-Output 'platform=Windows'; \
+         if ([System.Environment]::Is64BitOperatingSystem) { \
+             Write-Output 'arch=x86_64' \
+         } else { \
+             Write-Output 'arch=x86' \
+         }; \
+         Write-Output 'shell=powershell'; \
+         @('rg','git','patch','python3','grep','find','sed','pwsh','powershell') | ForEach-Object { \
+             if (Get-Command $_ -ErrorAction SilentlyContinue) { \
+                 Write-Output ('cap_' + $_ + '=1') \
+             } else { \
+                 Write-Output ('cap_' + $_ + '=0') \
+             } \
+         }";
+
+const POWERSHELL_WRAPPED_PROBE: &str = "powershell.exe -NoProfile -Command \"\
+         $homePath = $env:USERPROFILE; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = [Environment]::GetFolderPath('UserProfile') }; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = $HOME }; \
+         if ([string]::IsNullOrWhiteSpace($homePath)) { $homePath = (Get-Location).Path }; \
+         $userName = $env:USERNAME; \
+         if ([string]::IsNullOrWhiteSpace($userName)) { $userName = [Environment]::UserName }; \
+         Write-Output ('home=' + $homePath); \
+         Write-Output ('pwd=' + (Get-Location).Path); \
+         Write-Output ('user=' + $userName); \
+         Write-Output 'platform=Windows'; \
+         if ([System.Environment]::Is64BitOperatingSystem) { \
+             Write-Output 'arch=x86_64' \
+         } else { \
+             Write-Output 'arch=x86' \
+         }; \
+         Write-Output 'shell=powershell'; \
+         @('rg','git','patch','python3','grep','find','sed','pwsh','powershell') | ForEach-Object { \
+             if (Get-Command $_ -ErrorAction SilentlyContinue) { \
+                 Write-Output ('cap_' + $_ + '=1') \
+             } else { \
+                 Write-Output ('cap_' + $_ + '=0') \
+             } \
+         }\"";
+
 impl CapabilityProbe {
     pub fn posix_command() -> &'static str {
         "printf 'home=%s\\npwd=%s\\nuser=%s\\n' \"$HOME\" \"$PWD\" \"$(id -un 2>/dev/null || whoami)\"; \
@@ -66,24 +116,11 @@ impl CapabilityProbe {
     pub fn powershell_command() -> &'static str {
         // Single-quoted strings inside the PS script avoid double-quote
         // conflicts with the outer `powershell.exe -NoProfile -Command "..."` wrapper.
-        "powershell.exe -NoProfile -Command \"\
-         Write-Output 'home=' + $env:USERPROFILE; \
-         Write-Output 'pwd=' + (Get-Location).Path; \
-         Write-Output 'user=' + $env:USERNAME; \
-         Write-Output 'platform=Windows'; \
-         if ([System.Environment]::Is64BitOperatingSystem) { \
-             Write-Output 'arch=x86_64' \
-         } else { \
-             Write-Output 'arch=x86' \
-         }; \
-         Write-Output 'shell=powershell'; \
-         @('rg','git','patch','python3','grep','find','sed','pwsh','powershell') | ForEach-Object { \
-             if (Get-Command $_ -ErrorAction SilentlyContinue) { \
-                 Write-Output ('cap_' + $_ + '=1') \
-             } else { \
-                 Write-Output ('cap_' + $_ + '=0') \
-             } \
-         }\""
+        POWERSHELL_WRAPPED_PROBE
+    }
+
+    pub fn powershell_native_command() -> &'static str {
+        POWERSHELL_NATIVE_PROBE
     }
 
     pub fn cmd_command() -> &'static str {
@@ -225,6 +262,24 @@ cap_powershell=1";
         assert!(probe.capabilities.exec);
         assert!(!probe.capabilities.sftp);
         assert!(!probe.capabilities.pty);
+    }
+
+    #[test]
+    fn powershell_probe_command_groups_string_concatenation() {
+        let command = CapabilityProbe::powershell_command();
+        assert!(command.contains("Write-Output ('home=' + $homePath)"));
+        assert!(command.contains("[Environment]::GetFolderPath('UserProfile')"));
+        assert!(!command.contains("Write-Output 'home=' + $env:USERPROFILE"));
+    }
+
+    #[test]
+    fn powershell_native_probe_does_not_spawn_powershell_exe() {
+        let native = CapabilityProbe::powershell_native_command();
+        let wrapped = CapabilityProbe::powershell_command();
+
+        assert!(!native.contains("powershell.exe"));
+        assert!(wrapped.starts_with("powershell.exe -NoProfile -Command"));
+        assert!(wrapped.contains(native.trim_start()));
     }
 
     #[test]

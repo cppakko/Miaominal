@@ -411,13 +411,15 @@ pub(super) async fn run_exec_command(
         log::debug!("failed to close SSH exec channel cleanly: {error:?}");
     }
 
-    let stdout = String::from_utf8_lossy(&stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr).into_owned();
     if exit_status.unwrap_or(0) != 0 {
-        if stderr.is_empty() {
-            bail!("remote monitoring command failed: {stdout}");
+        let stderr_preview = stderr.trim();
+        let stdout_preview = stdout.trim();
+        if stderr_preview.is_empty() {
+            bail!("remote monitoring command failed: {stdout_preview}");
         } else {
-            bail!("remote monitoring command failed: {stderr}");
+            bail!("remote monitoring command failed: {stderr_preview}");
         }
     }
 

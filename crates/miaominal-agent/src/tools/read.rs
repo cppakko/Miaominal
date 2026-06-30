@@ -13,10 +13,16 @@ pub struct ReadArgs {
 }
 
 pub async fn read(channel: &AgentExecChannel, args: ReadArgs) -> AgentResult<ToolOutput> {
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+
     let path = resolve_workspace_path(&args.path)?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &path, false)?;
+    if !channel.policy_bypass_enabled() {
+        channel
+            .policy()
+            .enforce_path(crate::policy::AgentPathAccess::Read, &path, false)?;
+    }
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let start = args.start_line.unwrap_or(1).max(1);
     let end = args.end_line.unwrap_or(start + 199).max(start);
@@ -97,14 +103,13 @@ fn powershell_read_command(path: &str, start: usize, end: usize, max_bytes: usiz
         max = max_bytes,
         max_byte_index = max_byte_index,
     );
-    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
+    super::windows::powershell_encoded_command(&ps_script)
 }
 
 /// Build a CMD read command using PowerShell as fallback.
 ///
-/// CMD sessions spawn `powershell.exe -NoProfile -Command "..."` to execute
-/// the same PowerShell read logic. Single-quoted strings inside the script
-/// pass cleanly through CMD's double-quote argument wrapping.
+/// CMD sessions spawn `powershell.exe -NoProfile -EncodedCommand ...` to
+/// execute the same PowerShell read logic without CMD reinterpreting quotes.
 fn cmd_read_command(path: &str, start: usize, end: usize, max_bytes: usize) -> String {
     let ps_quoted = shell_quote(path, ShellType::PowerShell);
     let env = env_setup(ShellType::PowerShell);
@@ -112,10 +117,10 @@ fn cmd_read_command(path: &str, start: usize, end: usize, max_bytes: usize) -> S
     let skip = start.saturating_sub(1);
     let take = end - start + 1;
     let max_byte_index = max_bytes.saturating_sub(1);
-    format!(
-        "powershell.exe -NoProfile -Command \"{env}; \
+    let ps_script = format!(
+        "{env}; \
          if (-not (Test-Path -LiteralPath {path} -PathType Leaf)) {{ \
-         Write-Error 'not a regular file: {path}'; exit 1 }}; \
+          Write-Error ('not a regular file: ' + {path}); exit 1 }}; \
          $content = Get-Content -LiteralPath {path} -TotalCount {lines_to_read} \
          | Select-Object -Skip {skip} -First {take}; \
          $text = $content -join [char]10; \
@@ -123,8 +128,8 @@ fn cmd_read_command(path: &str, start: usize, end: usize, max_bytes: usize) -> S
          if ($bytes -gt {max}) {{ \
            $raw = [System.Text.Encoding]::UTF8.GetBytes($text); \
            $truncated = [System.Text.Encoding]::UTF8.GetString($raw[0..{max_byte_index}]); \
-           [Console]::Write($truncated + [char]10 + '[MIAOMINAL_TRUNCATED]') \
-         }} else {{ [Console]::Write($text) }}\"",
+            [Console]::Write($truncated + [char]10 + '[MIAOMINAL_TRUNCATED]') \
+          }} else {{ [Console]::Write($text) }}",
         env = env,
         path = ps_quoted,
         lines_to_read = lines_to_read,
@@ -132,12 +137,28 @@ fn cmd_read_command(path: &str, start: usize, end: usize, max_bytes: usize) -> S
         take = take,
         max = max_bytes,
         max_byte_index = max_byte_index,
-    )
+    );
+    super::windows::powershell_encoded_command(&ps_script)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+
+    fn decode_encoded_powershell_command(command: &str) -> String {
+        let encoded = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("encoded PowerShell command prefix");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("encoded command decodes");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).expect("encoded command is UTF-16LE")
+    }
 
     // ── POSIX regression ──
 
@@ -180,47 +201,53 @@ mod tests {
     #[test]
     fn powershell_read_command_generation() {
         let cmd = powershell_read_command("C:\\Users\\akko\\file.txt", 1, 10, 65536);
+        let script = decode_encoded_powershell_command(&cmd);
+        assert!(cmd.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!cmd.contains("C:\\Users\\akko\\file.txt"));
         // Must contain PowerShell env setup
-        assert!(cmd.contains("$env:PAGER='cat'"));
-        assert!(cmd.contains("$env:LANG='C.UTF-8'"));
+        assert!(script.contains("$env:PAGER='cat'"));
+        assert!(script.contains("$env:LANG='C.UTF-8'"));
         // Must use Test-Path for regular file check
-        assert!(cmd.contains("Test-Path -LiteralPath"));
-        assert!(cmd.contains("-PathType Leaf"));
+        assert!(script.contains("Test-Path -LiteralPath"));
+        assert!(script.contains("-PathType Leaf"));
         // Must use Get-Content with line range
-        assert!(cmd.contains("Get-Content -LiteralPath"));
-        assert!(cmd.contains("-TotalCount 10"));
-        assert!(cmd.contains("Select-Object -Skip 0 -First 10"));
+        assert!(script.contains("Get-Content -LiteralPath"));
+        assert!(script.contains("-TotalCount 10"));
+        assert!(script.contains("Select-Object -Skip 0 -First 10"));
         // Must use UTF-8 byte-level truncation
-        assert!(cmd.contains("[System.Text.Encoding]::UTF8.GetByteCount"));
-        assert!(cmd.contains("[System.Text.Encoding]::UTF8.GetBytes"));
-        assert!(cmd.contains("[System.Text.Encoding]::UTF8.GetString"));
+        assert!(script.contains("[System.Text.Encoding]::UTF8.GetByteCount"));
+        assert!(script.contains("[System.Text.Encoding]::UTF8.GetBytes"));
+        assert!(script.contains("[System.Text.Encoding]::UTF8.GetString"));
         // Must output truncated marker matching POSIX format
-        assert!(cmd.contains("[MIAOMINAL_TRUNCATED]"));
-        assert!(cmd.contains("[Console]::Write"));
+        assert!(script.contains("[MIAOMINAL_TRUNCATED]"));
+        assert!(script.contains("[Console]::Write"));
         // Path must be PowerShell single-quoted
-        assert!(cmd.contains("'C:\\Users\\akko\\file.txt'"));
+        assert!(script.contains("'C:\\Users\\akko\\file.txt'"));
     }
 
     #[test]
     fn powershell_read_command_handles_single_quote_in_path() {
         let cmd = powershell_read_command("C:\\Users\\akko\\it's file.txt", 1, 10, 65536);
-        assert!(cmd.contains("'C:\\Users\\akko\\it''s file.txt'"));
+        let script = decode_encoded_powershell_command(&cmd);
+        assert!(script.contains("'C:\\Users\\akko\\it''s file.txt'"));
     }
 
     #[test]
     fn powershell_read_command_skip_calculation() {
         // start=5, end=25 → skip=4, take=21
         let cmd = powershell_read_command("C:\\f.txt", 5, 25, 4096);
-        assert!(cmd.contains("-TotalCount 25"));
-        assert!(cmd.contains("Select-Object -Skip 4 -First 21"));
+        let script = decode_encoded_powershell_command(&cmd);
+        assert!(script.contains("-TotalCount 25"));
+        assert!(script.contains("Select-Object -Skip 4 -First 21"));
     }
 
     #[test]
     fn powershell_read_command_start_at_1() {
         // start=1, end=200 → skip=0, take=200
         let cmd = powershell_read_command("C:\\f.txt", 1, 200, 65536);
-        assert!(cmd.contains("-TotalCount 200"));
-        assert!(cmd.contains("Select-Object -Skip 0 -First 200"));
+        let script = decode_encoded_powershell_command(&cmd);
+        assert!(script.contains("-TotalCount 200"));
+        assert!(script.contains("Select-Object -Skip 0 -First 200"));
     }
 
     // ── CMD command generation ──
@@ -228,29 +255,32 @@ mod tests {
     #[test]
     fn cmd_read_command_generation() {
         let cmd = cmd_read_command("C:\\Users\\akko\\file.txt", 1, 10, 65536);
+        let script = decode_encoded_powershell_command(&cmd);
         // Must wrap in powershell.exe
-        assert!(cmd.starts_with("powershell.exe -NoProfile -Command \""));
-        assert!(cmd.ends_with('"'));
+        assert!(cmd.starts_with("powershell.exe -NoProfile -EncodedCommand "));
+        assert!(!cmd.contains("C:\\Users\\akko\\file.txt"));
         // Must contain PowerShell env setup
-        assert!(cmd.contains("$env:PAGER='cat'"));
+        assert!(script.contains("$env:PAGER='cat'"));
         // Must use Test-Path
-        assert!(cmd.contains("Test-Path -LiteralPath"));
-        // Must use single-quoted error message (CMD-safe)
-        assert!(cmd.contains("'not a regular file: "));
+        assert!(script.contains("Test-Path -LiteralPath"));
+        // Must use concatenation so quoted paths with single quotes stay valid.
+        assert!(script.contains("Write-Error ('not a regular file: ' + "));
         // Must use Get-Content
-        assert!(cmd.contains("Get-Content -LiteralPath"));
-        // Must use [char]10 for newline (CMD-safe, no embedded double-quotes)
-        assert!(cmd.contains("$content -join [char]10"));
+        assert!(script.contains("Get-Content -LiteralPath"));
+        // Must use [char]10 for newline.
+        assert!(script.contains("$content -join [char]10"));
         // Must output marker
-        assert!(cmd.contains("[MIAOMINAL_TRUNCATED]"));
+        assert!(script.contains("[MIAOMINAL_TRUNCATED]"));
         // Path must be PowerShell single-quoted
-        assert!(cmd.contains("'C:\\Users\\akko\\file.txt'"));
+        assert!(script.contains("'C:\\Users\\akko\\file.txt'"));
     }
 
     #[test]
     fn cmd_read_command_handles_single_quote_in_path() {
         let cmd = cmd_read_command("C:\\it's\\file.txt", 1, 5, 1024);
-        assert!(cmd.contains("'C:\\it''s\\file.txt'"));
+        let script = decode_encoded_powershell_command(&cmd);
+        assert!(script.contains("'C:\\it''s\\file.txt'"));
+        assert!(script.contains("Write-Error ('not a regular file: ' + 'C:\\it''s\\file.txt')"));
     }
 
     // ── All shell types produce valid commands ──
@@ -285,8 +315,12 @@ mod tests {
                 ShellType::PowerShell => powershell_read_command(path, 1, 10, 4096),
                 ShellType::Cmd => cmd_read_command(path, 1, 10, 4096),
             };
+            let searchable = match st {
+                ShellType::PowerShell | ShellType::Cmd => decode_encoded_powershell_command(&cmd),
+                ShellType::Posix | ShellType::Fish => cmd,
+            };
             assert!(
-                cmd.contains("[MIAOMINAL_TRUNCATED]"),
+                searchable.contains("[MIAOMINAL_TRUNCATED]"),
                 "command for {st:?} must contain truncation marker"
             );
         }

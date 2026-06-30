@@ -789,6 +789,30 @@ impl AppView {
         session.pty_output_tap = tap;
     }
 
+    pub(in crate::ui::shell) fn clear_active_session_pty_tap_if_same(
+        &mut self,
+        tap: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ) {
+        let Some(index) = self.active_terminal_session_index() else {
+            return;
+        };
+        let Some(session) = self
+            .workspace_state
+            .tabs
+            .get_mut(index)
+            .and_then(TabState::as_session_mut)
+        else {
+            return;
+        };
+        if session
+            .pty_output_tap
+            .as_ref()
+            .is_some_and(|current| current.same_channel(tap))
+        {
+            session.pty_output_tap = None;
+        }
+    }
+
     pub(in crate::ui::shell) fn set_session_pty_tap_by_tab_id(
         &mut self,
         tab_id: usize,
@@ -806,9 +830,27 @@ impl AppView {
         session.pty_output_tap = tap;
     }
 
-    pub(in crate::ui::shell) fn clear_session_pty_taps_by_tab_id(&mut self, tab_ids: &[usize]) {
-        for tab_id in tab_ids {
-            self.set_session_pty_tap_by_tab_id(*tab_id, None);
+    pub(in crate::ui::shell) fn clear_session_pty_taps_if_same(
+        &mut self,
+        taps: &[(usize, tokio::sync::mpsc::UnboundedSender<Vec<u8>>)],
+    ) {
+        for (tab_id, tap) in taps {
+            let Some(session) = self
+                .workspace_state
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id == *tab_id)
+                .and_then(TabState::as_session_mut)
+            else {
+                continue;
+            };
+            if session
+                .pty_output_tap
+                .as_ref()
+                .is_some_and(|current| current.same_channel(tap))
+            {
+                session.pty_output_tap = None;
+            }
         }
     }
 

@@ -15,10 +15,16 @@ pub struct GlobArgs {
 }
 
 pub async fn glob(channel: &AgentExecChannel, args: GlobArgs) -> AgentResult<ToolOutput> {
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+
     let root = resolve_workspace_path(&args.root)?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
+    if !channel.policy_bypass_enabled() {
+        channel
+            .policy()
+            .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
+    }
     if is_overbroad_root(&root) {
         return Err(AgentError::InvalidPath(
             "glob requires a narrowed workspace root".into(),

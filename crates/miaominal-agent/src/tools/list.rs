@@ -31,10 +31,16 @@ pub struct ListEntry {
 }
 
 pub async fn list(channel: &AgentExecChannel, args: ListArgs) -> AgentResult<ToolOutput> {
+    if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+
     let path = resolve_workspace_path(&args.path)?;
-    channel
-        .policy()
-        .enforce_path(crate::policy::AgentPathAccess::Read, &path, false)?;
+    if !channel.policy_bypass_enabled() {
+        channel
+            .policy()
+            .enforce_path(crate::policy::AgentPathAccess::Read, &path, false)?;
+    }
     let max_entries = args.max_entries.unwrap_or(500);
     let command = list_command(
         channel.shell_type(),

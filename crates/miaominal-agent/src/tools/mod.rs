@@ -4,11 +4,13 @@ mod glob;
 mod grep;
 mod job;
 mod list;
+mod patch_engine;
 mod read;
 mod rig_adapter;
 mod run_shell;
 mod web_fetch;
 mod web_search;
+mod windows;
 mod workspace_info;
 
 pub use apply_patch::apply_patch;
@@ -47,10 +49,10 @@ pub const TOOL_NAMES: &[&str] = &[
 pub fn tool_description(name: &str) -> &'static str {
     match name {
         "workspace_info" => {
-            "Return profile workspace metadata, shell, platform, sensitive paths, and remote capabilities."
+            "Return workspace metadata. The `shell` field is the actual exec-channel syntax for run_shell commands, not merely the SSH login/default shell."
         }
         "read" => {
-            "Read a line range from a remote profile workspace file with byte caps and truncation metadata."
+            "Read a line range from a remote profile workspace file with byte caps, preserving visible content including trailing whitespace."
         }
         "list" => "List entries in a remote profile workspace directory.",
         "glob" => "Find remote workspace paths by glob-style pattern under an explicit root.",
@@ -59,7 +61,7 @@ pub fn tool_description(name: &str) -> &'static str {
             "Create, edit, or delete files by applying an approved unified diff patch in the remote profile workspace. This is the only file-writing/editing tool; do not call `write`, `edit`, or `replace`."
         }
         "run_shell" => {
-            "Run an approved non-interactive shell command in the remote profile workspace. Prefer this for commands expected to finish quickly."
+            "Run an approved non-interactive command using exactly the syntax reported by workspace_info.shell. If shell is cmd, write CMD commands such as dir/type unless you explicitly launch powershell.exe."
         }
         "start_job" => {
             "Start an approved long-running remote shell job. Use only for commands that may block, stream, watch, serve, deploy, or run longer than a normal run_shell call; poll the returned job_id until completion."

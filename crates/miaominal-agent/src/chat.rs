@@ -121,6 +121,9 @@ pub enum AgentChatEvent {
         id: String,
         result: String,
     },
+    ToolCallAutoExecuteRequired {
+        id: String,
+    },
     ToolCallApprovalRequired {
         id: String,
         message: String,
@@ -133,7 +136,7 @@ pub enum AgentChatEvent {
     },
 }
 
-const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
+const SESSION_AGENT_PREAMBLE: &str = "You are Miaominal's terminal-side assistant. Help with shell, SSH, SFTP, and general development questions. Be concise, practical, and ask for clarification only when needed.\n\nTool contract:\n- Use only the tools listed in this session. Do not invent tool names.\n- There is no `write`, `edit`, or `replace` tool. For any file creation or modification, use `apply_patch` with a unified patch.\n- Use `read`, `list`, `glob`, and `grep` to inspect files before patching.\n- Treat `workspace_info.shell` as the command syntax used by `run_shell` on the exec channel, even if the SSH login/default shell is different. If it is `cmd`, use CMD syntax such as `dir` and `type`; do not use POSIX commands or bare PowerShell syntax unless you explicitly invoke `powershell.exe -NoProfile -Command ...`.\n- Use `run_shell` for commands expected to finish quickly. Use `start_job` only for long-running commands such as servers, watchers, deploys, logs, or slow test suites.\n- After `start_job`, keep track of the returned job_id and call `poll_job` until the job exits or you explicitly tell the user it is still running. If you forget the id, use `list_jobs`.\n- If a file change needs approval, call `apply_patch` normally and let Miaominal request approval.";
 const SESSION_AGENT_MAX_TURNS: usize = 40;
 
 fn chat_history(messages: Vec<AgentChatMessage>, vision_supported: bool) -> Vec<Message> {
@@ -257,6 +260,7 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
             | AgentChatEvent::ToolCallStarted(_)
             | AgentChatEvent::ToolCallDelta { .. }
             | AgentChatEvent::ToolCallCompleted { .. }
+            | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
             | AgentChatEvent::ToolCallApprovalRequired { .. }
             | AgentChatEvent::TokenUsage { .. } => {}
         }
@@ -331,14 +335,16 @@ macro_rules! build_provider_agent {
             agent_builder = agent_builder.max_tokens(mt);
         }
         if let Some(the_tools) = $tools {
+            let tool_mode = the_tools.mode();
             spawn_stream_chat(
                 agent_builder.tools(the_tools.into_rig_tools()).build(),
                 $prompt,
                 $history,
                 $sender,
+                Some(tool_mode),
             );
         } else {
-            spawn_stream_chat(agent_builder.build(), $prompt, $history, $sender);
+            spawn_stream_chat(agent_builder.build(), $prompt, $history, $sender, None);
         }
     }};
 }
@@ -497,6 +503,7 @@ fn spawn_stream_chat<M>(
     prompt: Message,
     history: Vec<Message>,
     sender: mpsc::Sender<AgentResult<AgentChatEvent>>,
+    tool_mode: Option<AgentMode>,
 ) where
     M: CompletionModel + Send + Sync + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage + 'static,
@@ -567,29 +574,14 @@ fn spawn_stream_chat<M>(
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
                     if !pending_streamed_tools.is_empty() {
+                        let auto_execute = matches!(tool_mode, Some(AgentMode::FullAuto));
                         log::warn!(
-                            "rig_core did not execute {} streamed tool call(s); forwarding for approval",
+                            "rig_core did not execute {} streamed tool call(s); forwarding to client",
                             pending_streamed_tools.len()
                         );
                         for (_cid, tool) in pending_streamed_tools.drain() {
-                            if sender
-                                .send(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
-                                    id: tool.internal_call_id.clone(),
-                                    name: tool.name.clone(),
-                                    arguments: tool.arguments,
-                                })))
+                            if !send_pending_streamed_tool_handoff(&sender, tool, auto_execute)
                                 .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            if sender
-                                .send(Ok(AgentChatEvent::ToolCallApprovalRequired {
-                                    id: tool.internal_call_id,
-                                    message: format!("tool `{}` requires user approval", tool.name),
-                                }))
-                                .await
-                                .is_err()
                             {
                                 break;
                             }
@@ -623,26 +615,18 @@ fn spawn_stream_chat<M>(
         }
 
         // If there are still unexecuted tool calls after the loop (e.g.,
-        // FinalResponse was handled without us intercepting it), send approval.
+        // FinalResponse was handled without us intercepting it), hand them to
+        // the UI for approval or automatic execution depending on agent mode.
         if !pending_streamed_tools.is_empty() {
+            let auto_execute = matches!(tool_mode, Some(AgentMode::FullAuto));
             log::warn!(
-                "rig_core stream ended with {} unexecuted tool call(s); forwarding for approval",
+                "rig_core stream ended with {} unexecuted tool call(s); forwarding to client",
                 pending_streamed_tools.len()
             );
             for (_cid, tool) in pending_streamed_tools.drain() {
-                let _ = sender
-                    .send(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
-                        id: tool.internal_call_id.clone(),
-                        name: tool.name.clone(),
-                        arguments: tool.arguments,
-                    })))
-                    .await;
-                let _ = sender
-                    .send(Ok(AgentChatEvent::ToolCallApprovalRequired {
-                        id: tool.internal_call_id,
-                        message: format!("tool `{}` requires user approval", tool.name),
-                    }))
-                    .await;
+                if !send_pending_streamed_tool_handoff(&sender, tool, auto_execute).await {
+                    break;
+                }
             }
         }
 
@@ -668,6 +652,43 @@ impl PendingStreamedTool {
             arguments: String::new(),
         }
     }
+}
+
+async fn send_pending_streamed_tool_handoff(
+    sender: &mpsc::Sender<AgentResult<AgentChatEvent>>,
+    tool: PendingStreamedTool,
+    auto_execute: bool,
+) -> bool {
+    let PendingStreamedTool {
+        internal_call_id,
+        name,
+        arguments,
+    } = tool;
+
+    if sender
+        .send(Ok(AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+            id: internal_call_id.clone(),
+            name: name.clone(),
+            arguments,
+        })))
+        .await
+        .is_err()
+    {
+        return false;
+    }
+
+    let event = if auto_execute {
+        AgentChatEvent::ToolCallAutoExecuteRequired {
+            id: internal_call_id,
+        }
+    } else {
+        AgentChatEvent::ToolCallApprovalRequired {
+            id: internal_call_id,
+            message: format!("tool `{name}` requires user approval"),
+        }
+    };
+
+    sender.send(Ok(event)).await.is_ok()
 }
 
 fn chat_event_from_assistant_content<R>(
@@ -843,6 +864,62 @@ mod tests {
         assert_eq!(
             structured_approval_message("tool `x` requires user approval"),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_streamed_handoff_auto_executes_when_requested() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let sent = send_pending_streamed_tool_handoff(
+            &sender,
+            PendingStreamedTool {
+                internal_call_id: "call-1".to_string(),
+                name: "run_shell".to_string(),
+                arguments: "{\"command\":\"dir\"}".to_string(),
+            },
+            true,
+        )
+        .await;
+
+        assert!(sent);
+        assert_eq!(
+            receiver.recv().await.expect("started event").unwrap(),
+            AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                id: "call-1".to_string(),
+                name: "run_shell".to_string(),
+                arguments: "{\"command\":\"dir\"}".to_string(),
+            })
+        );
+        assert_eq!(
+            receiver.recv().await.expect("auto event").unwrap(),
+            AgentChatEvent::ToolCallAutoExecuteRequired {
+                id: "call-1".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_streamed_handoff_requests_approval_when_not_auto() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let sent = send_pending_streamed_tool_handoff(
+            &sender,
+            PendingStreamedTool {
+                internal_call_id: "call-2".to_string(),
+                name: "apply_patch".to_string(),
+                arguments: "{}".to_string(),
+            },
+            false,
+        )
+        .await;
+
+        assert!(sent);
+        let _ = receiver.recv().await.expect("started event").unwrap();
+        assert_eq!(
+            receiver.recv().await.expect("approval event").unwrap(),
+            AgentChatEvent::ToolCallApprovalRequired {
+                id: "call-2".to_string(),
+                message: "tool `apply_patch` requires user approval".to_string(),
+            }
         );
     }
 }
