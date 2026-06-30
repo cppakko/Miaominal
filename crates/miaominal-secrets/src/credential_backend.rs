@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub const APP_CREDENTIAL_SERVICE: &str = "dev.akko.miaominal";
@@ -16,9 +17,10 @@ pub const APP_CREDENTIAL_SERVICE: &str = "dev.akko.miaominal";
 const VAULT_FILE_NAME: &str = "secret_vault.json";
 const VAULT_VERSION: u32 = 1;
 const VAULT_OUTPUT_LEN: usize = 32;
-const VAULT_MEMORY_COST: u32 = 65536;
-const VAULT_TIME_COST: u32 = 3;
-const VAULT_PARALLELISM: u32 = 4;
+
+static VAULT_MEMORY_COST: AtomicU32 = AtomicU32::new(65536);
+static VAULT_TIME_COST: AtomicU32 = AtomicU32::new(3);
+static VAULT_PARALLELISM: AtomicU32 = AtomicU32::new(4);
 const VAULT_AAD: &[u8] = b"miaominal.secret-vault.v1";
 const VAULT_METADATA_SERVICE: &str = "__vault__";
 const VAULT_METADATA_ACCOUNT: &str = "status";
@@ -309,7 +311,7 @@ impl CredentialBackend for LockedCredentialBackend {
 pub struct VaultCredentialBackend {
     file_path: PathBuf,
     passphrase: String,
-    io_lock: Mutex<()>,
+    state: Mutex<Option<VaultDocument>>,
 }
 
 impl VaultCredentialBackend {
@@ -321,7 +323,7 @@ impl VaultCredentialBackend {
         Self {
             file_path,
             passphrase: passphrase.into(),
-            io_lock: Mutex::new(()),
+            state: Mutex::new(None),
         }
     }
 
@@ -379,24 +381,31 @@ impl VaultCredentialBackend {
     }
 
     fn initialize_store(&self) -> Result<()> {
-        let _guard = self
-            .io_lock
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow!("vault lock poisoned"))?;
 
-        if !self.file_path.exists() {
-            return self.save_document(&VaultDocument::default());
-        }
+        let document = if !self.file_path.exists() {
+            let doc = VaultDocument::default();
+            self.save_document(&doc)?;
+            doc
+        } else {
+            let serialized = fs::read_to_string(&self.file_path)
+                .with_context(|| format!("failed to read {}", self.file_path.display()))?;
+            if serialized.trim().is_empty() {
+                let doc = VaultDocument::default();
+                self.save_document(&doc)?;
+                doc
+            } else {
+                let stored: StoredVaultDocument = serde_json::from_str(&serialized)
+                    .with_context(|| format!("failed to parse {}", self.file_path.display()))?;
+                self.decrypt_document(stored)?
+            }
+        };
 
-        let serialized = fs::read_to_string(&self.file_path)
-            .with_context(|| format!("failed to read {}", self.file_path.display()))?;
-        if serialized.trim().is_empty() {
-            return self.save_document(&VaultDocument::default());
-        }
-
-        let stored: StoredVaultDocument = serde_json::from_str(&serialized)
-            .with_context(|| format!("failed to parse {}", self.file_path.display()))?;
-        self.decrypt_document(stored).map(|_| ())
+        *state = Some(document);
+        Ok(())
     }
 
     fn save_document(&self, document: &VaultDocument) -> Result<()> {
@@ -479,13 +488,17 @@ impl VaultCredentialBackend {
     }
 
     fn with_document<T>(&self, f: impl FnOnce(&mut VaultDocument) -> Result<T>) -> Result<T> {
-        let _guard = self
-            .io_lock
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let mut document = self.load_document()?;
+        let mut document = match state.take() {
+            Some(doc) => doc,
+            None => self.load_document()?,
+        };
         let output = f(&mut document)?;
         self.save_document(&document)?;
+        *state = Some(document);
         Ok(output)
     }
 
@@ -507,11 +520,17 @@ impl CredentialBackend for VaultCredentialBackend {
     }
 
     fn get(&self, service: &str, account: &str) -> Result<Option<String>> {
-        let _guard = self
-            .io_lock
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let document = self.load_document()?;
+        let document = match state.as_ref() {
+            Some(doc) => doc,
+            None => {
+                let doc = self.load_document()?;
+                state.insert(doc)
+            }
+        };
         Ok(document
             .services
             .get(service)
@@ -519,11 +538,17 @@ impl CredentialBackend for VaultCredentialBackend {
     }
 
     fn get_many(&self, service: &str, accounts: &[&str]) -> Result<Vec<Option<String>>> {
-        let _guard = self
-            .io_lock
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let document = self.load_document()?;
+        let document = match state.as_ref() {
+            Some(doc) => doc,
+            None => {
+                let doc = self.load_document()?;
+                state.insert(doc)
+            }
+        };
         let stored_accounts = document.services.get(service);
 
         Ok(accounts
@@ -600,9 +625,9 @@ pub fn decrypt_with_aad(key: &[u8; 32], ciphertext: &[u8], aad: &[u8]) -> Result
 
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     let params = Params::new(
-        VAULT_MEMORY_COST,
-        VAULT_TIME_COST,
-        VAULT_PARALLELISM,
+        VAULT_MEMORY_COST.load(Ordering::Relaxed),
+        VAULT_TIME_COST.load(Ordering::Relaxed),
+        VAULT_PARALLELISM.load(Ordering::Relaxed),
         Some(VAULT_OUTPUT_LEN),
     )
     .map_err(|error| anyhow!("failed to create vault Argon2 params: {error}"))?;
@@ -614,6 +639,15 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     Ok(key)
 }
 
+/// Override Argon2id parameters for tests. Call in test setup to avoid
+/// the expensive default parameters (64 MB / 3 iterations).
+#[doc(hidden)]
+pub fn set_vault_test_parameters() {
+    VAULT_MEMORY_COST.store(2048, Ordering::Relaxed);
+    VAULT_TIME_COST.store(1, Ordering::Relaxed);
+    VAULT_PARALLELISM.store(1, Ordering::Relaxed);
+}
+
 fn locked_vault_error(service: &str, account: &str) -> anyhow::Error {
     anyhow!("local vault is locked; unlock it before accessing {service}/{account}")
 }
@@ -622,10 +656,15 @@ fn locked_vault_error(service: &str, account: &str) -> anyhow::Error {
 mod tests {
     use super::*;
 
+    fn test_backend(path: PathBuf) -> VaultCredentialBackend {
+        set_vault_test_parameters();
+        VaultCredentialBackend::new_with_path(path, "correct horse")
+    }
+
     #[test]
     fn vault_backend_round_trips_credentials() {
         let path = test_vault_path("round-trip");
-        let backend = VaultCredentialBackend::new_with_path(path.clone(), "correct horse");
+        let backend = test_backend(path.clone());
 
         backend
             .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
@@ -642,6 +681,7 @@ mod tests {
 
     #[test]
     fn vault_backend_rejects_wrong_passphrase() {
+        set_vault_test_parameters();
         let path = test_vault_path("wrong-passphrase");
         VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
             .set(APP_CREDENTIAL_SERVICE, "sync:webdav-password", "secret")
@@ -658,6 +698,7 @@ mod tests {
 
     #[test]
     fn vault_backend_rotates_passphrase() {
+        set_vault_test_parameters();
         let path = test_vault_path("rotate-passphrase");
         VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
             .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
@@ -681,6 +722,7 @@ mod tests {
 
     #[test]
     fn vault_backend_initialize_does_not_rewrite_existing_store() {
+        set_vault_test_parameters();
         let path = test_vault_path("initialize-no-rewrite");
         let backend = VaultCredentialBackend::new_with_path(path.clone(), "correct horse");
 
@@ -702,6 +744,7 @@ mod tests {
 
     #[test]
     fn vault_backend_initialize_rejects_wrong_passphrase() {
+        set_vault_test_parameters();
         let path = test_vault_path("initialize-wrong-passphrase");
         VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
             .set(APP_CREDENTIAL_SERVICE, "sync:webdav-password", "secret")
@@ -718,6 +761,7 @@ mod tests {
 
     #[test]
     fn vault_backend_get_many_returns_requested_accounts_in_order() {
+        set_vault_test_parameters();
         let path = test_vault_path("get-many");
         let backend = VaultCredentialBackend::new_with_path(path.clone(), "correct horse");
 

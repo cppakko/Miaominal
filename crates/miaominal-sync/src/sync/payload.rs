@@ -431,7 +431,8 @@ mod tests {
 
     #[test]
     fn collect_secrets_includes_ai_provider_api_keys() {
-        use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend};
+        use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters};
+        set_vault_test_parameters();
 
         let provider = miaominal_settings::AiProviderConfig {
             id: "provider-1".into(),

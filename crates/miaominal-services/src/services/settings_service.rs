@@ -355,6 +355,7 @@ mod tests {
     use super::*;
     use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore};
     use miaominal_secrets::{SecretKind, SecretStore, VaultCredentialBackend};
+    use miaominal_secrets::set_vault_test_parameters;
     use miaominal_sync::SyncConfig;
     use miaominal_sync::store::SyncConfigStore;
     use std::fs;
@@ -385,6 +386,7 @@ mod tests {
         label: &str,
         vault_passphrase: &str,
     ) -> (SyncEngine, PathBuf, PathBuf) {
+        set_vault_test_parameters();
         let vault_path = temp_vault_path(label);
         let config_path = temp_sync_config_path(label);
         let credentials = CredentialStore::with_backend(
@@ -406,6 +408,7 @@ mod tests {
     }
 
     fn test_keyring_like_backend(label: &str) -> (SecretStore, SyncEngine, PathBuf, PathBuf) {
+        set_vault_test_parameters();
         let secrets_path = temp_vault_path(&format!("{label}-secrets"));
         let config_path = temp_sync_config_path(&format!("{label}-config"));
         let credentials = CredentialStore::with_backend(

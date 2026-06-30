@@ -101,7 +101,7 @@ pub fn delete_keyring_secrets<S, K>(
 mod tests {
     use super::*;
     use crate::SyncConfig;
-    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend};
+    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters};
     use std::path::PathBuf;
 
     fn temp_path(label: &str) -> PathBuf {
@@ -119,6 +119,7 @@ mod tests {
     }
 
     fn vault_secret_store(passphrase: &str, vault_path: PathBuf) -> SecretStore {
+        set_vault_test_parameters();
         let backend = VaultCredentialBackend::new_with_path(vault_path, passphrase);
         let credentials = CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, backend);
         credentials
@@ -132,6 +133,7 @@ mod tests {
         vault_path: PathBuf,
         config_file: PathBuf,
     ) -> SyncConfigStore {
+        set_vault_test_parameters();
         let backend = VaultCredentialBackend::new_with_path(vault_path, passphrase);
         let credentials = CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, backend);
         credentials

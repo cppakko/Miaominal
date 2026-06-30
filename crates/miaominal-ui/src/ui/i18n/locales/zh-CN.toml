@@ -576,7 +576,6 @@ reply_ready = "{chat} 有新的回复。"
 [workspace.panel.agent.tool_actions]
 approve = "批准"
 deny = "拒绝"
-submit_answer = "提交"
 
 [workspace.panel.agent.tooltips]
 new_chat = "新建聊天"

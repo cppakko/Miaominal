@@ -44,12 +44,13 @@ impl TerminalService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend};
+    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters};
     use miaominal_storage::known_hosts_store::KnownHostsStore;
     use std::fs;
 
     #[test]
     fn hydrate_profile_loads_stored_password_and_passphrase() {
+        set_vault_test_parameters();
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime should start");
         let _runtime_guard = runtime.enter();
         let path = std::env::temp_dir().join(format!(

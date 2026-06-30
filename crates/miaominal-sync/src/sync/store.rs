@@ -213,7 +213,7 @@ impl SyncConfigStore {
 mod tests {
     use super::*;
     use miaominal_secrets::credential_backend::{
-        CredentialStore, LockedCredentialBackend, VaultCredentialBackend,
+        CredentialStore, LockedCredentialBackend, VaultCredentialBackend, set_vault_test_parameters,
     };
 
     fn temp_sync_config_path() -> PathBuf {
@@ -225,6 +225,7 @@ mod tests {
 
     #[test]
     fn get_secrets_reads_all_sync_secrets_in_one_call_shape() {
+        set_vault_test_parameters();
         let vault_path = std::env::temp_dir().join(format!(
             "miaominal-sync-secrets-{}.json",
             uuid::Uuid::new_v4()

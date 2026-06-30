@@ -718,7 +718,6 @@ reply_ready = "{chat} has a new reply."
 [workspace.panel.agent.tool_actions]
 approve = "Approve"
 deny = "Deny"
-submit_answer = "Submit"
 
 [workspace.panel.agent.tooltips]
 new_chat = "New chat"
