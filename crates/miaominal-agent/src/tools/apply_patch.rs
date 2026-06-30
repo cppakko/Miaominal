@@ -43,7 +43,8 @@ pub async fn apply_patch(
     }
 
     let original_shell = channel.shell_type();
-    eprintln!(
+    #[cfg(debug_assertions)]
+    log::info!(
         "[apply_patch] original_shell={:?} base_dir={:?} patch_len={}",
         original_shell,
         base_dir,
@@ -93,13 +94,15 @@ async fn apply_patch_posix(
     patch: &str,
 ) -> AgentResult<String> {
     let command = build_patch_command(shell, base_dir, patch)?;
-    eprintln!(
+    #[cfg(debug_assertions)]
+    log::info!(
         "[apply_patch] posix cmd for {:?} ({} bytes)",
         shell,
         command.len(),
     );
     channel.exec(command).await.map_err(|e| {
-        eprintln!("[apply_patch] posix exec failed: {:?}", e);
+        #[cfg(debug_assertions)]
+        log::info!("[apply_patch] posix exec failed: {:?}", e);
         e
     })
 }
@@ -116,12 +119,14 @@ async fn apply_patch_windows(
     patch: &str,
 ) -> AgentResult<String> {
     if matches!(shell, ShellType::Cmd) {
-        eprintln!("[apply_patch] CMD shell — using built-in engine directly");
+        #[cfg(debug_assertions)]
+        log::info!("[apply_patch] CMD shell - using built-in engine directly");
         return apply_patch_via_engine(channel, base_dir, patch).await;
     }
 
     let command = build_patch_command(shell, base_dir, patch)?;
-    eprintln!(
+    #[cfg(debug_assertions)]
+    log::info!(
         "[apply_patch] win cmd for {:?} ({} bytes)",
         shell,
         command.len(),
@@ -129,11 +134,13 @@ async fn apply_patch_windows(
 
     match channel.exec(command).await {
         Ok(output) => {
-            eprintln!("[apply_patch] external patch OK ({} bytes)", output.len());
+            #[cfg(debug_assertions)]
+            log::info!("[apply_patch] external patch OK ({} bytes)", output.len());
             Ok(output)
         }
         Err(exec_err) => {
-            eprintln!(
+            #[cfg(debug_assertions)]
+            log::info!(
                 "[apply_patch] external patch failed ({:?}), trying built-in engine",
                 exec_err,
             );
@@ -156,7 +163,8 @@ async fn apply_patch_via_engine(
     let files = super::patch_engine::parse_unified_diff(patch)
         .map_err(|e| AgentError::InvalidArguments(e.to_string()))?;
 
-    eprintln!("[apply_patch] engine: {} file(s) to patch", files.len(),);
+    #[cfg(debug_assertions)]
+    log::info!("[apply_patch] engine: {} file(s) to patch", files.len(),);
 
     let mut results: HashMap<String, super::patch_engine::PatchResult<Vec<u8>>> = HashMap::new();
 
@@ -170,14 +178,16 @@ async fn apply_patch_via_engine(
             }
         };
 
-        eprintln!("[apply_patch] engine: processing {target_path:?}");
+        #[cfg(debug_assertions)]
+        log::info!("[apply_patch] engine: processing {target_path:?}");
 
         let result = apply_windows_file_patch(channel, base_dir, &target_path, file).await;
         results.insert(target_key, result.map(|_| Vec::new()));
     }
 
     let summary = super::patch_engine::build_summary(&files, &results);
-    eprintln!("[apply_patch] engine done:\n{summary}");
+    #[cfg(debug_assertions)]
+    log::info!("[apply_patch] engine done:\n{summary}");
     Ok(summary)
 }
 

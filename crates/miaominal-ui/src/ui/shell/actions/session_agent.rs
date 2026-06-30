@@ -2109,6 +2109,7 @@ impl AppView {
                         Some(id) => match self.build_session_agent_provider(id) {
                             Ok(p) => Some(p),
                             Err(e) => {
+                                #[cfg(debug_assertions)]
                                 log::info!("skip title generation: {e:?}");
                                 None
                             }
@@ -2130,6 +2131,7 @@ impl AppView {
                                 })
                                 .await
                                 .unwrap_or_else(|error| {
+                                    #[cfg(debug_assertions)]
                                     log::info!("title generation task cancelled: {error:?}");
                                     None
                                 });

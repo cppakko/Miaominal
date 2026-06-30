@@ -272,7 +272,8 @@ impl FilePatchBuilder {
         if let Some(hb) = last_hunk {
             self.hunks.push(hb.build()?);
         }
-        let target = if self.is_deleted || self.new_path.is_empty() || self.new_path == "/dev/null" {
+        let target = if self.is_deleted || self.new_path.is_empty() || self.new_path == "/dev/null"
+        {
             self.old_path.clone()
         } else {
             self.new_path.clone()

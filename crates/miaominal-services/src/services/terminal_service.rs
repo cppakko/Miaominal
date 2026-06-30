@@ -44,7 +44,9 @@ impl TerminalService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters};
+    use miaominal_secrets::{
+        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+    };
     use miaominal_storage::known_hosts_store::KnownHostsStore;
     use std::fs;
 

@@ -109,9 +109,11 @@ pub(crate) async fn ensure_exec_shell_detected(channel: &AgentExecChannel) {
     if let Some(actual) = detect_exec_shell(channel).await {
         let before = channel.shell_type();
         if actual != before {
-            eprintln!(
+            #[cfg(debug_assertions)]
+            log::info!(
                 "[exec_shell] exec shell mismatch: profile={:?} actual={:?}",
-                before, actual,
+                before,
+                actual,
             );
         }
         channel.set_detected_shell(actual);

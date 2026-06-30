@@ -353,9 +353,9 @@ impl SettingsService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_secrets::set_vault_test_parameters;
     use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore};
     use miaominal_secrets::{SecretKind, SecretStore, VaultCredentialBackend};
-    use miaominal_secrets::set_vault_test_parameters;
     use miaominal_sync::SyncConfig;
     use miaominal_sync::store::SyncConfigStore;
     use std::fs;

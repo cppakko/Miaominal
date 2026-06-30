@@ -243,6 +243,7 @@ pub async fn generate_title(
             if title.is_empty() { None } else { Some(title) }
         }
         Err(error) => {
+            #[cfg(debug_assertions)]
             log::info!("title generation failed: {error:?}");
             None
         }
@@ -574,6 +575,7 @@ fn spawn_stream_chat<M>(
                             }))
                             .await;
                     }
+                    #[cfg(debug_assertions)]
                     log::info!("agent llm completion call boundary");
                     None
                 }
@@ -600,6 +602,7 @@ fn spawn_stream_chat<M>(
                 }
                 Ok(_) => None,
                 Err(error) => {
+                    #[cfg(debug_assertions)]
                     log::info!("agent llm stream error: {error:?}");
                     Some(Err(streaming_error(error)))
                 }

@@ -101,7 +101,9 @@ pub fn delete_keyring_secrets<S, K>(
 mod tests {
     use super::*;
     use crate::SyncConfig;
-    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters};
+    use miaominal_secrets::{
+        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+    };
     use std::path::PathBuf;
 
     fn temp_path(label: &str) -> PathBuf {
