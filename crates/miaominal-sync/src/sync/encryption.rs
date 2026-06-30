@@ -1,5 +1,5 @@
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::aead::{Aead, KeyInit, Nonce, array::Array};
+use aes_gcm::Aes256Gcm;
 use anyhow::{Context, Result};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
@@ -27,8 +27,8 @@ pub fn derive_key_with_params(
 }
 
 pub fn encrypt_with_aad(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<String> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let cipher = Aes256Gcm::new(&Array(*key));
+    let nonce = Nonce::<Aes256Gcm>::from(rand::random::<[u8; 12]>());
     let ciphertext = cipher
         .encrypt(
             &nonce,
@@ -53,12 +53,13 @@ pub fn decrypt_with_aad(key: &[u8; 32], encoded: &str, aad: &[u8]) -> Result<Vec
         anyhow::bail!("ciphertext too short to contain nonce");
     }
     let (nonce_bytes, ciphertext) = combined.split_at(12);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let cipher = Aes256Gcm::new(&Array(*key));
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce_bytes)
+        .map_err(|_| anyhow::anyhow!("ciphertext nonce must be 12 bytes"))?;
 
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             aes_gcm::aead::Payload {
                 msg: ciphertext,
                 aad,

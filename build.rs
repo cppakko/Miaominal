@@ -2,12 +2,13 @@
 
 use image::ExtendedColorType;
 use image::codecs::ico::{IcoEncoder, IcoFrame};
+use resvg::tiny_skia::{Pixmap, Transform};
+use resvg::usvg;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use tiny_skia::{Pixmap, Transform};
 
 const SYSTEM_ICON_PATH: &str = "assets/app_icon_system.svg";
 const BUNDLE_ICON_SIZE: u32 = 512;

@@ -32,7 +32,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-aes-gcm = "0.10"
+aes-gcm = "0.11.0"
 alacritty_terminal = "0.26"
 anyhow = "1"
 argon2 = "0.5"
@@ -64,37 +64,37 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", feature
 ] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 image = { version = "0.25", default-features = false }
-keyring = { version = "3", features = [
-    "apple-native",
-    "windows-native",
-    "sync-secret-service",
+keyring = { version = "4.1.2", features = [
+    "apple-native-keyring-store",
+    "windows-native-keyring-store",
+    "zbus-secret-service-keyring-store",
 ] }
 log = "0.4.33"
 material-colors = "0.4.2"
 notify = "8.2.0"
 open = "5.3.6"
 rand = "0.10.1"
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13.4", default-features = false, features = [
     "json",
-    "rustls-tls",
+    "query",
+    "rustls",
 ] }
 rig-core = "0.39.0"
 schemars = "1"
 settings = { git = "https://github.com/zed-industries/zed" }
 theme = { git = "https://github.com/zed-industries/zed" }
 theme_settings = { git = "https://github.com/zed-industries/zed" }
-resvg = "0.45.1"
+resvg = "0.47.0"
 rfd = "0.17.2"
-roxmltree = "0.20"
-rusqlite = { version = "0.32", features = ["bundled"] }
+roxmltree = "0.21.1"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 russh = "0.61.2"
-russh-sftp = "2.1.1"
+russh-sftp = "2.3.0"
 rust-embed = "8.11.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.3"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
-tiny-skia = "0.11.4"
 tokio = { version = "1", features = [
     "fs",
     "process",
@@ -103,9 +103,8 @@ tokio = { version = "1", features = [
     "sync",
     "time",
 ] }
-toml = "1.1.2+spec-1.1.0"
+toml = "1.1.2"
 unicode-segmentation = "1.13.3"
-usvg = "0.45.1"
 uuid = { version = "1.23.4", features = ["v4"] }
 winresource = "0.1"
 
@@ -154,8 +153,6 @@ image = { workspace = true, features = ["png"] }
 [build-dependencies]
 image = { workspace = true, features = ["ico", "png"] }
 resvg.workspace = true
-tiny-skia.workspace = true
-usvg.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
