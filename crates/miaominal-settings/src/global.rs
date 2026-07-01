@@ -191,6 +191,7 @@ pub fn sync_component_theme(cx: &mut App) {
     colors.slider_bar = hsla(material.roles.secondary_container);
     colors.slider_thumb = hsla(material.roles.primary);
 
+    component_theme.tokens = (&component_theme.colors).into();
     component_theme.highlight_theme = Arc::new(md3_highlight_theme(&material));
 }
 
