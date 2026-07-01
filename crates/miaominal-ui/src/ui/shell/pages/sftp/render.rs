@@ -1,6 +1,6 @@
 use super::super::super::*;
-use crate::ui::shell::pages::shell_compact_empty_state;
 use crate::ui::i18n;
+use crate::ui::shell::pages::shell_compact_empty_state;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -90,6 +90,19 @@ fn sftp_browser_area_flex(tab: &SftpTabState) -> f32 {
             .browser_area_flex
             .unwrap_or_else(|| default_sftp_browser_area_flex(tab)),
     )
+}
+
+fn sftp_drag_selection_overlay_bounds(
+    drag: SftpDragSelectionState,
+    header_height: Pixels,
+) -> Bounds<Pixels> {
+    let bounds = drag.bounds();
+    let left = bounds.origin.x;
+    let right = bounds.origin.x + bounds.size.width;
+    let top = bounds.origin.y.max(header_height);
+    let bottom = (bounds.origin.y + bounds.size.height).max(header_height);
+
+    Bounds::from_corners(Point::new(left, top), Point::new(right, bottom))
 }
 
 fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
@@ -514,7 +527,7 @@ fn sftp_empty_transfer_summary(error: Option<String>) -> impl IntoElement {
         i18n::string("sftp.ui.transfer_idle"),
         SFTP_PROGRESS_CENTER_MIN_HEIGHT,
     )
-        .into_any_element()
+    .into_any_element()
 }
 
 fn context_menu_local_sftp_entry(
@@ -913,6 +926,28 @@ impl AppView {
         }
     }
 
+    fn finish_sftp_page_pointer_drag(
+        &mut self,
+        tab_id: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let is_split_dragging = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp)
+            .is_some_and(|tab| tab.layout.drag.is_some());
+
+        if is_split_dragging {
+            self.finish_sftp_split_drag(tab_id, cx);
+            return true;
+        }
+
+        self.finish_active_sftp_drag_selection(tab_id, position, cx)
+    }
+
     pub(in crate::ui::shell) fn render_sftp_page(
         &self,
         entity: Entity<Self>,
@@ -1116,6 +1151,7 @@ impl AppView {
             .flex_1()
             .min_w(px(0.0))
             .min_h(px(0.0))
+            .overflow_hidden()
             .on_prepaint({
                 let local_table_bounds = local_table_bounds.clone();
                 let table = self.workspace_forms.sftp_browser.local_table.clone();
@@ -1146,6 +1182,7 @@ impl AppView {
                             event.position,
                             bounds,
                             table_row_height,
+                            _cx,
                         );
                     });
                 }
@@ -1165,13 +1202,16 @@ impl AppView {
                     };
 
                     entity.update(cx, |this, cx| {
-                        this.update_sftp_drag_selection(
+                        if this.update_sftp_drag_selection(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position,
                             bounds,
+                            table_row_height,
                             cx,
-                        );
+                        ) {
+                            cx.stop_propagation();
+                        }
                     });
                 }
             })
@@ -1187,13 +1227,16 @@ impl AppView {
                     };
 
                     entity.update(cx, |this, cx| {
-                        this.finish_sftp_drag_selection(
+                        if this.finish_sftp_drag_selection(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position,
                             bounds,
+                            table_row_height,
                             cx,
-                        );
+                        ) {
+                            cx.stop_propagation();
+                        }
                     });
                 }
             })
@@ -1240,7 +1283,7 @@ impl AppView {
                 cx.stop_propagation();
             })
             .when_some(sftp_tab.local_drag_selection, |this, drag| {
-                let bounds = drag.bounds();
+                let bounds = sftp_drag_selection_overlay_bounds(drag, table_row_height);
                 this.child(
                     div()
                         .absolute()
@@ -1248,6 +1291,8 @@ impl AppView {
                         .top(bounds.origin.y)
                         .w(bounds.size.width)
                         .h(bounds.size.height)
+                        .border_1()
+                        .border_color(color_with_alpha(extended.info.color, 0x80))
                         .bg(color_with_alpha(extended.info.color, 0x24)),
                 )
             })
@@ -1260,6 +1305,7 @@ impl AppView {
             .flex_1()
             .min_w(px(0.0))
             .min_h(px(0.0))
+            .overflow_hidden()
             .on_prepaint({
                 let remote_table_bounds = remote_table_bounds.clone();
                 let table = self.workspace_forms.sftp_browser.remote_table.clone();
@@ -1290,6 +1336,7 @@ impl AppView {
                             event.position,
                             bounds,
                             table_row_height,
+                            _cx,
                         );
                     });
                 }
@@ -1309,13 +1356,16 @@ impl AppView {
                     };
 
                     entity.update(cx, |this, cx| {
-                        this.update_sftp_drag_selection(
+                        if this.update_sftp_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
                             bounds,
+                            table_row_height,
                             cx,
-                        );
+                        ) {
+                            cx.stop_propagation();
+                        }
                     });
                 }
             })
@@ -1331,13 +1381,16 @@ impl AppView {
                     };
 
                     entity.update(cx, |this, cx| {
-                        this.finish_sftp_drag_selection(
+                        if this.finish_sftp_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
                             bounds,
+                            table_row_height,
                             cx,
-                        );
+                        ) {
+                            cx.stop_propagation();
+                        }
                     });
                 }
             })
@@ -1384,7 +1437,7 @@ impl AppView {
                 cx.stop_propagation();
             })
             .when_some(sftp_tab.remote_drag_selection, |this, drag| {
-                let bounds = drag.bounds();
+                let bounds = sftp_drag_selection_overlay_bounds(drag, table_row_height);
                 this.child(
                     div()
                         .absolute()
@@ -1392,6 +1445,8 @@ impl AppView {
                         .top(bounds.origin.y)
                         .w(bounds.size.width)
                         .h(bounds.size.height)
+                        .border_1()
+                        .border_color(color_with_alpha(extended.info.color, 0x80))
                         .bg(color_with_alpha(extended.info.color, 0x24)),
                 )
             })
@@ -1799,30 +1854,43 @@ impl AppView {
             .size_full()
             .relative()
             .bg(rgb(roles.surface_container))
+            .capture_any_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, _window, cx| {
+                    if event.button == MouseButton::Left {
+                        let _ = this.finish_active_sftp_drag_selection(tab_id, event.position, cx);
+                    }
+                },
+            ))
             .on_mouse_move(
                 cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {
+                        if this.finish_active_sftp_drag_selection(tab_id, event.position, cx) {
+                            cx.stop_propagation();
+                        }
                         return;
                     }
 
-                    let Some(divider) = this
+                    if let Some(divider) = this
                         .workspace_state
                         .tabs
                         .iter()
                         .find(|tab| tab.id == tab_id)
                         .and_then(TabState::as_sftp)
                         .and_then(|tab| tab.layout.drag.as_ref().map(|drag| drag.divider))
-                    else {
+                    {
+                        let pointer = match divider {
+                            SftpSplitDivider::BrowserPanels => f32::from(event.position.x),
+                            SftpSplitDivider::ProgressCenter => f32::from(event.position.y),
+                        };
+
+                        this.update_sftp_split_drag(tab_id, pointer, cx);
+                        cx.stop_propagation();
                         return;
-                    };
+                    }
 
-                    let pointer = match divider {
-                        SftpSplitDivider::BrowserPanels => f32::from(event.position.x),
-                        SftpSplitDivider::ProgressCenter => f32::from(event.position.y),
-                    };
-
-                    this.update_sftp_split_drag(tab_id, pointer, cx);
-                    cx.stop_propagation();
+                    if this.update_active_sftp_drag_selection(tab_id, event.position, cx) {
+                        cx.stop_propagation();
+                    }
                 }),
             )
             .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
@@ -1830,20 +1898,18 @@ impl AppView {
                     return;
                 }
 
-                let is_dragging = this
-                    .workspace_state
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.id == tab_id)
-                    .and_then(TabState::as_sftp)
-                    .is_some_and(|tab| tab.layout.drag.is_some());
-                if !is_dragging {
-                    return;
+                if this.finish_sftp_page_pointer_drag(tab_id, event.position, cx) {
+                    cx.stop_propagation();
                 }
-
-                this.finish_sftp_split_drag(tab_id, cx);
-                cx.stop_propagation();
             }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+                    if this.finish_sftp_page_pointer_drag(tab_id, event.position, cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .child(
                 div()
                     .size_full()

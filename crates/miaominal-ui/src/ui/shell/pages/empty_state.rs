@@ -40,7 +40,11 @@ pub(in crate::ui::shell) fn shell_compact_empty_state(
     copy: impl Into<SharedString>,
     min_height: f32,
 ) -> Div {
-    shell_empty_state_with_layout(icon, copy.into(), ShellEmptyStateLayout::compact(min_height))
+    shell_empty_state_with_layout(
+        icon,
+        copy.into(),
+        ShellEmptyStateLayout::compact(min_height),
+    )
 }
 
 fn shell_empty_state_with_layout(
@@ -70,32 +74,31 @@ fn shell_empty_state_with_layout(
         container.px_4().py_6()
     };
 
-    container
-        .child(
-            v_flex()
-                .max_w(px(layout.max_width))
-                .items_center()
-                .justify_center()
-                .gap(px(layout.gap))
-                .child(
-                    div()
-                        .size(px(layout.icon_size))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(rgb(roles.primary))
-                        .child(Icon::new(icon).size(px(layout.icon_size)))
-                        .text_color(rgb(roles.on_surface_variant)),
-                )
-                .child(
-                    div()
-                        .text_size(text_size)
-                        .line_height(miaominal_settings::scaled_line_height(line_height))
-                        .text_center()
-                        .text_color(rgb(roles.on_surface_variant))
-                        .child(copy),
-                ),
-        )
+    container.child(
+        v_flex()
+            .max_w(px(layout.max_width))
+            .items_center()
+            .justify_center()
+            .gap(px(layout.gap))
+            .child(
+                div()
+                    .size(px(layout.icon_size))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.primary))
+                    .child(Icon::new(icon).size(px(layout.icon_size)))
+                    .text_color(rgb(roles.on_surface_variant)),
+            )
+            .child(
+                div()
+                    .text_size(text_size)
+                    .line_height(miaominal_settings::scaled_line_height(line_height))
+                    .text_center()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(copy),
+            ),
+    )
 }
 
 pub(in crate::ui::shell) fn shell_empty_page(icon: AppIcon, copy: impl Into<SharedString>) -> Div {

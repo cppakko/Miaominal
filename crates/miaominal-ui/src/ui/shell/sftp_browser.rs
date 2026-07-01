@@ -1,6 +1,5 @@
 use super::*;
 use crate::ui::i18n;
-use gpui_component::ElementExt;
 use gpui_component::table::ColumnSort;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -10,6 +9,25 @@ use std::time::SystemTime;
 pub(in crate::ui::shell) enum SftpBrowserSide {
     Local,
     Remote,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::ui::shell) struct SftpBrowserSelectionModifiers {
+    pub(in crate::ui::shell) shift: bool,
+    pub(in crate::ui::shell) toggle: bool,
+}
+
+impl SftpBrowserSelectionModifiers {
+    fn from_gpui(modifiers: gpui::Modifiers) -> Self {
+        Self {
+            shift: modifiers.shift,
+            toggle: modifiers.control || modifiers.platform,
+        }
+    }
+
+    pub(in crate::ui::shell) fn modified(self) -> bool {
+        self.shift || self.toggle
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -105,13 +123,13 @@ pub(in crate::ui::shell) struct SftpBrowserTableDelegate {
     selected_row: Option<usize>,
     selected_paths: HashSet<String>,
     primary_selected_path: Option<String>,
-    row_bounds: Vec<Bounds<Pixels>>,
     empty_message: SharedString,
     loading: bool,
     sort_state: Option<(usize, ColumnSort)>,
     available_width: Pixels,
     hidden_columns: HashSet<usize>,
     visible_col_map: Vec<usize>,
+    pending_select_modifiers: SftpBrowserSelectionModifiers,
     pub(in crate::ui::shell) col_header_right_clicked: bool,
     pub(in crate::ui::shell) inline_rename_path: Option<String>,
 }
@@ -135,13 +153,13 @@ impl SftpBrowserTableDelegate {
             selected_row: None,
             selected_paths: HashSet::new(),
             primary_selected_path: None,
-            row_bounds: Vec::new(),
             empty_message: Self::localized_empty_message(side).into(),
             loading: false,
             sort_state: None,
             available_width: px(0.),
             hidden_columns,
             visible_col_map,
+            pending_select_modifiers: SftpBrowserSelectionModifiers::default(),
             col_header_right_clicked: false,
             inline_rename_path: None,
         }
@@ -167,8 +185,43 @@ impl SftpBrowserTableDelegate {
         self.rows.get(row_ix)
     }
 
+    pub(in crate::ui::shell) fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
     pub(in crate::ui::shell) fn row_index_by_path(&self, path: &str) -> Option<usize> {
         self.rows.iter().position(|row| row.path == path)
+    }
+
+    pub(in crate::ui::shell) fn paths_in_row_range(
+        &self,
+        start_row: usize,
+        end_row: usize,
+    ) -> Vec<String> {
+        if self.rows.is_empty() {
+            return Vec::new();
+        }
+
+        let start_row = start_row.min(self.rows.len().saturating_sub(1));
+        let end_row = end_row.min(self.rows.len().saturating_sub(1));
+        let (start_row, end_row) = if start_row <= end_row {
+            (start_row, end_row)
+        } else {
+            (end_row, start_row)
+        };
+
+        self.rows[start_row..=end_row]
+            .iter()
+            .map(|row| row.path.clone())
+            .collect()
+    }
+
+    pub(in crate::ui::shell) fn take_pending_select_modifiers(
+        &mut self,
+    ) -> SftpBrowserSelectionModifiers {
+        let modifiers = self.pending_select_modifiers;
+        self.pending_select_modifiers = SftpBrowserSelectionModifiers::default();
+        modifiers
     }
 
     pub(in crate::ui::shell) fn set_selected_paths(
@@ -192,20 +245,6 @@ impl SftpBrowserTableDelegate {
             .primary_selected_path
             .as_deref()
             .and_then(|path| self.row_index_by_path(path));
-    }
-
-    pub(in crate::ui::shell) fn paths_in_bounds(
-        &self,
-        selection_bounds: Bounds<Pixels>,
-    ) -> Vec<String> {
-        self.rows
-            .iter()
-            .enumerate()
-            .filter_map(|(row_ix, row)| {
-                let row_bounds = self.row_bounds.get(row_ix)?;
-                Self::bounds_intersect(*row_bounds, selection_bounds).then(|| row.path.clone())
-            })
-            .collect()
     }
 
     pub(in crate::ui::shell) fn receive_children(
@@ -256,7 +295,6 @@ impl SftpBrowserTableDelegate {
         self.rows = Vec::new();
         let source = self.source_rows.clone();
         self.flatten_into_visible(&source, 0);
-        self.row_bounds = vec![Bounds::default(); self.rows.len()];
         self.selected_row = self
             .primary_selected_path
             .as_deref()
@@ -341,13 +379,6 @@ impl SftpBrowserTableDelegate {
             (None, Some(_)) => Ordering::Less,
             (None, None) => Ordering::Equal,
         }
-    }
-
-    fn bounds_intersect(left: Bounds<Pixels>, right: Bounds<Pixels>) -> bool {
-        left.left() <= right.right()
-            && left.right() >= right.left()
-            && left.top() <= right.bottom()
-            && left.bottom() >= right.top()
     }
 
     fn collapse_directory(&mut self, path: String) {
@@ -586,7 +617,6 @@ impl TableDelegate for SftpBrowserTableDelegate {
         let is_selected = self.selected_paths.contains(&row_path);
         let select_path = row_path.clone();
         let context_path = row_path.clone();
-        let table_entity = cx.entity().clone();
 
         div()
             .id(("sftp-row", row_ix))
@@ -614,18 +644,15 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .bg(rgb(roles.primary)),
                     )
             })
-            .on_prepaint(move |bounds, _, cx| {
-                table_entity.update(cx, |table, _| {
-                    if let Some(row_bounds) = table.delegate_mut().row_bounds.get_mut(row_ix) {
-                        *row_bounds = bounds;
-                    }
-                });
-            })
             .on_click(cx.listener(move |table, e: &ClickEvent, _window, cx| {
                 cx.stop_propagation();
-                table
-                    .delegate_mut()
-                    .set_selected_paths(vec![select_path.clone()], Some(select_path.clone()));
+                let modifiers = SftpBrowserSelectionModifiers::from_gpui(e.modifiers());
+                let delegate = table.delegate_mut();
+                delegate.pending_select_modifiers = modifiers;
+                if !modifiers.modified() {
+                    delegate
+                        .set_selected_paths(vec![select_path.clone()], Some(select_path.clone()));
+                }
                 table.set_right_clicked_row(None, cx);
                 cx.emit(TableEvent::SelectRow(row_ix));
                 if e.click_count() == 2 {

@@ -191,6 +191,67 @@ impl AppView {
             });
     }
 
+    pub(in crate::ui::shell) fn sync_sftp_selection_for_side(
+        &mut self,
+        tab_id: usize,
+        side: SftpBrowserSide,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_index) = self.workspace_state.active_topbar_tab else {
+            return;
+        };
+        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
+            return;
+        };
+        if tab.id != tab_id {
+            return;
+        }
+
+        let Some(sftp) = tab.as_sftp() else {
+            return;
+        };
+
+        match side {
+            SftpBrowserSide::Local => {
+                let selected_paths: Vec<_> = sftp
+                    .selected_local_paths
+                    .iter()
+                    .map(|selected| selected.display().to_string())
+                    .collect();
+                let selected_path = sftp
+                    .selected_local_path
+                    .as_ref()
+                    .map(|selected| selected.display().to_string());
+
+                self.workspace_forms
+                    .sftp_browser
+                    .local_table
+                    .update(cx, |table, cx| {
+                        table
+                            .delegate_mut()
+                            .set_selected_paths(selected_paths, selected_path);
+                        table.set_right_clicked_row(None, cx);
+                        cx.notify();
+                    });
+            }
+            SftpBrowserSide::Remote => {
+                let selected_paths = sftp.selected_remote_paths.clone();
+                let selected_path = sftp.selected_remote_path.clone();
+
+                self.workspace_forms
+                    .sftp_browser
+                    .remote_table
+                    .update(cx, |table, cx| {
+                        table
+                            .delegate_mut()
+                            .set_selected_paths(selected_paths, selected_path);
+                        table.set_right_clicked_row(None, cx);
+                        cx.notify();
+                    });
+            }
+        }
+    }
+
     pub(in crate::ui::shell) fn sync_active_sftp_tables(&mut self, cx: &mut Context<Self>) {
         let Some(active_index) = self.workspace_state.active_topbar_tab else {
             return;

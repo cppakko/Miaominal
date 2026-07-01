@@ -383,8 +383,8 @@ mod platform {
             return rgba.to_vec();
         }
 
-        let scale = (target_limit as f32 / crop_width as f32)
-            .min(target_limit as f32 / crop_height as f32);
+        let scale =
+            (target_limit as f32 / crop_width as f32).min(target_limit as f32 / crop_height as f32);
         let dest_width = ((crop_width as f32 * scale).round() as u32).clamp(1, target_limit);
         let dest_height = ((crop_height as f32 * scale).round() as u32).clamp(1, target_limit);
         let dest_x = (output_size - dest_width) / 2;
@@ -392,8 +392,8 @@ mod platform {
         let Some(image) = RgbaImage::from_raw(source_size, source_size, rgba.to_vec()) else {
             return vec![0; output_len];
         };
-        let cropped = image::imageops::crop_imm(&image, min_x, min_y, crop_width, crop_height)
-            .to_image();
+        let cropped =
+            image::imageops::crop_imm(&image, min_x, min_y, crop_width, crop_height).to_image();
         let filter = if dest_width > crop_width || dest_height > crop_height {
             image::imageops::FilterType::Nearest
         } else {
@@ -436,7 +436,7 @@ mod platform {
     use objc2_app_kit::{
         NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSWorkspace,
     };
-    use objc2_foundation::{NSDictionary, NSString, NSSize};
+    use objc2_foundation::{NSDictionary, NSSize, NSString};
 
     pub(super) fn load_system_file_icon_bytes(
         key: &SystemFileIconKey,
@@ -540,7 +540,15 @@ mod platform {
             Some("application")
                 if matches!(
                     extension,
-                    "doc" | "docx" | "odp" | "ods" | "odt" | "ppt" | "pptx" | "rtf" | "xls"
+                    "doc"
+                        | "docx"
+                        | "odp"
+                        | "ods"
+                        | "odt"
+                        | "ppt"
+                        | "pptx"
+                        | "rtf"
+                        | "xls"
                         | "xlsx"
                 ) =>
             {
@@ -669,7 +677,11 @@ mod platform {
         None
     }
 
-    fn find_in_directory(dir: &Path, icon_names: &[String], extensions: &[&str]) -> Option<PathBuf> {
+    fn find_in_directory(
+        dir: &Path,
+        icon_names: &[String],
+        extensions: &[&str],
+    ) -> Option<PathBuf> {
         for name in icon_names {
             for extension in extensions {
                 let path = dir.join(format!("{name}.{extension}"));
@@ -702,7 +714,6 @@ mod platform {
             values.push(value);
         }
     }
-
 }
 
 #[cfg(not(any(

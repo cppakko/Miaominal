@@ -1322,6 +1322,9 @@ impl AppView {
         let window_activation_subscription =
             cx.observe_window_activation(window, |this, window, cx| {
                 this.sync_terminal_focus_reporting(window, cx);
+                if !window.is_window_active() {
+                    this.finish_any_active_sftp_drag_selection(cx);
+                }
             });
 
         let group_select = cx.new(|cx| {

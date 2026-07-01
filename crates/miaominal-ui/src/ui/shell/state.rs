@@ -1052,6 +1052,7 @@ pub(in crate::ui::shell) enum ClosedTabBundle {
 pub(in crate::ui::shell) struct SftpDragSelectionState {
     pub(in crate::ui::shell) start: Point<Pixels>,
     pub(in crate::ui::shell) current: Point<Pixels>,
+    pub(in crate::ui::shell) last_row_range: Option<(usize, usize)>,
 }
 
 impl SftpDragSelectionState {
@@ -1059,6 +1060,7 @@ impl SftpDragSelectionState {
         Self {
             start,
             current: start,
+            last_row_range: None,
         }
     }
 
@@ -1091,21 +1093,33 @@ impl SftpDragSelectionState {
         Bounds::from_corners(Point::new(left, top), Point::new(right, bottom))
     }
 
-    pub(in crate::ui::shell) fn window_bounds(&self, origin: Point<Pixels>) -> Bounds<Pixels> {
-        let bounds = self.bounds();
-        Bounds::from_corners(
-            Point::new(origin.x + bounds.origin.x, origin.y + bounds.origin.y),
-            Point::new(
-                origin.x + bounds.origin.x + bounds.size.width,
-                origin.y + bounds.origin.y + bounds.size.height,
-            ),
-        )
-    }
-
     pub(in crate::ui::shell) fn exceeds_threshold(&self, threshold: Pixels) -> bool {
         let bounds = self.bounds();
         bounds.size.width >= threshold || bounds.size.height >= threshold
     }
+
+    pub(in crate::ui::shell) fn set_last_row_range(
+        &mut self,
+        row_range: Option<(usize, usize)>,
+    ) -> bool {
+        if self.last_row_range == row_range {
+            return false;
+        }
+
+        self.last_row_range = row_range;
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct SftpDragSelectionContext {
+    pub(in crate::ui::shell) side: SftpBrowserSide,
+    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) last_position: Point<Pixels>,
+    pub(in crate::ui::shell) panel_bounds: Bounds<Pixels>,
+    pub(in crate::ui::shell) row_height: Pixels,
+    pub(in crate::ui::shell) anchor_content_y: f32,
+    pub(in crate::ui::shell) generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1168,10 +1182,12 @@ pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) local_entries: Vec<LocalSftpEntry>,
     pub(in crate::ui::shell) selected_local_path: Option<PathBuf>,
     pub(in crate::ui::shell) selected_local_paths: Vec<PathBuf>,
+    pub(in crate::ui::shell) local_selection_anchor: Option<PathBuf>,
     pub(in crate::ui::shell) remote_path: String,
     pub(in crate::ui::shell) remote_entries: Vec<SftpEntry>,
     pub(in crate::ui::shell) selected_remote_path: Option<String>,
     pub(in crate::ui::shell) selected_remote_paths: Vec<String>,
+    pub(in crate::ui::shell) remote_selection_anchor: Option<String>,
     pub(in crate::ui::shell) transfers: Vec<SftpTransferRow>,
     pub(in crate::ui::shell) last_status: String,
     pub(in crate::ui::shell) last_error: Option<String>,
@@ -1181,6 +1197,8 @@ pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) remote_drag_candidate: Option<Point<Pixels>>,
     pub(in crate::ui::shell) local_drag_selection: Option<SftpDragSelectionState>,
     pub(in crate::ui::shell) remote_drag_selection: Option<SftpDragSelectionState>,
+    pub(in crate::ui::shell) drag_selection_context: Option<SftpDragSelectionContext>,
+    pub(in crate::ui::shell) drag_selection_generation: u64,
     pub(in crate::ui::shell) suppress_local_clear_click: bool,
     pub(in crate::ui::shell) suppress_remote_clear_click: bool,
     pub(in crate::ui::shell) inline_rename: Option<InlineRenameState>,
@@ -1378,10 +1396,12 @@ impl TabState {
                 local_entries: Vec::new(),
                 selected_local_path: None,
                 selected_local_paths: Vec::new(),
+                local_selection_anchor: None,
                 remote_path: ".".into(),
                 remote_entries: Vec::new(),
                 selected_remote_path: None,
                 selected_remote_paths: Vec::new(),
+                remote_selection_anchor: None,
                 transfers: Vec::new(),
                 last_status: i18n::string("tabs.initial.sftp_starting_worker"),
                 last_error: None,
@@ -1391,6 +1411,8 @@ impl TabState {
                 remote_drag_candidate: None,
                 local_drag_selection: None,
                 remote_drag_selection: None,
+                drag_selection_context: None,
+                drag_selection_generation: 0,
                 suppress_local_clear_click: false,
                 suppress_remote_clear_click: false,
                 inline_rename: None,

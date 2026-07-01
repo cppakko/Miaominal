@@ -106,7 +106,7 @@ use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, Park
 pub(in crate::ui::shell) use panes::{PaneId, TerminalHoveredLink, TerminalScrollbarDrag};
 pub(in crate::ui::shell) use settings_labels::*;
 pub(in crate::ui::shell) use sftp_browser::{
-    SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
+    SftpBrowserSelectionModifiers, SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
 };
 pub(in crate::ui::shell) use state::{
     AgentExecMode, ChatPanelView, ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot,
@@ -120,10 +120,10 @@ pub(in crate::ui::shell) use state::{
     SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
     SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
     SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
-    SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
-    SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
-    trailing_at_mention_query,
+    SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
+    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
+    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
+    split_message_into_blocks, trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
