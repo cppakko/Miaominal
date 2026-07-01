@@ -1142,6 +1142,7 @@ pub(in crate::ui::shell) struct SftpSplitDragState {
 pub(in crate::ui::shell) struct SftpLayoutState {
     pub(in crate::ui::shell) local_panel_flex: Option<f32>,
     pub(in crate::ui::shell) browser_area_flex: Option<f32>,
+    pub(in crate::ui::shell) progress_center_visible: bool,
     pub(in crate::ui::shell) browser_container_width: Pixels,
     pub(in crate::ui::shell) page_container_height: Pixels,
     pub(in crate::ui::shell) drag: Option<SftpSplitDragState>,
@@ -1152,6 +1153,7 @@ impl Default for SftpLayoutState {
         Self {
             local_panel_flex: None,
             browser_area_flex: None,
+            progress_center_visible: false,
             browser_container_width: px(0.0),
             page_container_height: px(0.0),
             drag: None,

@@ -954,10 +954,28 @@ multi_message = "{count} items will be permanently deleted."
 
 [sftp.ui]
 drop_to_upload = "Drop to upload"
+item_count = "{count} items"
+local_path_label = "Local: {path}"
+local_selected_status = "{count} local items selected"
 remote_path_label = "Remote: {path}"
 progress_center = "Progress Center"
 local_section = "Local"
+remote_loading = "Loading remote directory..."
 remote_section = "Remote"
+remote_selected_status = "{count} remote items selected"
+selection_count = "{selected} of {count} selected"
+transfer_idle = "No active transfers"
+
+[sftp.tooltips]
+create_directory = "Create remote folder"
+download_selected = "Download selected remote items"
+edit_path = "Edit path"
+go_up = "Go up"
+hide_progress_center = "Hide transfer progress"
+refresh_local = "Refresh local folder"
+refresh_remote = "Refresh remote folder"
+show_progress_center = "Show transfer progress"
+upload_selected = "Upload selected local items"
 
 [sftp.transfer_status]
 queued = "Queued"

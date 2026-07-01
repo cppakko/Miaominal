@@ -1234,6 +1234,11 @@ impl AppView {
             .and_then(|index| self.workspace_state.tabs.get(index))
             .and_then(|tab| tab.as_session().map(|session| (tab, session)));
         let panel_session = active_session;
+        let active_sftp = self
+            .workspace_state
+            .active_topbar_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)));
 
         let active_tab = active_session.map(|(tab, _)| tab).or_else(|| {
             self.workspace_state
@@ -1299,6 +1304,15 @@ impl AppView {
         };
         let monitor_toggle_entity = entity.clone();
         let agent_toggle_entity = entity.clone();
+        let progress_toggle_entity = entity.clone();
+        let progress_center_open = active_sftp
+            .map(|(_, sftp)| sftp.layout.progress_center_visible)
+            .unwrap_or(false);
+        let progress_center_tooltip = if progress_center_open {
+            i18n::string("sftp.tooltips.hide_progress_center")
+        } else {
+            i18n::string("sftp.tooltips.show_progress_center")
+        };
 
         div()
             .h(px(STATUS_BAR_HEIGHT))
@@ -1418,6 +1432,43 @@ impl AppView {
                                     },
                                 )
                                 .id("session-agent-panel-toggle-button")
+                                .hover(move |this| {
+                                    this.bg(rgb(roles.surface_container_highest))
+                                        .border_color(rgb(roles.primary))
+                                }),
+                            ),
+                        )
+                    })
+                    .when(active_sftp.is_some(), |this| {
+                        this.child(
+                            div().id("sftp-progress-center-toggle").child(
+                                icon_button_with_tooltip(
+                                    AppIcon::PanelRight,
+                                    progress_center_tooltip,
+                                    24.0,
+                                    8.0,
+                                    Some(if progress_center_open {
+                                        roles.secondary_container
+                                    } else {
+                                        roles.surface_container
+                                    }),
+                                    Some(if progress_center_open {
+                                        roles.on_secondary_container
+                                    } else {
+                                        text_muted
+                                    }),
+                                    Some(if progress_center_open {
+                                        roles.primary
+                                    } else {
+                                        roles.outline_variant
+                                    }),
+                                    move |_window, cx| {
+                                        progress_toggle_entity.update(cx, |this, cx| {
+                                            this.toggle_active_sftp_progress_center(cx);
+                                        });
+                                    },
+                                )
+                                .id("sftp-progress-center-toggle-button")
                                 .hover(move |this| {
                                     this.bg(rgb(roles.surface_container_highest))
                                         .border_color(rgb(roles.primary))

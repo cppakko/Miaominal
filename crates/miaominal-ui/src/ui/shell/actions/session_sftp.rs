@@ -407,6 +407,7 @@ impl AppView {
                         last_bytes_complete: 0,
                     },
                 );
+                sftp.layout.progress_center_visible = true;
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
                     i18n::string_args("sftp.messages.transfer_queued", &[("id", &transfer_id)]);

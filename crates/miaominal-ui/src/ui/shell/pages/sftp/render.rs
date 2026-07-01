@@ -1,24 +1,26 @@
 use super::super::super::*;
+use crate::ui::shell::pages::shell_compact_empty_state;
 use crate::ui::i18n;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_component::{
-    ElementExt, StyledExt,
+    ElementExt,
     breadcrumb::{Breadcrumb, BreadcrumbItem},
     progress::Progress,
     table::DataTable,
 };
 
-const SFTP_SPLIT_GAP: f32 = 8.0;
+const SFTP_SPLIT_GAP: f32 = 6.0;
+const SFTP_ACTION_BUTTON_GAP: f32 = 4.0;
 const SFTP_MIN_SPLIT_FLEX: f32 = 0.05;
 const SFTP_DEFAULT_LOCAL_PANEL_FLEX: f32 = 0.5;
-const SFTP_DEFAULT_BROWSER_AREA_FLEX: f32 = 0.84;
+const SFTP_DEFAULT_BROWSER_AREA_FLEX: f32 = 0.95;
 const SFTP_DEFAULT_BROWSER_AREA_FLEX_WITH_TRANSFERS: f32 = 0.76;
 const SFTP_LOCAL_PANEL_MIN_WIDTH: f32 = 260.0;
 const SFTP_REMOTE_PANEL_MIN_WIDTH: f32 = 260.0;
-const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 96.0;
+const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 220.0;
 const SFTP_BROWSER_MIN_HEIGHT: f32 = 240.0;
 
 #[derive(Clone)]
@@ -96,9 +98,11 @@ fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
     div()
         .flex_1()
         .min_w(px(0.0))
-        .h(px(32.0))
-        .rounded(px(10.0))
-        .bg(rgb(roles.surface_container_low))
+        .h(px(30.0))
+        .rounded(px(8.0))
+        .bg(rgb(roles.surface_container))
+        .border_1()
+        .border_color(rgb(roles.outline_variant))
         .px_3()
         .flex()
         .items_center()
@@ -115,17 +119,19 @@ fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
 
 fn sftp_path_button(
     icon: AppIcon,
+    tooltip: impl Into<SharedString>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    icon_button(
+    icon_button_with_tooltip(
         icon,
+        tooltip,
         28.0,
-        32.0,
-        Some(roles.secondary_container),
-        Some(roles.on_secondary_container),
-        None,
+        8.0,
+        Some(roles.surface_container_low),
+        Some(roles.on_surface_variant),
+        Some(roles.outline_variant),
         on_click,
     )
 }
@@ -136,9 +142,11 @@ fn sftp_path_breadcrumb_shell(content: impl IntoElement) -> impl IntoElement {
     div()
         .flex_1()
         .min_w(px(0.0))
-        .h(px(32.0))
-        .rounded(px(10.0))
-        .bg(rgb(roles.surface_container_low))
+        .h(px(30.0))
+        .rounded(px(8.0))
+        .bg(rgb(roles.surface_container))
+        .border_1()
+        .border_color(rgb(roles.outline_variant))
         .px_3()
         .flex()
         .items_center()
@@ -250,27 +258,75 @@ fn sftp_path_bar(
         .w_full()
         .min_w(px(0.0))
         .items_center()
-        .gap_2()
+        .gap(px(SFTP_ACTION_BUTTON_GAP))
         .child(path_content)
         .child(sftp_path_button(
             AppIcon::CornerLeftUp,
+            i18n::string("sftp.tooltips.go_up"),
             move |window, cx| on_up(window, cx),
         ))
         .when(show_edit_button, |this| {
-            this.child(sftp_path_button(AppIcon::Edit, move |window, cx| {
-                on_edit(window, cx)
-            }))
+            this.child(sftp_path_button(
+                AppIcon::Edit,
+                i18n::string("sftp.tooltips.edit_path"),
+                move |window, cx| on_edit(window, cx),
+            ))
         })
 }
 
 fn sftp_panel_card() -> Div {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    card_surface(roles.surface_container_highest, 16.0)
+    card_surface(roles.surface_container_highest, 8.0)
         .size_full()
         .min_w(px(0.0))
         .min_h(px(0.0))
         .overflow_hidden()
+}
+
+fn sftp_toolbar_button(
+    icon: AppIcon,
+    tooltip: impl Into<SharedString>,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+
+    icon_button_with_tooltip(
+        icon,
+        tooltip,
+        28.0,
+        8.0,
+        Some(roles.surface_container_low),
+        Some(roles.on_surface_variant),
+        Some(roles.outline_variant),
+        on_click,
+    )
+}
+
+fn sftp_panel_meta_label(item_count: usize, selected_count: usize) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let label = if selected_count == 0 {
+        i18n::string_args("sftp.ui.item_count", &[("count", &item_count.to_string())])
+    } else {
+        i18n::string_args(
+            "sftp.ui.selection_count",
+            &[
+                ("selected", &selected_count.to_string()),
+                ("count", &item_count.to_string()),
+            ],
+        )
+    };
+
+    div()
+        .flex_shrink_0()
+        .text_size(miaominal_settings::FontSize::Body.scaled())
+        .line_height(miaominal_settings::scaled_line_height(16.0))
+        .text_color(rgb(if selected_count == 0 {
+            roles.on_surface_variant
+        } else {
+            roles.primary
+        }))
+        .child(label)
 }
 
 fn sftp_split_bar(
@@ -287,6 +343,7 @@ fn sftp_split_bar(
         }
     ));
 
+    let roles = miaominal_settings::current_theme().material.roles;
     let marker = SftpSplitDragMarker { divider };
     let mut bar = div().id(bar_id).flex_shrink_0().occlude();
     bar = match divider {
@@ -306,11 +363,15 @@ fn sftp_split_bar(
     )
     .hover(move |this| {
         if is_dragging {
-            this
+            this.bg(color_with_alpha(roles.primary, 0x22))
         } else {
             match divider {
-                SftpSplitDivider::BrowserPanels => this.cursor_col_resize(),
-                SftpSplitDivider::ProgressCenter => this.cursor_row_resize(),
+                SftpSplitDivider::BrowserPanels => this
+                    .cursor_col_resize()
+                    .bg(color_with_alpha(roles.primary, 0x14)),
+                SftpSplitDivider::ProgressCenter => this
+                    .cursor_row_resize()
+                    .bg(color_with_alpha(roles.primary, 0x14)),
             }
         }
     })
@@ -321,8 +382,11 @@ fn sftp_split_bar(
 fn sftp_browser_section<M>(
     section_id: impl Into<ElementId>,
     title: impl Into<SharedString>,
-    _item_count: usize,
+    icon: AppIcon,
+    item_count: usize,
+    selected_count: usize,
     path_bar: impl IntoElement,
+    toolbar: impl IntoElement,
     content: impl IntoElement,
     menu_builder: M,
 ) -> impl IntoElement
@@ -339,21 +403,51 @@ where
         .flex_col()
         .context_menu(menu_builder)
         .child(
-            div().w_full().px_3().py_3().child(
+            div().w_full().px_3().pt_2().pb_2().child(
                 v_flex()
                     .w_full()
                     .gap_2()
                     .child(
-                        h_flex().w_full().items_center().child(
-                            h_flex().items_center().gap_2().child(
-                                div()
-                                    .text_size(miaominal_settings::FontSize::Input.scaled())
-                                    .text_color(rgb(roles.on_surface))
-                                    .child(title),
-                            ),
-                        ),
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                h_flex()
+                                    .min_w(px(0.0))
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .size(px(18.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(rgb(roles.on_surface_variant))
+                                            .child(Icon::new(icon).size(px(16.0))),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w(px(0.0))
+                                            .overflow_hidden()
+                                            .text_size(miaominal_settings::FontSize::Input.scaled())
+                                            .text_color(rgb(roles.on_surface))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(title),
+                                    ),
+                            )
+                            .child(sftp_panel_meta_label(item_count, selected_count)),
                     )
-                    .child(div().h_flex().w_full().min_w(px(0.0)).child(path_bar)),
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .items_center()
+                            .gap(px(SFTP_ACTION_BUTTON_GAP))
+                            .child(path_bar)
+                            .child(toolbar),
+                    ),
             ),
         )
         .child(
@@ -370,47 +464,57 @@ where
 
 fn sftp_progress_center_card(
     section_id: impl Into<ElementId>,
-    status: impl Into<SharedString>,
     content: impl IntoElement,
 ) -> impl IntoElement {
-    let roles = miaominal_settings::current_theme().material.roles;
-    let status = status.into();
+    let content_shell = div()
+        .w_full()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(content);
 
     sftp_panel_card()
         .id(section_id)
         .flex()
         .flex_col()
-        .child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .px_3()
-                .pt_3()
-                .pb_2()
-                .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(roles.on_surface))
-                        .child(i18n::string("sftp.ui.progress_center")),
-                )
-                .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(roles.on_surface_variant))
-                        .child(status),
-                ),
-        )
-        .child(
-            div()
-                .flex_1()
-                .w_full()
-                .min_w(px(0.0))
-                .min_h(px(0.0))
-                .overflow_hidden()
-                .child(content),
-        )
+        .child(content_shell)
+}
+
+fn sftp_empty_transfer_summary(error: Option<String>) -> impl IntoElement {
+    if let Some(error) = error {
+        let material = miaominal_settings::current_theme().material;
+        let extended = material.extended;
+        return h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .pb_2()
+            .text_size(miaominal_settings::FontSize::Body.scaled())
+            .child(
+                div()
+                    .size(px(7.0))
+                    .rounded(px(999.0))
+                    .bg(rgb(extended.warning.color)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .text_color(rgb(extended.warning.color))
+                    .child(error),
+            )
+            .into_any_element();
+    }
+
+    shell_compact_empty_state(
+        AppIcon::Forward,
+        i18n::string("sftp.ui.transfer_idle"),
+        SFTP_PROGRESS_CENTER_MIN_HEIGHT,
+    )
+        .into_any_element()
 }
 
 fn context_menu_local_sftp_entry(
@@ -675,6 +779,23 @@ impl AppView {
             .and_then(TabState::as_sftp_mut)
     }
 
+    pub(in crate::ui::shell) fn toggle_active_sftp_progress_center(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(sftp) = self
+            .workspace_state
+            .active_topbar_tab
+            .and_then(|index| self.workspace_state.tabs.get_mut(index))
+            .and_then(TabState::as_sftp_mut)
+        else {
+            return;
+        };
+
+        sftp.layout.progress_center_visible = !sftp.layout.progress_center_visible;
+        cx.notify();
+    }
+
     fn cache_sftp_browser_container_width(
         &mut self,
         tab_id: usize,
@@ -825,6 +946,7 @@ impl AppView {
         let tab_id = tab.id;
         let local_panel_flex = sftp_local_panel_flex(sftp_tab);
         let browser_area_flex = sftp_browser_area_flex(sftp_tab);
+        let progress_center_visible = sftp_tab.layout.progress_center_visible;
         let local_path_bar = if self.workspace_forms.sftp_browser.local_path_editing {
             let up_entity = entity.clone();
             sftp_path_bar(
@@ -907,6 +1029,86 @@ impl AppView {
         let remote_sftp_table = self.workspace_forms.sftp_browser.remote_table.clone();
         let local_table_for_menu = self.workspace_forms.sftp_browser.local_table.clone();
         let remote_table_for_menu = self.workspace_forms.sftp_browser.remote_table.clone();
+        let local_selected_count = sftp_tab.selected_local_paths.len();
+        let remote_selected_count = sftp_tab.selected_remote_paths.len();
+
+        let local_toolbar = h_flex()
+            .items_center()
+            .gap(px(SFTP_ACTION_BUTTON_GAP))
+            .child(sftp_toolbar_button(
+                AppIcon::Rotate,
+                i18n::string("sftp.tooltips.refresh_local"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.refresh_sftp_local_directory(tab_id, cx);
+                        });
+                    }
+                },
+            ))
+            .child(sftp_toolbar_button(
+                AppIcon::Upload,
+                i18n::string("sftp.tooltips.upload_selected"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.queue_sftp_upload_selected(tab_id, cx);
+                        });
+                    }
+                },
+            ))
+            .into_any_element();
+
+        let remote_toolbar = h_flex()
+            .items_center()
+            .gap(px(SFTP_ACTION_BUTTON_GAP))
+            .child(sftp_toolbar_button(
+                AppIcon::Rotate,
+                i18n::string("sftp.tooltips.refresh_remote"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            let path = this
+                                .workspace_state
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.id == tab_id)
+                                .and_then(TabState::as_sftp)
+                                .map(|sftp| sftp.remote_path.clone())
+                                .unwrap_or_else(|| ".".into());
+                            this.request_sftp_remote_directory(tab_id, path, cx);
+                        });
+                    }
+                },
+            ))
+            .child(sftp_toolbar_button(
+                AppIcon::Plus,
+                i18n::string("sftp.tooltips.create_directory"),
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.begin_sftp_create_directory(tab_id, window, cx);
+                        });
+                    }
+                },
+            ))
+            .child(sftp_toolbar_button(
+                AppIcon::Download,
+                i18n::string("sftp.tooltips.download_selected"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.queue_sftp_download_selected(tab_id, cx);
+                        });
+                    }
+                },
+            ))
+            .into_any_element();
 
         let local_list = div()
             .id(("sftp-local-table-wrap", tab_id))
@@ -1226,33 +1428,7 @@ impl AppView {
         let footer = if sftp_tab.transfers.is_empty() {
             sftp_progress_center_card(
                 format!("sftp-progress-center-{tab_id}"),
-                sftp_tab.last_status.clone(),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .gap_2()
-                    .px_3()
-                    .pb_3()
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(i18n::string_args(
-                                "sftp.ui.remote_path_label",
-                                &[("path", &sftp_tab.remote_path)],
-                            )),
-                    )
-                    .when_some(sftp_tab.last_error.clone(), |this, error| {
-                        this.child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .line_height(miaominal_settings::scaled_line_height(16.0))
-                                .text_color(rgb(extended.warning.color))
-                                .child(error),
-                        )
-                    }),
+                sftp_empty_transfer_summary(sftp_tab.last_error.clone()),
             )
             .into_any_element()
         } else {
@@ -1518,15 +1694,13 @@ impl AppView {
 
             sftp_progress_center_card(
                 format!("sftp-progress-center-{tab_id}"),
-                sftp_tab.last_status.clone(),
                 div()
                     .flex_1()
                     .w_full()
                     .min_h(px(0.0))
                     .overflow_hidden()
                     .overflow_y_scrollbar()
-                    .px_2()
-                    .pb_2()
+                    .p_2()
                     .child(rows),
             )
             .into_any_element()
@@ -1558,8 +1732,11 @@ impl AppView {
                     .child(sftp_browser_section(
                         "local-sftp-section",
                         i18n::string("sftp.ui.local_section"),
+                        AppIcon::Computer,
                         sftp_tab.local_entries.len(),
+                        local_selected_count,
                         local_path_bar,
+                        local_toolbar,
                         local_list,
                         {
                             let entity = entity.clone();
@@ -1596,8 +1773,11 @@ impl AppView {
                     .child(sftp_browser_section(
                         "remote-sftp-section",
                         i18n::string("sftp.ui.remote_section"),
+                        AppIcon::FolderSymlink,
                         sftp_tab.remote_entries.len(),
+                        remote_selected_count,
                         remote_path_bar,
+                        remote_toolbar,
                         remote_list,
                         {
                             let entity = entity.clone();
@@ -1692,29 +1872,35 @@ impl AppView {
                                 div()
                                     .flex_grow(1.0)
                                     .flex_shrink(1.0)
-                                    .flex_basis(gpui::relative(browser_area_flex))
+                                    .flex_basis(gpui::relative(if progress_center_visible {
+                                        browser_area_flex
+                                    } else {
+                                        1.0
+                                    }))
                                     .min_w(px(0.0))
                                     .min_h(px(0.0))
                                     .child(browser_panels),
                             )
-                            .child(sftp_split_bar(
-                                tab_id,
-                                SftpSplitDivider::ProgressCenter,
-                                matches!(
-                                    sftp_tab.layout.drag.as_ref(),
-                                    Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
-                                ),
-                                cx,
-                            ))
-                            .child(
-                                div()
-                                    .flex_grow(1.0)
-                                    .flex_shrink(1.0)
-                                    .flex_basis(gpui::relative(1.0 - browser_area_flex))
-                                    .min_w(px(0.0))
-                                    .min_h(px(0.0))
-                                    .child(footer),
-                            ),
+                            .when(progress_center_visible, |this| {
+                                this.child(sftp_split_bar(
+                                    tab_id,
+                                    SftpSplitDivider::ProgressCenter,
+                                    matches!(
+                                        sftp_tab.layout.drag.as_ref(),
+                                        Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+                                    ),
+                                    cx,
+                                ))
+                                .child(
+                                    div()
+                                        .flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .flex_basis(gpui::relative(1.0 - browser_area_flex))
+                                        .min_w(px(0.0))
+                                        .min_h(px(0.0))
+                                        .child(footer),
+                                )
+                            }),
                     ),
             )
             .into_any_element()

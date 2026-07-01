@@ -812,10 +812,28 @@ multi_message = "{count} 个项目将被永久删除。"
 
 [sftp.ui]
 drop_to_upload = "拖放以上传"
+item_count = "{count} 项"
+local_path_label = "本地：{path}"
+local_selected_status = "已选择 {count} 个本地项"
 remote_path_label = "远程：{path}"
 progress_center = "进度中心"
 local_section = "本地"
+remote_loading = "正在加载远程目录..."
 remote_section = "远程"
+remote_selected_status = "已选择 {count} 个远程项"
+selection_count = "已选 {selected}/{count}"
+transfer_idle = "暂无活动传输"
+
+[sftp.tooltips]
+create_directory = "新建远程文件夹"
+download_selected = "下载选中的远程项"
+edit_path = "编辑路径"
+go_up = "返回上级"
+hide_progress_center = "隐藏传输进度"
+refresh_local = "刷新本地文件夹"
+refresh_remote = "刷新远程文件夹"
+show_progress_center = "显示传输进度"
+upload_selected = "上传选中的本地项"
 
 [sftp.transfer_status]
 queued = "排队中"

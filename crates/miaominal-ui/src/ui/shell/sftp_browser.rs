@@ -576,7 +576,8 @@ impl TableDelegate for SftpBrowserTableDelegate {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let roles = miaominal_settings::current_theme().material.roles;
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
         let row_path = self
             .rows
             .get(row_ix)
@@ -591,8 +592,27 @@ impl TableDelegate for SftpBrowserTableDelegate {
             .id(("sftp-row", row_ix))
             .when(is_selected, |this| {
                 this.relative()
-                    .text_color(rgb(roles.on_primary))
-                    .child(div().absolute().inset_0().bg(rgb(roles.primary)))
+                    .text_color(rgb(roles.on_secondary_container))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(4.0))
+                            .right(px(4.0))
+                            .top(px(2.0))
+                            .bottom(px(2.0))
+                            .rounded(px(7.0))
+                            .bg(rgb(roles.secondary_container)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(4.0))
+                            .top(px(7.0))
+                            .bottom(px(7.0))
+                            .w(px(3.0))
+                            .rounded(px(999.0))
+                            .bg(rgb(roles.primary)),
+                    )
             })
             .on_prepaint(move |bounds, _, cx| {
                 table_entity.update(cx, |table, _| {
@@ -647,6 +667,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
         let Some(row) = self.rows.get(row_ix) else {
             return div().into_any_element();
         };
+        let is_selected = self.selected_paths.contains(&row.path);
 
         let orig_col_ix = self.visible_col_map.get(col_ix).copied().unwrap_or(col_ix);
 
@@ -658,7 +679,9 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 let is_loading = row.is_loading_children;
                 let collapse_path = row.path.clone();
                 let expand_path = row.path.clone();
-                let icon = if row.is_directory {
+                let icon = if row.kind == miaominal_sftp::SftpEntryKind::Symlink {
+                    AppIcon::FolderSymlink
+                } else if row.is_directory {
                     if row.is_expanded || row.is_loading_children {
                         AppIcon::FolderOpen
                     } else {
@@ -668,6 +691,15 @@ impl TableDelegate for SftpBrowserTableDelegate {
                     AppIcon::File
                 };
                 let name_icon_size = px(18.0);
+                let icon_tint = if is_selected {
+                    roles.on_secondary_container
+                } else if row.is_directory {
+                    roles.primary
+                } else if row.kind == miaominal_sftp::SftpEntryKind::Symlink {
+                    roles.tertiary
+                } else {
+                    roles.on_surface_variant
+                };
                 let name = row.name.clone();
                 let is_renaming = self.inline_rename_path.as_deref() == Some(row.path.as_str());
 
@@ -702,6 +734,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                 .flex()
                                 .items_center()
                                 .justify_center()
+                                .text_color(rgb(icon_tint))
                                 .child(Icon::new(icon).size(name_icon_size)),
                         )
                         .child(
@@ -818,6 +851,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .flex()
                             .items_center()
                             .justify_center()
+                            .text_color(rgb(icon_tint))
                             .child(Icon::new(icon).size(name_icon_size)),
                     )
                     .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(name))
