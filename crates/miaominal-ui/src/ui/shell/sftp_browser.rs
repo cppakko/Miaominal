@@ -655,7 +655,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let material = miaominal_settings::current_theme().material;
@@ -734,8 +734,14 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_color(rgb(icon_tint))
-                                .child(Icon::new(icon).size(name_icon_size)),
+                                .child(render_system_file_icon(
+                                    row,
+                                    icon,
+                                    icon_tint,
+                                    name_icon_size,
+                                    window,
+                                    cx,
+                                )),
                         )
                         .child(
                             div()
@@ -851,8 +857,14 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(rgb(icon_tint))
-                            .child(Icon::new(icon).size(name_icon_size)),
+                            .child(render_system_file_icon(
+                                row,
+                                icon,
+                                icon_tint,
+                                name_icon_size,
+                                window,
+                                cx,
+                            )),
                     )
                     .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(name))
                     .into_any_element()

@@ -68,6 +68,7 @@ mod settings_labels;
 mod sftp_browser;
 mod state;
 mod support;
+mod system_file_icons;
 mod workspace;
 
 pub use app_view::AppView;
@@ -127,6 +128,7 @@ pub(in crate::ui::shell) use state::{
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
+pub(in crate::ui::shell) use system_file_icons::render_system_file_icon;
 use workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
 
 pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};

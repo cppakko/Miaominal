@@ -5459,7 +5459,11 @@ dependencies = [
  "miaominal-storage",
  "miaominal-sync",
  "miaominal-terminal",
+ "mime_guess",
  "notify 8.2.0",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "open",
  "rfd",
  "rust-embed",
@@ -5472,6 +5476,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "unicode-segmentation",
  "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]
