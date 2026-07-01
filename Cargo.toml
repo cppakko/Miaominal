@@ -41,8 +41,8 @@ directories = "6.0.0"
 env_logger = "0.11"
 fontdb = { version = "0.23", features = ["fontconfig", "fontconfig-parser"] }
 futures = "0.3"
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -81,9 +81,9 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 ] }
 rig-core = "0.39.0"
 schemars = "1"
-settings = { git = "https://github.com/zed-industries/zed" }
-theme = { git = "https://github.com/zed-industries/zed" }
-theme_settings = { git = "https://github.com/zed-industries/zed" }
+settings = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
+theme = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
+theme_settings = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
 resvg = "0.47.0"
 rfd = "0.17.2"
 roxmltree = "0.21.1"
