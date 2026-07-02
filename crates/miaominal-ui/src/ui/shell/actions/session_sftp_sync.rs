@@ -6,6 +6,30 @@ impl AppView {
         SftpService::display_local_path(path).into()
     }
 
+    pub(in crate::ui::shell) fn sftp_browser_table_tab_id(&self, cx: &App) -> Option<usize> {
+        self.workspace_forms
+            .sftp_browser
+            .remote_table
+            .read(cx)
+            .delegate()
+            .tab_id()
+    }
+
+    pub(in crate::ui::shell) fn should_sync_sftp_browser_for_tab(&self, tab_id: usize) -> bool {
+        let active_tab_matches = self
+            .workspace_state
+            .active_topbar_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .is_some_and(|tab| tab.id == tab_id && tab.as_sftp().is_some());
+        if active_tab_matches {
+            return true;
+        }
+
+        self.panels.session_side_panel_open
+            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp
+            && self.session_side_panel_sftp_tab_id() == Some(tab_id)
+    }
+
     fn sync_sftp_path_inputs(
         &mut self,
         local_path: SharedString,
@@ -30,15 +54,18 @@ impl AppView {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_index) = self.workspace_state.active_topbar_tab else {
-            return;
-        };
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
-            return;
-        };
-        if tab.id != tab_id {
+        if !self.should_sync_sftp_browser_for_tab(tab_id) {
             return;
         }
+
+        let Some(tab) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+        else {
+            return;
+        };
 
         let Some(sftp) = tab.as_sftp() else {
             return;
@@ -71,15 +98,18 @@ impl AppView {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_index) = self.workspace_state.active_topbar_tab else {
-            return;
-        };
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
-            return;
-        };
-        if tab.id != tab_id {
+        if !self.should_sync_sftp_browser_for_tab(tab_id) {
             return;
         }
+
+        let Some(tab) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+        else {
+            return;
+        };
 
         let Some(sftp) = tab.as_sftp() else {
             return;
@@ -141,15 +171,18 @@ impl AppView {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_index) = self.workspace_state.active_topbar_tab else {
-            return;
-        };
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
-            return;
-        };
-        if tab.id != tab_id {
+        if !self.should_sync_sftp_browser_for_tab(tab_id) {
             return;
         }
+
+        let Some(tab) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+        else {
+            return;
+        };
 
         let Some(sftp) = tab.as_sftp() else {
             return;
@@ -197,15 +230,18 @@ impl AppView {
         side: SftpBrowserSide,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_index) = self.workspace_state.active_topbar_tab else {
-            return;
-        };
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
-            return;
-        };
-        if tab.id != tab_id {
+        if !self.should_sync_sftp_browser_for_tab(tab_id) {
             return;
         }
+
+        let Some(tab) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+        else {
+            return;
+        };
 
         let Some(sftp) = tab.as_sftp() else {
             return;

@@ -1591,10 +1591,15 @@ impl AppView {
         let side_panel = show_side_panel.and_then(|visibility| {
             session_index
                 .and_then(|index| self.workspace_state.tabs.get(index))
-                .and_then(TabState::as_session)
-                .map(|session| {
+                .and_then(|tab| tab.as_session().map(|session| (tab.id, session)))
+                .map(|(session_tab_id, session)| {
                     render_workspace_side_panel(
-                        self.render_session_workspace_side_panel(entity.clone(), session, cx),
+                        self.render_session_workspace_side_panel(
+                            entity.clone(),
+                            session_tab_id,
+                            session,
+                            cx,
+                        ),
                         SESSION_MONITOR_PANEL_WIDTH,
                         visibility,
                         WorkspaceSidePanelDock::Left,
@@ -2567,6 +2572,7 @@ impl AppView {
     fn render_session_workspace_side_panel(
         &self,
         entity: Entity<Self>,
+        session_tab_id: usize,
         session: &SessionTabState,
         cx: &App,
     ) -> gpui::AnyElement {
@@ -2574,6 +2580,7 @@ impl AppView {
         let selected_index = match self.panels.session_side_panel_view {
             SessionSidePanelView::Monitor => 0,
             SessionSidePanelView::Snippets => 1,
+            SessionSidePanelView::Sftp => 2,
         };
 
         let tabs = TabBar::new("session-side-panel-tabs")
@@ -2590,8 +2597,17 @@ impl AppView {
                             }
                             _ => {
                                 this.panels.session_side_panel_open = true;
-                                this.panels.session_side_panel_view =
-                                    SessionSidePanelView::Snippets;
+                                match *index {
+                                    1 => {
+                                        this.panels.session_side_panel_view =
+                                            SessionSidePanelView::Snippets;
+                                    }
+                                    _ => {
+                                        this.panels.session_side_panel_view =
+                                            SessionSidePanelView::Sftp;
+                                        this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
+                                    }
+                                }
                             }
                         }
                         cx.notify();
@@ -2600,6 +2616,7 @@ impl AppView {
             })
             .child(Tab::new().label(i18n::string("workspace.panel.monitor.title")))
             .child(Tab::new().label(i18n::string("snippets.page.snippets")))
+            .child(Tab::new().label("SFTP"))
             .h(px(36.0));
 
         let content = match self.panels.session_side_panel_view {
@@ -2608,6 +2625,9 @@ impl AppView {
             }
             SessionSidePanelView::Snippets => {
                 self.render_session_snippets_panel(entity.clone(), cx)
+            }
+            SessionSidePanelView::Sftp => {
+                self.render_session_sftp_panel(entity.clone(), session_tab_id)
             }
         };
 
@@ -2642,6 +2662,75 @@ impl AppView {
                     )
                     .child(div().flex_1().min_h(px(0.0)).child(content)),
             )
+            .into_any_element()
+    }
+
+    fn render_session_sftp_panel(
+        &self,
+        entity: Entity<Self>,
+        session_tab_id: usize,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+
+        if let Some(tab_id) = self.session_side_panel_sftp_tab_id()
+            && let Some(sftp_tab) = self
+                .workspace_state
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .and_then(TabState::as_sftp)
+        {
+            return div()
+                .id("session-sftp-panel-content")
+                .size_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .p_3()
+                .child(self.render_sftp_remote_browser_panel(entity, tab_id, sftp_tab))
+                .into_any_element();
+        }
+
+        v_flex()
+            .id("session-sftp-panel-content")
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .p_3()
+            .child(
+                div()
+                    .size(px(44.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(roles.surface))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.primary))
+                    .child(Icon::new(AppIcon::FolderSymlink).size(px(22.0))),
+            )
+            .child(
+                div()
+                    .max_w(px(280.0))
+                    .text_center()
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .text_color(rgb(text_muted))
+                    .child(i18n::string("sftp_browser.empty.remote")),
+            )
+            .child(editor_button(
+                i18n::string("workspace.menu.open_sftp_tab"),
+                false,
+                true,
+                move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
+                    });
+                },
+            ))
             .into_any_element()
     }
 

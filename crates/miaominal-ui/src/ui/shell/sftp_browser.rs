@@ -189,6 +189,10 @@ impl SftpBrowserTableDelegate {
         self.rows.len()
     }
 
+    pub(in crate::ui::shell) fn tab_id(&self) -> Option<usize> {
+        (self.tab_id != 0).then_some(self.tab_id)
+    }
+
     pub(in crate::ui::shell) fn row_index_by_path(&self, path: &str) -> Option<usize> {
         self.rows.iter().position(|row| row.path == path)
     }

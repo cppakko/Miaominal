@@ -726,10 +726,21 @@ impl AppView {
                 let mut removed = self.owned_tab_indices_for_topbar(index);
                 removed.sort_unstable();
                 removed.dedup();
-
-                let tabs = removed
+                let session_removed = removed
                     .iter()
-                    .map(|&remove_index| {
+                    .copied()
+                    .filter(|&remove_index| {
+                        self.workspace_state
+                            .tabs
+                            .get(remove_index)
+                            .and_then(TabState::as_session)
+                            .is_some()
+                    })
+                    .collect::<Vec<_>>();
+
+                let tabs = session_removed
+                    .iter()
+                    .filter_map(|&remove_index| {
                         let tab = self.workspace_state.tabs.get(remove_index)?;
                         let session = tab.as_session()?;
                         let profile = self.profile_for_session_reopen(
@@ -741,7 +752,10 @@ impl AppView {
                             hidden_from_topbar: tab.hidden_from_topbar,
                         })
                     })
-                    .collect::<Option<Vec<_>>>()?;
+                    .collect::<Vec<_>>();
+                if tabs.is_empty() {
+                    return None;
+                }
 
                 let workspace = if self.workspace_state.active_topbar_tab == Some(index) {
                     self.unload_active_topbar_workspace(cx);
@@ -755,7 +769,7 @@ impl AppView {
                         .get_mut(index)
                         .and_then(|tab| tab.workspace.take())
                 }
-                .map(|workspace| self.normalize_closed_workspace(workspace, &removed));
+                .map(|workspace| self.normalize_closed_workspace(workspace, &session_removed));
 
                 Some(ClosedTabBundle::SessionWorkspace { tabs, workspace })
             }
@@ -1122,6 +1136,13 @@ impl AppView {
             self.reset_sftp_path_editing();
             self.sync_active_sftp_path_inputs(cx);
             self.sync_active_sftp_tables(cx);
+        }
+        if self.panels.session_side_panel_open
+            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp
+            && self.workspace_state.tabs[index].as_session().is_some()
+        {
+            let session_tab_id = self.workspace_state.tabs[index].id;
+            self.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
         }
 
         self.sync_terminal_focus_reporting(window, cx);

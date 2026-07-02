@@ -458,6 +458,14 @@ impl AppView {
                 .unwrap_or_default()
         };
         owned.push(index);
+        let owner_tab_id = tab.id;
+        owned.extend(self.workspace_state.tabs.iter().enumerate().filter_map(
+            |(candidate_index, candidate)| {
+                let sftp = candidate.as_sftp()?;
+                (candidate.hidden_from_topbar && sftp.owner_session_tab_id == Some(owner_tab_id))
+                    .then_some(candidate_index)
+            },
+        ));
         owned.sort_unstable();
         owned.dedup();
         owned

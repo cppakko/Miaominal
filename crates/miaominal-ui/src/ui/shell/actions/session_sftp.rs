@@ -20,6 +20,115 @@ impl AppView {
         )
     }
 
+    fn profile_for_session_tab_id(&self, session_tab_id: usize) -> Option<SessionProfile> {
+        self.workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == session_tab_id)
+            .and_then(TabState::as_session)
+            .and_then(|session| {
+                self.data
+                    .sessions
+                    .iter()
+                    .find(|profile| profile.id == session.profile_id)
+                    .cloned()
+                    .or_else(|| session.pending_profile.clone())
+            })
+    }
+
+    fn reusable_sftp_tab_id_for_session(
+        &self,
+        session_tab_id: usize,
+        profile_id: &str,
+    ) -> Option<usize> {
+        self.workspace_state.tabs.iter().find_map(|tab| {
+            let sftp = tab.as_sftp()?;
+            let usable_owner =
+                !tab.hidden_from_topbar || sftp.owner_session_tab_id == Some(session_tab_id);
+            (sftp.profile_id == profile_id && usable_owner && sftp.commands.is_some())
+                .then_some(tab.id)
+        })
+    }
+
+    pub(in crate::ui::shell) fn session_side_panel_sftp_tab_id(&self) -> Option<usize> {
+        let (session_tab_id, profile_id) = self
+            .active_terminal_session_index()
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| {
+                tab.as_session()
+                    .map(|session| (tab.id, session.profile_id.as_str()))
+            })?;
+
+        self.reusable_sftp_tab_id_for_session(session_tab_id, profile_id)
+    }
+
+    pub(in crate::ui::shell) fn ensure_session_side_panel_sftp_tab(
+        &mut self,
+        session_tab_id: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let Some(profile) = self.profile_for_session_tab_id(session_tab_id) else {
+            self.status_message = i18n::string("session.messages.open_sftp_requires_active_ssh");
+            cx.notify();
+            return None;
+        };
+
+        if let Some(tab_id) = self.reusable_sftp_tab_id_for_session(session_tab_id, &profile.id) {
+            self.sync_sftp_path_inputs_for_tab(tab_id, cx);
+            self.sync_sftp_tables_for_tab(tab_id, cx);
+            return Some(tab_id);
+        }
+
+        if self.profile_requires_local_vault_unlock(&profile) {
+            self.prompt_local_vault_unlock(cx);
+            return None;
+        }
+
+        let tab_id = {
+            let next_id = self.workspace_state.next_tab_id;
+            self.workspace_state.next_tab_id += 1;
+            next_id
+        };
+        let mut tab = TabState::new_sftp(tab_id, &profile);
+        tab.hidden_from_topbar = true;
+        if let Some(sftp) = tab.as_sftp_mut() {
+            sftp.owner_session_tab_id = Some(session_tab_id);
+        }
+
+        let connection = self
+            .sftp_service()
+            .start_session(profile.clone(), self.data.sessions.clone());
+        if let Some(sftp) = tab.as_sftp_mut() {
+            sftp.commands = Some(connection.commands);
+        }
+
+        self.workspace_state.tabs.push(tab);
+        self.refresh_sftp_local_directory(tab_id, cx);
+        self.spawn_sftp_event_loop(tab_id, connection.events, cx);
+        self.sync_sftp_path_inputs_for_tab(tab_id, cx);
+        self.sync_sftp_tables_for_tab(tab_id, cx);
+        self.status_message = i18n::string_args(
+            "sftp.messages.opened_tab_for",
+            &[("profile", &profile.name)],
+        );
+        cx.notify();
+        Some(tab_id)
+    }
+
+    fn sftp_browser_event_tab_id(
+        &self,
+        table_entity: &Entity<TableState<SftpBrowserTableDelegate>>,
+        cx: &App,
+    ) -> Option<usize> {
+        self.active_sftp_tab_id()
+            .or_else(|| table_entity.read(cx).delegate().tab_id())
+    }
+
+    fn active_or_browser_sftp_tab_id(&self, cx: &App) -> Option<usize> {
+        self.active_sftp_tab_id()
+            .or_else(|| self.sftp_browser_table_tab_id(cx))
+    }
+
     pub(in crate::ui::shell) fn resolve_remote_sftp_entry(
         &self,
         tab_id: usize,
@@ -74,7 +183,7 @@ impl AppView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab_id) = self.active_sftp_tab_id() else {
+        let Some(tab_id) = self.sftp_browser_event_tab_id(table_entity, cx) else {
             return;
         };
 
@@ -151,7 +260,7 @@ impl AppView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab_id) = self.active_sftp_tab_id() else {
+        let Some(tab_id) = self.sftp_browser_event_tab_id(table_entity, cx) else {
             return;
         };
 
@@ -339,8 +448,9 @@ impl AppView {
             .and_then(|index| self.workspace_state.tabs.get(index))
             .map(|tab| tab.id)
             == Some(tab_id);
+        let is_visible_browser_tab = is_active_tab || self.should_sync_sftp_browser_for_tab(tab_id);
         let remote_path_submit_pending =
-            is_active_tab && self.workspace_forms.sftp_browser.remote_path_submit_pending;
+            is_visible_browser_tab && self.workspace_forms.sftp_browser.remote_path_submit_pending;
 
         let tab = &mut self.workspace_state.tabs[tab_index];
         let TabState { status, kind, .. } = tab;
@@ -585,7 +695,7 @@ impl AppView {
         if should_sync_paths {
             self.sync_sftp_path_inputs_for_tab(tab_id, cx);
             self.sync_sftp_tables_for_tab(tab_id, cx);
-            if is_active_tab {
+            if is_visible_browser_tab {
                 self.workspace_forms.sftp_browser.remote_path_editing = false;
                 self.workspace_forms.sftp_browser.remote_path_submit_pending = false;
             }
@@ -2101,9 +2211,13 @@ impl AppView {
             .trim()
             .to_string();
         let Some((tab_id, current_path)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp.local_path.clone())))
         else {
             return;
@@ -2143,9 +2257,13 @@ impl AppView {
             .trim()
             .to_string();
         let Some((tab_id, current_path)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp.remote_path.clone())))
         else {
             return;
@@ -2325,10 +2443,13 @@ impl AppView {
 
     pub(in crate::ui::shell) fn commit_sftp_inline_rename(&mut self, cx: &mut Context<Self>) {
         let Some((tab_id, commands, rename_state)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .filter(|tab| !tab.hidden_from_topbar)
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| {
                 let sftp = tab.as_sftp()?;
                 let rename_state = sftp.inline_rename.clone()?;
@@ -2413,10 +2534,14 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn cancel_sftp_inline_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(tab_id) = self.active_or_browser_sftp_tab_id(cx) else {
+            return;
+        };
         let Some(sftp) = self
             .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get_mut(index))
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
             .and_then(TabState::as_sftp_mut)
         else {
             return;
@@ -2547,10 +2672,13 @@ impl AppView {
 
     pub(in crate::ui::shell) fn skip_sftp_overwrite_prompt(&mut self, cx: &mut Context<Self>) {
         let Some((tab_id, commands, prompt)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .filter(|tab| !tab.hidden_from_topbar)
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| {
                 let sftp = tab.as_sftp()?;
                 Some((tab.id, sftp.commands.clone()?, sftp.prompt.clone()?))
@@ -2625,10 +2753,13 @@ impl AppView {
 
     pub(in crate::ui::shell) fn commit_sftp_prompt(&mut self, cx: &mut Context<Self>) {
         let Some((tab_id, commands, prompt)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .filter(|tab| !tab.hidden_from_topbar)
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| {
                 let sftp = tab.as_sftp()?;
                 Some((tab.id, sftp.commands.clone()?, sftp.prompt.clone()?))
@@ -2762,9 +2893,13 @@ impl AppView {
 
     pub(in crate::ui::shell) fn cancel_sftp_prompt(&mut self, cx: &mut Context<Self>) {
         let Some((tab_id, prompt)) = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
+            .active_or_browser_sftp_tab_id(cx)
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
             .and_then(|tab| {
                 tab.as_sftp()
                     .and_then(|sftp| sftp.prompt.clone().map(|prompt| (tab.id, prompt)))

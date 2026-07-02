@@ -209,6 +209,15 @@ impl AppView {
                 incoming.terminal_scrollbar_last_interaction_at;
         }
         self.workspace_state.workspace.active_pane_id = new_id;
+        if self.panels.session_side_panel_open
+            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp
+            && let Some(session_tab_id) = self
+                .active_terminal_session_index()
+                .and_then(|index| self.workspace_state.tabs.get(index))
+                .map(|tab| tab.id)
+        {
+            self.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
+        }
         self.rebind_terminal_focus_reporting(window, cx);
         self.workspace_state
             .workspace
@@ -1004,14 +1013,28 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn pending_sftp_prompt(&self) -> Option<(usize, SftpPromptState)> {
-        self.workspace_state
+        let active_prompt = self
+            .workspace_state
             .active_topbar_tab
             .and_then(|index| self.workspace_state.tabs.get(index))
             .filter(|tab| !tab.hidden_from_topbar)
             .and_then(|tab| {
                 tab.as_sftp()
                     .and_then(|sftp| sftp.prompt.clone().map(|prompt| (tab.id, prompt)))
+            });
+
+        active_prompt.or_else(|| {
+            self.session_side_panel_sftp_tab_id().and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| {
+                        tab.as_sftp()
+                            .and_then(|sftp| sftp.prompt.clone().map(|prompt| (tab.id, prompt)))
+                    })
             })
+        })
     }
 
     pub(in crate::ui::shell) fn start_dialog_exit(

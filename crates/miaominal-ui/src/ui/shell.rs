@@ -119,11 +119,11 @@ pub(in crate::ui::shell) use state::{
     PendingSyncPullConfirmState, SecretVisibilityState, SessionAgentAutoScrollState,
     SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
     SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
-    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionTabState,
-    SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
-    SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus, ShellState,
-    SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState,
-    split_message_into_blocks, trailing_at_mention_query,
+    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionSidePanelView,
+    SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState,
+    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus,
+    ShellState, SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter,
+    WorkspaceState, split_message_into_blocks, trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

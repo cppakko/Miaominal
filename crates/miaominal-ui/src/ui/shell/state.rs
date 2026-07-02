@@ -1177,6 +1177,7 @@ impl Default for SftpLayoutState {
 
 pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) profile_id: String,
+    pub(in crate::ui::shell) owner_session_tab_id: Option<usize>,
     pub(in crate::ui::shell) commands: Option<SftpCommandSender>,
     pub(in crate::ui::shell) local_path: PathBuf,
     pub(in crate::ui::shell) local_entries: Vec<LocalSftpEntry>,
@@ -1391,6 +1392,7 @@ impl TabState {
             status: i18n::string("tabs.initial.sftp_connecting"),
             kind: TabKind::Sftp(Box::new(SftpTabState {
                 profile_id: profile.id.clone(),
+                owner_session_tab_id: None,
                 commands: None,
                 local_path,
                 local_entries: Vec::new(),
@@ -1629,6 +1631,7 @@ pub(in crate::ui::shell) enum SessionSidePanelView {
     #[default]
     Monitor,
     Snippets,
+    Sftp,
 }
 
 #[derive(Default)]

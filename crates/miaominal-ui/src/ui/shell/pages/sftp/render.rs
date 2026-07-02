@@ -956,6 +956,317 @@ impl AppView {
         self.render_sftp_page_content(entity, cx)
     }
 
+    pub(in crate::ui::shell) fn render_sftp_remote_browser_panel(
+        &self,
+        entity: Entity<Self>,
+        tab_id: usize,
+        sftp_tab: &SftpTabState,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let extended = material.extended;
+
+        let remote_path_bar = if self.workspace_forms.sftp_browser.remote_path_editing {
+            let up_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_input_shell(&self.workspace_forms.sftp_browser.remote_path_input),
+                false,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_remote_up(tab_id, cx);
+                    });
+                },
+                |_window, _cx| {},
+            )
+            .into_any_element()
+        } else {
+            let breadcrumb_entity = entity.clone();
+            let up_entity = entity.clone();
+            let edit_entity = entity.clone();
+            sftp_path_bar(
+                sftp_path_breadcrumb_shell(build_remote_sftp_breadcrumb(
+                    &sftp_tab.remote_path,
+                    breadcrumb_entity,
+                    tab_id,
+                )),
+                true,
+                move |_window, cx| {
+                    up_entity.update(cx, |this, cx| {
+                        this.navigate_sftp_remote_up(tab_id, cx);
+                    });
+                },
+                move |_window, cx| {
+                    edit_entity.update(cx, |this, cx| {
+                        this.set_sftp_remote_path_editing(true, cx);
+                    });
+                },
+            )
+            .into_any_element()
+        };
+
+        let remote_toolbar = h_flex()
+            .items_center()
+            .gap(px(SFTP_ACTION_BUTTON_GAP))
+            .child(sftp_toolbar_button(
+                AppIcon::Rotate,
+                i18n::string("sftp.tooltips.refresh_remote"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            let path = this
+                                .workspace_state
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.id == tab_id)
+                                .and_then(TabState::as_sftp)
+                                .map(|sftp| sftp.remote_path.clone())
+                                .unwrap_or_else(|| ".".into());
+                            this.request_sftp_remote_directory(tab_id, path, cx);
+                        });
+                    }
+                },
+            ))
+            .child(sftp_toolbar_button(
+                AppIcon::Plus,
+                i18n::string("sftp.tooltips.create_directory"),
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.begin_sftp_create_directory(tab_id, window, cx);
+                        });
+                    }
+                },
+            ))
+            .child(sftp_toolbar_button(
+                AppIcon::Download,
+                i18n::string("sftp.tooltips.download_selected"),
+                {
+                    let entity = entity.clone();
+                    move |_window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.queue_sftp_download_selected(tab_id, cx);
+                        });
+                    }
+                },
+            ))
+            .into_any_element();
+
+        let table_row_height = gpui_component::Size::Small.table_row_height();
+        let remote_table_bounds = Rc::new(RefCell::new(None));
+        let remote_sftp_table = self.workspace_forms.sftp_browser.remote_table.clone();
+        let remote_table_for_menu = self.workspace_forms.sftp_browser.remote_table.clone();
+        let remote_selected_count = sftp_tab.selected_remote_paths.len();
+
+        let remote_list = div()
+            .id(("sftp-remote-table-wrap", tab_id))
+            .group("sftp-remote-drop")
+            .relative()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_hidden()
+            .on_prepaint({
+                let remote_table_bounds = remote_table_bounds.clone();
+                let table = self.workspace_forms.sftp_browser.remote_table.clone();
+                move |bounds, _, cx| {
+                    *remote_table_bounds.borrow_mut() = Some(bounds);
+                    table.update(cx, |table, cx| {
+                        if table.delegate_mut().set_available_width(bounds.size.width) {
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .on_mouse_down(MouseButton::Left, {
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseDownEvent, _window, cx| {
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, _cx| {
+                        this.begin_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            table_row_height,
+                            _cx,
+                        );
+                    });
+                }
+            })
+            .on_mouse_move({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        if this.update_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            table_row_height,
+                            cx,
+                        ) {
+                            cx.stop_propagation();
+                        }
+                    });
+                }
+            })
+            .capture_any_mouse_up({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event: &MouseUpEvent, _window, cx| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        if this.finish_sftp_drag_selection(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position,
+                            bounds,
+                            table_row_height,
+                            cx,
+                        ) {
+                            cx.stop_propagation();
+                        }
+                    });
+                }
+            })
+            .on_click({
+                let entity = entity.clone();
+                let remote_table_bounds = remote_table_bounds.clone();
+                move |event, _window, cx| {
+                    let Some(bounds) = *remote_table_bounds.borrow() else {
+                        return;
+                    };
+
+                    entity.update(cx, |this, cx| {
+                        this.handle_sftp_blank_click(
+                            tab_id,
+                            SftpBrowserSide::Remote,
+                            event.position(),
+                            bounds,
+                            table_row_height,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .child(
+                DataTable::new(&self.workspace_forms.sftp_browser.remote_table)
+                    .with_size(gpui_component::Size::Small)
+                    .bordered(false)
+                    .scrollbar_visible(true, true),
+            )
+            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                if !event.modifiers.shift {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == px(0.) {
+                    return;
+                }
+                remote_sftp_table.update(cx, |state, cx| {
+                    let mut offset = state.horizontal_scroll_handle.offset();
+                    offset.x += delta.y;
+                    state.horizontal_scroll_handle.set_offset(offset);
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            })
+            .when_some(sftp_tab.remote_drag_selection, |this, drag| {
+                let bounds = sftp_drag_selection_overlay_bounds(drag, table_row_height);
+                this.child(
+                    div()
+                        .absolute()
+                        .left(bounds.origin.x)
+                        .top(bounds.origin.y)
+                        .w(bounds.size.width)
+                        .h(bounds.size.height)
+                        .border_1()
+                        .border_color(color_with_alpha(extended.info.color, 0x80))
+                        .bg(color_with_alpha(extended.info.color, 0x24)),
+                )
+            })
+            .on_drop::<ExternalPaths>({
+                let entity = entity.clone();
+                move |paths: &ExternalPaths, _window, cx| {
+                    let local_paths: Vec<PathBuf> = paths.paths().to_vec();
+                    entity.update(cx, |this, cx| {
+                        this.queue_sftp_upload_paths(tab_id, local_paths, cx);
+                    });
+                }
+            })
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .invisible()
+                    .group_drag_over::<ExternalPaths>("sftp-remote-drop", |style| style.visible())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .bg(color_with_alpha(roles.primary, 0x20))
+                    .child(
+                        div()
+                            .text_size(miaominal_settings::FontSize::Subheading.scaled())
+                            .text_color(rgb(roles.on_primary))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(i18n::string("sftp.ui.drop_to_upload")),
+                    ),
+            )
+            .into_any_element();
+
+        sftp_browser_section(
+            SharedString::from(format!("remote-sftp-section-{tab_id}")),
+            i18n::string("sftp.ui.remote_section"),
+            AppIcon::FolderSymlink,
+            sftp_tab.remote_entries.len(),
+            remote_selected_count,
+            remote_path_bar,
+            remote_toolbar,
+            remote_list,
+            {
+                let entity = entity.clone();
+                let remote_table_for_menu = remote_table_for_menu.clone();
+                move |menu, _window, cx: &mut Context<PopupMenu>| {
+                    let is_header = remote_table_for_menu.update(cx, |state, _| {
+                        state.delegate_mut().take_col_header_right_clicked()
+                    });
+                    if is_header {
+                        return menu;
+                    }
+                    build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                }
+            },
+        )
+        .into_any_element()
+    }
+
     pub(in crate::ui::shell) fn render_sftp_page_content(
         &self,
         entity: Entity<Self>,
