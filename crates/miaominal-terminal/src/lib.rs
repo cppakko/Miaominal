@@ -59,6 +59,8 @@ pub const DEFAULT_TERMINAL_COLUMNS: usize = 120;
 pub const DEFAULT_TERMINAL_LINES: usize = 32;
 pub const MIN_TERMINAL_COLUMNS: usize = 20;
 pub const SCROLLBACK_LINES: usize = 10_000;
+const MIN_TERMINAL_TEXT_CONTRAST: f32 = 4.5;
+const CONTRAST_MIX_STEPS: usize = 8;
 
 pub fn terminal_font() -> Font {
     let mut f = font(settings::font_family());
@@ -699,6 +701,7 @@ fn build_cell(
         search_match: SearchMatchKind::None,
     }
     .with_default_fg(default_fg)
+    .with_legible_foreground(default_fg, default_bg)
 }
 
 impl TerminalCell {
@@ -706,6 +709,11 @@ impl TerminalCell {
         if self.dim {
             self.fg = mix_with_default(self.fg, default_fg, 0.35);
         }
+        self
+    }
+
+    fn with_legible_foreground(mut self, default_fg: Hsla, default_bg: Hsla) -> Self {
+        self.fg = legible_foreground(self.fg, self.bg, default_fg, default_bg);
         self
     }
 }
@@ -791,15 +799,95 @@ fn is_url_char(ch: char) -> bool {
 }
 
 fn mix_with_default(color: Hsla, default: Hsla, amount: f32) -> Hsla {
+    mix_colors(color, default, amount)
+}
+
+fn mix_colors(color: Hsla, target: Hsla, amount: f32) -> Hsla {
     let color: Rgba = color.into();
-    let default: Rgba = default.into();
+    let target: Rgba = target.into();
     let mix = Rgba {
-        r: color.r + (default.r - color.r) * amount,
-        g: color.g + (default.g - color.g) * amount,
-        b: color.b + (default.b - color.b) * amount,
+        r: color.r + (target.r - color.r) * amount,
+        g: color.g + (target.g - color.g) * amount,
+        b: color.b + (target.b - color.b) * amount,
         a: color.a,
     };
     rgba_to_hsla(mix)
+}
+
+fn legible_foreground(fg: Hsla, bg: Hsla, default_fg: Hsla, default_bg: Hsla) -> Hsla {
+    let current_ratio = contrast_ratio(fg, bg);
+    if current_ratio >= MIN_TERMINAL_TEXT_CONTRAST {
+        return fg;
+    }
+
+    let default_fg_ratio = contrast_ratio(default_fg, bg);
+    let default_bg_ratio = contrast_ratio(default_bg, bg);
+    let target = if default_fg_ratio >= default_bg_ratio {
+        default_fg
+    } else {
+        default_bg
+    };
+
+    let mut best = fg;
+    let mut best_ratio = current_ratio;
+    for step in 1..=CONTRAST_MIX_STEPS {
+        let amount = step as f32 / CONTRAST_MIX_STEPS as f32;
+        let candidate = mix_colors(fg, target, amount);
+        let ratio = contrast_ratio(candidate, bg);
+        if ratio > best_ratio {
+            best = candidate;
+            best_ratio = ratio;
+        }
+        if ratio >= MIN_TERMINAL_TEXT_CONTRAST {
+            return candidate;
+        }
+    }
+
+    let black = rgba_to_hsla(Rgba {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let white = rgba_to_hsla(Rgba {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+
+    for candidate in [default_fg, default_bg, black, white] {
+        let ratio = contrast_ratio(candidate, bg);
+        if ratio > best_ratio {
+            best = candidate;
+            best_ratio = ratio;
+        }
+    }
+
+    best
+}
+
+fn contrast_ratio(a: Hsla, b: Hsla) -> f32 {
+    let a = relative_luminance(a);
+    let b = relative_luminance(b);
+    let lighter = a.max(b);
+    let darker = a.min(b);
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn relative_luminance(color: Hsla) -> f32 {
+    let color: Rgba = color.into();
+    0.2126 * linear_channel(color.r)
+        + 0.7152 * linear_channel(color.g)
+        + 0.0722 * linear_channel(color.b)
+}
+
+fn linear_channel(value: f32) -> f32 {
+    if value <= 0.03928 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn resolve_color(color: Color, colors: &Colors) -> Hsla {
@@ -1159,6 +1247,28 @@ mod tests {
     }
 
     #[test]
+    fn legible_foreground_leaves_high_contrast_text_alone() {
+        let fg = rgba_to_hsla(rgb(0xe8eaed));
+        let bg = rgba_to_hsla(rgb(0x101418));
+        let adjusted = legible_foreground(fg, bg, fg, bg);
+
+        assert_rgba_close(adjusted, fg);
+    }
+
+    #[test]
+    fn legible_foreground_repairs_low_contrast_ansi_blocks() {
+        let fg = rgba_to_hsla(rgb(0xa5f29f));
+        let bg = rgba_to_hsla(rgb(0x8ee58b));
+        let default_fg = rgba_to_hsla(rgb(0xece6df));
+        let default_bg = rgba_to_hsla(rgb(0x160f0b));
+
+        let adjusted = legible_foreground(fg, bg, default_fg, default_bg);
+
+        assert!(contrast_ratio(adjusted, bg) >= MIN_TERMINAL_TEXT_CONTRAST);
+        assert!(contrast_ratio(adjusted, bg) > contrast_ratio(fg, bg));
+    }
+
+    #[test]
     fn alternate_scroll_requires_alternate_screen() {
         let terminal = TerminalState::default();
 
@@ -1172,5 +1282,16 @@ mod tests {
         terminal.push_bytes(b"\x1b[?1049h");
 
         assert!(terminal.alternate_scroll_active());
+    }
+
+    fn assert_rgba_close(actual: Hsla, expected: Hsla) {
+        let actual: Rgba = actual.into();
+        let expected: Rgba = expected.into();
+        let delta = (actual.r - expected.r).abs()
+            + (actual.g - expected.g).abs()
+            + (actual.b - expected.b).abs()
+            + (actual.a - expected.a).abs();
+
+        assert!(delta < 0.001, "color delta was {delta}");
     }
 }
