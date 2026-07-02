@@ -2015,7 +2015,7 @@ impl AppView {
                                         .child(prompt.prompt.clone()),
                                 )
                                 .child(
-                                    Input::new(input)
+                                    HintedInput::new(input)
                                         .large()
                                         .w_full()
                                         .border_0()

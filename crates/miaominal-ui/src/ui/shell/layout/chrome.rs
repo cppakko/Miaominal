@@ -831,7 +831,7 @@ impl AppView {
                                                                 cx.stop_propagation();
                                                             })
                                                             .child(
-                                                                Input::new(&self.workspace_forms.rename_input)
+                                                                HintedInput::new(&self.workspace_forms.rename_input)
                                                                     .appearance(false)
                                                                     .border_1()
                                                                     .border_color(rgb(roles.primary))

@@ -1,5 +1,5 @@
-use aes_gcm::aead::{Aead, KeyInit, Nonce, array::Array};
 use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, KeyInit, Nonce, array::Array};
 use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;

@@ -121,7 +121,7 @@ fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
         .items_center()
         .overflow_hidden()
         .child(
-            Input::new(input)
+            HintedInput::new(input)
                 .appearance(false)
                 .border_0()
                 .small()
@@ -2361,7 +2361,7 @@ impl AppView {
 
         let body = match &prompt.kind {
             SftpPromptKind::CreateRemoteDirectory { .. } => Some(
-                Input::new(&self.workspace_forms.sftp_browser.prompt_input)
+                HintedInput::new(&self.workspace_forms.sftp_browser.prompt_input)
                     .large()
                     .w_full()
                     .rounded(px(12.0))

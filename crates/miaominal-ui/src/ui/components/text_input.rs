@@ -1,14 +1,10 @@
-use super::icon_button;
+use super::{HintedInput, icon_button};
 use crate::ui::assets::AppIcon;
 use gpui::{
     AnyElement, App, Div, Entity, IntoElement, ParentElement, SharedString, Styled, Window, div,
     prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::{
-    Icon, Sizable as _, Size, h_flex,
-    input::{Input, InputState},
-    v_flex,
-};
+use gpui_component::{Icon, Sizable as _, Size, h_flex, input::InputState, v_flex};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextInputSurface {
@@ -27,10 +23,13 @@ impl TextInputSurface {
     }
 }
 
-pub(crate) fn surface_text_input(input: &Entity<InputState>, surface: TextInputSurface) -> Input {
+pub(crate) fn surface_text_input(
+    input: &Entity<InputState>,
+    surface: TextInputSurface,
+) -> HintedInput {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    Input::new(input)
+    HintedInput::new(input)
         .w_full()
         .border_0()
         .rounded(px(14.0))
@@ -187,11 +186,14 @@ pub(crate) fn surface_text_editor(
         .bg(rgb(surface.background()))
         .overflow_hidden()
         .child(
-            Input::new(input)
+            HintedInput::new(input)
                 .size_full()
                 .appearance(false)
                 .focus_bordered(false)
-                .p_3(),
+                .p_3()
+                .hint_top(px(12.0))
+                .hint_bottom(px(12.0))
+                .container_h_full(),
         )
 }
 

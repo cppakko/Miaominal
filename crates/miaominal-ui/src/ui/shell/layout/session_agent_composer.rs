@@ -131,11 +131,14 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 })
                                 .child(
                                     div().flex_1().child(
-                                        Input::new(&prompt_input)
+                                        HintedInput::new(&prompt_input)
                                             .w_full()
                                             .appearance(false)
                                             .focus_bordered(false)
-                                            .p_1(),
+                                            .p_1()
+                                            .hint_left(px(4.0))
+                                            .hint_top(px(4.0))
+                                            .hint_bottom(px(4.0)),
                                     ),
                                 )
                                 .on_key_down({

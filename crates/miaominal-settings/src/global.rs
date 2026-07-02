@@ -68,6 +68,7 @@ pub fn sync_component_theme(cx: &mut App) {
     let secondary_active_tone = if is_dark { 70 } else { 82 };
     let danger_hover_tone = if is_dark { 70 } else { 35 };
     let danger_active_tone = if is_dark { 60 } else { 30 };
+    let muted_foreground_tone = if is_dark { 78 } else { 38 };
 
     let component_theme = ComponentTheme::global_mut(cx);
     component_theme.mode = if is_dark {
@@ -113,7 +114,10 @@ pub fn sync_component_theme(cx: &mut App) {
     ));
     colors.secondary_foreground = hsla(material.roles.on_secondary_container);
     colors.muted = hsla(material.roles.surface_container_low);
-    colors.muted_foreground = hsla(material.roles.on_surface_variant).opacity(0.6);
+    colors.muted_foreground = hsla(material_theme::palette_tone_rgb(
+        material.palettes.neutral,
+        muted_foreground_tone,
+    ));
     colors.popover = hsla(material.roles.surface_container_high);
     colors.popover_foreground = hsla(material.roles.on_surface);
     colors.overlay = hsla(material.roles.scrim);

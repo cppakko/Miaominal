@@ -298,7 +298,7 @@ impl AppView {
                         this.child(
                             div()
                                 .flex_1()
-                                .child(Input::new(&title_input).appearance(false).w_full()),
+                                .child(HintedInput::new(&title_input).appearance(false).w_full()),
                         )
                     })
                     .when(!editing, move |this| {
@@ -496,7 +496,7 @@ impl AppView {
                                                 move |this| {
                                                     this.child(
                                                         div().flex_1().child(
-                                                            Input::new(&title_input)
+                                                            HintedInput::new(&title_input)
                                                             .appearance(false)
                                                             .w_full(),
                                                         ),

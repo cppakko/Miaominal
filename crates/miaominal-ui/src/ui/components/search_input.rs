@@ -1,8 +1,6 @@
+use super::HintedInput;
 use gpui::{AnyElement, Div, Entity, ParentElement, Styled, div, px, rgb};
-use gpui_component::{
-    Icon, IconName, Sizable as _,
-    input::{Input, InputState},
-};
+use gpui_component::{Icon, IconName, Sizable as _, input::InputState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchInputStyle {
@@ -34,15 +32,15 @@ impl SearchInputStyle {
         }
     }
 
-    fn build_input(self, input: &Entity<InputState>, icon_color: u32) -> Input {
+    fn build_input(self, input: &Entity<InputState>, icon_color: u32) -> HintedInput {
         let mut prefix = div().flex().items_center().text_color(rgb(icon_color));
         if matches!(self, Self::Pill) {
             prefix = prefix.pl_3();
         }
 
         let field = match self {
-            Self::Pill => Input::new(input).large(),
-            Self::Compact => Input::new(input).small(),
+            Self::Pill => HintedInput::new(input).large().hint_left(px(44.0)),
+            Self::Compact => HintedInput::new(input).small().hint_left(px(34.0)),
         };
 
         field

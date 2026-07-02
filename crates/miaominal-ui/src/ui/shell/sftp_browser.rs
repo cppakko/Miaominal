@@ -783,7 +783,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                     cx.stop_propagation();
                                 })
                                 .child(
-                                    Input::new(&inline_rename_input)
+                                    HintedInput::new(&inline_rename_input)
                                         .appearance(false)
                                         .border_1()
                                         .border_color(rgb(roles.primary))

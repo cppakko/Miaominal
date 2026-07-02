@@ -21,7 +21,8 @@ pub(in crate::ui::shell) use animation::{
 };
 pub(in crate::ui::shell) use group_accent::{GroupAccentPalette, group_accent_palette};
 pub(in crate::ui::shell) use inputs::{
-    new_input_state, set_input_masked, set_input_placeholder, set_input_value,
+    new_input_state, set_code_editor_input_placeholder, set_input_masked, set_input_placeholder,
+    set_input_value,
 };
 pub(in crate::ui::shell) use sync_ops::sync_status_summary;
 pub(in crate::ui::shell) use terminal::{

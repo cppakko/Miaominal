@@ -15,7 +15,7 @@ use gpui_component::{
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     h_flex,
     input::TabSize,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
     select::{SearchableVec, SelectEvent, SelectItem, SelectState},
@@ -75,8 +75,8 @@ pub use app_view::AppView;
 
 pub(crate) use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
-    EDITOR_FOOTER_ACTION_HEIGHT, IconTileTone, SearchInputStyle, TextInputSurface, badge,
-    basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
+    EDITOR_FOOTER_ACTION_HEIGHT, HintedInput, IconTileTone, SearchInputStyle, TextInputSurface,
+    badge, basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
     editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button, field_label,
     icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
     page_muted_icon_tile, page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
@@ -137,8 +137,9 @@ use support::{
     TerminalScrollbarMetrics, classify_terminal_key, container_transition_animation,
     list_enter_animation, new_input_state, overlay_enter_animation, render_basic_dialog,
     render_basic_dialog_with_config, render_bottom_popup, render_terminal_canvas_for_pane,
-    set_input_placeholder, set_input_value, short_feedback_animation, terminal_cell_width,
-    terminal_line_height, terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
+    set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
+    short_feedback_animation, terminal_cell_width, terminal_line_height, terminal_scrollbar_metrics,
+    terminal_scrollbar_offset_for_pointer,
 };
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {

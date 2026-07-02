@@ -927,7 +927,7 @@ fn render_session_agent_ask_user_actions(
                     .items_center()
                     .child(
                         div().flex_1().min_w(px(0.0)).child(
-                            Input::new(&input)
+                            HintedInput::new(&input)
                                 .w_full()
                                 .border_0()
                                 .rounded(px(6.0))

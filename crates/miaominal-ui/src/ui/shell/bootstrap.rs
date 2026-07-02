@@ -196,9 +196,16 @@ impl AppView {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .placeholder(i18n::string("placeholders.host_editor.startup_command"))
+                .placeholder("")
                 .default_value(startup_command_value)
         });
+        set_code_editor_input_placeholder(
+            &startup_command_input,
+            i18n::string("placeholders.host_editor.startup_command"),
+            false,
+            window,
+            cx,
+        );
         let proxy_jump_profile_ids = selected_profile_data
             .as_ref()
             .map(|profile| profile.proxy_jump_profile_ids.clone())
@@ -238,10 +245,15 @@ impl AppView {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .placeholder(i18n::string(
-                    "placeholders.keychain.import_private_key_body",
-                ))
+                .placeholder("")
         });
+        set_code_editor_input_placeholder(
+            &managed_key_import_private_key_input,
+            i18n::string("placeholders.keychain.import_private_key_body"),
+            false,
+            window,
+            cx,
+        );
         let managed_key_import_public_key_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("bash")
@@ -253,8 +265,15 @@ impl AppView {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .placeholder(i18n::string("placeholders.keychain.import_public_key_body"))
+                .placeholder("")
         });
+        set_code_editor_input_placeholder(
+            &managed_key_import_public_key_input,
+            i18n::string("placeholders.keychain.import_public_key_body"),
+            false,
+            window,
+            cx,
+        );
         let managed_key_import_passphrase_input = new_input_state(
             i18n::string("placeholders.keychain.import_passphrase_optional"),
             "",
@@ -294,9 +313,16 @@ impl AppView {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .placeholder(i18n::string("placeholders.keychain.deploy_command"))
+                .placeholder("")
                 .default_value(KEYCHAIN_DEPLOY_DEFAULT_COMMAND)
         });
+        set_code_editor_input_placeholder(
+            &keychain_deploy_command_input,
+            i18n::string("placeholders.keychain.deploy_command"),
+            false,
+            window,
+            cx,
+        );
         let port_forward_label_input = new_input_state(
             i18n::string("placeholders.forward.rule_label"),
             "",
@@ -353,8 +379,15 @@ impl AppView {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .placeholder(i18n::string("placeholders.snippets.script_body"))
+                .placeholder("")
         });
+        set_code_editor_input_placeholder(
+            &snippet_script_input,
+            i18n::string("placeholders.snippets.script_body"),
+            true,
+            window,
+            cx,
+        );
         let snippet_filter_input = new_input_state(
             i18n::string("placeholders.snippets.filter"),
             "",
@@ -375,15 +408,25 @@ impl AppView {
                 .auto_grow(3, 8)
                 .submit_on_enter(true)
                 .context_menu(false)
-                .placeholder(i18n::string("workspace.panel.agent.placeholder"))
+                .placeholder("")
         });
+        set_input_placeholder(
+            &agent_prompt_input,
+            i18n::string("workspace.panel.agent.placeholder"),
+            window,
+            cx,
+        );
         let agent_ask_user_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .submit_on_enter(true)
-                .placeholder(i18n::string(
-                    "workspace.panel.agent.tool_placeholders.custom_answer",
-                ))
+                .placeholder("")
         });
+        set_input_placeholder(
+            &agent_ask_user_input,
+            i18n::string("workspace.panel.agent.tool_placeholders.custom_answer"),
+            window,
+            cx,
+        );
         let agent_title_input = new_input_state(
             i18n::string("workspace.panel.agent.sidebar_title"),
             "",
@@ -1949,9 +1992,10 @@ impl AppView {
             window,
             cx,
         );
-        set_input_placeholder(
+        set_code_editor_input_placeholder(
             &self.host_editor_forms.startup_command_input,
             i18n::string("placeholders.host_editor.startup_command"),
+            false,
             window,
             cx,
         );
@@ -1982,15 +2026,17 @@ impl AppView {
             window,
             cx,
         );
-        set_input_placeholder(
+        set_code_editor_input_placeholder(
             &self.panel_forms.keychain.import_private_key_input,
             i18n::string("placeholders.keychain.import_private_key_body"),
+            false,
             window,
             cx,
         );
-        set_input_placeholder(
+        set_code_editor_input_placeholder(
             &self.panel_forms.keychain.import_public_key_input,
             i18n::string("placeholders.keychain.import_public_key_body"),
+            false,
             window,
             cx,
         );
@@ -2018,9 +2064,10 @@ impl AppView {
             window,
             cx,
         );
-        set_input_placeholder(
+        set_code_editor_input_placeholder(
             &self.panel_forms.keychain.deploy_command_input,
             i18n::string("placeholders.keychain.deploy_command"),
+            false,
             window,
             cx,
         );
@@ -2123,9 +2170,10 @@ impl AppView {
             window,
             cx,
         );
-        set_input_placeholder(
+        set_code_editor_input_placeholder(
             &self.panel_forms.snippets.script_input,
             i18n::string("placeholders.snippets.script_body"),
+            true,
             window,
             cx,
         );

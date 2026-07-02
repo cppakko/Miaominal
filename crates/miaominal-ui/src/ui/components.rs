@@ -14,6 +14,8 @@ mod fab_button;
 mod icon_button;
 #[path = "components/icon_tile.rs"]
 mod icon_tile;
+#[path = "components/input_hint.rs"]
+mod input_hint;
 #[path = "components/list_item_card.rs"]
 mod list_item_card;
 #[path = "components/md3_select.rs"]
@@ -48,6 +50,7 @@ pub(crate) use icon_button::{
     IconButtonStyle, icon_button, icon_button_with_icon_size, icon_button_with_tooltip,
 };
 pub(crate) use icon_tile::{IconTileTone, icon_tile, page_muted_icon_tile};
+pub(crate) use input_hint::{HintedInput, register_code_editor_input_hint, register_input_hint};
 pub(crate) use list_item_card::list_item_card;
 pub(crate) use md3_select::md3_select;
 pub(crate) use md3_spinner::md3_spinner;
