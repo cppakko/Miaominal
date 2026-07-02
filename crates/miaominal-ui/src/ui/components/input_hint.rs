@@ -112,7 +112,8 @@ fn code_editor_gutter_width(size: Size, folding: bool, window: &mut Window) -> P
         None,
     );
 
-    shaped_line.width + LINE_NUMBER_RIGHT_MARGIN
+    shaped_line.width
+        + LINE_NUMBER_RIGHT_MARGIN
         + if folding {
             FOLD_ICON_HITBOX_WIDTH
         } else {

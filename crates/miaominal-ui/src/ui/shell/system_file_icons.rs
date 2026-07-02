@@ -376,7 +376,7 @@ mod platform {
 
         let crop_width = max_x - min_x + 1;
         let crop_height = max_y - min_y + 1;
-        let visual_margin = (output_size / 18).max(1).min(4);
+        let visual_margin = (output_size / 18).clamp(1, 4);
         let target_limit = output_size.saturating_sub(visual_margin).max(1);
 
         if source_size == output_size && crop_width.max(crop_height) >= target_limit {

@@ -138,8 +138,8 @@ use support::{
     list_enter_animation, new_input_state, overlay_enter_animation, render_basic_dialog,
     render_basic_dialog_with_config, render_bottom_popup, render_terminal_canvas_for_pane,
     set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
-    short_feedback_animation, terminal_cell_width, terminal_line_height, terminal_scrollbar_metrics,
-    terminal_scrollbar_offset_for_pointer,
+    short_feedback_animation, terminal_cell_width, terminal_line_height,
+    terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
 };
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {

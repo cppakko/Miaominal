@@ -599,7 +599,7 @@ impl AppView {
         match side {
             SftpBrowserSide::Local => {
                 let table = self.workspace_forms.sftp_browser.local_table.read(cx);
-                let row_range = Self::sftp_drag_selection_row_range(&table, drag, row_height);
+                let row_range = Self::sftp_drag_selection_row_range(table, drag, row_height);
                 let selected_paths = row_range
                     .map(|(start, end)| table.delegate().paths_in_row_range(start, end))
                     .unwrap_or_default();
@@ -607,7 +607,7 @@ impl AppView {
             }
             SftpBrowserSide::Remote => {
                 let table = self.workspace_forms.sftp_browser.remote_table.read(cx);
-                let row_range = Self::sftp_drag_selection_row_range(&table, drag, row_height);
+                let row_range = Self::sftp_drag_selection_row_range(table, drag, row_height);
                 let selected_paths = row_range
                     .map(|(start, end)| table.delegate().paths_in_row_range(start, end))
                     .unwrap_or_default();

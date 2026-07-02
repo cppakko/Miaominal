@@ -392,23 +392,38 @@ fn sftp_split_bar(
     .into_any_element()
 }
 
-fn sftp_browser_section<M>(
-    section_id: impl Into<ElementId>,
-    title: impl Into<SharedString>,
+struct SftpBrowserSection<P, T, C, M> {
+    section_id: ElementId,
+    title: SharedString,
     icon: AppIcon,
     item_count: usize,
     selected_count: usize,
-    path_bar: impl IntoElement,
-    toolbar: impl IntoElement,
-    content: impl IntoElement,
+    path_bar: P,
+    toolbar: T,
+    content: C,
     menu_builder: M,
-) -> impl IntoElement
+}
+
+fn sftp_browser_section<P, T, C, M>(section: SftpBrowserSection<P, T, C, M>) -> impl IntoElement
 where
+    P: IntoElement,
+    T: IntoElement,
+    C: IntoElement,
     M: for<'a, 'b, 'c> Fn(PopupMenu, &'a mut Window, &'b mut Context<'c, PopupMenu>) -> PopupMenu
         + 'static,
 {
     let roles = miaominal_settings::current_theme().material.roles;
-    let title = title.into();
+    let SftpBrowserSection {
+        section_id,
+        title,
+        icon,
+        item_count,
+        selected_count,
+        path_bar,
+        toolbar,
+        content,
+        menu_builder,
+    } = section;
 
     sftp_panel_card()
         .id(section_id)
@@ -1241,19 +1256,19 @@ impl AppView {
             )
             .into_any_element();
 
-        sftp_browser_section(
-            SharedString::from(format!("remote-sftp-section-{tab_id}")),
-            i18n::string("sftp.ui.remote_section"),
-            AppIcon::FolderSymlink,
-            sftp_tab.remote_entries.len(),
-            remote_selected_count,
-            remote_path_bar,
-            remote_toolbar,
-            remote_list,
-            {
+        sftp_browser_section(SftpBrowserSection {
+            section_id: SharedString::from(format!("remote-sftp-section-{tab_id}")).into(),
+            title: i18n::string("sftp.ui.remote_section").into(),
+            icon: AppIcon::FolderSymlink,
+            item_count: sftp_tab.remote_entries.len(),
+            selected_count: remote_selected_count,
+            path_bar: remote_path_bar,
+            toolbar: remote_toolbar,
+            content: remote_list,
+            menu_builder: {
                 let entity = entity.clone();
                 let remote_table_for_menu = remote_table_for_menu.clone();
-                move |menu, _window, cx: &mut Context<PopupMenu>| {
+                move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                     let is_header = remote_table_for_menu.update(cx, |state, _| {
                         state.delegate_mut().take_col_header_right_clicked()
                     });
@@ -1263,7 +1278,7 @@ impl AppView {
                     build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
                 }
             },
-        )
+        })
         .into_any_element()
     }
 
@@ -2095,19 +2110,19 @@ impl AppView {
                     .h_full()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .child(sftp_browser_section(
-                        "local-sftp-section",
-                        i18n::string("sftp.ui.local_section"),
-                        AppIcon::Computer,
-                        sftp_tab.local_entries.len(),
-                        local_selected_count,
-                        local_path_bar,
-                        local_toolbar,
-                        local_list,
-                        {
+                    .child(sftp_browser_section(SftpBrowserSection {
+                        section_id: "local-sftp-section".into(),
+                        title: i18n::string("sftp.ui.local_section").into(),
+                        icon: AppIcon::Computer,
+                        item_count: sftp_tab.local_entries.len(),
+                        selected_count: local_selected_count,
+                        path_bar: local_path_bar,
+                        toolbar: local_toolbar,
+                        content: local_list,
+                        menu_builder: {
                             let entity = entity.clone();
                             let local_table_for_menu = local_table_for_menu.clone();
-                            move |menu, _window, cx: &mut Context<PopupMenu>| {
+                            move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                                 let is_header = local_table_for_menu.update(cx, |state, _| {
                                     state.delegate_mut().take_col_header_right_clicked()
                                 });
@@ -2117,7 +2132,7 @@ impl AppView {
                                 build_local_sftp_context_menu(menu, entity.clone(), tab_id, cx)
                             }
                         },
-                    )),
+                    })),
             )
             .child(sftp_split_bar(
                 tab_id,
@@ -2136,19 +2151,19 @@ impl AppView {
                     .h_full()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .child(sftp_browser_section(
-                        "remote-sftp-section",
-                        i18n::string("sftp.ui.remote_section"),
-                        AppIcon::FolderSymlink,
-                        sftp_tab.remote_entries.len(),
-                        remote_selected_count,
-                        remote_path_bar,
-                        remote_toolbar,
-                        remote_list,
-                        {
+                    .child(sftp_browser_section(SftpBrowserSection {
+                        section_id: "remote-sftp-section".into(),
+                        title: i18n::string("sftp.ui.remote_section").into(),
+                        icon: AppIcon::FolderSymlink,
+                        item_count: sftp_tab.remote_entries.len(),
+                        selected_count: remote_selected_count,
+                        path_bar: remote_path_bar,
+                        toolbar: remote_toolbar,
+                        content: remote_list,
+                        menu_builder: {
                             let entity = entity.clone();
                             let remote_table_for_menu = remote_table_for_menu.clone();
-                            move |menu, _window, cx: &mut Context<PopupMenu>| {
+                            move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                                 let is_header = remote_table_for_menu.update(cx, |state, _| {
                                     state.delegate_mut().take_col_header_right_clicked()
                                 });
@@ -2158,7 +2173,7 @@ impl AppView {
                                 build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
                             }
                         },
-                    )),
+                    })),
             );
 
         div()

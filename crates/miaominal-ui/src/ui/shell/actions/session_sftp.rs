@@ -1198,7 +1198,7 @@ impl AppView {
 
     fn sftp_local_paths_in_click_range(
         &self,
-        anchor: &PathBuf,
+        anchor: &std::path::Path,
         row_ix: usize,
         cx: &App,
     ) -> Vec<PathBuf> {
