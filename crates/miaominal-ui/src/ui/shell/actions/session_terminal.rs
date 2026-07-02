@@ -235,10 +235,9 @@ impl AppView {
             && let Some((line, column)) = self.event_position_to_viewport_cell(event.position)
         {
             let button = mouse_wheel_button_for_pixels(pixels);
-            let steps = match event.delta {
-                ScrollDelta::Pixels(_) => (pixels.abs() / line_height).round().max(1.0) as usize,
-                ScrollDelta::Lines(point) => point.y.abs().round().max(1.0) as usize,
-            };
+            let steps = terminal_wheel_scroll_lines(event.delta, pixels, line_height)
+                .unsigned_abs()
+                .max(1) as usize;
             let modifiers = MouseReportModifiers {
                 shift: false,
                 alt: event.modifiers.alt,
@@ -262,6 +261,14 @@ impl AppView {
             if sent_any {
                 return;
             }
+        }
+
+        if !event.modifiers.shift && self.active_terminal_alternate_scroll_active() {
+            let lines = terminal_wheel_scroll_lines(event.delta, pixels, line_height);
+            if lines != 0 {
+                self.send_terminal_bytes_no_scroll(terminal_alternate_scroll_bytes(lines), cx);
+            }
+            return;
         }
 
         let multiplier = if event.modifiers.shift { 5.0 } else { 1.0 };
@@ -1245,6 +1252,15 @@ impl AppView {
         Some(session.terminal.input_modes())
     }
 
+    fn active_terminal_alternate_scroll_active(&self) -> bool {
+        self.workspace_state
+            .workspace
+            .active_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(TabState::as_session)
+            .is_some_and(|session| session.terminal.alternate_scroll_active())
+    }
+
     fn touch_terminal_scrollbar_visibility(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let interaction_at = Instant::now();
 
@@ -1541,6 +1557,28 @@ fn mouse_wheel_button_for_pixels(pixels: f32) -> MouseReportButton {
     }
 }
 
+fn terminal_wheel_scroll_lines(delta: ScrollDelta, pixels: f32, line_height: f32) -> i32 {
+    let lines = match delta {
+        ScrollDelta::Pixels(_) => (pixels.abs() / line_height.max(1.0)).round().max(1.0) as i32,
+        ScrollDelta::Lines(point) => point.y.abs().round().max(1.0) as i32,
+    };
+
+    if pixels.is_sign_positive() {
+        lines
+    } else {
+        -lines
+    }
+}
+
+fn terminal_alternate_scroll_bytes(lines: i32) -> Vec<u8> {
+    let command = if lines > 0 { b'A' } else { b'B' };
+    let mut bytes = Vec::with_capacity(lines.unsigned_abs() as usize * 3);
+    for _ in 0..lines.unsigned_abs() {
+        bytes.extend_from_slice(&[0x1b, b'O', command]);
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1580,6 +1618,33 @@ mod tests {
             mouse_wheel_button_for_pixels(-1.0),
             MouseReportButton::WheelDown
         );
+    }
+
+    #[test]
+    fn positive_alternate_scroll_generates_up_keys() {
+        assert_eq!(terminal_alternate_scroll_bytes(2), b"\x1bOA\x1bOA".to_vec());
+    }
+
+    #[test]
+    fn negative_alternate_scroll_generates_down_keys() {
+        assert_eq!(
+            terminal_alternate_scroll_bytes(-2),
+            b"\x1bOB\x1bOB".to_vec()
+        );
+    }
+
+    #[test]
+    fn small_pixel_scroll_still_generates_one_terminal_line() {
+        let delta = ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(3.0)));
+
+        assert_eq!(terminal_wheel_scroll_lines(delta, 3.0, 18.0), 1);
+    }
+
+    #[test]
+    fn negative_line_scroll_preserves_direction() {
+        let delta = ScrollDelta::Lines(gpui::point(0.0, -3.0));
+
+        assert_eq!(terminal_wheel_scroll_lines(delta, -54.0, 18.0), -3);
     }
 
     #[test]

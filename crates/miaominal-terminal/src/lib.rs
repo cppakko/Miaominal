@@ -342,6 +342,12 @@ impl TerminalState {
         }
     }
 
+    pub fn alternate_scroll_active(&self) -> bool {
+        self.term
+            .mode()
+            .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+    }
+
     pub fn start_selection(&mut self, line: i32, column: usize, side: Side, block: bool) {
         let point = Point::new(Line(line), Column(column));
         let ty = if block {
@@ -1150,5 +1156,21 @@ mod tests {
                 .all(|cell| cell.link.as_deref() == Some("http://example.test/path"))
         );
         assert_eq!(row[end].link, None);
+    }
+
+    #[test]
+    fn alternate_scroll_requires_alternate_screen() {
+        let terminal = TerminalState::default();
+
+        assert!(!terminal.alternate_scroll_active());
+    }
+
+    #[test]
+    fn alternate_scroll_is_active_in_alternate_screen() {
+        let mut terminal = TerminalState::default();
+
+        terminal.push_bytes(b"\x1b[?1049h");
+
+        assert!(terminal.alternate_scroll_active());
     }
 }
