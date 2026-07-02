@@ -249,12 +249,7 @@ impl SyncEngine {
     }
 
     pub fn sync_enabled_for_provider(&self) -> bool {
-        let config = &self.config_store.config;
-        match config.provider {
-            SyncProvider::None => false,
-            SyncProvider::GithubGist => config.gist_enabled,
-            SyncProvider::WebDav => config.webdav_enabled,
-        }
+        self.config_store.config.provider != SyncProvider::None
     }
 
     fn sync_passphrase(&self) -> Result<String> {

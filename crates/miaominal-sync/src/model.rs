@@ -43,8 +43,8 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             provider: SyncProvider::None,
-            gist_enabled: false,
-            webdav_enabled: false,
+            gist_enabled: true,
+            webdav_enabled: true,
             gist_id: None,
             webdav_url: String::new(),
             webdav_username: String::new(),
@@ -54,6 +54,13 @@ impl Default for SyncConfig {
             last_sync_at: 0,
             device_id: String::new(),
         }
+    }
+}
+
+impl SyncConfig {
+    pub fn normalize_legacy_provider_flags(&mut self) {
+        self.gist_enabled = true;
+        self.webdav_enabled = true;
     }
 }
 

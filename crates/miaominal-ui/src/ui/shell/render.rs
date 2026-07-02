@@ -1,7 +1,7 @@
 use super::state::{
     PendingAiProviderPopupState, PendingChatSessionRenameState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
-    PendingSyncPassphrasePopupState,
+    PendingSyncPassphrasePopupState, PendingSyncProviderConfigPopupState,
 };
 use super::*;
 use crate::ui::i18n;
@@ -95,6 +95,7 @@ impl Render for AppView {
             self.pending_sync_passphrase_clear_confirm_popup();
         let pending_sync_passphrase_popup = self.pending_sync_passphrase_popup();
         let pending_ai_provider_popup = self.pending_ai_provider_popup();
+        let pending_sync_provider_config_popup = self.pending_sync_provider_config_popup();
         let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup();
         let pending_sftp_prompt = self.pending_sftp_prompt();
         let exiting_dialogs = self.active_exiting_dialogs(window);
@@ -344,6 +345,14 @@ impl Render for AppView {
             })
             .when_some(pending_ai_provider_popup, |this, popup| {
                 this.child(self.render_ai_provider_popup(
+                    entity.clone(),
+                    popup,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
+            })
+            .when_some(pending_sync_provider_config_popup, |this, popup| {
+                this.child(self.render_sync_provider_config_popup(
                     entity.clone(),
                     popup,
                     None,
@@ -2597,6 +2606,184 @@ impl AppView {
         )
     }
 
+    fn render_sync_provider_config_popup(
+        &self,
+        entity: Entity<AppView>,
+        popup: PendingSyncProviderConfigPopupState,
+        exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let save_in_progress = self.sync_provider_config_save_in_progress_for(popup.provider);
+        let entity_cancel = entity.clone();
+        let entity_submit = entity.clone();
+
+        let (title, description, popup_body, popup_key) = match popup.provider {
+            SyncProvider::GithubGist => {
+                let token_input = self.panel_forms.settings.sync_github_token_input.clone();
+                let gist_id_input = self.panel_forms.settings.sync_github_gist_id_input.clone();
+                let target = SecretRevealTarget::SyncGithubToken;
+                let reveal_icon = self.secret_reveal_icon(target.clone());
+                let entity_toggle = entity.clone();
+                (
+                    i18n::string("settings.sync.gist_group.title"),
+                    i18n::string("settings.sync.gist_group.description"),
+                    v_flex()
+                        .w_full()
+                        .gap_5()
+                        .child(surface_secret_text_input_stack(
+                            i18n::string("settings.sync.gist.token.label"),
+                            token_input,
+                            crate::ui::components::SecretTextInputStackOptions {
+                                surface: TextInputSurface::Low,
+                                size: gpui_component::Size::Large,
+                                required: true,
+                                disabled: save_in_progress,
+                                trailing: None,
+                                reveal_icon,
+                            },
+                            move |window, cx| {
+                                entity_toggle.update(cx, |this, cx| {
+                                    this.toggle_secret_visibility(
+                                        SecretRevealTarget::SyncGithubToken,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            },
+                        ))
+                        .child(surface_text_input_stack(
+                            i18n::string("settings.sync.gist.gist_id.label"),
+                            gist_id_input,
+                            TextInputSurface::Low,
+                            false,
+                        ))
+                        .into_any_element(),
+                    "sync-provider-gist",
+                )
+            }
+            SyncProvider::WebDav => {
+                let url_input = self.panel_forms.settings.sync_webdav_url_input.clone();
+                let username_input = self.panel_forms.settings.sync_webdav_username_input.clone();
+                let password_input = self.panel_forms.settings.sync_webdav_password_input.clone();
+                let target = SecretRevealTarget::SyncWebdavPassword;
+                let reveal_icon = self.secret_reveal_icon(target.clone());
+                let entity_toggle = entity.clone();
+                (
+                    i18n::string("settings.sync.webdav_group.title"),
+                    i18n::string("settings.sync.webdav_group.description"),
+                    v_flex()
+                        .w_full()
+                        .gap_5()
+                        .child(surface_text_input_stack(
+                            i18n::string("settings.sync.webdav.url.label"),
+                            url_input,
+                            TextInputSurface::Low,
+                            true,
+                        ))
+                        .child(surface_text_input_stack(
+                            i18n::string("settings.sync.webdav.username.label"),
+                            username_input,
+                            TextInputSurface::Low,
+                            true,
+                        ))
+                        .child(surface_secret_text_input_stack(
+                            i18n::string("settings.sync.webdav.password.label"),
+                            password_input,
+                            crate::ui::components::SecretTextInputStackOptions {
+                                surface: TextInputSurface::Low,
+                                size: gpui_component::Size::Large,
+                                required: true,
+                                disabled: save_in_progress,
+                                trailing: None,
+                                reveal_icon,
+                            },
+                            move |window, cx| {
+                                entity_toggle.update(cx, |this, cx| {
+                                    this.toggle_secret_visibility(
+                                        SecretRevealTarget::SyncWebdavPassword,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            },
+                        ))
+                        .into_any_element(),
+                    "sync-provider-webdav",
+                )
+            }
+            SyncProvider::None => (
+                i18n::string("settings.sync.provider_group.title"),
+                i18n::string("settings.sync.provider_group.description"),
+                div().into_any_element(),
+                "sync-provider-none",
+            ),
+        };
+
+        let actions = h_flex()
+            .w_full()
+            .justify_end()
+            .gap_3()
+            .child(
+                Button::new("sync-provider-config-popup-cancel")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .disabled(save_in_progress)
+                    .text_color(rgb(roles.on_surface_variant))
+                    .label(i18n::string("dialogs.common.cancel"))
+                    .on_click(move |_, window, cx| {
+                        entity_cancel.update(cx, |this, cx| {
+                            this.close_sync_provider_config_popup(window, cx);
+                        });
+                    }),
+            )
+            .child(if save_in_progress {
+                div()
+                    .id("sync-provider-config-popup-submit-spinner")
+                    .min_w(px(116.0))
+                    .min_h(px(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(crate::ui::components::md3_spinner(18.0))
+                    .into_any_element()
+            } else {
+                Button::new("sync-provider-config-popup-submit")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .text_color(rgb(roles.primary))
+                    .label(i18n::string("settings.sync.save_action"))
+                    .on_click(move |_, window, cx| {
+                        entity_submit.update(cx, |this, cx| {
+                            this.submit_sync_provider_config_popup_action(window, cx);
+                        });
+                    })
+                    .into_any_element()
+            })
+            .into_any_element();
+
+        render_bottom_popup(
+            bottom_popup_panel(
+                title,
+                Some(description),
+                Some(popup_body),
+                actions,
+                bottom_popup_viewport_height,
+            ),
+            popup_key,
+            exit_progress,
+            move |window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.close_sync_provider_config_popup(window, cx);
+                });
+            },
+        )
+    }
+
     fn render_sync_passphrase_clear_confirm_popup(
         &self,
         entity: Entity<AppView>,
@@ -2867,6 +3054,13 @@ impl AppView {
                 Some(exit_progress),
                 bottom_popup_viewport_height,
             ),
+            DialogOverlaySnapshot::SyncProviderConfigPopup(popup) => self
+                .render_sync_provider_config_popup(
+                    entity,
+                    popup,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                ),
             DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode) => self
                 .render_local_vault_passphrase_popup(
                     entity,

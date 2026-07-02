@@ -1,7 +1,7 @@
 use super::super::state::{
     PendingLocalDataResetConfirmState, PendingLocalDataResetConfirmationPopupState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
-    SyncPassphraseOperation, SyncSecretSaveOperation,
+    SyncPassphraseOperation,
 };
 use super::super::support::set_input_masked;
 use super::super::*;

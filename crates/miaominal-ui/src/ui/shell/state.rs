@@ -974,6 +974,11 @@ pub(in crate::ui::shell) struct PendingSyncPassphrasePopupState;
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingAiProviderPopupState;
 
+#[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct PendingSyncProviderConfigPopupState {
+    pub(in crate::ui::shell) provider: SyncProvider,
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     HostKey(HostKeyPrompt),
@@ -993,6 +998,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     SyncPassphraseClearConfirmPopup(PendingSyncPassphraseClearConfirmPopupState),
     SyncPassphrasePopup(PendingSyncPassphrasePopupState),
     AiProviderPopup(PendingAiProviderPopupState),
+    SyncProviderConfigPopup(PendingSyncProviderConfigPopupState),
     LocalVaultPassphrasePopup(LocalVaultPassphrasePopupMode),
     SftpPrompt {
         tab_id: usize,
@@ -1020,6 +1026,11 @@ impl DialogOverlaySnapshot {
             Self::SyncPassphraseClearConfirmPopup(_) => "sync-passphrase-clear-confirm".to_string(),
             Self::SyncPassphrasePopup(_) => "sync-passphrase".to_string(),
             Self::AiProviderPopup(_) => "ai-provider".to_string(),
+            Self::SyncProviderConfigPopup(popup) => match popup.provider {
+                SyncProvider::None => "sync-provider-none".to_string(),
+                SyncProvider::GithubGist => "sync-provider-gist".to_string(),
+                SyncProvider::WebDav => "sync-provider-webdav".to_string(),
+            },
             Self::LocalVaultPassphrasePopup(_) => "local-vault-passphrase".to_string(),
             Self::SftpPrompt { tab_id, .. } => format!("sftp-prompt-{tab_id}"),
         }
@@ -1551,16 +1562,17 @@ pub(in crate::ui::shell) enum SyncPassphraseOperation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SyncSecretSaveOperation {
-    GithubToken,
-    WebdavPassword,
+pub(in crate::ui::shell) enum SyncProviderConfigSaveOperation {
+    GithubGist,
+    WebDav,
 }
 
 pub(in crate::ui::shell) struct SyncUiState {
     pub(in crate::ui::shell) sync_engine: SyncEngine,
     pub(in crate::ui::shell) sync_status: SyncStatus,
     pub(in crate::ui::shell) active_sync_task: Option<gpui::Task<()>>,
-    pub(in crate::ui::shell) sync_secret_save_operation: Option<SyncSecretSaveOperation>,
+    pub(in crate::ui::shell) sync_provider_config_save_operation:
+        Option<SyncProviderConfigSaveOperation>,
     pub(in crate::ui::shell) sync_passphrase_operation: Option<SyncPassphraseOperation>,
     pub(in crate::ui::shell) sync_passphrase_configured: bool,
 }

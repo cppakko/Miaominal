@@ -26,35 +26,43 @@ pub(super) struct LocalVaultSyncSecretInputs {
     pub(super) webdav_password: String,
     pub(super) sync_passphrase: String,
 }
-enum SyncSecretSaveTaskRequest {
-    GithubToken(String),
-    WebdavPassword(String),
+
+enum SyncProviderConfigSaveTaskRequest {
+    GithubGist {
+        token: String,
+        gist_id: Option<String>,
+    },
+    WebDav {
+        url: String,
+        username: String,
+        password: String,
+    },
 }
 
-struct SyncSecretSaveTaskResult {
-    operation: SyncSecretSaveOperation,
+struct SyncProviderConfigSaveTaskResult {
+    operation: SyncProviderConfigSaveOperation,
     updated_config: SyncConfig,
 }
 
-impl SyncSecretSaveTaskRequest {
-    fn operation(&self) -> SyncSecretSaveOperation {
+impl SyncProviderConfigSaveTaskRequest {
+    fn operation(&self) -> SyncProviderConfigSaveOperation {
         match self {
-            Self::GithubToken(_) => SyncSecretSaveOperation::GithubToken,
-            Self::WebdavPassword(_) => SyncSecretSaveOperation::WebdavPassword,
+            Self::GithubGist { .. } => SyncProviderConfigSaveOperation::GithubGist,
+            Self::WebDav { .. } => SyncProviderConfigSaveOperation::WebDav,
         }
     }
 
     fn worker_name(&self) -> &'static str {
         match self {
-            Self::GithubToken(_) => "sync-github-token-save",
-            Self::WebdavPassword(_) => "sync-webdav-password-save",
+            Self::GithubGist { .. } => "sync-gist-config-save",
+            Self::WebDav { .. } => "sync-webdav-config-save",
         }
     }
 
     fn cancelled_message(&self) -> &'static str {
         match self {
-            Self::GithubToken(_) => "sync GitHub token save task cancelled",
-            Self::WebdavPassword(_) => "sync WebDAV password save task cancelled",
+            Self::GithubGist { .. } => "sync GitHub Gist config save task cancelled",
+            Self::WebDav { .. } => "sync WebDAV config save task cancelled",
         }
     }
 }
@@ -351,183 +359,315 @@ impl AppView {
     pub(in crate::ui::shell) fn sync_passphrase_operation_in_progress(&self) -> bool {
         self.sync.sync_passphrase_operation.is_some()
     }
-    pub(in crate::ui::shell) fn sync_secret_save_in_progress(&self) -> bool {
-        self.sync.sync_secret_save_operation.is_some()
+    pub(in crate::ui::shell) fn sync_provider_config_save_in_progress(&self) -> bool {
+        self.sync.sync_provider_config_save_operation.is_some()
     }
-    pub(in crate::ui::shell) fn sync_github_token_save_in_progress(&self) -> bool {
-        self.sync.sync_secret_save_operation == Some(SyncSecretSaveOperation::GithubToken)
-    }
-    pub(in crate::ui::shell) fn sync_webdav_password_save_in_progress(&self) -> bool {
-        self.sync.sync_secret_save_operation == Some(SyncSecretSaveOperation::WebdavPassword)
+    pub(in crate::ui::shell) fn sync_provider_config_save_in_progress_for(
+        &self,
+        provider: SyncProvider,
+    ) -> bool {
+        match provider {
+            SyncProvider::GithubGist => {
+                self.sync.sync_provider_config_save_operation
+                    == Some(SyncProviderConfigSaveOperation::GithubGist)
+            }
+            SyncProvider::WebDav => {
+                self.sync.sync_provider_config_save_operation
+                    == Some(SyncProviderConfigSaveOperation::WebDav)
+            }
+            SyncProvider::None => false,
+        }
     }
     pub(in crate::ui::shell) fn sync_passphrase_save_in_progress(&self) -> bool {
         self.sync.sync_passphrase_operation == Some(SyncPassphraseOperation::Save)
     }
-    pub(super) fn sync_secret_field_label(operation: SyncSecretSaveOperation) -> String {
+    pub(super) fn sync_provider_config_field_label(
+        operation: SyncProviderConfigSaveOperation,
+    ) -> String {
         match operation {
-            SyncSecretSaveOperation::GithubToken => i18n::string("settings.sync.gist.token.label"),
-            SyncSecretSaveOperation::WebdavPassword => {
-                i18n::string("settings.sync.webdav.password.label")
+            SyncProviderConfigSaveOperation::GithubGist => {
+                i18n::string("settings.sync.providers.gist")
+            }
+            SyncProviderConfigSaveOperation::WebDav => {
+                i18n::string("settings.sync.providers.webdav")
             }
         }
     }
-    pub(super) fn sync_gist_field_label() -> String {
-        i18n::string("settings.sync.gist.gist_id.label")
+    fn sync_provider_config_has_stored_secret(&self, provider: SyncProvider) -> bool {
+        match provider {
+            SyncProvider::GithubGist => self.sync.sync_engine.config_store.config.has_github_token,
+            SyncProvider::WebDav => {
+                self.sync
+                    .sync_engine
+                    .config_store
+                    .config
+                    .has_webdav_password
+            }
+            SyncProvider::None => false,
+        }
     }
-    pub(in crate::ui::shell) fn update_sync_config(
-        &mut self,
-        update: impl FnOnce(&mut SyncConfig),
-    ) -> anyhow::Result<()> {
-        self.sync.sync_engine.config_store.update(update)
-    }
-    pub(in crate::ui::shell) fn submit_sync_github_token_save(
+    pub(in crate::ui::shell) fn open_selected_sync_provider_config_popup(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.sync_secret_save_in_progress() {
+        let provider = self
+            .panel_forms
+            .settings
+            .sync_provider_select
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or(self.sync.sync_engine.config_store.config.provider);
+        self.open_sync_provider_config_popup(provider, window, cx);
+    }
+    pub(in crate::ui::shell) fn open_sync_provider_config_popup(
+        &mut self,
+        provider: SyncProvider,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if provider == SyncProvider::None {
             return;
         }
 
-        let token = self
-            .panel_forms
-            .settings
-            .sync_github_token_input
-            .read(cx)
-            .value()
-            .to_string();
-
-        if self.local_vault_status == LocalVaultStatus::Locked {
+        if self.local_vault_status == LocalVaultStatus::Locked
+            && self.sync_provider_config_has_stored_secret(provider)
+        {
             self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::SaveSyncGithubToken(token),
+                PendingLocalVaultUnlockAction::OpenSyncProviderConfig(provider),
                 window,
                 cx,
             );
             return;
         }
 
-        self.continue_save_sync_github_token_after_unlock(token, window, cx);
+        self.prepare_sync_provider_config_popup_inputs(provider, window, cx);
+        let popup = PendingSyncProviderConfigPopupState { provider };
+        let stable_key = DialogOverlaySnapshot::SyncProviderConfigPopup(popup).stable_key();
+        self.dialogs
+            .exiting_dialogs
+            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
+        self.sync_provider_config_popup = Some(popup);
+        match provider {
+            SyncProvider::GithubGist => {
+                self.panel_forms
+                    .settings
+                    .sync_github_token_input
+                    .update(cx, |input, cx| input.focus(window, cx));
+            }
+            SyncProvider::WebDav => {
+                self.panel_forms
+                    .settings
+                    .sync_webdav_url_input
+                    .update(cx, |input, cx| input.focus(window, cx));
+            }
+            SyncProvider::None => {}
+        }
+        cx.notify();
     }
-    pub(in crate::ui::shell) fn submit_sync_github_gist_id_save(
+    fn prepare_sync_provider_config_popup_inputs(
+        &mut self,
+        provider: SyncProvider,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_sync_secret_inputs(window, cx);
+        let config = self.sync.sync_engine.config_store.config.clone();
+        set_input_value(
+            &self.panel_forms.settings.sync_github_gist_id_input,
+            config.gist_id.unwrap_or_default(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.sync_webdav_url_input,
+            config.webdav_url,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.sync_webdav_username_input,
+            config.webdav_username,
+            window,
+            cx,
+        );
+        match provider {
+            SyncProvider::GithubGist => {
+                self.set_secret_visibility(
+                    SecretRevealTarget::SyncGithubToken,
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
+            }
+            SyncProvider::WebDav => {
+                self.set_secret_visibility(
+                    SecretRevealTarget::SyncWebdavPassword,
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
+            }
+            SyncProvider::None => {}
+        }
+    }
+    pub(super) fn dismiss_sync_provider_config_popup(&mut self, cx: &mut Context<Self>) {
+        if let Some(popup) = self.sync_provider_config_popup.take() {
+            self.start_dialog_exit(DialogOverlaySnapshot::SyncProviderConfigPopup(popup), cx);
+            cx.notify();
+        }
+    }
+    pub(in crate::ui::shell) fn close_sync_provider_config_popup(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let gist_id_input = self
-            .panel_forms
-            .settings
-            .sync_github_gist_id_input
-            .read(cx)
-            .value()
-            .to_string();
-        let gist_id = normalize_github_gist_id(&gist_id_input);
-        let field_label = Self::sync_gist_field_label();
-
-        if let Err(error) = self.update_sync_config(|config| {
-            config.gist_id = (!gist_id.is_empty()).then_some(gist_id.clone());
-        }) {
-            self.notify_sync_secret_save_failed(window, &field_label, &error.to_string(), cx);
+        if self.sync_provider_config_save_in_progress() {
             return;
         }
 
         set_input_value(
-            &self.panel_forms.settings.sync_github_gist_id_input,
-            gist_id.clone(),
+            &self.panel_forms.settings.sync_github_token_input,
+            "",
             window,
             cx,
         );
-
-        if self.sync.sync_engine.config_store.config.provider == SyncProvider::GithubGist
-            && self.sync.sync_engine.config_store.config.gist_enabled
-        {
-            if gist_id.is_empty() {
-                self.sync.sync_status = SyncStatus::RemoteBindingRequired {
-                    provider: SyncProvider::GithubGist,
-                };
-            } else if matches!(
-                self.sync.sync_status,
-                SyncStatus::RemoteBindingRequired {
-                    provider: SyncProvider::GithubGist,
-                }
-            ) {
-                self.sync.sync_status = SyncStatus::Idle;
-            }
-        }
-
-        self.notify_sync_secret_saved(window, &field_label, cx);
-    }
-    pub(super) fn continue_save_sync_github_token_after_unlock(
-        &mut self,
-        token: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.sync_secret_save_in_progress() {
-            return;
-        }
-
-        if self.local_vault_status == LocalVaultStatus::Locked {
-            self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::SaveSyncGithubToken(token),
-                window,
-                cx,
-            );
-            return;
-        }
-
-        self.spawn_sync_secret_save_operation(SyncSecretSaveTaskRequest::GithubToken(token), cx);
-    }
-    pub(in crate::ui::shell) fn submit_sync_webdav_password_save(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.sync_secret_save_in_progress() {
-            return;
-        }
-
-        let password = self
-            .panel_forms
-            .settings
-            .sync_webdav_password_input
-            .read(cx)
-            .value()
-            .to_string();
-
-        if self.local_vault_status == LocalVaultStatus::Locked {
-            self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::SaveSyncWebdavPassword(password),
-                window,
-                cx,
-            );
-            return;
-        }
-
-        self.continue_save_sync_webdav_password_after_unlock(password, window, cx);
-    }
-    pub(super) fn continue_save_sync_webdav_password_after_unlock(
-        &mut self,
-        password: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.sync_secret_save_in_progress() {
-            return;
-        }
-
-        if self.local_vault_status == LocalVaultStatus::Locked {
-            self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::SaveSyncWebdavPassword(password),
-                window,
-                cx,
-            );
-            return;
-        }
-
-        self.spawn_sync_secret_save_operation(
-            SyncSecretSaveTaskRequest::WebdavPassword(password),
+        set_input_value(
+            &self.panel_forms.settings.sync_webdav_password_input,
+            "",
+            window,
             cx,
         );
+        self.set_secret_visibility(
+            SecretRevealTarget::SyncGithubToken,
+            false,
+            false,
+            window,
+            cx,
+        );
+        self.set_secret_visibility(
+            SecretRevealTarget::SyncWebdavPassword,
+            false,
+            false,
+            window,
+            cx,
+        );
+        self.dismiss_sync_provider_config_popup(cx);
+    }
+    pub(in crate::ui::shell) fn submit_sync_provider_config_popup_action(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sync_provider_config_save_in_progress() {
+            return;
+        }
+
+        let Some(popup) = self.sync_provider_config_popup else {
+            return;
+        };
+
+        let draft = match popup.provider {
+            SyncProvider::GithubGist => {
+                let token = self
+                    .panel_forms
+                    .settings
+                    .sync_github_token_input
+                    .read(cx)
+                    .value()
+                    .to_string();
+                let gist_id_input = self
+                    .panel_forms
+                    .settings
+                    .sync_github_gist_id_input
+                    .read(cx)
+                    .value()
+                    .to_string();
+                let gist_id = normalize_github_gist_id(&gist_id_input);
+                SyncProviderConfigSaveDraft::GithubGist {
+                    token,
+                    gist_id: (!gist_id.is_empty()).then_some(gist_id),
+                }
+            }
+            SyncProvider::WebDav => {
+                let url = self
+                    .panel_forms
+                    .settings
+                    .sync_webdav_url_input
+                    .read(cx)
+                    .value()
+                    .to_string();
+                let username = self
+                    .panel_forms
+                    .settings
+                    .sync_webdav_username_input
+                    .read(cx)
+                    .value()
+                    .to_string();
+                let password = self
+                    .panel_forms
+                    .settings
+                    .sync_webdav_password_input
+                    .read(cx)
+                    .value()
+                    .to_string();
+                SyncProviderConfigSaveDraft::WebDav {
+                    url,
+                    username,
+                    password,
+                }
+            }
+            SyncProvider::None => return,
+        };
+
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::SaveSyncProviderConfig(draft),
+                window,
+                cx,
+            );
+            return;
+        }
+
+        self.continue_save_sync_provider_config_after_unlock(draft, window, cx);
+    }
+    pub(super) fn continue_save_sync_provider_config_after_unlock(
+        &mut self,
+        draft: SyncProviderConfigSaveDraft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sync_provider_config_save_in_progress() {
+            return;
+        }
+
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::SaveSyncProviderConfig(draft),
+                window,
+                cx,
+            );
+            return;
+        }
+
+        let request = match draft {
+            SyncProviderConfigSaveDraft::GithubGist { token, gist_id } => {
+                SyncProviderConfigSaveTaskRequest::GithubGist { token, gist_id }
+            }
+            SyncProviderConfigSaveDraft::WebDav {
+                url,
+                username,
+                password,
+            } => SyncProviderConfigSaveTaskRequest::WebDav {
+                url,
+                username,
+                password,
+            },
+        };
+        self.spawn_sync_provider_config_save_operation(request, cx);
     }
     pub(super) fn continue_save_sync_passphrase_after_unlock(
         &mut self,
@@ -572,9 +712,9 @@ impl AppView {
 
         self.spawn_sync_passphrase_operation(SyncPassphraseTaskRequest::Clear, cx);
     }
-    fn spawn_sync_secret_save_operation(
+    fn spawn_sync_provider_config_save_operation(
         &mut self,
-        request: SyncSecretSaveTaskRequest,
+        request: SyncProviderConfigSaveTaskRequest,
         cx: &mut Context<Self>,
     ) {
         let operation = request.operation();
@@ -582,7 +722,7 @@ impl AppView {
         let cancelled_message = request.cancelled_message().to_string();
         let notification_window = cx.active_window();
 
-        self.sync.sync_secret_save_operation = Some(operation);
+        self.sync.sync_provider_config_save_operation = Some(operation);
         cx.notify();
 
         let mut sync_engine = self.sync.sync_engine.clone();
@@ -591,30 +731,42 @@ impl AppView {
             .name(worker_name)
             .spawn(move || {
                 let result = match request {
-                    SyncSecretSaveTaskRequest::GithubToken(token) => {
-                        SettingsService::persist_sync_github_token(&mut sync_engine, token.as_str())
-                            .map(|()| SyncSecretSaveTaskResult {
-                                operation: SyncSecretSaveOperation::GithubToken,
-                                updated_config: sync_engine.config_store.config.clone(),
-                            })
-                    }
-                    SyncSecretSaveTaskRequest::WebdavPassword(password) => {
-                        SettingsService::persist_sync_webdav_password(
+                    SyncProviderConfigSaveTaskRequest::GithubGist { token, gist_id } => {
+                        SettingsService::persist_sync_gist_config(
                             &mut sync_engine,
-                            password.as_str(),
+                            token.as_str(),
+                            gist_id,
                         )
-                        .map(|()| SyncSecretSaveTaskResult {
-                            operation: SyncSecretSaveOperation::WebdavPassword,
+                        .map(|()| SyncProviderConfigSaveTaskResult {
+                            operation: SyncProviderConfigSaveOperation::GithubGist,
                             updated_config: sync_engine.config_store.config.clone(),
                         })
                     }
+                    SyncProviderConfigSaveTaskRequest::WebDav {
+                        url,
+                        username,
+                        password,
+                    } => SettingsService::persist_sync_webdav_config(
+                        &mut sync_engine,
+                        url,
+                        username,
+                        password.as_str(),
+                    )
+                    .map(|()| SyncProviderConfigSaveTaskResult {
+                        operation: SyncProviderConfigSaveOperation::WebDav,
+                        updated_config: sync_engine.config_store.config.clone(),
+                    }),
                 };
 
                 tx.send(result).ok();
             });
 
         if let Err(error) = spawn_result {
-            self.finish_sync_secret_save_spawn_error(operation, anyhow::anyhow!(error), cx);
+            self.finish_sync_provider_config_save_spawn_error(
+                operation,
+                anyhow::anyhow!(error),
+                cx,
+            );
             return;
         }
 
@@ -637,101 +789,110 @@ impl AppView {
                     };
 
                     if let Err(error) = this_for_window.update(cx, move |this, cx| {
-                        this.finish_sync_secret_save_operation(result, window, cx);
+                        this.finish_sync_provider_config_save_operation(result, window, cx);
                     }) {
-                        log::debug!("failed to apply sync secret save result in window: {error:?}");
+                        log::debug!(
+                            "failed to apply sync provider config save result in window: {error:?}"
+                        );
                     }
                 });
 
                 if let Err(error) = update_result {
-                    log::debug!("failed to access active window for sync secret save: {error:?}");
+                    log::debug!(
+                        "failed to access active window for sync provider config save: {error:?}"
+                    );
                     if let Some(result) = result.borrow_mut().take()
                         && let Err(error) = this.update(cx, move |this, cx| {
-                            this.finish_sync_secret_save_operation_without_window(result, cx);
+                            this.finish_sync_provider_config_save_operation_without_window(
+                                result, cx,
+                            );
                         })
                     {
                         log::debug!(
-                            "failed to apply sync secret save result without window: {error:?}"
+                            "failed to apply sync provider config save result without window: {error:?}"
                         );
                     }
                 }
             } else if let Err(error) = this.update(cx, move |this, cx| {
-                this.finish_sync_secret_save_operation_without_window(result, cx);
+                this.finish_sync_provider_config_save_operation_without_window(result, cx);
             }) {
                 log::debug!(
-                    "failed to apply sync secret save result without active window: {error:?}"
+                    "failed to apply sync provider config save result without active window: {error:?}"
                 );
             }
         })
         .detach();
     }
-    pub(super) fn finish_sync_secret_save_spawn_error(
+    pub(super) fn finish_sync_provider_config_save_spawn_error(
         &mut self,
-        operation: SyncSecretSaveOperation,
+        operation: SyncProviderConfigSaveOperation,
         error: anyhow::Error,
         cx: &mut Context<Self>,
     ) {
-        self.sync.sync_secret_save_operation = Some(operation);
-        self.finish_sync_secret_save_operation_without_window(
-            Err(error.context("failed to spawn sync secret save worker")),
+        self.sync.sync_provider_config_save_operation = Some(operation);
+        self.finish_sync_provider_config_save_operation_without_window(
+            Err(error.context("failed to spawn sync provider config save worker")),
             cx,
         );
     }
-    fn finish_sync_secret_save_operation(
+    fn finish_sync_provider_config_save_operation(
         &mut self,
-        result: Result<SyncSecretSaveTaskResult>,
+        result: Result<SyncProviderConfigSaveTaskResult>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let operation = self
             .sync
-            .sync_secret_save_operation
-            .unwrap_or(SyncSecretSaveOperation::GithubToken);
-        self.sync.sync_secret_save_operation = None;
+            .sync_provider_config_save_operation
+            .unwrap_or(SyncProviderConfigSaveOperation::GithubGist);
+        self.sync.sync_provider_config_save_operation = None;
 
         match result {
             Ok(task_result) => {
-                let SyncSecretSaveTaskResult {
+                let SyncProviderConfigSaveTaskResult {
                     operation,
                     updated_config,
                 } = task_result;
                 self.sync.sync_engine.config_store.config = updated_config;
                 self.refresh_sync_secret_placeholders(window, cx);
-                let field_label = Self::sync_secret_field_label(operation);
+                self.refresh_sync_provider_config_inputs_after_save(operation, window, cx);
+                let field_label = Self::sync_provider_config_field_label(operation);
                 self.notify_sync_secret_saved(window, &field_label, cx);
+                self.dismiss_sync_provider_config_popup(cx);
             }
             Err(error) => {
-                let field_label = Self::sync_secret_field_label(operation);
+                let field_label = Self::sync_provider_config_field_label(operation);
                 self.notify_sync_secret_save_failed(window, &field_label, &error.to_string(), cx);
             }
         }
     }
-    fn finish_sync_secret_save_operation_without_window(
+    fn finish_sync_provider_config_save_operation_without_window(
         &mut self,
-        result: Result<SyncSecretSaveTaskResult>,
+        result: Result<SyncProviderConfigSaveTaskResult>,
         cx: &mut Context<Self>,
     ) {
         let operation = self
             .sync
-            .sync_secret_save_operation
-            .unwrap_or(SyncSecretSaveOperation::GithubToken);
-        self.sync.sync_secret_save_operation = None;
+            .sync_provider_config_save_operation
+            .unwrap_or(SyncProviderConfigSaveOperation::GithubGist);
+        self.sync.sync_provider_config_save_operation = None;
 
         match result {
             Ok(task_result) => {
-                let SyncSecretSaveTaskResult {
+                let SyncProviderConfigSaveTaskResult {
                     operation,
                     updated_config,
                 } = task_result;
                 self.sync.sync_engine.config_store.config = updated_config;
-                let field_label = Self::sync_secret_field_label(operation);
+                let field_label = Self::sync_provider_config_field_label(operation);
                 self.status_message = i18n::string_args(
                     "settings.sync.save_feedback.saved_message",
                     &[("field", &field_label)],
                 );
+                self.dismiss_sync_provider_config_popup(cx);
             }
             Err(error) => {
-                let field_label = Self::sync_secret_field_label(operation);
+                let field_label = Self::sync_provider_config_field_label(operation);
                 self.status_message = i18n::string_args(
                     "settings.sync.save_feedback.failed_message",
                     &[("field", &field_label), ("error", &error.to_string())],
@@ -740,6 +901,87 @@ impl AppView {
         }
 
         cx.notify();
+    }
+    fn refresh_sync_provider_config_inputs_after_save(
+        &mut self,
+        operation: SyncProviderConfigSaveOperation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let config = self.sync.sync_engine.config_store.config.clone();
+        match operation {
+            SyncProviderConfigSaveOperation::GithubGist => {
+                set_input_value(
+                    &self.panel_forms.settings.sync_github_gist_id_input,
+                    config.gist_id.unwrap_or_default(),
+                    window,
+                    cx,
+                );
+                set_input_value(
+                    &self.panel_forms.settings.sync_github_token_input,
+                    "",
+                    window,
+                    cx,
+                );
+                self.set_secret_visibility(
+                    SecretRevealTarget::SyncGithubToken,
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
+
+                if self.sync.sync_engine.config_store.config.provider == SyncProvider::GithubGist
+                    && self
+                        .sync
+                        .sync_engine
+                        .config_store
+                        .config
+                        .gist_id
+                        .as_ref()
+                        .map(|value| value.trim().is_empty())
+                        .unwrap_or(true)
+                {
+                    self.sync.sync_status = SyncStatus::RemoteBindingRequired {
+                        provider: SyncProvider::GithubGist,
+                    };
+                } else if matches!(
+                    self.sync.sync_status,
+                    SyncStatus::RemoteBindingRequired {
+                        provider: SyncProvider::GithubGist,
+                    }
+                ) {
+                    self.sync.sync_status = SyncStatus::Idle;
+                }
+            }
+            SyncProviderConfigSaveOperation::WebDav => {
+                set_input_value(
+                    &self.panel_forms.settings.sync_webdav_url_input,
+                    config.webdav_url,
+                    window,
+                    cx,
+                );
+                set_input_value(
+                    &self.panel_forms.settings.sync_webdav_username_input,
+                    config.webdav_username,
+                    window,
+                    cx,
+                );
+                set_input_value(
+                    &self.panel_forms.settings.sync_webdav_password_input,
+                    "",
+                    window,
+                    cx,
+                );
+                self.set_secret_visibility(
+                    SecretRevealTarget::SyncWebdavPassword,
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
+            }
+        }
     }
     fn spawn_sync_passphrase_operation(
         &mut self,
@@ -1078,39 +1320,6 @@ impl AppView {
     }
     pub(in crate::ui::shell) fn passphrase_is_set(&self) -> bool {
         self.sync.sync_passphrase_configured
-    }
-    pub(in crate::ui::shell) fn notify_passphrase_required_in_window(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.notify_validation_failure_in_window(
-            window,
-            ValidationNotificationKind::RequiredInputMissing,
-            i18n::string("settings.sync.passphrase_required_error.message"),
-            cx,
-        );
-    }
-    pub(in crate::ui::shell) fn notify_sync_toggle_update_failed_in_window(
-        &mut self,
-        window: &mut Window,
-        provider_name: String,
-        error: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) {
-        let error = error.into();
-        let message = i18n::string_args(
-            "settings.sync.toggle_failed_error.message",
-            &[("provider", &provider_name), ("error", &error)],
-        );
-        let notification = Self::error_notification(
-            i18n::string("settings.sync.toggle_failed_error.title"),
-            message.clone(),
-        );
-
-        self.status_message = message;
-        window.push_notification(notification, cx);
-        cx.notify();
     }
 }
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use super::state::{
     PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
+    PendingSyncProviderConfigPopupState,
 };
 use miaominal_core::keychain::ManagedKeySource;
 
@@ -33,6 +34,8 @@ pub struct AppView {
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
     pub(in crate::ui::shell) sync_passphrase_popup: Option<PendingSyncPassphrasePopupState>,
     pub(in crate::ui::shell) ai_provider_popup: Option<PendingAiProviderPopupState>,
+    pub(in crate::ui::shell) sync_provider_config_popup:
+        Option<PendingSyncProviderConfigPopupState>,
     pub(in crate::ui::shell) local_vault_passphrase_popup: Option<LocalVaultPassphrasePopupMode>,
     pub(in crate::ui::shell) pending_local_vault_unlock_action:
         Option<PendingLocalVaultUnlockAction>,
@@ -1004,6 +1007,12 @@ impl AppView {
         &self,
     ) -> Option<PendingAiProviderPopupState> {
         self.ai_provider_popup
+    }
+
+    pub(in crate::ui::shell) fn pending_sync_provider_config_popup(
+        &self,
+    ) -> Option<PendingSyncProviderConfigPopupState> {
+        self.sync_provider_config_popup
     }
 
     pub(in crate::ui::shell) fn pending_local_vault_passphrase_popup(

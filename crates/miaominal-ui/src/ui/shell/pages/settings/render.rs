@@ -1,12 +1,11 @@
 use super::super::super::*;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::{editor_button_with_id, md3_select, md3_spinner, md3_switch};
+use crate::ui::components::{editor_button_with_id, md3_select, md3_spinner};
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
 use gpui_component::{
-    Disableable, Icon, Size, WindowExt,
+    Disableable, Icon, Size,
     group_box::GroupBoxVariant,
-    notification::Notification,
     setting::{
         RenderOptions, SettingField, SettingFieldElement, SettingGroup, SettingItem, SettingPage,
         Settings,
@@ -1433,10 +1432,57 @@ impl SettingFieldElement for SyncProviderField {
             .settings
             .sync_provider_select
             .clone();
+        let selected_provider = select_state.read(cx).selected_value().copied().unwrap_or(
+            self.app_view
+                .read(cx)
+                .sync
+                .sync_engine
+                .config_store
+                .config
+                .provider,
+        );
+        let roles = miaominal_settings::current_theme().material.roles;
+        let app_view = self.app_view.clone();
 
-        md3_select(&select_state)
-            .with_size(options.size)
+        h_flex()
             .w_full()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(240.0))
+                    .child(md3_select(&select_state).with_size(options.size).w_full()),
+            )
+            .child(if selected_provider == SyncProvider::None {
+                div()
+                    .size(px(34.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .border_color(rgb(roles.outline_variant))
+                    .opacity(0.45)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(Icon::new(AppIcon::Edit).small())
+                    .into_any_element()
+            } else {
+                icon_button(
+                    AppIcon::Edit,
+                    34.0,
+                    12.0,
+                    None,
+                    None,
+                    Some(roles.outline_variant),
+                    move |window, cx| {
+                        app_view.update(cx, |this, cx| {
+                            this.open_selected_sync_provider_config_popup(window, cx);
+                        });
+                    },
+                )
+                .into_any_element()
+            })
             .into_any_element()
     }
 }
@@ -1675,8 +1721,6 @@ fn sync_page(entity: Entity<AppView>) -> SettingPage {
             sync_status_group(entity.clone()),
             sync_encryption_group(entity.clone()),
             sync_provider_group(entity.clone()),
-            sync_gist_group(entity.clone()),
-            sync_webdav_group(entity.clone()),
         ])
 }
 
@@ -1833,109 +1877,11 @@ fn sync_provider_group(entity: Entity<AppView>) -> SettingGroup {
         .description(i18n::string("settings.sync.provider_group.description"))
         .item(
             SettingItem::new(
-                i18n::string("settings.sync.gist.enabled.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |_, _, cx| {
-                        let checked = entity
-                            .read(cx)
-                            .sync
-                            .sync_engine
-                            .config_store
-                            .config
-                            .gist_enabled;
-                        let entity = entity.clone();
-
-                        md3_switch("settings-sync-gist-enabled")
-                            .checked(checked)
-                            .on_click(move |enabled, window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    if *enabled && !this.passphrase_is_set() {
-                                        this.notify_passphrase_required_in_window(window, cx);
-                                        return;
-                                    }
-                                    if let Err(e) = this.update_sync_config(|c| {
-                                        c.gist_enabled = *enabled;
-                                    }) {
-                                        log::warn!("failed to persist sync config: {e:?}");
-                                        this.notify_sync_toggle_update_failed_in_window(
-                                            window,
-                                            i18n::string("settings.sync.providers.gist"),
-                                            e.to_string(),
-                                            cx,
-                                        );
-                                        return;
-                                    }
-                                    cx.notify();
-                                });
-                            })
-                            .into_any_element()
-                    }
-                }),
-            )
-            .description(i18n::string("settings.sync.gist.enabled.description")),
-        )
-        .item(
-            SettingItem::new(
-                i18n::string("settings.sync.webdav.enabled.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |_, _, cx| {
-                        let checked = entity
-                            .read(cx)
-                            .sync
-                            .sync_engine
-                            .config_store
-                            .config
-                            .webdav_enabled;
-                        let entity = entity.clone();
-
-                        md3_switch("settings-sync-webdav-enabled")
-                            .checked(checked)
-                            .on_click(move |enabled, window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    if *enabled && !this.passphrase_is_set() {
-                                        this.notify_passphrase_required_in_window(window, cx);
-                                        return;
-                                    }
-                                    if let Err(e) = this.update_sync_config(|c| {
-                                        c.webdav_enabled = *enabled;
-                                    }) {
-                                        log::warn!("failed to persist sync config: {e:?}");
-                                        this.notify_sync_toggle_update_failed_in_window(
-                                            window,
-                                            i18n::string("settings.sync.providers.webdav"),
-                                            e.to_string(),
-                                            cx,
-                                        );
-                                        return;
-                                    }
-                                    cx.notify();
-                                });
-                            })
-                            .into_any_element()
-                    }
-                }),
-            )
-            .description(i18n::string("settings.sync.webdav.enabled.description")),
-        )
-        .item(
-            SettingItem::new(
                 i18n::string("settings.sync.provider.backend.label"),
                 SettingField::element(SyncProviderField::new(entity.clone())),
             )
             .description(i18n::string("settings.sync.provider.backend.description")),
         )
-}
-
-fn render_input_action_field(field: AnyElement, action: AnyElement) -> AnyElement {
-    h_flex()
-        .w_full()
-        .gap_3()
-        .items_center()
-        .child(div().flex_1().min_w(px(0.0)).child(field))
-        .child(action)
-        .into_any_element()
 }
 
 fn render_text_action_field(text: String, action: Option<Button>) -> AnyElement {
@@ -1979,372 +1925,6 @@ fn render_text_actions_field(text: String, actions: Vec<AnyElement>) -> AnyEleme
         )
         .child(h_flex().w_full().justify_end().gap_3().children(actions))
         .into_any_element()
-}
-
-fn sync_save_success_message(field_label: &str) -> String {
-    i18n::string_args(
-        "settings.sync.save_feedback.saved_message",
-        &[("field", field_label)],
-    )
-}
-
-fn sync_save_error_message(field_label: &str, error: &str) -> String {
-    i18n::string_args(
-        "settings.sync.save_feedback.failed_message",
-        &[("field", field_label), ("error", error)],
-    )
-}
-
-fn push_sync_save_success(window: &mut Window, field_label: &str, cx: &mut App) -> String {
-    let message = sync_save_success_message(field_label);
-    window.push_notification(
-        Notification::success(message.clone())
-            .title(i18n::string("settings.sync.save_feedback.saved_title")),
-        cx,
-    );
-    message
-}
-
-fn push_sync_save_error(
-    window: &mut Window,
-    field_label: &str,
-    error: &str,
-    cx: &mut App,
-) -> String {
-    let message = sync_save_error_message(field_label, error);
-    window.push_notification(
-        Notification::error(message.clone())
-            .title(i18n::string("settings.sync.save_feedback.failed_title")),
-        cx,
-    );
-    message
-}
-
-fn sync_gist_group(entity: Entity<AppView>) -> SettingGroup {
-    SettingGroup::new()
-        .title(i18n::string("settings.sync.gist_group.title"))
-        .description(i18n::string("settings.sync.gist_group.description"))
-        .items(vec![
-            SettingItem::new(
-                i18n::string("settings.sync.gist.token.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .sync_github_token_input
-                            .clone();
-                        let save_in_progress = entity.read(cx).sync_github_token_save_in_progress();
-                        let reveal_icon = entity
-                            .read(cx)
-                            .secret_reveal_icon(SecretRevealTarget::SyncGithubToken);
-                        let entity = entity.clone();
-                        render_input_action_field(
-                            surface_secret_text_input(
-                                input,
-                                TextInputSurface::Highest,
-                                options.size,
-                                save_in_progress,
-                                None,
-                                reveal_icon,
-                                {
-                                    let entity = entity.clone();
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.toggle_secret_visibility(
-                                                SecretRevealTarget::SyncGithubToken,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                            .into_any_element(),
-                            if save_in_progress {
-                                div()
-                                    .id("sync-gist-token-save-spinner")
-                                    .min_w(px(116.0))
-                                    .min_h(px(32.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(md3_spinner(18.0))
-                                    .into_any_element()
-                            } else {
-                                settings_action_button(
-                                    "sync-gist-token-save",
-                                    i18n::string("settings.sync.save_action"),
-                                    false,
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.submit_sync_github_token_save(window, cx);
-                                        });
-                                    },
-                                )
-                                .into_any_element()
-                            },
-                        )
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.sync.gist.token.description")),
-            SettingItem::new(
-                i18n::string("settings.sync.gist.gist_id.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .sync_github_gist_id_input
-                            .clone();
-                        let config = entity.read(cx).sync.sync_engine.config_store.config.clone();
-                        let show_binding_hint = config.provider == SyncProvider::GithubGist
-                            && config
-                                .gist_id
-                                .as_ref()
-                                .map(|value| value.trim().is_empty())
-                                .unwrap_or(true);
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        let entity_for_action = entity.clone();
-
-                        v_flex()
-                            .w_full()
-                            .gap_3()
-                            .child(render_input_action_field(
-                                surface_text_input(&input, TextInputSurface::Highest)
-                                    .with_size(options.size)
-                                    .disabled(false)
-                                    .text_color(rgb(roles.on_surface))
-                                    .into_any_element(),
-                                settings_action_button(
-                                    "sync-gist-id-save",
-                                    i18n::string("settings.sync.save_action"),
-                                    false,
-                                    move |window, cx| {
-                                        entity_for_action.update(cx, |this, cx| {
-                                            this.submit_sync_github_gist_id_save(window, cx);
-                                        });
-                                    },
-                                )
-                                .into_any_element(),
-                            ))
-                            .when(show_binding_hint, |this| {
-                                this.child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                                        .text_color(rgb(roles.on_surface_variant))
-                                        .child(i18n::string("settings.sync.gist.binding_hint")),
-                                )
-                            })
-                            .into_any_element()
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.sync.gist.gist_id.description")),
-        ])
-}
-
-fn sync_webdav_group(entity: Entity<AppView>) -> SettingGroup {
-    SettingGroup::new()
-        .title(i18n::string("settings.sync.webdav_group.title"))
-        .description(i18n::string("settings.sync.webdav_group.description"))
-        .items(vec![
-            SettingItem::new(
-                i18n::string("settings.sync.webdav.url.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .sync_webdav_url_input
-                            .clone();
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        let entity = entity.clone();
-                        render_input_action_field(
-                            surface_text_input(&input, TextInputSurface::Highest)
-                                .with_size(options.size)
-                                .disabled(false)
-                                .text_color(rgb(roles.on_surface))
-                                .into_any_element(),
-                            settings_action_button(
-                                "sync-webdav-url-save",
-                                i18n::string("settings.sync.save_action"),
-                                false,
-                                move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        let field_label =
-                                            i18n::string("settings.sync.webdav.url.label");
-                                        let url = this
-                                            .panel_forms
-                                            .settings
-                                            .sync_webdav_url_input
-                                            .read(cx)
-                                            .value()
-                                            .to_string();
-                                        if let Err(e) = this.update_sync_config(|c| {
-                                            c.webdav_url = url;
-                                        }) {
-                                            log::warn!("failed to persist sync config: {e:?}");
-                                            let error = e.to_string();
-                                            this.status_message = push_sync_save_error(
-                                                window,
-                                                &field_label,
-                                                &error,
-                                                cx,
-                                            );
-                                        } else {
-                                            this.status_message =
-                                                push_sync_save_success(window, &field_label, cx);
-                                        }
-                                        cx.notify();
-                                    });
-                                },
-                            )
-                            .into_any_element(),
-                        )
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.sync.webdav.url.description")),
-            SettingItem::new(
-                i18n::string("settings.sync.webdav.username.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .sync_webdav_username_input
-                            .clone();
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        let entity = entity.clone();
-                        render_input_action_field(
-                            surface_text_input(&input, TextInputSurface::Highest)
-                                .with_size(options.size)
-                                .disabled(false)
-                                .text_color(rgb(roles.on_surface))
-                                .into_any_element(),
-                            settings_action_button(
-                                "sync-webdav-user-save",
-                                i18n::string("settings.sync.save_action"),
-                                false,
-                                move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        let field_label =
-                                            i18n::string("settings.sync.webdav.username.label");
-                                        let username = this
-                                            .panel_forms
-                                            .settings
-                                            .sync_webdav_username_input
-                                            .read(cx)
-                                            .value()
-                                            .to_string();
-                                        if let Err(e) = this.update_sync_config(|c| {
-                                            c.webdav_username = username;
-                                        }) {
-                                            log::warn!("failed to persist sync config: {e:?}");
-                                            let error = e.to_string();
-                                            this.status_message = push_sync_save_error(
-                                                window,
-                                                &field_label,
-                                                &error,
-                                                cx,
-                                            );
-                                        } else {
-                                            this.status_message =
-                                                push_sync_save_success(window, &field_label, cx);
-                                        }
-                                        cx.notify();
-                                    });
-                                },
-                            )
-                            .into_any_element(),
-                        )
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.sync.webdav.username.description")),
-            SettingItem::new(
-                i18n::string("settings.sync.webdav.password.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .sync_webdav_password_input
-                            .clone();
-                        let save_in_progress =
-                            entity.read(cx).sync_webdav_password_save_in_progress();
-                        let reveal_icon = entity
-                            .read(cx)
-                            .secret_reveal_icon(SecretRevealTarget::SyncWebdavPassword);
-                        let entity = entity.clone();
-                        render_input_action_field(
-                            surface_secret_text_input(
-                                input,
-                                TextInputSurface::Highest,
-                                options.size,
-                                save_in_progress,
-                                None,
-                                reveal_icon,
-                                {
-                                    let entity = entity.clone();
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.toggle_secret_visibility(
-                                                SecretRevealTarget::SyncWebdavPassword,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                            .into_any_element(),
-                            if save_in_progress {
-                                div()
-                                    .id("sync-webdav-pass-save-spinner")
-                                    .min_w(px(116.0))
-                                    .min_h(px(32.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(md3_spinner(18.0))
-                                    .into_any_element()
-                            } else {
-                                settings_action_button(
-                                    "sync-webdav-pass-save",
-                                    i18n::string("settings.sync.save_action"),
-                                    false,
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.submit_sync_webdav_password_save(window, cx);
-                                        });
-                                    },
-                                )
-                                .into_any_element()
-                            },
-                        )
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.sync.webdav.password.description")),
-        ])
 }
 
 fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {

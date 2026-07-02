@@ -832,6 +832,9 @@ impl AppView {
                     } else if this.ai_provider_popup.is_some() {
                         this.submit_ai_provider_save(window, cx);
                         submitted_popup = true;
+                    } else if this.sync_provider_config_popup.is_some() {
+                        this.submit_sync_provider_config_popup_action(window, cx);
+                        submitted_popup = true;
                     }
                 });
                 if submitted_popup {
@@ -1836,6 +1839,7 @@ impl AppView {
             },
             sync_passphrase_popup: None,
             ai_provider_popup: None,
+            sync_provider_config_popup: None,
             local_vault_passphrase_popup: None,
             pending_local_vault_unlock_action: None,
             local_vault_unlock_in_progress: false,
@@ -1850,7 +1854,7 @@ impl AppView {
                 sync_engine,
                 sync_status: SyncStatus::Idle,
                 active_sync_task: None,
-                sync_secret_save_operation: None,
+                sync_provider_config_save_operation: None,
                 sync_passphrase_operation: None,
                 sync_passphrase_configured,
             },

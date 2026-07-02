@@ -39,8 +39,8 @@ use miaominal_ssh::{
     SessionMonitorSnapshot,
 };
 use miaominal_storage::SettingsStore;
-use miaominal_sync::SyncStatus;
 use miaominal_sync::engine::SyncEngine;
+use miaominal_sync::{SyncProvider, SyncStatus};
 use miaominal_terminal::{
     MouseEncoding, MouseProtocol, MouseReportButton, MouseReportKind, MouseReportModifiers,
     TerminalInputModes, TerminalScroll, TerminalState, encode_mouse_report, sanitize_paste,
@@ -116,14 +116,15 @@ pub(in crate::ui::shell) use state::{
     PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
     PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
     PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
-    PendingSyncPullConfirmState, SecretVisibilityState, SessionAgentAutoScrollState,
-    SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
-    SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
-    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionSidePanelView,
-    SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState,
-    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus,
-    ShellState, SyncPullConfirmReason, SyncUiState, TabKind, TabState, TrustedHostFilter,
-    WorkspaceState, split_message_into_blocks, trailing_at_mention_query,
+    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState, SecretVisibilityState,
+    SessionAgentAutoScrollState, SessionAgentMessage, SessionAgentMessageMotion,
+    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall,
+    SessionAgentToolStatus, SessionConnectionState, SessionMonitoringState, SessionPurpose,
+    SessionSidePanelView, SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind,
+    SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow,
+    SftpTransferStatus, ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason,
+    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
+    trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -343,14 +344,27 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
     ImportManagedKey,
     SavePortForwardRule,
     SaveSnippet,
-    SaveSyncGithubToken(String),
-    SaveSyncWebdavPassword(String),
     SaveSyncPassphrase(String),
+    OpenSyncProviderConfig(SyncProvider),
+    SaveSyncProviderConfig(SyncProviderConfigSaveDraft),
     OpenAiProvider(String),
     SaveAiProvider(AiProviderSaveDraft),
     SaveWebSearch(WebSearchSaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell) enum SyncProviderConfigSaveDraft {
+    GithubGist {
+        token: String,
+        gist_id: Option<String>,
+    },
+    WebDav {
+        url: String,
+        username: String,
+        password: String,
+    },
 }
 
 #[derive(Clone, Debug)]

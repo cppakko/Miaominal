@@ -52,9 +52,10 @@ impl SettingsService {
     }
 
     pub fn set_sync_provider(sync_engine: &mut SyncEngine, provider: SyncProvider) -> Result<()> {
-        sync_engine
-            .config_store
-            .update(|config| config.provider = provider)
+        sync_engine.config_store.update(|config| {
+            config.provider = provider;
+            config.normalize_legacy_provider_flags();
+        })
     }
 
     pub fn persist_sync_github_token(sync_engine: &mut SyncEngine, token: &str) -> Result<()> {
@@ -62,6 +63,18 @@ impl SettingsService {
         sync_engine
             .config_store
             .update(|config| config.has_github_token = !token.trim().is_empty())
+    }
+
+    pub fn persist_sync_gist_config(
+        sync_engine: &mut SyncEngine,
+        token: &str,
+        gist_id: Option<String>,
+    ) -> Result<()> {
+        sync_engine.config_store.set_github_token(token)?;
+        sync_engine.config_store.update(|config| {
+            config.gist_id = gist_id;
+            config.has_github_token = !token.trim().is_empty();
+        })
     }
 
     pub fn persist_sync_webdav_password(
@@ -72,6 +85,20 @@ impl SettingsService {
         sync_engine
             .config_store
             .update(|config| config.has_webdav_password = !password.trim().is_empty())
+    }
+
+    pub fn persist_sync_webdav_config(
+        sync_engine: &mut SyncEngine,
+        url: String,
+        username: String,
+        password: &str,
+    ) -> Result<()> {
+        sync_engine.config_store.set_webdav_password(password)?;
+        sync_engine.config_store.update(|config| {
+            config.webdav_url = url;
+            config.webdav_username = username;
+            config.has_webdav_password = !password.trim().is_empty();
+        })
     }
 
     pub fn persist_sync_passphrase(

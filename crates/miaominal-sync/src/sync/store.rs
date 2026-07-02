@@ -63,6 +63,7 @@ impl SyncConfigStore {
         if config.device_id.is_empty() {
             config.device_id = uuid::Uuid::new_v4().to_string();
         }
+        config.normalize_legacy_provider_flags();
 
         let store = Self::with_credentials(config_file, config, credentials);
         store.persist()?;
@@ -110,6 +111,7 @@ impl SyncConfigStore {
 
     pub fn update<F: FnOnce(&mut SyncConfig)>(&mut self, f: F) -> Result<()> {
         f(&mut self.config);
+        self.config.normalize_legacy_provider_flags();
         self.persist()
     }
 

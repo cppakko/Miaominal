@@ -53,14 +53,14 @@ impl AppView {
             PendingLocalVaultUnlockAction::SaveSnippet => {
                 self.continue_save_snippet_after_unlock(window, cx);
             }
-            PendingLocalVaultUnlockAction::SaveSyncGithubToken(token) => {
-                self.continue_save_sync_github_token_after_unlock(token, window, cx);
-            }
-            PendingLocalVaultUnlockAction::SaveSyncWebdavPassword(password) => {
-                self.continue_save_sync_webdav_password_after_unlock(password, window, cx);
-            }
             PendingLocalVaultUnlockAction::SaveSyncPassphrase(passphrase) => {
                 self.continue_save_sync_passphrase_after_unlock(passphrase, window, cx);
+            }
+            PendingLocalVaultUnlockAction::OpenSyncProviderConfig(provider) => {
+                self.open_sync_provider_config_popup(provider, window, cx);
+            }
+            PendingLocalVaultUnlockAction::SaveSyncProviderConfig(draft) => {
+                self.continue_save_sync_provider_config_after_unlock(draft, window, cx);
             }
             PendingLocalVaultUnlockAction::OpenAiProvider(provider_id) => {
                 self.edit_ai_provider(provider_id, window, cx);
