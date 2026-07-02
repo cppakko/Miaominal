@@ -4,6 +4,30 @@ use crate::ui::shell::state::SessionFailureStatus;
 use gpui_component::WindowExt as _;
 use miaominal_services::TerminalService;
 
+const TERMINAL_OUTPUT_BATCH_MAX_CHUNKS: usize = 64;
+const TERMINAL_OUTPUT_BATCH_MAX_BYTES: usize = 256 * 1024;
+
+fn coalesce_session_output(
+    mut chunk: Vec<u8>,
+    events: &mut FuturesUnboundedReceiver<SessionEvent>,
+) -> (Vec<u8>, Option<SessionEvent>) {
+    let mut chunks = 1usize;
+
+    while chunks < TERMINAL_OUTPUT_BATCH_MAX_CHUNKS && chunk.len() < TERMINAL_OUTPUT_BATCH_MAX_BYTES
+    {
+        match events.try_recv() {
+            Ok(SessionEvent::Output(next)) => {
+                chunk.extend_from_slice(&next);
+                chunks += 1;
+            }
+            Ok(event) => return (chunk, Some(event)),
+            Err(_) => break,
+        }
+    }
+
+    (chunk, None)
+}
+
 impl AppView {
     fn terminal_service(&self) -> TerminalService {
         TerminalService::new(
@@ -1348,7 +1372,26 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
-            while let Some(event) = events.next().await {
+            let mut pending_event = None;
+
+            loop {
+                let event = if let Some(event) = pending_event.take() {
+                    event
+                } else {
+                    let Some(event) = events.next().await else {
+                        break;
+                    };
+                    event
+                };
+                let event = match event {
+                    SessionEvent::Output(chunk) => {
+                        let (chunk, pending) = coalesce_session_output(chunk, &mut events);
+                        pending_event = pending;
+                        SessionEvent::Output(chunk)
+                    }
+                    event => event,
+                };
+
                 if this
                     .update(cx, |this, cx| this.handle_session_event(tab_id, event, cx))
                     .is_err()
@@ -2051,5 +2094,43 @@ impl AppView {
         if let Some(session) = self.workspace_state.tabs[tab_index].as_session_mut() {
             session.reconnect_task = Some(reconnect_task);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[test]
+    fn coalesce_session_output_merges_consecutive_output() {
+        let (sender, mut receiver) = mpsc::unbounded();
+        sender
+            .unbounded_send(SessionEvent::Output(b"b".to_vec()))
+            .expect("output event should send");
+        sender
+            .unbounded_send(SessionEvent::Output(b"c".to_vec()))
+            .expect("output event should send");
+
+        let (chunk, pending) = coalesce_session_output(b"a".to_vec(), &mut receiver);
+
+        assert_eq!(chunk, b"abc");
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn coalesce_session_output_preserves_next_non_output_event() {
+        let (sender, mut receiver) = mpsc::unbounded();
+        sender
+            .unbounded_send(SessionEvent::Output(b"b".to_vec()))
+            .expect("output event should send");
+        sender
+            .unbounded_send(SessionEvent::Status("ready".into()))
+            .expect("status event should send");
+
+        let (chunk, pending) = coalesce_session_output(b"a".to_vec(), &mut receiver);
+
+        assert_eq!(chunk, b"ab");
+        assert!(matches!(pending, Some(SessionEvent::Status(status)) if status == "ready"));
     }
 }

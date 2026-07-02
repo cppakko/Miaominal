@@ -7,7 +7,11 @@ use gpui::{
     canvas, fill, px, quad, rgba, size,
 };
 use miaominal_terminal::{SearchMatchKind, TerminalSnapshot, terminal_font, terminal_font_size};
-use std::ops::Range;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    ops::Range,
+};
 
 const TERMINAL_SCROLLBAR_TRACK_WIDTH: f32 = 6.0;
 const TERMINAL_SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 20.0;
@@ -19,6 +23,12 @@ struct TerminalCanvasPrepaint {
 
 struct TerminalImeHandler {
     entity: WeakEntity<AppView>,
+}
+
+#[derive(Clone, Copy)]
+struct TerminalLineShapeKey {
+    text_hash: u64,
+    text_len: usize,
 }
 
 impl InputHandler for TerminalImeHandler {
@@ -467,16 +477,19 @@ fn paint_snapshot(
             y: origin.y + line_height_px * row as f32,
         };
 
-        let (text, runs) = build_line_text_and_runs(cells, row, hovered_link, &terminal_font);
-        if text.is_empty() {
+        let (shape_key, runs) =
+            build_line_shape_key_and_runs(cells, row, hovered_link, &terminal_font);
+        if shape_key.text_len == 0 {
             continue;
         }
 
-        let shaped = window.text_system().shape_line(
-            SharedString::from(text),
+        let shaped = window.text_system().shape_line_by_hash(
+            shape_key.text_hash,
+            shape_key.text_len,
             font_size,
             &runs,
             Some(cell_width_px),
+            || SharedString::from(materialize_line_text(cells)),
         );
 
         if let Err(error) = shaped.paint(
@@ -646,33 +659,74 @@ fn paint_search_highlights(
     }
 }
 
-fn build_line_text_and_runs(
-    cells: &[miaominal_terminal::TerminalCell],
-    row_index: usize,
-    hovered_link: Option<&TerminalHoveredLink>,
-    base_font: &gpui::Font,
-) -> (String, Vec<TextRun>) {
-    let mut text = String::with_capacity(cells.len());
-    let mut runs: Vec<TextRun> = Vec::new();
-    let hovered_range = hovered_link_range(cells, row_index, hovered_link);
+fn terminal_text_character(cell: &miaominal_terminal::TerminalCell) -> char {
+    if cell.spacer || cell.character == '\0' || custom_glyphs::is_custom_glyph(cell.character) {
+        ' '
+    } else {
+        cell.character
+    }
+}
 
-    for (column, cell) in cells.iter().enumerate() {
-        let start = text.len();
-        let character = if cell.spacer
-            || cell.character == '\0'
-            || custom_glyphs::is_custom_glyph(cell.character)
-        {
-            ' '
-        } else {
-            cell.character
-        };
-        text.push(character);
+fn hash_terminal_text_char(hasher: &mut DefaultHasher, ch: char) {
+    ch.hash(hasher);
+}
+
+fn materialize_line_text(cells: &[miaominal_terminal::TerminalCell]) -> String {
+    let text_len = line_text_len(cells);
+    let mut text = String::with_capacity(text_len);
+
+    for cell in cells {
+        text.push(terminal_text_character(cell));
         if !cell.spacer {
             for ch in &cell.zero_width {
                 text.push(*ch);
             }
         }
-        let len = text.len() - start;
+    }
+
+    text
+}
+
+fn line_text_len(cells: &[miaominal_terminal::TerminalCell]) -> usize {
+    cells
+        .iter()
+        .map(|cell| {
+            let mut len = terminal_text_character(cell).len_utf8();
+            if !cell.spacer {
+                len += cell
+                    .zero_width
+                    .iter()
+                    .map(|ch| ch.len_utf8())
+                    .sum::<usize>();
+            }
+            len
+        })
+        .sum()
+}
+
+fn build_line_shape_key_and_runs(
+    cells: &[miaominal_terminal::TerminalCell],
+    row_index: usize,
+    hovered_link: Option<&TerminalHoveredLink>,
+    base_font: &gpui::Font,
+) -> (TerminalLineShapeKey, Vec<TextRun>) {
+    let mut hasher = DefaultHasher::new();
+    let mut text_len = 0usize;
+    let mut runs: Vec<TextRun> = Vec::new();
+    let hovered_range = hovered_link_range(cells, row_index, hovered_link);
+
+    for (column, cell) in cells.iter().enumerate() {
+        let start = text_len;
+        let character = terminal_text_character(cell);
+        hash_terminal_text_char(&mut hasher, character);
+        text_len += character.len_utf8();
+        if !cell.spacer {
+            for ch in &cell.zero_width {
+                hash_terminal_text_char(&mut hasher, *ch);
+                text_len += ch.len_utf8();
+            }
+        }
+        let len = text_len - start;
 
         let mut font = base_font.clone();
         if cell.bold {
@@ -723,7 +777,13 @@ fn build_line_text_and_runs(
         }
     }
 
-    (text, runs)
+    (
+        TerminalLineShapeKey {
+            text_hash: hasher.finish(),
+            text_len,
+        },
+        runs,
+    )
 }
 
 fn hovered_link_range(
@@ -889,8 +949,29 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let (text, _) = build_line_text_and_runs(&cells, 0, None, &gpui::font("Consolas"));
+        let text = materialize_line_text(&cells);
 
         assert_eq!(text, "a b c ");
+    }
+
+    #[test]
+    fn shape_key_text_len_matches_materialized_text() {
+        let fg = default_foreground();
+        let bg = default_background();
+        let mut cells = ['a', '你', 'b']
+            .into_iter()
+            .map(|character| {
+                let mut cell = miaominal_terminal::TerminalCell::blank(fg, bg);
+                cell.character = character;
+                cell
+            })
+            .collect::<Vec<_>>();
+        cells[0].zero_width.push('\u{0301}');
+
+        let text = materialize_line_text(&cells);
+        let (shape_key, _) =
+            build_line_shape_key_and_runs(&cells, 0, None, &gpui::font("Consolas"));
+
+        assert_eq!(shape_key.text_len, text.len());
     }
 }
