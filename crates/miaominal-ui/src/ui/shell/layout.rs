@@ -22,3 +22,17 @@ mod session_agent_utils;
 mod sidebar;
 #[path = "layout/workspace.rs"]
 mod workspace;
+#[path = "layout/workspace_monitor.rs"]
+mod workspace_monitor;
+#[path = "layout/workspace_panes.rs"]
+mod workspace_panes;
+#[path = "layout/workspace_session_status.rs"]
+mod workspace_session_status;
+#[path = "layout/workspace_side_panel.rs"]
+mod workspace_side_panel;
+#[path = "layout/workspace_snippets.rs"]
+mod workspace_snippets;
+#[path = "layout/workspace_terminal_menu.rs"]
+mod workspace_terminal_menu;
+#[path = "layout/workspace_terminal_search.rs"]
+mod workspace_terminal_search;
