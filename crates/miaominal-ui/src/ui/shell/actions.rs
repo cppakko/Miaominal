@@ -26,8 +26,12 @@ mod session_agent;
 mod session_agent_attachments;
 #[path = "actions/session_sftp.rs"]
 mod session_sftp;
+#[path = "actions/session_sftp_drag_selection.rs"]
+mod session_sftp_drag_selection;
 #[path = "actions/session_sftp_edit.rs"]
 mod session_sftp_edit;
+#[path = "actions/session_sftp_prompt.rs"]
+mod session_sftp_prompt;
 #[path = "actions/session_sftp_sync.rs"]
 mod session_sftp_sync;
 #[path = "actions/session_sftp_transfer.rs"]
