@@ -829,72 +829,94 @@ impl AppView {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        let Some((tab_id, visible)) = self
+        let active_sftp = self
             .workspace_state
             .active_topbar_tab
             .and_then(|index| self.workspace_state.tabs.get(index))
             .and_then(|tab| {
                 tab.as_sftp()
-                    .map(|sftp| (tab.id, sftp.layout.progress_center_visible))
-            })
-        else {
+                    .map(|sftp| sftp.layout.progress_center_visible)
+            });
+        let side_panel_sftp = (self.panels.session_side_panel_open
+            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp)
+            .then(|| self.session_side_panel_sftp_tab_id())
+            .flatten()
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| {
+                        tab.as_sftp()
+                            .map(|sftp| sftp.layout.progress_center_visible)
+                    })
+            });
+        let Some(visible) = active_sftp.or(side_panel_sftp) else {
             return;
         };
 
-        self.set_sftp_progress_center_visible(tab_id, !visible, cx);
+        self.set_sftp_progress_center_visible(!visible, cx);
     }
 
     pub(in crate::ui::shell) fn set_sftp_progress_center_visible(
         &mut self,
-        tab_id: usize,
         visible: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
-            return;
-        };
-
-        if tab.layout.progress_center_visible == visible
-            && tab
-                .layout
-                .progress_center_transition
-                .as_ref()
-                .is_none_or(|transition| {
-                    transition.phase
-                        == if visible {
-                            SftpProgressCenterTransitionPhase::Entering
-                        } else {
-                            SftpProgressCenterTransitionPhase::Exiting
-                        }
-                })
-        {
-            return;
+        if self.apply_sftp_progress_center_visibility(visible) {
+            cx.notify();
         }
-
-        tab.layout.progress_center_visible = visible;
-        tab.layout.progress_center_transition = Some(SftpProgressCenterTransition {
-            phase: if visible {
-                SftpProgressCenterTransitionPhase::Entering
-            } else {
-                SftpProgressCenterTransitionPhase::Exiting
-            },
-            started_at: Instant::now(),
-            duration: CONTAINER_TRANSITION_DURATION,
-        });
-
-        if !visible
-            && matches!(
-                tab.layout.drag.as_ref(),
-                Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
-            )
-        {
-            tab.layout.drag = None;
-        }
-
-        cx.notify();
     }
 
-    fn sftp_progress_center_render_visibility(
+    pub(in crate::ui::shell) fn apply_sftp_progress_center_visibility(
+        &mut self,
+        visible: bool,
+    ) -> bool {
+        let phase = if visible {
+            SftpProgressCenterTransitionPhase::Entering
+        } else {
+            SftpProgressCenterTransitionPhase::Exiting
+        };
+        let started_at = Instant::now();
+        let mut changed = false;
+
+        for tab in &mut self.workspace_state.tabs {
+            let Some(sftp) = tab.as_sftp_mut() else {
+                continue;
+            };
+
+            if sftp.layout.progress_center_visible == visible
+                && sftp
+                    .layout
+                    .progress_center_transition
+                    .as_ref()
+                    .is_none_or(|transition| transition.phase == phase)
+            {
+                continue;
+            }
+
+            sftp.layout.progress_center_visible = visible;
+            sftp.layout.progress_center_transition = Some(SftpProgressCenterTransition {
+                phase,
+                started_at,
+                duration: CONTAINER_TRANSITION_DURATION,
+            });
+
+            if !visible
+                && matches!(
+                    sftp.layout.drag.as_ref(),
+                    Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+                )
+            {
+                sftp.layout.drag = None;
+            }
+            changed = true;
+        }
+
+        changed
+    }
+
+    pub(in crate::ui::shell) fn sftp_progress_center_render_visibility(
         &mut self,
         tab_id: usize,
         window: &mut Window,
@@ -928,6 +950,320 @@ impl AppView {
             SftpProgressCenterTransitionPhase::Entering => eased,
             SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
         })
+    }
+
+    pub(in crate::ui::shell) fn render_sftp_progress_center(
+        &self,
+        entity: Entity<Self>,
+        section_id: impl Into<ElementId>,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let extended = material.extended;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+
+        let transfers = self
+            .workspace_state
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
+            .flat_map(|(tab_id, sftp)| {
+                sftp.transfers
+                    .iter()
+                    .map(move |transfer| (tab_id, sftp, transfer))
+            });
+
+        let first_error = self
+            .workspace_state
+            .tabs
+            .iter()
+            .filter_map(TabState::as_sftp)
+            .find_map(|sftp| sftp.last_error.clone());
+
+        let mut rows = v_flex().w_full().gap_1();
+        let mut has_transfers = false;
+        for (tab_id, sftp_tab, transfer) in transfers {
+            has_transfers = true;
+            let transfer_id = transfer.transfer_id;
+            let profile_label = self
+                .data
+                .sessions
+                .iter()
+                .find(|profile| profile.id == sftp_tab.profile_id)
+                .map(|profile| profile.name.as_str())
+                .unwrap_or(sftp_tab.profile_id.as_str());
+            let direction_icon = match transfer.direction {
+                TransferDirection::Upload => AppIcon::Upload,
+                TransferDirection::Download => AppIcon::Download,
+            };
+            let progress = transfer.bytes_total.map_or_else(
+                || format_byte_size(Some(transfer.bytes_complete)).to_string(),
+                |total| {
+                    format!(
+                        "{} / {}",
+                        format_byte_size(Some(transfer.bytes_complete)),
+                        format_byte_size(Some(total))
+                    )
+                },
+            );
+            let progress_value = match transfer.bytes_total {
+                Some(total) if total > 0 => {
+                    ((transfer.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
+                }
+                Some(_) if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
+                Some(_) => 0.0,
+                None if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
+                None => 0.0,
+            };
+            let progress_loading = transfer.bytes_total.is_none()
+                && matches!(
+                    &transfer.status,
+                    SftpTransferStatus::Queued | SftpTransferStatus::Running
+                );
+            let status_label = match &transfer.status {
+                SftpTransferStatus::Queued => i18n::string("sftp.transfer_status.queued"),
+                SftpTransferStatus::Running => i18n::string("sftp.transfer_status.running"),
+                SftpTransferStatus::Paused => i18n::string("sftp.transfer_status.paused"),
+                SftpTransferStatus::Done => i18n::string("sftp.transfer_status.done"),
+                SftpTransferStatus::Cancelled => i18n::string("sftp.transfer_status.cancelled"),
+                SftpTransferStatus::Failed(message) => {
+                    i18n::string_args("sftp.transfer_status.failed", &[("message", message)])
+                }
+            };
+            let accent = match &transfer.status {
+                SftpTransferStatus::Queued => extended.warning.color,
+                SftpTransferStatus::Running => extended.info.color,
+                SftpTransferStatus::Paused => extended.warning.color,
+                SftpTransferStatus::Done => extended.success.color,
+                SftpTransferStatus::Cancelled => roles.on_surface_variant,
+                SftpTransferStatus::Failed(_) => extended.warning.color,
+            };
+            let speed_label = if matches!(&transfer.status, SftpTransferStatus::Running) {
+                transfer
+                    .bytes_per_second
+                    .map(|bps| format!("{}/s", format_byte_size(Some(bps))))
+            } else {
+                None
+            };
+            let transfer_actions = match &transfer.status {
+                SftpTransferStatus::Queued | SftpTransferStatus::Running => {
+                    let pause_entity = entity.clone();
+                    let cancel_entity = entity.clone();
+                    Some(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(icon_button(
+                                AppIcon::Pause,
+                                22.0,
+                                6.0,
+                                Some(roles.surface_container_low),
+                                Some(roles.on_surface_variant),
+                                None,
+                                move |_window, cx| {
+                                    pause_entity.update(cx, |this, cx| {
+                                        this.pause_sftp_transfer(tab_id, transfer_id, cx);
+                                    });
+                                },
+                            ))
+                            .child(icon_button(
+                                AppIcon::Close,
+                                22.0,
+                                6.0,
+                                Some(roles.surface_container_low),
+                                Some(roles.on_surface_variant),
+                                None,
+                                move |_window, cx| {
+                                    cancel_entity.update(cx, |this, cx| {
+                                        this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                                    });
+                                },
+                            ))
+                            .into_any_element(),
+                    )
+                }
+                SftpTransferStatus::Paused => {
+                    let resume_entity = entity.clone();
+                    let cancel_entity = entity.clone();
+                    Some(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(icon_button(
+                                AppIcon::Play,
+                                22.0,
+                                6.0,
+                                Some(roles.surface_container_low),
+                                Some(roles.on_surface_variant),
+                                None,
+                                move |_window, cx| {
+                                    resume_entity.update(cx, |this, cx| {
+                                        this.resume_sftp_transfer(tab_id, transfer_id, cx);
+                                    });
+                                },
+                            ))
+                            .child(icon_button(
+                                AppIcon::Close,
+                                22.0,
+                                6.0,
+                                Some(roles.surface_container_low),
+                                Some(roles.on_surface_variant),
+                                None,
+                                move |_window, cx| {
+                                    cancel_entity.update(cx, |this, cx| {
+                                        this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                                    });
+                                },
+                            ))
+                            .into_any_element(),
+                    )
+                }
+                SftpTransferStatus::Done
+                | SftpTransferStatus::Cancelled
+                | SftpTransferStatus::Failed(_) => {
+                    let delete_entity = entity.clone();
+                    Some(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(icon_button(
+                                AppIcon::Trash,
+                                22.0,
+                                6.0,
+                                Some(roles.surface_container_low),
+                                Some(roles.on_surface_variant),
+                                None,
+                                move |_window, cx| {
+                                    delete_entity.update(cx, |this, cx| {
+                                        this.remove_sftp_transfer_record(tab_id, transfer_id, cx);
+                                    });
+                                },
+                            ))
+                            .into_any_element(),
+                    )
+                }
+            };
+
+            rows = rows.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "sftp-transfer-row-{}-{}",
+                        tab_id, transfer.transfer_id.0
+                    )))
+                    .w_full()
+                    .px_2()
+                    .py_2()
+                    .rounded(px(8.0))
+                    .when(
+                        matches!(
+                            &transfer.status,
+                            SftpTransferStatus::Running | SftpTransferStatus::Paused
+                        ),
+                        |this| this.bg(rgb(roles.surface_container_high)),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w(px(20.0))
+                                            .flex_shrink_0()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(rgb(accent))
+                                            .child(Icon::new(direction_icon).small()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(roles.on_surface))
+                                            .child(format!(
+                                                "[{}] {} -> {}",
+                                                profile_label,
+                                                transfer.source.display(),
+                                                transfer.destination
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(roles.on_surface_variant))
+                                            .child(progress),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(accent))
+                                            .child(status_label),
+                                    )
+                                    .when_some(speed_label, |this, speed| {
+                                        this.child(
+                                            div()
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Body.scaled(),
+                                                )
+                                                .text_color(rgb(text_muted))
+                                                .child(speed),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().child(
+                                            Progress::new(format!(
+                                                "sftp-transfer-progress-{tab_id}-{}",
+                                                transfer_id.0
+                                            ))
+                                            .with_size(gpui_component::Size::Small)
+                                            .value(progress_value)
+                                            .loading(progress_loading)
+                                            .color(rgb(accent)),
+                                        ),
+                                    )
+                                    .when_some(transfer_actions, |this, actions| {
+                                        this.child(actions)
+                                    }),
+                            ),
+                    ),
+            );
+        }
+
+        if !has_transfers {
+            return sftp_progress_center_card(section_id, sftp_empty_transfer_summary(first_error))
+                .into_any_element();
+        }
+
+        sftp_progress_center_card(
+            section_id,
+            div()
+                .flex_1()
+                .w_full()
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .overflow_y_scrollbar()
+                .p_2()
+                .child(rows),
+        )
+        .into_any_element()
     }
 
     fn cache_sftp_browser_container_width(
@@ -1401,10 +1737,6 @@ impl AppView {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
         let progress_center_visibility =
             self.sftp_progress_center_render_visibility(tab_id, window);
         let Some(tab) = self
@@ -1923,290 +2255,8 @@ impl AppView {
             )
             .into_any_element();
 
-        let footer = if sftp_tab.transfers.is_empty() {
-            sftp_progress_center_card(
-                format!("sftp-progress-center-{tab_id}"),
-                sftp_empty_transfer_summary(sftp_tab.last_error.clone()),
-            )
-            .into_any_element()
-        } else {
-            let mut rows = v_flex().w_full().gap_1();
-            for transfer in &sftp_tab.transfers {
-                let transfer_id = transfer.transfer_id;
-                let direction_icon = match transfer.direction {
-                    TransferDirection::Upload => AppIcon::Upload,
-                    TransferDirection::Download => AppIcon::Download,
-                };
-                let progress = transfer.bytes_total.map_or_else(
-                    || format_byte_size(Some(transfer.bytes_complete)).to_string(),
-                    |total| {
-                        format!(
-                            "{} / {}",
-                            format_byte_size(Some(transfer.bytes_complete)),
-                            format_byte_size(Some(total))
-                        )
-                    },
-                );
-                let progress_value = match transfer.bytes_total {
-                    Some(total) if total > 0 => {
-                        ((transfer.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
-                    }
-                    Some(_) if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
-                    Some(_) => 0.0,
-                    None if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
-                    None => 0.0,
-                };
-                let progress_loading = transfer.bytes_total.is_none()
-                    && matches!(
-                        &transfer.status,
-                        SftpTransferStatus::Queued | SftpTransferStatus::Running
-                    );
-                let status_label = match &transfer.status {
-                    SftpTransferStatus::Queued => i18n::string("sftp.transfer_status.queued"),
-                    SftpTransferStatus::Running => i18n::string("sftp.transfer_status.running"),
-                    SftpTransferStatus::Paused => i18n::string("sftp.transfer_status.paused"),
-                    SftpTransferStatus::Done => i18n::string("sftp.transfer_status.done"),
-                    SftpTransferStatus::Cancelled => i18n::string("sftp.transfer_status.cancelled"),
-                    SftpTransferStatus::Failed(message) => {
-                        i18n::string_args("sftp.transfer_status.failed", &[("message", message)])
-                    }
-                };
-                let accent = match &transfer.status {
-                    SftpTransferStatus::Queued => extended.warning.color,
-                    SftpTransferStatus::Running => extended.info.color,
-                    SftpTransferStatus::Paused => extended.warning.color,
-                    SftpTransferStatus::Done => extended.success.color,
-                    SftpTransferStatus::Cancelled => roles.on_surface_variant,
-                    SftpTransferStatus::Failed(_) => extended.warning.color,
-                };
-                let speed_label = if matches!(&transfer.status, SftpTransferStatus::Running) {
-                    transfer
-                        .bytes_per_second
-                        .map(|bps| format!("{}/s", format_byte_size(Some(bps))))
-                } else {
-                    None
-                };
-                let transfer_actions = match &transfer.status {
-                    SftpTransferStatus::Queued | SftpTransferStatus::Running => {
-                        let pause_entity = entity.clone();
-                        let cancel_entity = entity.clone();
-                        Some(
-                            h_flex()
-                                .items_center()
-                                .gap_1()
-                                .flex_shrink_0()
-                                .child(icon_button(
-                                    AppIcon::Pause,
-                                    22.0,
-                                    6.0,
-                                    Some(roles.surface_container_low),
-                                    Some(roles.on_surface_variant),
-                                    None,
-                                    move |_window, cx| {
-                                        pause_entity.update(cx, |this, cx| {
-                                            this.pause_sftp_transfer(tab_id, transfer_id, cx);
-                                        });
-                                    },
-                                ))
-                                .child(icon_button(
-                                    AppIcon::Close,
-                                    22.0,
-                                    6.0,
-                                    Some(roles.surface_container_low),
-                                    Some(roles.on_surface_variant),
-                                    None,
-                                    move |_window, cx| {
-                                        cancel_entity.update(cx, |this, cx| {
-                                            this.cancel_sftp_transfer(tab_id, transfer_id, cx);
-                                        });
-                                    },
-                                ))
-                                .into_any_element(),
-                        )
-                    }
-                    SftpTransferStatus::Paused => {
-                        let resume_entity = entity.clone();
-                        let cancel_entity = entity.clone();
-                        Some(
-                            h_flex()
-                                .items_center()
-                                .gap_1()
-                                .flex_shrink_0()
-                                .child(icon_button(
-                                    AppIcon::Play,
-                                    22.0,
-                                    6.0,
-                                    Some(roles.surface_container_low),
-                                    Some(roles.on_surface_variant),
-                                    None,
-                                    move |_window, cx| {
-                                        resume_entity.update(cx, |this, cx| {
-                                            this.resume_sftp_transfer(tab_id, transfer_id, cx);
-                                        });
-                                    },
-                                ))
-                                .child(icon_button(
-                                    AppIcon::Close,
-                                    22.0,
-                                    6.0,
-                                    Some(roles.surface_container_low),
-                                    Some(roles.on_surface_variant),
-                                    None,
-                                    move |_window, cx| {
-                                        cancel_entity.update(cx, |this, cx| {
-                                            this.cancel_sftp_transfer(tab_id, transfer_id, cx);
-                                        });
-                                    },
-                                ))
-                                .into_any_element(),
-                        )
-                    }
-                    SftpTransferStatus::Done
-                    | SftpTransferStatus::Cancelled
-                    | SftpTransferStatus::Failed(_) => {
-                        let delete_entity = entity.clone();
-                        Some(
-                            h_flex()
-                                .items_center()
-                                .gap_1()
-                                .flex_shrink_0()
-                                .child(icon_button(
-                                    AppIcon::Trash,
-                                    22.0,
-                                    6.0,
-                                    Some(roles.surface_container_low),
-                                    Some(roles.on_surface_variant),
-                                    None,
-                                    move |_window, cx| {
-                                        delete_entity.update(cx, |this, cx| {
-                                            this.remove_sftp_transfer_record(
-                                                tab_id,
-                                                transfer_id,
-                                                cx,
-                                            );
-                                        });
-                                    },
-                                ))
-                                .into_any_element(),
-                        )
-                    }
-                };
-
-                rows = rows.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "sftp-transfer-row-{}-{}",
-                            tab_id, transfer.transfer_id.0
-                        )))
-                        .w_full()
-                        .px_2()
-                        .py_2()
-                        .rounded(px(8.0))
-                        .when(
-                            matches!(
-                                &transfer.status,
-                                SftpTransferStatus::Running | SftpTransferStatus::Paused
-                            ),
-                            |this| this.bg(rgb(roles.surface_container_high)),
-                        )
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .items_center()
-                                        .gap_3()
-                                        .child(
-                                            div()
-                                                .w(px(20.0))
-                                                .flex_shrink_0()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_color(rgb(accent))
-                                                .child(Icon::new(direction_icon).small()),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.0))
-                                                .text_size(
-                                                    miaominal_settings::FontSize::Body.scaled(),
-                                                )
-                                                .text_color(rgb(roles.on_surface))
-                                                .child(format!(
-                                                    "{} -> {}",
-                                                    transfer.source.display(),
-                                                    transfer.destination
-                                                )),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(
-                                                    miaominal_settings::FontSize::Body.scaled(),
-                                                )
-                                                .text_color(rgb(roles.on_surface_variant))
-                                                .child(progress),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(
-                                                    miaominal_settings::FontSize::Body.scaled(),
-                                                )
-                                                .text_color(rgb(accent))
-                                                .child(status_label),
-                                        )
-                                        .when_some(speed_label, |this, speed| {
-                                            this.child(
-                                                div()
-                                                    .text_size(
-                                                        miaominal_settings::FontSize::Body.scaled(),
-                                                    )
-                                                    .text_color(rgb(text_muted))
-                                                    .child(speed),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .items_center()
-                                        .gap_2()
-                                        .child(
-                                            div().flex_1().child(
-                                                Progress::new(format!(
-                                                    "sftp-transfer-progress-{tab_id}-{}",
-                                                    transfer_id.0
-                                                ))
-                                                .with_size(gpui_component::Size::Small)
-                                                .value(progress_value)
-                                                .loading(progress_loading)
-                                                .color(rgb(accent)),
-                                            ),
-                                        )
-                                        .when_some(transfer_actions, |this, actions| {
-                                            this.child(actions)
-                                        }),
-                                ),
-                        ),
-                );
-            }
-
-            sftp_progress_center_card(
-                format!("sftp-progress-center-{tab_id}"),
-                div()
-                    .flex_1()
-                    .w_full()
-                    .min_h(px(0.0))
-                    .overflow_hidden()
-                    .overflow_y_scrollbar()
-                    .p_2()
-                    .child(rows),
-            )
-            .into_any_element()
-        };
+        let footer = self
+            .render_sftp_progress_center(entity.clone(), format!("sftp-progress-center-{tab_id}"));
 
         let browser_panels = div()
             .flex()

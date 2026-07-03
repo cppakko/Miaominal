@@ -1245,7 +1245,22 @@ impl AppView {
             .workspace_state
             .active_topbar_tab
             .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)));
+            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
+            .or_else(|| {
+                if !self.panels.session_side_panel_open
+                    || self.panels.session_side_panel_view != SessionSidePanelView::Sftp
+                {
+                    return None;
+                }
+
+                self.session_side_panel_sftp_tab_id().and_then(|tab_id| {
+                    self.workspace_state
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id)
+                        .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
+                })
+            });
 
         let active_tab = active_session.map(|(tab, _)| tab).or_else(|| {
             self.workspace_state

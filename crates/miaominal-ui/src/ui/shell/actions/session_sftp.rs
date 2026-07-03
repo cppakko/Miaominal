@@ -457,6 +457,7 @@ impl AppView {
         let mut validation_notification = None;
         let mut download_done_filename: Option<String> = None;
         let mut transfer_failed_notification: Option<String> = None;
+        let mut open_global_progress_center = false;
 
         match event {
             SftpEvent::Status(message) => {
@@ -503,20 +504,7 @@ impl AppView {
                         last_bytes_complete: 0,
                     },
                 );
-                if !sftp.layout.progress_center_visible
-                    || matches!(
-                        sftp.layout.progress_center_transition.as_ref(),
-                        Some(transition)
-                            if transition.phase == SftpProgressCenterTransitionPhase::Exiting
-                    )
-                {
-                    sftp.layout.progress_center_visible = true;
-                    sftp.layout.progress_center_transition = Some(SftpProgressCenterTransition {
-                        phase: SftpProgressCenterTransitionPhase::Entering,
-                        started_at: Instant::now(),
-                        duration: CONTAINER_TRANSITION_DURATION,
-                    });
-                }
+                open_global_progress_center = true;
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
                     i18n::string_args("sftp.messages.transfer_queued", &[("id", &transfer_id)]);
@@ -704,6 +692,10 @@ impl AppView {
                 self.workspace_forms.sftp_browser.remote_path_editing = false;
                 self.workspace_forms.sftp_browser.remote_path_submit_pending = false;
             }
+        }
+
+        if open_global_progress_center {
+            self.apply_sftp_progress_center_visibility(true);
         }
 
         if refresh_local_directory {

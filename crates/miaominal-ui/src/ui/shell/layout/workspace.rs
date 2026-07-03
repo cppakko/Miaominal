@@ -4,6 +4,9 @@ use super::workspace_side_panel::{
     WorkspaceSidePanelDock, render_workspace_side_panel, workspace_side_panel_render_state,
 };
 
+const SESSION_SFTP_BOTTOM_PROGRESS_FLEX: f32 = 0.26;
+const SESSION_SFTP_BOTTOM_PROGRESS_GAP: f32 = 8.0;
+
 impl AppView {
     pub(in crate::ui::shell) fn render_workspace_surface(
         &mut self,
@@ -73,9 +76,19 @@ impl AppView {
                     WorkspaceSidePanelDock::Right,
                 )
             });
+        let sftp_progress_panel =
+            self.render_session_workspace_sftp_progress_panel(entity.clone(), window);
+        let sftp_progress_visibility = sftp_progress_panel
+            .as_ref()
+            .map(|(_, visibility)| *visibility)
+            .unwrap_or(0.0);
+        let workspace_row_flex = 1.0 - SESSION_SFTP_BOTTOM_PROGRESS_FLEX * sftp_progress_visibility;
 
-        h_flex()
-            .size_full()
+        let workspace_row = h_flex()
+            .w_full()
+            .flex_grow(1.0)
+            .flex_shrink(1.0)
+            .flex_basis(gpui::relative(workspace_row_flex))
             .min_w(px(0.0))
             .min_h(px(0.0))
             .on_mouse_move(
@@ -126,6 +139,61 @@ impl AppView {
                     .child(workspace_body),
             )
             .when_some(agent_panel, |this, panel| this.child(panel))
+            .into_any_element();
+
+        v_flex()
+            .size_full()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_hidden()
+            .child(workspace_row)
+            .when_some(sftp_progress_panel, |this, (panel, visibility)| {
+                this.child(
+                    div()
+                        .w_full()
+                        .h(px(SESSION_SFTP_BOTTOM_PROGRESS_GAP * visibility))
+                        .flex_shrink_0(),
+                )
+                .child(
+                    div()
+                        .flex_grow(visibility)
+                        .flex_shrink(1.0)
+                        .flex_basis(gpui::relative(
+                            SESSION_SFTP_BOTTOM_PROGRESS_FLEX * visibility,
+                        ))
+                        .min_w(px(0.0))
+                        .min_h(px(0.0))
+                        .overflow_hidden()
+                        .px_3()
+                        .pb_3()
+                        .opacity(visibility)
+                        .child(panel),
+                )
+            })
             .into_any_element()
+    }
+
+    fn render_session_workspace_sftp_progress_panel(
+        &mut self,
+        entity: Entity<Self>,
+        window: &mut Window,
+    ) -> Option<(gpui::AnyElement, f32)> {
+        if !self.panels.session_side_panel_open
+            || self.panels.session_side_panel_view != SessionSidePanelView::Sftp
+        {
+            return None;
+        }
+
+        let tab_id = self.session_side_panel_sftp_tab_id()?;
+        let visibility = self
+            .sftp_progress_center_render_visibility(tab_id, window)
+            .unwrap_or(0.0);
+        if visibility <= 0.0 {
+            return None;
+        }
+
+        let panel = self.render_sftp_progress_center(entity, "session-sftp-progress-center");
+
+        Some((panel, visibility))
     }
 }
