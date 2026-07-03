@@ -22,6 +22,7 @@ const SFTP_LOCAL_PANEL_MIN_WIDTH: f32 = 260.0;
 const SFTP_REMOTE_PANEL_MIN_WIDTH: f32 = 260.0;
 const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 220.0;
 const SFTP_BROWSER_MIN_HEIGHT: f32 = 240.0;
+const SFTP_PROGRESS_CENTER_SLIDE_OFFSET: f32 = 14.0;
 
 #[derive(Clone)]
 struct SftpSplitDragMarker {
@@ -828,17 +829,105 @@ impl AppView {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        let Some(sftp) = self
+        let Some((tab_id, visible)) = self
             .workspace_state
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get_mut(index))
-            .and_then(TabState::as_sftp_mut)
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| {
+                tab.as_sftp()
+                    .map(|sftp| (tab.id, sftp.layout.progress_center_visible))
+            })
         else {
             return;
         };
 
-        sftp.layout.progress_center_visible = !sftp.layout.progress_center_visible;
+        self.set_sftp_progress_center_visible(tab_id, !visible, cx);
+    }
+
+    pub(in crate::ui::shell) fn set_sftp_progress_center_visible(
+        &mut self,
+        tab_id: usize,
+        visible: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return;
+        };
+
+        if tab.layout.progress_center_visible == visible
+            && tab
+                .layout
+                .progress_center_transition
+                .as_ref()
+                .is_none_or(|transition| {
+                    transition.phase
+                        == if visible {
+                            SftpProgressCenterTransitionPhase::Entering
+                        } else {
+                            SftpProgressCenterTransitionPhase::Exiting
+                        }
+                })
+        {
+            return;
+        }
+
+        tab.layout.progress_center_visible = visible;
+        tab.layout.progress_center_transition = Some(SftpProgressCenterTransition {
+            phase: if visible {
+                SftpProgressCenterTransitionPhase::Entering
+            } else {
+                SftpProgressCenterTransitionPhase::Exiting
+            },
+            started_at: Instant::now(),
+            duration: CONTAINER_TRANSITION_DURATION,
+        });
+
+        if !visible
+            && matches!(
+                tab.layout.drag.as_ref(),
+                Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+            )
+        {
+            tab.layout.drag = None;
+        }
+
         cx.notify();
+    }
+
+    fn sftp_progress_center_render_visibility(
+        &mut self,
+        tab_id: usize,
+        window: &mut Window,
+    ) -> Option<f32> {
+        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+            return None;
+        };
+
+        let Some(transition) = tab.layout.progress_center_transition else {
+            return tab.layout.progress_center_visible.then_some(1.0);
+        };
+
+        let duration_seconds = transition.duration.as_secs_f32();
+        if duration_seconds <= f32::EPSILON {
+            tab.layout.progress_center_transition = None;
+            return tab.layout.progress_center_visible.then_some(1.0);
+        }
+
+        let elapsed = Instant::now().saturating_duration_since(transition.started_at);
+        let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+        let eased = progress * progress * (3.0 - 2.0 * progress);
+
+        if progress >= 1.0 {
+            tab.layout.progress_center_transition = None;
+            return tab.layout.progress_center_visible.then_some(1.0);
+        }
+
+        window.request_animation_frame();
+
+        Some(match transition.phase {
+            SftpProgressCenterTransitionPhase::Entering => eased,
+            SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
+        })
     }
 
     fn cache_sftp_browser_container_width(
@@ -981,12 +1070,13 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn render_sftp_page_for_tab(
-        &self,
+        &mut self,
         entity: Entity<Self>,
         tab_id: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        self.render_sftp_page_content(entity, tab_id, cx)
+        self.render_sftp_page_content(entity, tab_id, window, cx)
     }
 
     pub(in crate::ui::shell) fn render_sftp_remote_browser_panel(
@@ -1302,9 +1392,10 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn render_sftp_page_content(
-        &self,
+        &mut self,
         entity: Entity<Self>,
         tab_id: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
@@ -1314,6 +1405,8 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
+        let progress_center_visibility =
+            self.sftp_progress_center_render_visibility(tab_id, window);
         let Some(tab) = self
             .workspace_state
             .tabs
@@ -1328,7 +1421,10 @@ impl AppView {
 
         let local_panel_flex = sftp_local_panel_flex(sftp_tab);
         let browser_area_flex = sftp_browser_area_flex(sftp_tab);
-        let progress_center_visible = sftp_tab.layout.progress_center_visible;
+        let progress_center_visibility = progress_center_visibility.unwrap_or(0.0);
+        let progress_center_visible = progress_center_visibility > 0.0;
+        let progress_center_footer_flex = (1.0 - browser_area_flex) * progress_center_visibility;
+        let browser_panel_flex = 1.0 - progress_center_footer_flex;
         let local_path_bar = if self.workspace_forms.sftp_browser.local_path_editing {
             let up_entity = entity.clone();
             sftp_path_bar(
@@ -2293,33 +2389,47 @@ impl AppView {
                                 div()
                                     .flex_grow(1.0)
                                     .flex_shrink(1.0)
-                                    .flex_basis(gpui::relative(if progress_center_visible {
-                                        browser_area_flex
-                                    } else {
-                                        1.0
-                                    }))
+                                    .flex_basis(gpui::relative(browser_panel_flex))
                                     .min_w(px(0.0))
                                     .min_h(px(0.0))
                                     .child(browser_panels),
                             )
                             .when(progress_center_visible, |this| {
-                                this.child(sftp_split_bar(
-                                    tab_id,
-                                    SftpSplitDivider::ProgressCenter,
-                                    matches!(
-                                        sftp_tab.layout.drag.as_ref(),
-                                        Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
-                                    ),
-                                    cx,
-                                ))
+                                this.child(
+                                    div()
+                                        .w_full()
+                                        .h(px(SFTP_SPLIT_GAP * progress_center_visibility))
+                                        .overflow_hidden()
+                                        .opacity(progress_center_visibility)
+                                        .child(sftp_split_bar(
+                                            tab_id,
+                                            SftpSplitDivider::ProgressCenter,
+                                            matches!(
+                                                sftp_tab.layout.drag.as_ref(),
+                                                Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+                                            ),
+                                            cx,
+                                        )),
+                                )
                                 .child(
                                     div()
-                                        .flex_grow(1.0)
+                                        .flex_grow(progress_center_visibility)
                                         .flex_shrink(1.0)
-                                        .flex_basis(gpui::relative(1.0 - browser_area_flex))
+                                        .flex_basis(gpui::relative(progress_center_footer_flex))
                                         .min_w(px(0.0))
                                         .min_h(px(0.0))
-                                        .child(footer),
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .size_full()
+                                                .opacity(progress_center_visibility)
+                                                .top(px(
+                                                    (1.0 - progress_center_visibility)
+                                                        * SFTP_PROGRESS_CENTER_SLIDE_OFFSET,
+                                                ))
+                                                .child(footer),
+                                        ),
                                 )
                             }),
                     ),

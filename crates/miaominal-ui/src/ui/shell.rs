@@ -132,16 +132,16 @@ use std::time::{Duration, Instant, SystemTime};
 pub(in crate::ui::shell) use system_file_icons::render_system_file_icon;
 use workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
 
-pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
 use support::{
-    OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase,
-    TerminalScrollbarMetrics, classify_terminal_key, container_transition_animation,
-    list_enter_animation, new_input_state, overlay_enter_animation, render_basic_dialog,
-    render_basic_dialog_with_config, render_bottom_popup, render_terminal_canvas_for_pane,
-    set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
-    short_feedback_animation, terminal_cell_width, terminal_line_height,
+    CONTAINER_TRANSITION_DURATION, OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent,
+    TerminalKeyPhase, TerminalScrollbarMetrics, classify_terminal_key,
+    container_transition_animation, list_enter_animation, new_input_state, overlay_enter_animation,
+    render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
+    render_terminal_canvas_for_pane, set_code_editor_input_placeholder, set_input_placeholder,
+    set_input_value, short_feedback_animation, terminal_cell_width, terminal_line_height,
     terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
 };
+pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {
     gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
@@ -380,6 +380,19 @@ pub(in crate::ui::shell) enum WorkspaceSidePanelTransitionPhase {
 #[derive(Clone, Copy, Debug)]
 pub(in crate::ui::shell) struct WorkspaceSidePanelTransition {
     pub(in crate::ui::shell) phase: WorkspaceSidePanelTransitionPhase,
+    pub(in crate::ui::shell) started_at: Instant,
+    pub(in crate::ui::shell) duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) enum SftpProgressCenterTransitionPhase {
+    Entering,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct SftpProgressCenterTransition {
+    pub(in crate::ui::shell) phase: SftpProgressCenterTransitionPhase,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
 }

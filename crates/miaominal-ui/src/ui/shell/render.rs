@@ -587,7 +587,7 @@ impl AppView {
                 },
             ),
             PrimaryViewKind::Sftp(tab_id) => (
-                self.render_sftp_page_for_tab(entity, tab_id, cx),
+                self.render_sftp_page_for_tab(entity, tab_id, window, cx),
                 PrimarySurfaceRenderState {
                     has_active_session: false,
                     has_active_sftp_tab: true,

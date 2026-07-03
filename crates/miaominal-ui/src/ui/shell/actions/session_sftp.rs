@@ -503,7 +503,20 @@ impl AppView {
                         last_bytes_complete: 0,
                     },
                 );
-                sftp.layout.progress_center_visible = true;
+                if !sftp.layout.progress_center_visible
+                    || matches!(
+                        sftp.layout.progress_center_transition.as_ref(),
+                        Some(transition)
+                            if transition.phase == SftpProgressCenterTransitionPhase::Exiting
+                    )
+                {
+                    sftp.layout.progress_center_visible = true;
+                    sftp.layout.progress_center_transition = Some(SftpProgressCenterTransition {
+                        phase: SftpProgressCenterTransitionPhase::Entering,
+                        started_at: Instant::now(),
+                        duration: CONTAINER_TRANSITION_DURATION,
+                    });
+                }
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
                     i18n::string_args("sftp.messages.transfer_queued", &[("id", &transfer_id)]);
