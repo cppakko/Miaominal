@@ -433,24 +433,29 @@ where
         .flex_col()
         .context_menu(menu_builder)
         .child(
-            div().w_full().px_3().pt_2().pb_2().child(
+            div().w_full().flex_shrink_0().px_3().pt_2().pb_2().child(
                 v_flex()
                     .w_full()
+                    .flex_shrink_0()
                     .gap_2()
                     .child(
                         h_flex()
                             .w_full()
+                            .h(px(24.0))
+                            .flex_shrink_0()
                             .items_center()
                             .justify_between()
                             .gap_3()
                             .child(
                                 h_flex()
+                                    .flex_1()
                                     .min_w(px(0.0))
                                     .items_center()
                                     .gap_2()
                                     .child(
                                         div()
                                             .size(px(18.0))
+                                            .flex_shrink_0()
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -461,9 +466,14 @@ where
                                         this.child(
                                             div()
                                                 .min_w(px(0.0))
+                                                .flex_shrink_0()
                                                 .overflow_hidden()
+                                                .whitespace_nowrap()
                                                 .text_size(
                                                     miaominal_settings::FontSize::Input.scaled(),
+                                                )
+                                                .line_height(
+                                                    miaominal_settings::scaled_line_height(20.0),
                                                 )
                                                 .text_color(rgb(roles.on_surface))
                                                 .font_weight(FontWeight::MEDIUM)
@@ -477,6 +487,7 @@ where
                         h_flex()
                             .w_full()
                             .min_w(px(0.0))
+                            .flex_shrink_0()
                             .items_center()
                             .gap(px(SFTP_ACTION_BUTTON_GAP))
                             .child(path_bar)
@@ -2128,7 +2139,7 @@ impl AppView {
                         section_id: SharedString::from(format!("local-sftp-section-{tab_id}"))
                             .into(),
                         title: i18n::string("sftp.ui.local_section").into(),
-                        show_title: false,
+                        show_title: true,
                         icon: AppIcon::Computer,
                         item_count: sftp_tab.local_entries.len(),
                         selected_count: local_selected_count,
@@ -2171,7 +2182,7 @@ impl AppView {
                         section_id: SharedString::from(format!("remote-sftp-section-{tab_id}"))
                             .into(),
                         title: i18n::string("sftp.ui.remote_section").into(),
-                        show_title: false,
+                        show_title: true,
                         icon: AppIcon::FolderSymlink,
                         item_count: sftp_tab.remote_entries.len(),
                         selected_count: remote_selected_count,
