@@ -3,15 +3,6 @@ use crate::ui::i18n;
 
 impl AppView {
     pub(in crate::ui::shell) fn open_hosts_tab(&mut self, cx: &mut Context<Self>) {
-        let previous_active_terminal_tab_id = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| {
-                tab.as_session()
-                    .filter(|session| session.purpose == SessionPurpose::Terminal)
-                    .map(|_| tab.id)
-            });
         self.unload_active_topbar_workspace(cx);
 
         let tab_id = self.workspace_state.next_tab_id;
@@ -23,18 +14,6 @@ impl AppView {
         self.panel_view.sidebar_section = SidebarSection::Hosts;
         self.editors.host_editor_open = false;
         self.editors.host_editor_is_new = false;
-        if let Some(terminal_tab_id) = previous_active_terminal_tab_id {
-            self.start_hosts_to_terminal_transition(
-                tab_id,
-                terminal_tab_id,
-                HostsToTerminalTransitionDirection::ToHosts,
-                false,
-            );
-            self.workspace_state.terminal_view_transition = None;
-            self.workspace_state.visible_terminal_view_tab_id = None;
-        } else {
-            self.workspace_state.hosts_to_terminal_transition = None;
-        }
         self.status_message = i18n::string("navigation.messages.opened_new_hosts_tab");
         cx.notify();
     }

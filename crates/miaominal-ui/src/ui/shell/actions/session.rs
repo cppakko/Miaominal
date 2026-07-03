@@ -576,19 +576,6 @@ impl AppView {
         };
 
         self.workspace_state.active_topbar_tab = Some(index);
-        if should_animate_hosts_to_terminal {
-            self.start_hosts_to_terminal_transition(
-                self.workspace_state.tabs[index].id,
-                self.workspace_state.tabs[index].id,
-                HostsToTerminalTransitionDirection::ToTerminal,
-                preserve_host_editor_sidebar,
-            );
-            self.workspace_state.terminal_view_transition = None;
-            self.workspace_state.visible_terminal_view_tab_id =
-                Some(self.workspace_state.tabs[index].id);
-        } else {
-            self.workspace_state.hosts_to_terminal_transition = None;
-        }
         self.load_topbar_workspace(index, cx);
         self.rebind_terminal_focus_reporting(window, cx);
 
@@ -1081,14 +1068,8 @@ impl AppView {
         let previous_active_index = self.workspace_state.active_topbar_tab;
         let previous_active_tab =
             previous_active_index.and_then(|active| self.workspace_state.tabs.get(active));
-        let previous_active_terminal_tab_id = previous_active_tab.and_then(|tab| {
-            tab.as_session()
-                .filter(|session| session.purpose == SessionPurpose::Terminal)
-                .map(|_| tab.id)
-        });
         let previous_active_is_hosts = previous_active_tab.is_some_and(TabState::is_hosts)
             && self.panel_view.sidebar_section == SidebarSection::Hosts;
-        let target_is_hosts = self.workspace_state.tabs[index].is_hosts();
         let target_is_terminal = self.workspace_state.tabs[index]
             .as_session()
             .is_some_and(|session| session.purpose == SessionPurpose::Terminal);
@@ -1107,32 +1088,6 @@ impl AppView {
         }
 
         self.panel_view.sidebar_section = SidebarSection::Hosts;
-        if previous_active_index != Some(index) {
-            if previous_active_is_hosts && target_is_terminal {
-                let target_tab_id = self.workspace_state.tabs[index].id;
-                self.start_hosts_to_terminal_transition(
-                    target_tab_id,
-                    target_tab_id,
-                    HostsToTerminalTransitionDirection::ToTerminal,
-                    preserve_host_editor_sidebar,
-                );
-                self.workspace_state.terminal_view_transition = None;
-                self.workspace_state.visible_terminal_view_tab_id = Some(target_tab_id);
-            } else if let Some(terminal_tab_id) =
-                previous_active_terminal_tab_id.filter(|_| target_is_hosts)
-            {
-                self.start_hosts_to_terminal_transition(
-                    self.workspace_state.tabs[index].id,
-                    terminal_tab_id,
-                    HostsToTerminalTransitionDirection::ToHosts,
-                    false,
-                );
-                self.workspace_state.terminal_view_transition = None;
-                self.workspace_state.visible_terminal_view_tab_id = None;
-            } else {
-                self.workspace_state.hosts_to_terminal_transition = None;
-            }
-        }
 
         if !preserve_host_editor_sidebar {
             self.editors.host_editor_open = false;

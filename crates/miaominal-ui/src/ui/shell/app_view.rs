@@ -55,25 +55,6 @@ pub struct AppView {
 }
 
 impl AppView {
-    pub(in crate::ui::shell) fn start_hosts_to_terminal_transition(
-        &mut self,
-        active_tab_id: usize,
-        terminal_tab_id: usize,
-        direction: HostsToTerminalTransitionDirection,
-        show_host_editor_sidebar: bool,
-    ) {
-        self.workspace_state.hosts_to_terminal_transition = Some(HostsToTerminalTransition {
-            started_at: Instant::now(),
-            duration: support::OVERLAY_ENTER_DURATION,
-            active_tab_id,
-            terminal_tab_id,
-            direction,
-            show_host_editor_sidebar,
-        });
-    }
-}
-
-impl AppView {
     pub(in crate::ui::shell) fn set_active_pane(
         &mut self,
         new_id: PaneId,

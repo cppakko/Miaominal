@@ -1677,9 +1677,8 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) recently_closed_tabs: Vec<ClosedTabBundle>,
     pub(in crate::ui::shell) renaming_tab: Option<usize>,
     pub(in crate::ui::shell) reported_terminal_focus_tab_id: Option<usize>,
-    pub(in crate::ui::shell) hosts_to_terminal_transition: Option<HostsToTerminalTransition>,
-    pub(in crate::ui::shell) terminal_view_transition: Option<TerminalViewTransition>,
-    pub(in crate::ui::shell) visible_terminal_view_tab_id: Option<usize>,
+    pub(in crate::ui::shell) primary_view_transition: Option<PrimaryViewTransition>,
+    pub(in crate::ui::shell) visible_primary_view: Option<PrimaryViewKind>,
     pub(in crate::ui::shell) session_agent_panel_width: f32,
     pub(in crate::ui::shell) session_agent_panel_drag: Option<SessionAgentPanelDragState>,
     pub(in crate::ui::shell) terminal_originated_selection_drag: Option<PaneId>,
@@ -1704,7 +1703,6 @@ pub(in crate::ui::shell) struct SessionAgentAutoScrollState {
 
 #[derive(Default)]
 pub(in crate::ui::shell) struct ShellState {
-    pub(in crate::ui::shell) suppressed_page_container_animation_section: Option<SidebarSection>,
     pub(in crate::ui::shell) page_editor_sidebar_transition: Option<PageEditorSidebarTransition>,
     pub(in crate::ui::shell) visible_page_editor_sidebar: Option<PageEditorSidebarKind>,
 }

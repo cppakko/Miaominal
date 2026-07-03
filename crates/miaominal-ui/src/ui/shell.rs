@@ -173,32 +173,17 @@ pub(in crate::ui::shell) enum KeychainEditorMode {
     Deploy,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) enum HostsToTerminalTransitionDirection {
-    ToTerminal,
-    ToHosts,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum PrimaryViewKind {
+    Sidebar(SidebarSection),
+    Terminal(usize),
+    Sftp(usize),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct HostsToTerminalTransition {
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-    pub(in crate::ui::shell) active_tab_id: usize,
-    pub(in crate::ui::shell) terminal_tab_id: usize,
-    pub(in crate::ui::shell) direction: HostsToTerminalTransitionDirection,
-    pub(in crate::ui::shell) show_host_editor_sidebar: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum TerminalViewTransitionPhase {
-    Entering,
-    Exiting,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct TerminalViewTransition {
-    pub(in crate::ui::shell) tab_id: usize,
-    pub(in crate::ui::shell) phase: TerminalViewTransitionPhase,
+#[derive(Clone, Copy)]
+pub(in crate::ui::shell) struct PrimaryViewTransition {
+    pub(in crate::ui::shell) from: PrimaryViewKind,
+    pub(in crate::ui::shell) to: PrimaryViewKind,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
 }

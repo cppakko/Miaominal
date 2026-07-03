@@ -963,12 +963,13 @@ impl AppView {
         self.finish_active_sftp_drag_selection(tab_id, position, cx)
     }
 
-    pub(in crate::ui::shell) fn render_sftp_page(
+    pub(in crate::ui::shell) fn render_sftp_page_for_tab(
         &self,
         entity: Entity<Self>,
+        tab_id: usize,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        self.render_sftp_page_content(entity, cx)
+        self.render_sftp_page_content(entity, tab_id, cx)
     }
 
     pub(in crate::ui::shell) fn render_sftp_remote_browser_panel(
@@ -1285,6 +1286,7 @@ impl AppView {
     pub(in crate::ui::shell) fn render_sftp_page_content(
         &self,
         entity: Entity<Self>,
+        tab_id: usize,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
@@ -1294,17 +1296,18 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let Some(active_index) = self.workspace_state.active_topbar_tab else {
-            return self.render_snippets_page_content();
-        };
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
+        let Some(tab) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+        else {
             return self.render_snippets_page_content();
         };
         let Some(sftp_tab) = tab.as_sftp() else {
             return self.render_snippets_page_content();
         };
 
-        let tab_id = tab.id;
         let local_panel_flex = sftp_local_panel_flex(sftp_tab);
         let browser_area_flex = sftp_browser_area_flex(sftp_tab);
         let progress_center_visible = sftp_tab.layout.progress_center_visible;

@@ -14,18 +14,11 @@ struct PageEditorSidebarRenderState {
 }
 
 #[derive(Clone, Copy)]
-struct TerminalViewRenderState {
-    tab_id: usize,
-    phase: TerminalViewTransitionPhase,
+struct PrimaryViewTransitionRenderState {
+    from: PrimaryViewKind,
+    to: PrimaryViewKind,
     visibility: f32,
     animating: bool,
-}
-
-#[derive(Clone, Copy)]
-struct HostsToTerminalTransitionRenderState {
-    terminal_tab_id: usize,
-    visibility: f32,
-    show_host_editor_sidebar: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +38,8 @@ struct ShellBodyRenderState {
     page_editor_sidebar: Option<PageEditorSidebarRenderState>,
     primary_surface: PrimarySurfaceRenderState,
 }
+
+const PRIMARY_VIEW_GUTTER: f32 = 8.0;
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -66,15 +61,12 @@ impl Render for AppView {
             .and_then(|index| self.workspace_state.tabs.get(index))
             .and_then(TabState::as_sftp)
             .is_some();
-        let hosts_to_terminal_transition = self.hosts_to_terminal_transition_render_state(window);
-        let active_terminal_tab_id = self.active_terminal_tab_id();
-        let terminal_view_transition = if hosts_to_terminal_transition.is_some() {
-            self.clear_terminal_view_transition_state();
-            None
-        } else {
-            self.terminal_view_render_state(active_terminal_tab_id, window)
-        };
-        let show_sidebar = !has_active_session && !has_active_sftp_tab;
+        let desired_primary_view =
+            self.desired_primary_view_kind(has_active_session, has_active_sftp_tab);
+        let primary_view_transition =
+            self.primary_view_transition_render_state(desired_primary_view, window);
+        let primary_view_animating = primary_view_transition.animating;
+        let root_right_gutter = self.primary_view_root_right_gutter(primary_view_transition);
 
         let pending_host_key = self.pending_host_key_prompt();
         let pending_kbi = self.pending_keyboard_interactive_prompt();
@@ -134,24 +126,22 @@ impl Render for AppView {
             && !has_active_session
             && !has_active_sftp_tab
             && self.panel_view.sidebar_section == SidebarSection::KnownHosts;
-        let page_editor_sidebar = if hosts_to_terminal_transition.is_some()
-            || has_active_session
-            || has_active_sftp_tab
-        {
-            self.clear_page_editor_sidebar_transition_state();
-            None
-        } else {
-            self.page_editor_sidebar_render_state(
-                self.desired_page_editor_sidebar_kind(
-                    show_host_editor_sidebar,
-                    show_port_forward_editor_sidebar,
-                    show_snippets_editor_sidebar,
-                    show_keychain_editor_sidebar,
-                    show_known_hosts_sidebar,
-                ),
-                window,
-            )
-        };
+        let page_editor_sidebar =
+            if primary_view_animating || has_active_session || has_active_sftp_tab {
+                self.clear_page_editor_sidebar_transition_state();
+                None
+            } else {
+                self.page_editor_sidebar_render_state(
+                    self.desired_page_editor_sidebar_kind(
+                        show_host_editor_sidebar,
+                        show_port_forward_editor_sidebar,
+                        show_snippets_editor_sidebar,
+                        show_keychain_editor_sidebar,
+                        show_known_hosts_sidebar,
+                    ),
+                    window,
+                )
+            };
         let show_host_editor_sidebar = matches!(
             page_editor_sidebar,
             Some(sidebar) if sidebar.kind == PageEditorSidebarKind::Hosts
@@ -172,67 +162,23 @@ impl Render for AppView {
             page_editor_sidebar,
             Some(sidebar) if sidebar.kind == PageEditorSidebarKind::KnownHosts
         );
-        let shell_body = if let Some(transition) = hosts_to_terminal_transition {
-            self.render_hosts_to_terminal_transition(
-                transition,
-                entity.clone(),
-                show_host_editor_sidebar,
-                window,
-                cx,
-            )
-        } else if let Some(transition) = terminal_view_transition.filter(|state| state.animating) {
-            self.render_terminal_view_transition(
-                transition,
-                entity.clone(),
-                has_active_sftp_tab,
-                show_sidebar,
-                window,
-                cx,
-            )
+        let shell_body = if primary_view_transition.animating {
+            self.render_primary_view_transition(primary_view_transition, entity.clone(), window, cx)
         } else {
-            let primary_panel = if has_active_session {
-                self.render_terminal_page(window, cx)
-            } else if has_active_sftp_tab {
-                self.render_sftp_page(entity.clone(), cx)
-            } else if self.panel_view.sidebar_section == SidebarSection::Hosts {
-                self.render_hosts_page(entity.clone(), cx)
-            } else if self.panel_view.sidebar_section == SidebarSection::Keychain {
-                self.render_keychain_page(entity.clone(), cx)
-            } else if self.panel_view.sidebar_section == SidebarSection::PortForwarding {
-                self.render_forward_page(entity.clone(), cx)
-            } else if self.panel_view.sidebar_section == SidebarSection::KnownHosts {
-                self.render_trusted_page(entity.clone(), cx)
-            } else if self.panel_view.sidebar_section == SidebarSection::Settings {
-                self.render_settings_page(entity.clone())
-            } else {
-                self.render_snippets_page(entity.clone(), cx)
-            };
-            let animate_sidebar_page = self.should_animate_sidebar_page_container(
-                self.panel_view.sidebar_section,
-                show_sidebar,
-            );
-            let primary_panel = super::support::render_sidebar_page_container(
-                primary_panel,
-                self.panel_view.sidebar_section,
-                animate_sidebar_page,
-            );
-
-            self.render_shell_body(
+            self.render_primary_view_shell(
+                desired_primary_view,
                 entity.clone(),
-                primary_panel,
-                ShellBodyRenderState {
-                    show_sidebar,
-                    page_editor_sidebar,
-                    primary_surface: PrimarySurfaceRenderState {
-                        has_active_session,
-                        has_active_sftp_tab,
-                        show_host_editor_sidebar,
-                        show_port_forward_editor_sidebar,
-                        show_snippets_editor_sidebar,
-                        show_keychain_editor_sidebar,
-                        show_known_hosts_sidebar,
-                    },
+                page_editor_sidebar,
+                PrimarySurfaceRenderState {
+                    has_active_session,
+                    has_active_sftp_tab,
+                    show_host_editor_sidebar,
+                    show_port_forward_editor_sidebar,
+                    show_snippets_editor_sidebar,
+                    show_keychain_editor_sidebar,
+                    show_known_hosts_sidebar,
                 },
+                window,
                 cx,
             )
         };
@@ -243,9 +189,7 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .bg(rgb(roles.surface_container))
-            .when(!has_active_session && !has_active_sftp_tab, |this| {
-                this.pr_2()
-            })
+            .pr(px(root_right_gutter))
             .child(self.render_top_bar(entity.clone(), window))
             .child(shell_body)
             .child(self.render_status_footer(entity.clone()))
@@ -399,274 +343,290 @@ impl AppView {
             })
     }
 
-    fn clear_hosts_transition_editor_state(&mut self, transition: HostsToTerminalTransition) {
-        self.workspace_state.hosts_to_terminal_transition = None;
-        if transition.show_host_editor_sidebar {
+    fn desired_primary_view_kind(
+        &self,
+        has_active_session: bool,
+        has_active_sftp_tab: bool,
+    ) -> PrimaryViewKind {
+        if has_active_session && let Some(tab_id) = self.active_terminal_tab_id() {
+            return PrimaryViewKind::Terminal(tab_id);
+        }
+
+        if has_active_sftp_tab && let Some(tab_id) = self.active_sftp_tab_id() {
+            return PrimaryViewKind::Sftp(tab_id);
+        }
+
+        PrimaryViewKind::Sidebar(self.panel_view.sidebar_section)
+    }
+
+    fn primary_view_exists(&self, view: PrimaryViewKind) -> bool {
+        match view {
+            PrimaryViewKind::Sidebar(_) => true,
+            PrimaryViewKind::Terminal(tab_id) => self.workspace_state.tabs.iter().any(|tab| {
+                tab.id == tab_id
+                    && tab
+                        .as_session()
+                        .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+            }),
+            PrimaryViewKind::Sftp(tab_id) => self
+                .workspace_state
+                .tabs
+                .iter()
+                .any(|tab| tab.id == tab_id && tab.as_sftp().is_some()),
+        }
+    }
+
+    fn primary_view_tab_index(&self, view: PrimaryViewKind) -> Option<usize> {
+        match view {
+            PrimaryViewKind::Terminal(tab_id) | PrimaryViewKind::Sftp(tab_id) => self
+                .workspace_state
+                .tabs
+                .iter()
+                .position(|tab| tab.id == tab_id),
+            PrimaryViewKind::Sidebar(_) => None,
+        }
+    }
+
+    fn primary_view_transition_axis_direction(
+        &self,
+        from: PrimaryViewKind,
+        to: PrimaryViewKind,
+    ) -> f32 {
+        match (
+            self.primary_view_tab_index(from),
+            self.primary_view_tab_index(to),
+        ) {
+            (Some(from_index), Some(to_index)) if to_index < from_index => -1.0,
+            (Some(from_index), Some(to_index)) if to_index > from_index => 1.0,
+            _ => match (from, to) {
+                (PrimaryViewKind::Terminal(_), PrimaryViewKind::Sftp(_)) => 1.0,
+                (PrimaryViewKind::Sftp(_), PrimaryViewKind::Terminal(_)) => -1.0,
+                _ => 1.0,
+            },
+        }
+    }
+
+    fn should_animate_primary_view_transition(
+        &self,
+        from: PrimaryViewKind,
+        to: PrimaryViewKind,
+    ) -> bool {
+        !matches!(
+            (from, to),
+            (PrimaryViewKind::Terminal(_), PrimaryViewKind::Terminal(_))
+                | (PrimaryViewKind::Sftp(_), PrimaryViewKind::Sftp(_))
+        )
+    }
+
+    fn primary_view_root_right_gutter(&self, transition: PrimaryViewTransitionRenderState) -> f32 {
+        let from_uses_sidebar = matches!(transition.from, PrimaryViewKind::Sidebar(_));
+        let to_uses_sidebar = matches!(transition.to, PrimaryViewKind::Sidebar(_));
+
+        match (from_uses_sidebar, to_uses_sidebar) {
+            (true, true) => PRIMARY_VIEW_GUTTER,
+            (true, false) => PRIMARY_VIEW_GUTTER * (1.0 - transition.visibility),
+            (false, true) => PRIMARY_VIEW_GUTTER * transition.visibility,
+            (false, false) => 0.0,
+        }
+    }
+
+    fn finish_primary_view_transition(&mut self, transition: PrimaryViewTransition) {
+        if matches!(
+            (transition.from, transition.to),
+            (
+                PrimaryViewKind::Sidebar(SidebarSection::Hosts),
+                PrimaryViewKind::Terminal(_)
+            )
+        ) {
             self.editors.host_editor_open = false;
             self.editors.host_editor_is_new = false;
         }
+
+        self.workspace_state.primary_view_transition = None;
     }
 
-    fn finish_hosts_transition(&mut self, transition: HostsToTerminalTransition) {
-        if matches!(
-            transition.direction,
-            HostsToTerminalTransitionDirection::ToHosts
-        ) {
-            self.shell_state.suppressed_page_container_animation_section =
-                Some(SidebarSection::Hosts);
+    fn primary_view_transition_render_state(
+        &mut self,
+        desired: PrimaryViewKind,
+        window: &mut Window,
+    ) -> PrimaryViewTransitionRenderState {
+        let now = Instant::now();
+        let duration = super::support::CONTAINER_TRANSITION_DURATION;
+
+        if self.workspace_state.visible_primary_view.is_none() {
+            self.workspace_state.visible_primary_view = Some(desired);
         }
 
-        self.clear_hosts_transition_editor_state(transition);
-    }
+        if self.workspace_state.visible_primary_view != Some(desired) {
+            let from = self
+                .workspace_state
+                .primary_view_transition
+                .map(|transition| transition.to)
+                .or(self.workspace_state.visible_primary_view)
+                .unwrap_or(desired);
+            self.workspace_state.visible_primary_view = Some(desired);
+            if self.should_animate_primary_view_transition(from, desired) {
+                self.workspace_state.primary_view_transition = Some(PrimaryViewTransition {
+                    from,
+                    to: desired,
+                    started_at: now,
+                    duration,
+                });
+            } else {
+                self.workspace_state.primary_view_transition = None;
+            }
+        }
 
-    fn clear_terminal_view_transition_state(&mut self) {
-        self.workspace_state.terminal_view_transition = None;
-        self.workspace_state.visible_terminal_view_tab_id = self.active_terminal_tab_id();
-    }
-
-    fn hosts_to_terminal_transition_render_state(
-        &mut self,
-        window: &mut Window,
-    ) -> Option<HostsToTerminalTransitionRenderState> {
-        let transition = self.workspace_state.hosts_to_terminal_transition?;
-        let active_tab_id = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .map(|tab| tab.id);
-        let active_tab_is_hosts = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .is_some_and(TabState::is_hosts);
-        let active_tab_is_terminal = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .is_some_and(|session| session.purpose == SessionPurpose::Terminal);
-        let terminal_tab_exists = self
-            .workspace_state
-            .tabs
-            .iter()
-            .any(|tab| tab.id == transition.terminal_tab_id);
-
-        let transition_still_valid = active_tab_id == Some(transition.active_tab_id)
-            && self.panel_view.sidebar_section == SidebarSection::Hosts
-            && terminal_tab_exists
-            && match transition.direction {
-                HostsToTerminalTransitionDirection::ToTerminal => active_tab_is_terminal,
-                HostsToTerminalTransitionDirection::ToHosts => active_tab_is_hosts,
+        let Some(transition) = self.workspace_state.primary_view_transition else {
+            return PrimaryViewTransitionRenderState {
+                from: desired,
+                to: desired,
+                visibility: 1.0,
+                animating: false,
             };
+        };
 
-        if !transition_still_valid {
-            self.clear_hosts_transition_editor_state(transition);
-            return None;
+        if !self.primary_view_exists(transition.from) || !self.primary_view_exists(transition.to) {
+            self.workspace_state.primary_view_transition = None;
+            self.workspace_state.visible_primary_view = Some(desired);
+            return PrimaryViewTransitionRenderState {
+                from: desired,
+                to: desired,
+                visibility: 1.0,
+                animating: false,
+            };
         }
 
         let duration_seconds = transition.duration.as_secs_f32();
         if duration_seconds <= f32::EPSILON {
-            self.finish_hosts_transition(transition);
-            return None;
+            self.finish_primary_view_transition(transition);
+            return PrimaryViewTransitionRenderState {
+                from: desired,
+                to: desired,
+                visibility: 1.0,
+                animating: false,
+            };
         }
 
-        let elapsed = Instant::now().saturating_duration_since(transition.started_at);
+        let elapsed = now.saturating_duration_since(transition.started_at);
         let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+        let eased = progress * progress * (3.0 - 2.0 * progress);
 
         if progress >= 1.0 {
-            self.finish_hosts_transition(transition);
-            return None;
+            self.finish_primary_view_transition(transition);
+            return PrimaryViewTransitionRenderState {
+                from: desired,
+                to: desired,
+                visibility: 1.0,
+                animating: false,
+            };
         }
 
         window.request_animation_frame();
-        let eased = progress * progress * (3.0 - 2.0 * progress);
-        let visibility = match transition.direction {
-            HostsToTerminalTransitionDirection::ToTerminal => eased,
-            HostsToTerminalTransitionDirection::ToHosts => 1.0 - eased,
-        };
+        PrimaryViewTransitionRenderState {
+            from: transition.from,
+            to: transition.to,
+            visibility: eased,
+            animating: true,
+        }
+    }
 
-        Some(HostsToTerminalTransitionRenderState {
-            terminal_tab_id: transition.terminal_tab_id,
-            visibility,
-            show_host_editor_sidebar: transition.show_host_editor_sidebar,
-        })
+    fn render_sidebar_primary_panel(
+        &mut self,
+        section: SidebarSection,
+        entity: Entity<Self>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match section {
+            SidebarSection::Hosts => self.render_hosts_page(entity, cx),
+            SidebarSection::Keychain => self.render_keychain_page(entity, cx),
+            SidebarSection::PortForwarding => self.render_forward_page(entity, cx),
+            SidebarSection::KnownHosts => self.render_trusted_page(entity, cx),
+            SidebarSection::Settings => self.render_settings_page(entity),
+            SidebarSection::Snippets => self.render_snippets_page(entity, cx),
+        }
+    }
+
+    fn render_primary_view_panel(
+        &mut self,
+        view: PrimaryViewKind,
+        entity: Entity<Self>,
+        current_surface: Option<PrimarySurfaceRenderState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, PrimarySurfaceRenderState) {
+        match view {
+            PrimaryViewKind::Sidebar(section) => {
+                let mut render_state = current_surface.unwrap_or(PrimarySurfaceRenderState {
+                    has_active_session: false,
+                    has_active_sftp_tab: false,
+                    show_host_editor_sidebar: false,
+                    show_port_forward_editor_sidebar: false,
+                    show_keychain_editor_sidebar: false,
+                    show_snippets_editor_sidebar: false,
+                    show_known_hosts_sidebar: false,
+                });
+                render_state.has_active_session = false;
+                render_state.has_active_sftp_tab = false;
+                (
+                    self.render_sidebar_primary_panel(section, entity, cx),
+                    render_state,
+                )
+            }
+            PrimaryViewKind::Terminal(tab_id) => (
+                self.render_terminal_page_for_tab(tab_id, window, cx)
+                    .unwrap_or_else(|| self.render_terminal_page(window, cx)),
+                PrimarySurfaceRenderState {
+                    has_active_session: true,
+                    has_active_sftp_tab: false,
+                    show_host_editor_sidebar: false,
+                    show_port_forward_editor_sidebar: false,
+                    show_keychain_editor_sidebar: false,
+                    show_snippets_editor_sidebar: false,
+                    show_known_hosts_sidebar: false,
+                },
+            ),
+            PrimaryViewKind::Sftp(tab_id) => (
+                self.render_sftp_page_for_tab(entity, tab_id, cx),
+                PrimarySurfaceRenderState {
+                    has_active_session: false,
+                    has_active_sftp_tab: true,
+                    show_host_editor_sidebar: false,
+                    show_port_forward_editor_sidebar: false,
+                    show_keychain_editor_sidebar: false,
+                    show_snippets_editor_sidebar: false,
+                    show_known_hosts_sidebar: false,
+                },
+            ),
+        }
+    }
+
+    fn render_primary_view_shell(
+        &mut self,
+        view: PrimaryViewKind,
+        entity: Entity<Self>,
+        page_editor_sidebar: Option<PageEditorSidebarRenderState>,
+        current_surface: PrimarySurfaceRenderState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (primary_panel, primary_surface) =
+            self.render_primary_view_panel(view, entity.clone(), Some(current_surface), window, cx);
+        self.render_shell_body(
+            entity,
+            primary_panel,
+            ShellBodyRenderState {
+                show_sidebar: matches!(view, PrimaryViewKind::Sidebar(_)),
+                page_editor_sidebar,
+                primary_surface,
+            },
+            cx,
+        )
     }
 
     fn clear_page_editor_sidebar_transition_state(&mut self) {
         self.shell_state.page_editor_sidebar_transition = None;
         self.shell_state.visible_page_editor_sidebar = None;
-    }
-
-    fn should_animate_sidebar_page_container(
-        &mut self,
-        section: SidebarSection,
-        show_sidebar: bool,
-    ) -> bool {
-        if !show_sidebar {
-            self.shell_state.suppressed_page_container_animation_section = None;
-            return false;
-        }
-
-        match self.shell_state.suppressed_page_container_animation_section {
-            Some(suppressed_section) if suppressed_section == section => false,
-            Some(_) => {
-                self.shell_state.suppressed_page_container_animation_section = None;
-                true
-            }
-            None => true,
-        }
-    }
-
-    fn terminal_view_render_state(
-        &mut self,
-        desired: Option<usize>,
-        window: &mut Window,
-    ) -> Option<TerminalViewRenderState> {
-        let now = Instant::now();
-        let duration = super::support::CONTAINER_TRANSITION_DURATION;
-
-        match (self.workspace_state.visible_terminal_view_tab_id, desired) {
-            (None, Some(tab_id)) => {
-                self.workspace_state.visible_terminal_view_tab_id = Some(tab_id);
-                self.workspace_state.terminal_view_transition = Some(TerminalViewTransition {
-                    tab_id,
-                    phase: TerminalViewTransitionPhase::Entering,
-                    started_at: now,
-                    duration,
-                });
-            }
-            (Some(tab_id), None) => match self.workspace_state.terminal_view_transition {
-                Some(transition) if transition.tab_id == tab_id => {
-                    if transition.phase == TerminalViewTransitionPhase::Entering {
-                        self.workspace_state.terminal_view_transition =
-                            Some(TerminalViewTransition {
-                                phase: TerminalViewTransitionPhase::Exiting,
-                                started_at: now,
-                                ..transition
-                            });
-                    }
-                }
-                _ => {
-                    self.workspace_state.terminal_view_transition = Some(TerminalViewTransition {
-                        tab_id,
-                        phase: TerminalViewTransitionPhase::Exiting,
-                        started_at: now,
-                        duration,
-                    });
-                }
-            },
-            (Some(tab_id), Some(desired_tab_id)) if tab_id == desired_tab_id => {
-                if let Some(transition) = self.workspace_state.terminal_view_transition
-                    && transition.tab_id == tab_id
-                    && transition.phase == TerminalViewTransitionPhase::Exiting
-                {
-                    self.workspace_state.terminal_view_transition = Some(TerminalViewTransition {
-                        phase: TerminalViewTransitionPhase::Entering,
-                        started_at: now,
-                        ..transition
-                    });
-                }
-            }
-            (Some(current), Some(desired_tab_id)) if current != desired_tab_id => {
-                self.workspace_state.visible_terminal_view_tab_id = Some(desired_tab_id);
-                self.workspace_state.terminal_view_transition = None;
-            }
-            _ => {}
-        }
-
-        if let Some(transition) = self.workspace_state.terminal_view_transition {
-            let duration_seconds = transition.duration.as_secs_f32();
-            if duration_seconds <= f32::EPSILON {
-                self.workspace_state.terminal_view_transition = None;
-                self.workspace_state.visible_terminal_view_tab_id = match transition.phase {
-                    TerminalViewTransitionPhase::Entering => Some(transition.tab_id),
-                    TerminalViewTransitionPhase::Exiting => {
-                        self.shell_state.suppressed_page_container_animation_section =
-                            Some(self.panel_view.sidebar_section);
-                        None
-                    }
-                };
-
-                return self
-                    .workspace_state
-                    .visible_terminal_view_tab_id
-                    .map(|tab_id| TerminalViewRenderState {
-                        tab_id,
-                        phase: TerminalViewTransitionPhase::Entering,
-                        visibility: 1.0,
-                        animating: false,
-                    });
-            }
-
-            let elapsed = now.saturating_duration_since(transition.started_at);
-            let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-            let eased = progress * progress * (3.0 - 2.0 * progress);
-
-            if progress >= 1.0 {
-                self.workspace_state.terminal_view_transition = None;
-                self.workspace_state.visible_terminal_view_tab_id = match transition.phase {
-                    TerminalViewTransitionPhase::Entering => Some(transition.tab_id),
-                    TerminalViewTransitionPhase::Exiting => {
-                        self.shell_state.suppressed_page_container_animation_section =
-                            Some(self.panel_view.sidebar_section);
-                        None
-                    }
-                };
-
-                return self
-                    .workspace_state
-                    .visible_terminal_view_tab_id
-                    .map(|tab_id| TerminalViewRenderState {
-                        tab_id,
-                        phase: TerminalViewTransitionPhase::Entering,
-                        visibility: 1.0,
-                        animating: false,
-                    });
-            }
-
-            window.request_animation_frame();
-
-            return Some(TerminalViewRenderState {
-                tab_id: transition.tab_id,
-                phase: transition.phase,
-                visibility: match transition.phase {
-                    TerminalViewTransitionPhase::Entering => eased,
-                    TerminalViewTransitionPhase::Exiting => 1.0 - eased,
-                },
-                animating: true,
-            });
-        }
-
-        self.workspace_state.visible_terminal_view_tab_id = desired;
-        desired.map(|tab_id| TerminalViewRenderState {
-            tab_id,
-            phase: TerminalViewTransitionPhase::Entering,
-            visibility: 1.0,
-            animating: false,
-        })
-    }
-
-    fn render_non_terminal_primary_panel(
-        &mut self,
-        entity: Entity<Self>,
-        has_active_sftp_tab: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if has_active_sftp_tab {
-            self.render_sftp_page(entity, cx)
-        } else if self.panel_view.sidebar_section == SidebarSection::Hosts {
-            self.render_hosts_page(entity, cx)
-        } else if self.panel_view.sidebar_section == SidebarSection::Keychain {
-            self.render_keychain_page(entity, cx)
-        } else if self.panel_view.sidebar_section == SidebarSection::PortForwarding {
-            self.render_forward_page(entity, cx)
-        } else if self.panel_view.sidebar_section == SidebarSection::KnownHosts {
-            self.render_trusted_page(entity, cx)
-        } else if self.panel_view.sidebar_section == SidebarSection::Settings {
-            self.render_settings_page(entity)
-        } else {
-            self.render_snippets_page(entity, cx)
-        }
     }
 
     fn render_terminal_page_for_tab(
@@ -893,107 +853,61 @@ impl AppView {
             .into_any_element()
     }
 
-    fn render_terminal_view_transition(
+    fn render_primary_view_transition(
         &mut self,
-        transition: TerminalViewRenderState,
+        transition: PrimaryViewTransitionRenderState,
         entity: Entity<Self>,
-        has_active_sftp_tab: bool,
-        show_sidebar: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let non_terminal_section = self.panel_view.sidebar_section;
-        let non_terminal_panel =
-            self.render_non_terminal_primary_panel(entity.clone(), has_active_sftp_tab, cx);
-        let terminal_panel = self
-            .render_terminal_page_for_tab(transition.tab_id, window, cx)
-            .unwrap_or_else(|| self.render_terminal_page(window, cx));
-        let (
-            incoming_surface,
-            outgoing_surface,
-            incoming_opacity,
-            outgoing_opacity,
-            incoming_shift,
-            outgoing_shift,
-        ) = match transition.phase {
-            TerminalViewTransitionPhase::Entering => (
-                self.render_primary_surface_layer(
-                    entity.clone(),
-                    terminal_panel,
-                    PrimarySurfaceRenderState {
-                        has_active_session: true,
-                        has_active_sftp_tab: false,
-                        show_host_editor_sidebar: false,
-                        show_port_forward_editor_sidebar: false,
-                        show_keychain_editor_sidebar: false,
-                        show_snippets_editor_sidebar: false,
-                        show_known_hosts_sidebar: false,
-                    },
-                ),
-                self.render_primary_surface_layer(
-                    entity.clone(),
-                    super::support::render_sidebar_page_container(
-                        non_terminal_panel,
-                        non_terminal_section,
-                        false,
-                    ),
-                    PrimarySurfaceRenderState {
-                        has_active_session: false,
-                        has_active_sftp_tab,
-                        show_host_editor_sidebar: false,
-                        show_port_forward_editor_sidebar: false,
-                        show_keychain_editor_sidebar: false,
-                        show_snippets_editor_sidebar: false,
-                        show_known_hosts_sidebar: false,
-                    },
-                ),
-                0.82 + transition.visibility * 0.18,
-                1.0 - transition.visibility,
-                (1.0 - transition.visibility) * 8.0,
-                transition.visibility * -10.0,
-            ),
-            TerminalViewTransitionPhase::Exiting => {
-                let outgoing_terminal_panel = self
-                    .render_terminal_page_for_tab(transition.tab_id, window, cx)
-                    .unwrap_or_else(|| self.render_terminal_page(window, cx));
-                (
-                    self.render_primary_surface_layer(
-                        entity.clone(),
-                        super::support::render_sidebar_page_container(
-                            non_terminal_panel,
-                            non_terminal_section,
-                            false,
-                        ),
-                        PrimarySurfaceRenderState {
-                            has_active_session: false,
-                            has_active_sftp_tab,
-                            show_host_editor_sidebar: false,
-                            show_port_forward_editor_sidebar: false,
-                            show_keychain_editor_sidebar: false,
-                            show_snippets_editor_sidebar: false,
-                            show_known_hosts_sidebar: false,
-                        },
-                    ),
-                    self.render_primary_surface_layer(
-                        entity.clone(),
-                        outgoing_terminal_panel,
-                        PrimarySurfaceRenderState {
-                            has_active_session: true,
-                            has_active_sftp_tab: false,
-                            show_host_editor_sidebar: false,
-                            show_port_forward_editor_sidebar: false,
-                            show_keychain_editor_sidebar: false,
-                            show_snippets_editor_sidebar: false,
-                            show_known_hosts_sidebar: false,
-                        },
-                    ),
-                    0.82 + transition.visibility * 0.18,
-                    transition.visibility,
-                    0.0,
-                    (1.0 - transition.visibility) * -10.0,
-                )
-            }
+        let progress = transition.visibility;
+        let from_uses_sidebar = matches!(transition.from, PrimaryViewKind::Sidebar(_));
+        let to_uses_sidebar = matches!(transition.to, PrimaryViewKind::Sidebar(_));
+        let full_surface_to_full_surface = !from_uses_sidebar && !to_uses_sidebar;
+        let sidebar_visibility = match (from_uses_sidebar, to_uses_sidebar) {
+            (true, true) => 1.0,
+            (true, false) => 1.0 - progress,
+            (false, true) => progress,
+            (false, false) => 0.0,
+        };
+        let full_surface_gutter = match (from_uses_sidebar, to_uses_sidebar) {
+            (true, true) => 0.0,
+            (true, false) => PRIMARY_VIEW_GUTTER * progress,
+            (false, true) => PRIMARY_VIEW_GUTTER * (1.0 - progress),
+            (false, false) => PRIMARY_VIEW_GUTTER,
+        };
+
+        let (incoming_panel, incoming_state) =
+            self.render_primary_view_panel(transition.to, entity.clone(), None, window, cx);
+        let (outgoing_panel, outgoing_state) =
+            self.render_primary_view_panel(transition.from, entity.clone(), None, window, cx);
+        let incoming_surface =
+            self.render_primary_surface_layer(entity.clone(), incoming_panel, incoming_state);
+        let outgoing_surface =
+            self.render_primary_surface_layer(entity.clone(), outgoing_panel, outgoing_state);
+        let incoming_opacity = if full_surface_to_full_surface {
+            0.7 + progress * 0.3
+        } else {
+            0.82 + progress * 0.18
+        };
+        let outgoing_opacity = 1.0 - progress;
+        let axis_direction = if full_surface_to_full_surface {
+            self.primary_view_transition_axis_direction(transition.from, transition.to)
+        } else {
+            0.0
+        };
+        let incoming_x_shift = axis_direction * (1.0 - progress) * 22.0;
+        let outgoing_x_shift = axis_direction * progress * -22.0;
+        let incoming_y_shift = if full_surface_to_full_surface {
+            0.0
+        } else {
+            (1.0 - progress) * 8.0
+        };
+        let outgoing_y_shift = if full_surface_to_full_surface {
+            0.0
+        } else {
+            progress * -10.0
         };
 
         div()
@@ -1005,15 +919,35 @@ impl AppView {
             .min_h(px(0.0))
             .rounded(px(16.0))
             .overflow_hidden()
-            .when(show_sidebar, |this| {
-                this.child(self.render_sidebar(entity.clone()))
+            .when(sidebar_visibility > 0.0, |this| {
+                this.child(
+                    div()
+                        .relative()
+                        .h_full()
+                        .w(px(LEFT_RAIL_WIDTH * sidebar_visibility))
+                        .min_w(px(0.0))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(0.0))
+                                .left(px(0.0))
+                                .bottom(px(0.0))
+                                .w(px(LEFT_RAIL_WIDTH))
+                                .opacity(sidebar_visibility)
+                                .child(self.render_sidebar(entity.clone())),
+                        ),
+                )
             })
-            .when(!show_sidebar, |this| this.pr_2().pl_2())
+            .pl(px(full_surface_gutter))
+            .pr(px(full_surface_gutter))
             .child(
                 div()
                     .flex_1()
                     .flex()
                     .rounded(px(16.0))
+                    .overflow_hidden()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .bg(rgb(roles.surface_container))
@@ -1024,20 +958,20 @@ impl AppView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(incoming_shift))
-                                    .right(px(0.0))
-                                    .bottom(px(-incoming_shift))
-                                    .left(px(0.0))
+                                    .top(px(incoming_y_shift))
+                                    .right(px(-incoming_x_shift))
+                                    .bottom(px(-incoming_y_shift))
+                                    .left(px(incoming_x_shift))
                                     .opacity(incoming_opacity)
                                     .child(incoming_surface),
                             )
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(outgoing_shift))
-                                    .right(px(0.0))
-                                    .bottom(px(-outgoing_shift))
-                                    .left(px(0.0))
+                                    .top(px(outgoing_y_shift))
+                                    .right(px(-outgoing_x_shift))
+                                    .bottom(px(-outgoing_y_shift))
+                                    .left(px(outgoing_x_shift))
                                     .opacity(outgoing_opacity)
                                     .child(outgoing_surface),
                             ),
@@ -1097,132 +1031,6 @@ impl AppView {
                     .bottom(px(0.0))
                     .opacity(opacity)
                     .child(content),
-            )
-            .into_any_element()
-    }
-
-    fn render_hosts_to_terminal_transition(
-        &mut self,
-        transition: HostsToTerminalTransitionRenderState,
-        entity: Entity<Self>,
-        show_host_editor_sidebar: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let progress = transition.visibility;
-        let show_transition_host_editor_sidebar =
-            transition.show_host_editor_sidebar || show_host_editor_sidebar;
-        let roles = miaominal_settings::current_theme().material.roles;
-        let expansion_left = LEFT_RAIL_WIDTH * (1.0 - progress);
-        let terminal_side_inset = 8.0 * progress;
-        let host_editor_visible_width = EDITOR_DRAWER_WIDTH * (1.0 - progress);
-        let sidebar_opacity = 1.0 - progress;
-        let hosts_opacity = 1.0 - progress;
-        let terminal_opacity = 0.2 + progress * 0.8;
-        let hosts_panel = self.render_hosts_page(entity.clone(), cx);
-        let terminal_panel = self
-            .render_terminal_page_for_tab(transition.terminal_tab_id, window, cx)
-            .unwrap_or_else(|| self.render_terminal_page(window, cx));
-        let hosts_surface = self.render_primary_surface_layer(
-            entity.clone(),
-            hosts_panel,
-            PrimarySurfaceRenderState {
-                has_active_session: false,
-                has_active_sftp_tab: false,
-                show_host_editor_sidebar: show_transition_host_editor_sidebar,
-                show_port_forward_editor_sidebar: false,
-                show_keychain_editor_sidebar: false,
-                show_snippets_editor_sidebar: false,
-                show_known_hosts_sidebar: false,
-            },
-        );
-        let hosts_layer = div()
-            .size_full()
-            .flex()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .child(hosts_surface)
-            .when(show_transition_host_editor_sidebar, |this| {
-                this.child(
-                    div()
-                        .relative()
-                        .h_full()
-                        .w(px(host_editor_visible_width))
-                        .min_w(px(0.0))
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(0.0))
-                                .right(px(0.0))
-                                .bottom(px(0.0))
-                                .child(self.render_hosts_editor_sidebar(entity.clone(), cx)),
-                        ),
-                )
-            });
-        let terminal_surface = self.render_primary_surface_layer(
-            entity.clone(),
-            terminal_panel,
-            PrimarySurfaceRenderState {
-                has_active_session: true,
-                has_active_sftp_tab: false,
-                show_host_editor_sidebar: false,
-                show_port_forward_editor_sidebar: false,
-                show_keychain_editor_sidebar: false,
-                show_snippets_editor_sidebar: false,
-                show_known_hosts_sidebar: false,
-            },
-        );
-
-        div()
-            .flex_1()
-            .w_full()
-            .relative()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .rounded(px(16.0))
-            .overflow_hidden()
-            .child(
-                div()
-                    .relative()
-                    .size_full()
-                    .rounded(px(16.0))
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(0.0))
-                            .top(px(0.0))
-                            .bottom(px(0.0))
-                            .opacity(sidebar_opacity)
-                            .child(self.render_sidebar(entity.clone())),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(expansion_left + terminal_side_inset))
-                            .top(px(0.0))
-                            .right(px(terminal_side_inset))
-                            .bottom(px(0.0))
-                            .bg(rgb(roles.surface_container))
-                            .child(
-                                div()
-                                    .size_full()
-                                    .opacity(terminal_opacity)
-                                    .child(terminal_surface),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(LEFT_RAIL_WIDTH))
-                            .top(px(0.0))
-                            .right(px(0.0))
-                            .bottom(px(0.0))
-                            .opacity(hosts_opacity)
-                            .child(hosts_layer),
-                    ),
             )
             .into_any_element()
     }
