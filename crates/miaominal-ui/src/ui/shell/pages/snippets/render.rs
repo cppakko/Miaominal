@@ -57,6 +57,7 @@ fn snippet_package_card(
     } else {
         i18n::string_args("snippets.package_card.count_other", &[("count", &count)])
     };
+    let item_id = SharedString::from(format!("snippet-package-card-{}", title.as_str()));
     let icon = miaominal_core::snippet::package_initials(&title)
         .unwrap_or_else(|| i18n::string("snippets.package_card.fallback_icon"));
 
@@ -68,6 +69,7 @@ fn snippet_package_card(
         },
         20.0,
     )
+    .id(item_id)
     .w(px(SNIPPET_CARD_WIDTH))
     .min_h(px(88.0))
     .cursor_pointer()
@@ -135,8 +137,10 @@ fn snippet_command_card(
         if material.dark { 65 } else { 50 },
     );
     let preview = snippet_script_preview(&snippet.script);
+    let item_id = SharedString::from(format!("snippet-card-{}", snippet.id.as_str()));
 
     snippets_card_shell(SNIPPET_CARD_WIDTH)
+        .id(item_id)
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
             on_click(window, cx);
@@ -184,6 +188,7 @@ fn snippet_list_row(
         (!snippet.package.trim().is_empty()).then(|| snippets_truncate(snippet.package.trim(), 20));
     let language_label =
         (!snippet.language.trim().is_empty()).then(|| snippet.language.trim().to_string());
+    let item_id = SharedString::from(format!("snippet-row-{}", snippet.id.as_str()));
 
     list_item_card(
         page_primary_icon_tile(AppIcon::Notebook, 44.0, 14.0).into_any_element(),
@@ -232,6 +237,7 @@ fn snippet_list_row(
             on_click(window, cx);
         },
     )
+    .id(item_id)
 }
 
 fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {

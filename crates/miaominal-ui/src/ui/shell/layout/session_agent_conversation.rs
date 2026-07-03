@@ -894,28 +894,36 @@ fn render_session_agent_ask_user_actions(
                     .children(prompt.choices.iter().enumerate().map(|(index, choice)| {
                         let choice_entity = entity.clone();
                         let tool_id = tool_call.id.clone();
+                        let choice_id = SharedString::from(format!(
+                            "session-agent-ask-user-choice-{}-{index}",
+                            tool_call.id.as_str()
+                        ));
                         let answer = choice.label.clone();
-                        render_session_agent_text_action_button(
-                            choice.label.clone(),
-                            choice.description.clone(),
-                            false,
-                            true,
-                            roles,
-                            move |window, cx| {
-                                let tool_id = tool_id.clone();
-                                let answer = answer.clone();
-                                choice_entity.update(cx, |this, cx| {
-                                    this.submit_session_agent_user_answer(
-                                        tool_id,
-                                        answer,
-                                        Some(index),
-                                        false,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            },
-                        )
+                        div()
+                            .id(choice_id)
+                            .w_full()
+                            .child(render_session_agent_text_action_button(
+                                choice.label.clone(),
+                                choice.description.clone(),
+                                false,
+                                true,
+                                roles,
+                                move |window, cx| {
+                                    let tool_id = tool_id.clone();
+                                    let answer = answer.clone();
+                                    choice_entity.update(cx, |this, cx| {
+                                        this.submit_session_agent_user_answer(
+                                            tool_id,
+                                            answer,
+                                            Some(index),
+                                            false,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                },
+                            ))
+                            .into_any_element()
                     })),
             )
         })
@@ -958,7 +966,7 @@ fn render_session_agent_ask_user_actions(
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     app: &AppView,
     message_column_width: f32,
-    index: usize,
+    _index: usize,
     message: &SessionAgentMessage,
     entity: Entity<AppView>,
     cx: &mut Context<AppView>,
@@ -981,6 +989,12 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     let is_run_shell = tool_call.name == "run_shell";
     let is_ask_user = tool_call.name == "ask_user";
     let tool_id = tool_call.id.clone();
+    let tool_call_id =
+        SharedString::from(format!("session-agent-tool-call-{}", tool_call.id.as_str()));
+    let tool_call_header_id = SharedString::from(format!(
+        "session-agent-tool-call-header-{}",
+        tool_call.id.as_str()
+    ));
     let toggle_entity = entity.clone();
     let copy_all_entity = entity.clone();
     let copy_all_text = format_tool_call_copy_text(tool_call);
@@ -1004,7 +1018,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
 
     render_session_agent_message_with_enter_motion(
         v_flex()
-            .id(("session-agent-tool-call", index))
+            .id(tool_call_id)
             .w(px(message_column_width))
             .max_w(px(message_column_width))
             .min_w_0()
@@ -1014,7 +1028,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
             .bg(rgb(roles.surface_container_high))
             .child(
                 h_flex()
-                    .id(("session-agent-tool-call-header", index))
+                    .id(tool_call_header_id)
                     .w_full()
                     .items_center()
                     .gap_2()
@@ -1116,6 +1130,10 @@ fn render_session_agent_message_attachments(
         .items_start()
         .gap_1()
         .children(attachments.iter().map(|attachment| {
+            let item_id = SharedString::from(format!(
+                "session-agent-message-attachment-{}",
+                attachment.id.as_str()
+            ));
             let icon = match &attachment.content {
                 miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => AppIcon::Upload,
                 miaominal_core::chat_attachment::ChatAttachmentContent::TextFile(_) => {
@@ -1123,6 +1141,7 @@ fn render_session_agent_message_attachments(
                 }
             };
             h_flex()
+                .id(item_id)
                 .flex_shrink_0()
                 .gap_1()
                 .px_2()

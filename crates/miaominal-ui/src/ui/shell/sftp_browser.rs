@@ -11,6 +11,15 @@ pub(in crate::ui::shell) enum SftpBrowserSide {
     Remote,
 }
 
+impl SftpBrowserSide {
+    fn id_segment(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::ui::shell) struct SftpBrowserSelectionModifiers {
     pub(in crate::ui::shell) shift: bool,
@@ -542,7 +551,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
         let side = self.side;
 
         div()
-            .id(("sftp-th-menu", col_ix))
+            .id(("sftp-th-menu", orig_col_ix))
             .size_full()
             .on_mouse_down(
                 MouseButton::Right,
@@ -621,9 +630,14 @@ impl TableDelegate for SftpBrowserTableDelegate {
         let is_selected = self.selected_paths.contains(&row_path);
         let select_path = row_path.clone();
         let context_path = row_path.clone();
+        let row_id = SharedString::from(format!(
+            "sftp-row-{}-{}",
+            self.side.id_segment(),
+            row_path.as_str()
+        ));
 
         div()
-            .id(("sftp-row", row_ix))
+            .id(row_id)
             .when(is_selected, |this| {
                 this.relative()
                     .text_color(rgb(roles.on_secondary_container))
@@ -710,6 +724,11 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 let is_loading = row.is_loading_children;
                 let collapse_path = row.path.clone();
                 let expand_path = row.path.clone();
+                let disclosure_id = SharedString::from(format!(
+                    "sftp-disclosure-{}-{}",
+                    self.side.id_segment(),
+                    row.path.as_str()
+                ));
                 let icon = if row.kind == miaominal_sftp::SftpEntryKind::Symlink {
                     AppIcon::FolderSymlink
                 } else if row.is_directory {
@@ -818,7 +837,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .when(is_directory && !is_loading && is_expanded, |this| {
                                 this.child(
                                     div()
-                                        .id(("sftp-collapse", row_ix))
+                                        .id(disclosure_id.clone())
                                         .cursor_pointer()
                                         .child(
                                             Icon::new(IconName::ChevronDown)
@@ -839,7 +858,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .when(is_directory && !is_loading && !is_expanded, |this| {
                                 this.child(
                                     div()
-                                        .id(("sftp-expand", row_ix))
+                                        .id(disclosure_id)
                                         .cursor_pointer()
                                         .child(
                                             Icon::new(IconName::ChevronRight)

@@ -1074,6 +1074,9 @@ impl AppView {
                                                     let bubble_opacity = 0.12 + tab_visibility * 0.88;
 
                                                     div()
+                                                        .id(SharedString::from(format!(
+                                                            "top-tab-shell-{tab_id}"
+                                                        )))
                                                         .relative()
                                                         .flex_shrink_0()
                                                         .w(px(TOPBAR_TAB_WIDTH))
@@ -1110,6 +1113,10 @@ impl AppView {
                                                 let tab_kind_icon = topbar_tab_icon(snapshot.kind);
 
                                                 div()
+                                                    .id(SharedString::from(format!(
+                                                        "top-tab-exiting-{}",
+                                                        snapshot.tab_id
+                                                    )))
                                                     .absolute()
                                                     .left(px(
                                                         snapshot.visible_index as f32

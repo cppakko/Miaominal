@@ -380,7 +380,10 @@ impl AppView {
                         if is_list {
                             recent_connections = recent_connections.child(
                                 div()
-                                    .id(SharedString::from(format!("recent-row-{index}")))
+                                    .id(SharedString::from(format!(
+                                        "recent-row-{}",
+                                        profile.id.as_str()
+                                    )))
                                     .w_full()
                                     .context_menu({
                                         let entity = entity.clone();
@@ -418,7 +421,10 @@ impl AppView {
                             let tags = prepare_host_card_tags(&profile.tags);
                             recent_connections = recent_connections.child(
                                 div()
-                                    .id(SharedString::from(format!("recent-card-{index}")))
+                                    .id(SharedString::from(format!(
+                                        "recent-card-{}",
+                                        profile.id.as_str()
+                                    )))
                                     .w(px(HOST_CARD_WIDTH))
                                     .context_menu({
                                         let entity = entity.clone();
@@ -481,7 +487,10 @@ impl AppView {
                     if is_list {
                         fav_connections = fav_connections.child(
                             div()
-                                .id(SharedString::from(format!("fav-row-{index}")))
+                                .id(SharedString::from(format!(
+                                    "fav-row-{}",
+                                    profile.id.as_str()
+                                )))
                                 .w_full()
                                 .context_menu({
                                     let entity = entity.clone();
@@ -514,7 +523,10 @@ impl AppView {
                         let tags = prepare_host_card_tags(&profile.tags);
                         fav_connections = fav_connections.child(
                             div()
-                                .id(SharedString::from(format!("fav-card-{index}")))
+                                .id(SharedString::from(format!(
+                                    "fav-card-{}",
+                                    profile.id.as_str()
+                                )))
                                 .w(px(HOST_CARD_WIDTH))
                                 .context_menu({
                                     let entity = entity.clone();
@@ -575,7 +587,10 @@ impl AppView {
                         if is_list {
                             connections = connections.child(
                                 div()
-                                    .id(SharedString::from(format!("host-row-{index}")))
+                                    .id(SharedString::from(format!(
+                                        "host-row-{}",
+                                        profile.id.as_str()
+                                    )))
                                     .w_full()
                                     .context_menu({
                                         let entity = entity.clone();
@@ -614,7 +629,10 @@ impl AppView {
                             let tags = prepare_host_card_tags(&profile.tags);
                             connections = connections.child(
                                 div()
-                                    .id(SharedString::from(format!("host-card-{index}")))
+                                    .id(SharedString::from(format!(
+                                        "host-card-{}",
+                                        profile.id.as_str()
+                                    )))
                                     .w(px(HOST_CARD_WIDTH))
                                     .context_menu({
                                         let entity = entity.clone();

@@ -368,6 +368,10 @@ fn render_composer_badge_row(
             let names = app.session_agent.selected_at_targets.clone();
             this.children(names.into_iter().map(|name| {
                 let remove_name = name.clone();
+                let badge_id =
+                    SharedString::from(format!("session-agent-target-badge-{}", name.as_str()));
+                let remove_id =
+                    SharedString::from(format!("session-agent-target-remove-{}", name.as_str()));
                 let remove_entity = entity.clone();
                 let resolved = candidates.iter().any(|candidate| {
                     candidate.name == name
@@ -377,6 +381,7 @@ fn render_composer_badge_row(
                             .is_some_and(|suffix| suffix.starts_with(' '))
                 });
                 div()
+                    .id(badge_id)
                     .flex_none()
                     .px_2()
                     .py_1()
@@ -399,7 +404,7 @@ fn render_composer_badge_row(
                             .child(format!("@{name}"))
                             .child(
                                 div()
-                                    .id("session-agent-target-remove")
+                                    .id(remove_id)
                                     .size(px(16.0))
                                     .rounded(px(4.0))
                                     .flex()
@@ -446,6 +451,10 @@ fn render_composer_badge_row(
                 let bg = roles.secondary_container;
                 let fg = roles.on_secondary_container;
                 div()
+                    .id(SharedString::from(format!(
+                        "attachment-badge-{}",
+                        attachment_id.as_str()
+                    )))
                     .flex_none()
                     .px_2()
                     .py_1()

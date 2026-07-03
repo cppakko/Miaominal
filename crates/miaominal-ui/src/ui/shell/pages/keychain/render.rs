@@ -78,8 +78,9 @@ fn managed_key_card(key: &ManagedKeyRecord, entity: Entity<AppView>) -> impl Int
     let source_label = managed_key_source_label(key.source);
     let deploy_id = key.id.clone();
     let delete_id = key.id.clone();
+    let item_id = SharedString::from(format!("managed-key-card-{}", key.id.as_str()));
 
-    keychain_card_shell().child(
+    keychain_card_shell().id(item_id).child(
         h_flex()
             .w_full()
             .gap_3()
@@ -197,8 +198,12 @@ fn agent_identity_card(identity: &miaominal_ssh::AgentIdentitySummary) -> impl I
     } else {
         identity.comment.clone()
     };
+    let item_id = SharedString::from(format!(
+        "agent-identity-card-{}",
+        identity.serialized.as_str()
+    ));
 
-    keychain_card_shell().child(
+    keychain_card_shell().id(item_id).child(
         h_flex().w_full().items_start().gap_3().child(
             v_flex()
                 .flex_1()

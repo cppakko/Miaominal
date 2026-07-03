@@ -395,6 +395,7 @@ fn sftp_split_bar(
 struct SftpBrowserSection<P, T, C, M> {
     section_id: ElementId,
     title: SharedString,
+    show_title: bool,
     icon: AppIcon,
     item_count: usize,
     selected_count: usize,
@@ -416,6 +417,7 @@ where
     let SftpBrowserSection {
         section_id,
         title,
+        show_title,
         icon,
         item_count,
         selected_count,
@@ -455,15 +457,19 @@ where
                                             .text_color(rgb(roles.on_surface_variant))
                                             .child(Icon::new(icon).size(px(16.0))),
                                     )
-                                    .child(
-                                        div()
-                                            .min_w(px(0.0))
-                                            .overflow_hidden()
-                                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                                            .text_color(rgb(roles.on_surface))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(title),
-                                    ),
+                                    .when(show_title, |this| {
+                                        this.child(
+                                            div()
+                                                .min_w(px(0.0))
+                                                .overflow_hidden()
+                                                .text_size(
+                                                    miaominal_settings::FontSize::Input.scaled(),
+                                                )
+                                                .text_color(rgb(roles.on_surface))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .child(title),
+                                        )
+                                    }),
                             )
                             .child(sftp_panel_meta_label(item_count, selected_count)),
                     )
@@ -1260,6 +1266,7 @@ impl AppView {
         sftp_browser_section(SftpBrowserSection {
             section_id: SharedString::from(format!("remote-sftp-section-{tab_id}")).into(),
             title: i18n::string("sftp.ui.remote_section").into(),
+            show_title: true,
             icon: AppIcon::FolderSymlink,
             item_count: sftp_tab.remote_entries.len(),
             selected_count: remote_selected_count,
@@ -1980,6 +1987,10 @@ impl AppView {
 
                 rows = rows.child(
                     div()
+                        .id(SharedString::from(format!(
+                            "sftp-transfer-row-{}-{}",
+                            tab_id, transfer.transfer_id.0
+                        )))
                         .w_full()
                         .px_2()
                         .py_2()
@@ -2114,8 +2125,10 @@ impl AppView {
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .child(sftp_browser_section(SftpBrowserSection {
-                        section_id: "local-sftp-section".into(),
+                        section_id: SharedString::from(format!("local-sftp-section-{tab_id}"))
+                            .into(),
                         title: i18n::string("sftp.ui.local_section").into(),
+                        show_title: false,
                         icon: AppIcon::Computer,
                         item_count: sftp_tab.local_entries.len(),
                         selected_count: local_selected_count,
@@ -2155,8 +2168,10 @@ impl AppView {
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .child(sftp_browser_section(SftpBrowserSection {
-                        section_id: "remote-sftp-section".into(),
+                        section_id: SharedString::from(format!("remote-sftp-section-{tab_id}"))
+                            .into(),
                         title: i18n::string("sftp.ui.remote_section").into(),
+                        show_title: false,
                         icon: AppIcon::FolderSymlink,
                         item_count: sftp_tab.remote_entries.len(),
                         selected_count: remote_selected_count,

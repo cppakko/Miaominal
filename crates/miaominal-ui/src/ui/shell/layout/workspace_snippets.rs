@@ -22,6 +22,7 @@ fn session_snippet_package_card(
     } else {
         i18n::string_args("snippets.package_card.count_other", &[("count", &count)])
     };
+    let item_id = SharedString::from(format!("session-snippet-package-card-{}", title.as_str()));
     let icon = miaominal_core::snippet::package_initials(&title)
         .unwrap_or_else(|| i18n::string("snippets.package_card.fallback_icon"));
 
@@ -33,6 +34,7 @@ fn session_snippet_package_card(
         },
         16.0,
     )
+    .id(item_id)
     .w_full()
     .cursor_pointer()
     .p_3()
@@ -201,10 +203,14 @@ impl AppView {
                     .unwrap_or(snippet.script.as_str())
                     .trim();
                 let preview = truncate_with_ellipsis(preview_line, 48);
-                let button_id = SharedString::from(format!("session-snippet-send-{}", snippet.id));
+                let card_id =
+                    SharedString::from(format!("session-snippet-card-{}", snippet.id.as_str()));
+                let button_id =
+                    SharedString::from(format!("session-snippet-send-{}", snippet.id.as_str()));
 
                 list = list.child(
                     div()
+                        .id(card_id)
                         .w_full()
                         .rounded(px(14.0))
                         .bg(rgb(roles.surface))

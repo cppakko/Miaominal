@@ -1823,6 +1823,10 @@ impl AppView {
                     .filter_map(|(i, prompt)| {
                         self.kbi_inputs.get(i).map(|input| {
                             v_flex()
+                                .id(SharedString::from(format!(
+                                    "keyboard-interactive-prompt-{:?}",
+                                    input.entity_id()
+                                )))
                                 .w_full()
                                 .gap_1()
                                 .child(

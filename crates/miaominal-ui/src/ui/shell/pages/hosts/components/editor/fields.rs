@@ -49,8 +49,12 @@ pub(super) fn editor_environment_variable_row(
     on_remove: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
+    let item_id = SharedString::from(format!(
+        "host-editor-environment-variable-row-{:?}",
+        name_input.entity_id()
+    ));
 
-    v_flex().w_full().gap_2().child(
+    v_flex().id(item_id).w_full().gap_2().child(
         h_flex()
             .w_full()
             .gap_2()

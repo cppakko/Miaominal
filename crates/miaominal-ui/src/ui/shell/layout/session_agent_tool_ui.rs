@@ -125,7 +125,10 @@ pub(in crate::ui::shell::layout) fn render_tool_field_grid(
         .w_full()
         .gap_1()
         .children(fields.into_iter().map(|(label, value)| {
+            let field_id =
+                SharedString::from(format!("session-agent-tool-field-{}", label.as_str()));
             h_flex()
+                .id(field_id)
                 .w_full()
                 .gap_2()
                 .items_start()

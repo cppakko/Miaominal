@@ -248,6 +248,12 @@ fn trusted_host_card(entity: Entity<AppView>, view: TrustedKnownHostView) -> imp
     let select_fingerprint = view.entry.fingerprint.clone();
     let copy_host = view.entry.host.clone();
     let port = view.entry.port;
+    let item_id = SharedString::from(format!(
+        "trusted-host-card-{}-{}-{}",
+        view.entry.host.as_str(),
+        view.entry.port,
+        view.entry.fingerprint.as_str()
+    ));
 
     let mut badges_row = h_flex()
         .gap_2()
@@ -267,6 +273,7 @@ fn trusted_host_card(entity: Entity<AppView>, view: TrustedKnownHostView) -> imp
     }
 
     card_surface(roles.surface_container, 20.0)
+        .id(item_id)
         .w(px(TRUSTED_CARD_WIDTH))
         .min_h(px(128.0))
         .p_4()
@@ -342,8 +349,11 @@ fn trusted_detail_panel(
     } else {
         for profile in &view.linked_profiles {
             let open_id = profile.id.clone();
+            let item_id =
+                SharedString::from(format!("known-host-linked-profile-{}", profile.id.as_str()));
             linked_profiles = linked_profiles.child(
                 div()
+                    .id(item_id)
                     .rounded(px(8.0))
                     .bg(rgb(roles.surface_container_high))
                     .p_3()

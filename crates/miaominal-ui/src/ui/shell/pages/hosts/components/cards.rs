@@ -37,6 +37,7 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
     let icon = icon.into();
     let count = count.into();
     let title = title.into();
+    let item_id = SharedString::from(format!("host-group-card-{}", title.as_ref()));
 
     card_surface(
         if is_selected {
@@ -46,6 +47,7 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
         },
         18.0,
     )
+    .id(item_id)
     .w(px(GROUP_CARD_WIDTH))
     .h(px(GROUP_CARD_HEIGHT))
     .cursor_pointer()
