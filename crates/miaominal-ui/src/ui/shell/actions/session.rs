@@ -1895,6 +1895,17 @@ impl AppView {
             input.focus(window, cx);
         });
         cx.notify();
+        cx.on_next_frame(window, move |this, window, cx| {
+            if this.workspace_state.renaming_tab != Some(index) {
+                return;
+            }
+
+            let rename_input = this.workspace_forms.rename_input.clone();
+            rename_input.update(cx, |input, cx| {
+                input.focus(window, cx);
+            });
+            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+        });
     }
 
     pub(in crate::ui::shell) fn commit_rename_tab(&mut self, cx: &mut Context<Self>) {

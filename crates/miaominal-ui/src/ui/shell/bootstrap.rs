@@ -672,7 +672,7 @@ impl AppView {
             &rename_input,
             |this: &mut AppView, _, event: &InputEvent, cx| match event {
                 InputEvent::PressEnter { .. } => this.commit_rename_tab(cx),
-                InputEvent::Blur => this.cancel_rename_tab(cx),
+                InputEvent::Blur => this.commit_rename_tab(cx),
                 _ => {}
             },
         );

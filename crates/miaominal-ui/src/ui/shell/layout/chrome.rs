@@ -4,6 +4,8 @@ use gpui::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_TITLE_CHARS: usize = 20;
+const TOPBAR_TAB_TITLE_HEIGHT: f32 = 14.0;
+const TOPBAR_TAB_RENAME_HEIGHT: f32 = 22.0;
 const TOPBAR_TAB_GAP: f32 = 8.0;
 const TOPBAR_SECTION_GAP: f32 = 12.0;
 const TOPBAR_ACTION_BUTTON_WIDTH: f32 = 36.0;
@@ -835,7 +837,15 @@ impl AppView {
                                                                     .appearance(false)
                                                                     .border_1()
                                                                     .border_color(rgb(roles.primary))
+                                                                    .bg(rgb(roles.surface_container_highest))
+                                                                    .rounded(px(2.0))
                                                                     .xsmall()
+                                                                    .h(px(TOPBAR_TAB_RENAME_HEIGHT))
+                                                                    .text_size(miaominal_settings::FontSize::Heading.scaled())
+                                                                    .line_height(miaominal_settings::scaled_line_height(
+                                                                        TOPBAR_TAB_TITLE_HEIGHT,
+                                                                    ))
+                                                                    .text_color(rgb(roles.on_surface))
                                                                     .w_full(),
                                                             )
                                                             .into_any_element()
@@ -846,10 +856,12 @@ impl AppView {
                                                             )))
                                                             .flex_1()
                                                             .min_w(px(0.0))
-                                                            .h(px(14.0))
+                                                            .h(px(TOPBAR_TAB_TITLE_HEIGHT))
                                                             .overflow_hidden()
                                                             .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                                            .line_height(miaominal_settings::scaled_line_height(14.0))
+                                                            .line_height(miaominal_settings::scaled_line_height(
+                                                                TOPBAR_TAB_TITLE_HEIGHT,
+                                                            ))
                                                             .text_color(rgb(tab_foreground_color))
                                                             .child(display_title)
                                                             .into_any_element()
