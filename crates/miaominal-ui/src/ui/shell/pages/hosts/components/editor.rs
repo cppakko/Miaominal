@@ -1,11 +1,11 @@
 use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button};
-use crate::ui::{components::SectionCard, i18n};
+use crate::ui::{
+    components::{SectionCard, SegmentedSwitch},
+    i18n,
+};
 
 use super::super::super::super::*;
-use gpui_component::{
-    Size,
-    tab::{Tab, TabBar},
-};
+use gpui_component::Size;
 
 #[path = "editor/fields.rs"]
 mod fields;
@@ -57,15 +57,19 @@ impl AppView {
             AuthMethod::Agent => 2,
             AuthMethod::KeyboardInteractive => 3,
         };
-        let auth_method_tabs = TabBar::new("host-editor-auth-method")
-            .w_full()
-            .pill()
-            .with_size(Size::Small)
+        let auth_method_tabs = SegmentedSwitch::new("host-editor-auth-method")
             .selected_index(auth_method_selected_index)
+            .width(320.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("hosts.editor.auth_methods.password"))
+            .item(i18n::string("hosts.editor.auth_methods.managed_key"))
+            .item(i18n::string("hosts.editor.auth_methods.ssh_agent"))
+            .item(i18n::string("hosts.editor.auth_methods.interactive"))
             .on_click({
                 let entity = entity.clone();
                 move |index, _, cx| {
-                    let auth_method = match *index {
+                    let auth_method = match index {
                         0 => AuthMethod::Password,
                         1 => AuthMethod::ManagedKey,
                         2 => AuthMethod::Agent,
@@ -76,54 +80,26 @@ impl AppView {
                         this.set_auth_method(auth_method, cx);
                     });
                 }
-            })
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.auth_methods.password")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.auth_methods.managed_key")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.auth_methods.ssh_agent")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.auth_methods.interactive")),
-            );
-        let agent_forwarding_tabs = TabBar::new("host-editor-agent-forwarding")
-            .w_full()
-            .pill()
-            .with_size(Size::Small)
+            });
+        let agent_forwarding_tabs = SegmentedSwitch::new("host-editor-agent-forwarding")
             .selected_index(if host_editor.agent_forwarding_enabled {
                 1
             } else {
                 0
             })
+            .width(204.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("settings.values.off"))
+            .item(i18n::string("settings.values.on"))
             .on_click({
                 let entity = entity.clone();
                 move |index, _, cx| {
                     entity.update(cx, |this, cx| {
-                        this.set_agent_forwarding_enabled(*index == 1, cx);
+                        this.set_agent_forwarding_enabled(index == 1, cx);
                     });
                 }
-            })
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("settings.values.off")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("settings.values.on")),
-            );
+            });
 
         let shell_type_selected_index = match host_editor.shell_type {
             ShellType::Posix => 0,
@@ -131,15 +107,19 @@ impl AppView {
             ShellType::PowerShell => 2,
             ShellType::Cmd => 3,
         };
-        let shell_type_tabs = TabBar::new("host-editor-shell-type")
-            .w_full()
-            .pill()
-            .with_size(Size::Small)
+        let shell_type_tabs = SegmentedSwitch::new("host-editor-shell-type")
             .selected_index(shell_type_selected_index)
+            .width(320.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("hosts.editor.shell_types.posix"))
+            .item(i18n::string("hosts.editor.shell_types.fish"))
+            .item(i18n::string("hosts.editor.shell_types.powershell"))
+            .item(i18n::string("hosts.editor.shell_types.cmd"))
             .on_click({
                 let entity = entity.clone();
                 move |index, _, cx| {
-                    let shell_type = match *index {
+                    let shell_type = match index {
                         0 => ShellType::Posix,
                         1 => ShellType::Fish,
                         2 => ShellType::PowerShell,
@@ -150,27 +130,7 @@ impl AppView {
                         this.set_shell_type(shell_type, cx);
                     });
                 }
-            })
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.shell_types.posix")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.shell_types.fish")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.shell_types.powershell")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("hosts.editor.shell_types.cmd")),
-            );
+            });
 
         let mut proxy_jump_items = Vec::new();
         for (index, profile) in proxy_jump_chain_profiles.iter().enumerate() {

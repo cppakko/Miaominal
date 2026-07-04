@@ -1,9 +1,7 @@
-use crate::ui::components::{SectionCard, editor_button, md3_select, md3_spinner, md3_switch};
-use crate::ui::i18n;
-use gpui_component::{
-    Size,
-    tab::{Tab, TabBar},
+use crate::ui::components::{
+    SectionCard, SegmentedSwitch, editor_button, md3_select, md3_spinner, md3_switch,
 };
+use crate::ui::i18n;
 
 use super::super::super::*;
 use super::super::empty_state::shell_empty_page;
@@ -331,15 +329,17 @@ impl AppView {
                 i18n::string("forwarding.editor.select_host_profile")
             })
             .disabled(self.data.sessions.is_empty() || is_editing_rule);
-        let forward_kind_tabs = TabBar::new("port-forward-editor-kind")
-            .w_full()
-            .pill()
-            .with_size(Size::Small)
+        let forward_kind_tabs = SegmentedSwitch::new("port-forward-editor-kind")
             .selected_index(forward_kind_selected_index)
+            .width(260.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("forwarding.editor.local"))
+            .item(i18n::string("forwarding.editor.remote"))
             .on_click({
                 let entity = entity.clone();
                 move |index, _, cx| {
-                    let kind = match *index {
+                    let kind = match index {
                         0 => PortForwardKind::Local,
                         1 => PortForwardKind::Remote,
                         _ => return,
@@ -348,17 +348,7 @@ impl AppView {
                         this.set_port_forward_kind(kind, cx);
                     });
                 }
-            })
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("forwarding.editor.local")),
-            )
-            .child(
-                Tab::new()
-                    .flex_1()
-                    .label(i18n::string("forwarding.editor.remote")),
-            );
+            });
 
         SectionCard::new(
             AppIcon::Forward,

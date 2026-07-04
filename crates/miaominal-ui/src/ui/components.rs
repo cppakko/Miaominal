@@ -32,6 +32,8 @@ mod pill_label;
 mod search_input;
 #[path = "components/section_card.rs"]
 mod section_card;
+#[path = "components/segmented_switch.rs"]
+mod segmented_switch;
 #[path = "components/setting_field_with_reset_action.rs"]
 mod setting_field_with_reset_action;
 #[path = "components/text_input.rs"]
@@ -61,6 +63,7 @@ pub(crate) use page_chrome::{
 pub(crate) use pill_label::pill_label;
 pub(crate) use search_input::{SearchInputStyle, search_filter_input};
 pub(crate) use section_card::SectionCard;
+pub(crate) use segmented_switch::SegmentedSwitch;
 pub(crate) use setting_field_with_reset_action::setting_field_with_reset_action;
 pub(crate) use text_input::{
     SecretTextInputStackOptions, TextInputSurface, field_label, surface_secret_text_input,

@@ -1,11 +1,10 @@
 use super::super::super::*;
 use super::super::empty_state::shell_empty_state;
-use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button_with_id};
+use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SegmentedSwitch, editor_button_with_id};
 use crate::ui::{
     components::{SectionCard, md3_spinner},
     i18n,
 };
-use gpui_component::tab::{Tab, TabBar};
 use miaominal_core::keychain::ManagedKeySource;
 use rfd::FileDialog;
 
@@ -303,15 +302,13 @@ impl AppView {
                 .then_with(|| left.serialized.cmp(&right.serialized))
         });
 
-        let header = v_flex()
-            .w_full()
-            .gap_6()
-            .px_5()
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .child(
+        let header =
+            v_flex()
+                .w_full()
+                .gap_6()
+                .px_5()
+                .child(
+                    h_flex().w_full().justify_center().child(
                         h_flex()
                             .w_full()
                             .max_w(px(576.0))
@@ -321,28 +318,30 @@ impl AppView {
                                 None,
                             )),
                     ),
-            )
-            .child(
-                h_flex().w_full().justify_center().child(
-                    TabBar::new("keychain-view-tabs")
-                        .segmented()
-                        .selected_index(selected_keychain_page_view_index)
-                        .on_click({
-                            let entity = entity.clone();
-                            move |index, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.keychain_page_view = match *index {
-                                        0 => KeychainPageView::ManagedKeys,
-                                        _ => KeychainPageView::AgentIdentities,
-                                    };
-                                    cx.notify();
-                                });
-                            }
-                        })
-                        .child(Tab::new().label(i18n::string("keychain.page.managed_keys")))
-                        .child(Tab::new().label(i18n::string("keychain.page.agent_identities"))),
-                ),
-            );
+                )
+                .child(
+                    h_flex().w_full().justify_center().child(
+                        SegmentedSwitch::new("keychain-view-tabs")
+                            .selected_index(selected_keychain_page_view_index)
+                            .width(332.0)
+                            .height(34.0)
+                            .padding(2.0)
+                            .item(i18n::string("keychain.page.managed_keys"))
+                            .item(i18n::string("keychain.page.agent_identities"))
+                            .on_click({
+                                let entity = entity.clone();
+                                move |index, _, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        this.keychain_page_view = match index {
+                                            0 => KeychainPageView::ManagedKeys,
+                                            _ => KeychainPageView::AgentIdentities,
+                                        };
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    ),
+                );
 
         let content = v_flex()
             .w_full()

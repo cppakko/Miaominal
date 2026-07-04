@@ -1,6 +1,8 @@
 use crate::ui::shell::state::SessionSidePanelView;
-use crate::ui::{components::editor_button, i18n};
-use gpui_component::tab::{Tab, TabBar};
+use crate::ui::{
+    components::{SegmentedSwitch, editor_button},
+    i18n,
+};
 
 use super::super::*;
 
@@ -152,42 +154,36 @@ impl AppView {
             SessionSidePanelView::Snippets => 1,
             SessionSidePanelView::Sftp => 2,
         };
-
-        let tabs = TabBar::new("session-side-panel-tabs")
-            .segmented()
+        let switch = SegmentedSwitch::new("session-side-panel-switch")
             .selected_index(selected_index)
+            .width(204.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("workspace.panel.monitor.title"))
+            .item(i18n::string("snippets.page.snippets"))
+            .item("SFTP")
             .on_click({
                 let entity = entity.clone();
                 move |index, _, cx| {
                     entity.update(cx, |this, cx| {
-                        match *index {
+                        this.panels.session_side_panel_open = true;
+                        match index {
                             0 => {
-                                this.panels.session_side_panel_open = true;
                                 this.panels.session_side_panel_view = SessionSidePanelView::Monitor;
                             }
+                            1 => {
+                                this.panels.session_side_panel_view =
+                                    SessionSidePanelView::Snippets;
+                            }
                             _ => {
-                                this.panels.session_side_panel_open = true;
-                                match *index {
-                                    1 => {
-                                        this.panels.session_side_panel_view =
-                                            SessionSidePanelView::Snippets;
-                                    }
-                                    _ => {
-                                        this.panels.session_side_panel_view =
-                                            SessionSidePanelView::Sftp;
-                                        this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
-                                    }
-                                }
+                                this.panels.session_side_panel_view = SessionSidePanelView::Sftp;
+                                this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
                             }
                         }
                         cx.notify();
                     });
                 }
-            })
-            .child(Tab::new().label(i18n::string("workspace.panel.monitor.title")))
-            .child(Tab::new().label(i18n::string("snippets.page.snippets")))
-            .child(Tab::new().label("SFTP"))
-            .h(px(36.0));
+            });
 
         let content = match self.panels.session_side_panel_view {
             SessionSidePanelView::Monitor => {
@@ -213,6 +209,7 @@ impl AppView {
                 v_flex()
                     .size_full()
                     .overflow_hidden()
+                    .child(div().flex_1().min_h(px(0.0)).child(content))
                     .child(
                         h_flex()
                             .w_full()
@@ -221,16 +218,8 @@ impl AppView {
                             .items_center()
                             .justify_center()
                             .px_3()
-                            .child(
-                                div()
-                                    .h_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(tabs),
-                            ),
-                    )
-                    .child(div().flex_1().min_h(px(0.0)).child(content)),
+                            .child(switch),
+                    ),
             )
             .into_any_element()
     }
@@ -260,7 +249,8 @@ impl AppView {
                 .size_full()
                 .min_w(px(0.0))
                 .min_h(px(0.0))
-                .p_3()
+                .px_3()
+                .pb_3()
                 .child(self.render_sftp_remote_browser_panel(entity, tab_id, sftp_tab))
                 .into_any_element();
         }
