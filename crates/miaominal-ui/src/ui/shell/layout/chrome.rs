@@ -3,7 +3,6 @@ use crate::ui::i18n;
 use gpui::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
 use std::time::{Duration, Instant};
 
-const TOPBAR_TAB_TITLE_CHARS: usize = 20;
 const TOPBAR_TAB_TITLE_HEIGHT: f32 = 14.0;
 const TOPBAR_TAB_RENAME_HEIGHT: f32 = 22.0;
 const TOPBAR_TAB_GAP: f32 = 8.0;
@@ -795,10 +794,7 @@ impl AppView {
                                                         roles.on_secondary_container,
                                                         active_strength,
                                                     );
-                                                    let display_title = truncate_with_ellipsis(
-                                                        &tab.title,
-                                                        TOPBAR_TAB_TITLE_CHARS,
-                                                    );
+                                                    let display_title = tab.title.clone();
                                                     let tab_background = blend_rgb(
                                                         roles.surface_container_low,
                                                         roles.secondary_container,
@@ -857,7 +853,7 @@ impl AppView {
                                                             .flex_1()
                                                             .min_w(px(0.0))
                                                             .h(px(TOPBAR_TAB_TITLE_HEIGHT))
-                                                            .overflow_hidden()
+                                                            .truncate()
                                                             .text_size(miaominal_settings::FontSize::Heading.scaled())
                                                             .line_height(miaominal_settings::scaled_line_height(
                                                                 TOPBAR_TAB_TITLE_HEIGHT,
@@ -956,6 +952,9 @@ impl AppView {
                                                                 });
                                                             },
                                                         )
+                                                        .when(is_session && !is_renaming, |this| {
+                                                            this.tooltip(footer_tooltip(tab.title.clone()))
+                                                        })
                                                         .context_menu(move |menu, _window, _cx| {
                                                             build_tab_context_menu(
                                                                 menu,
@@ -969,16 +968,16 @@ impl AppView {
                                                                 .w_full()
                                                                 .h_full()
                                                                 .items_center()
-                                                                .justify_between()
-                                                                .gap_1()
+                                                                .gap(px(2.0))
                                                                 .child(
                                                                     h_flex()
                                                                         .flex_1()
                                                                         .min_w(px(0.0))
                                                                         .h_full()
-                                                                        .px_3()
+                                                                        .pl_3()
+                                                                        .pr_1()
                                                                         .items_center()
-                                                                        .gap_2()
+                                                                        .gap(px(6.0))
                                                                         .text_color(rgb(tab_foreground_color))
                                                                         .cursor_pointer()
                                                                         .on_mouse_up(MouseButton::Left, move |_, window, cx| {
@@ -1027,7 +1026,7 @@ impl AppView {
                                                                 .child(
                                                                     div()
                                                                         .flex_shrink_0()
-                                                                        .size(px(24.0))
+                                                                        .size(px(20.0))
                                                                         .rounded(px(999.0))
                                                                         .flex()
                                                                         .items_center()
@@ -1108,10 +1107,6 @@ impl AppView {
                                             }))
                                             .children(exiting_tabs.iter().map(|tab| {
                                                 let snapshot = &tab.snapshot;
-                                                let display_title = truncate_with_ellipsis(
-                                                    &snapshot.title,
-                                                    TOPBAR_TAB_TITLE_CHARS,
-                                                );
                                                 let tab_foreground_color = blend_rgb(
                                                     roles.on_surface_variant,
                                                     roles.on_secondary_container,
@@ -1159,16 +1154,16 @@ impl AppView {
                                                                             .w_full()
                                                                             .h_full()
                                                                             .items_center()
-                                                                            .justify_between()
-                                                                            .gap_1()
+                                                                            .gap(px(2.0))
                                                                             .child(
                                                                                 h_flex()
                                                                                     .flex_1()
                                                                                     .min_w(px(0.0))
                                                                                     .h_full()
-                                                                                    .px_3()
+                                                                                    .pl_3()
+                                                                                    .pr_1()
                                                                                     .items_center()
-                                                                                    .gap_2()
+                                                                                    .gap(px(6.0))
                                                                                     .text_color(rgb(tab_foreground_color))
                                                                                     .when_some(
                                                                                         snapshot.status_color,
@@ -1191,17 +1186,17 @@ impl AppView {
                                                                                             .flex_1()
                                                                                             .min_w(px(0.0))
                                                                                             .h(px(14.0))
-                                                                                            .overflow_hidden()
+                                                                                            .truncate()
                                                                                             .text_size(miaominal_settings::FontSize::Body.scaled())
                                                                                             .line_height(miaominal_settings::scaled_line_height(14.0))
                                                                                             .text_color(rgb(tab_foreground_color))
-                                                                                            .child(display_title),
+                                                                                            .child(snapshot.title.clone()),
                                                                                     ),
                                                                             )
                                                                             .child(
                                                                                 div()
                                                                                     .flex_shrink_0()
-                                                                                    .size(px(24.0))
+                                                                                    .size(px(20.0))
                                                                                     .rounded(px(999.0))
                                                                                     .flex()
                                                                                     .items_center()
