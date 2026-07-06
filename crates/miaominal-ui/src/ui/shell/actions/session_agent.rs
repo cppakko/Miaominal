@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
+use crate::ui::shell::state::SessionAgentExecutionContext;
 use crate::ui::shell::state::TokenUsage;
 use gpui_component::WindowExt as _;
 use miaominal_agent::{
@@ -23,7 +24,8 @@ const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::fro
 const SESSION_AGENT_CONTEXT_MAX_MESSAGES: usize = 40;
 const SESSION_AGENT_CONTEXT_MAX_CHARS: usize = 80_000;
 
-type SessionAgentTools = Option<(Option<AgentToolSet>, Option<mpsc::UnboundedSender<Vec<u8>>>)>;
+type SessionAgentPtyTap = (usize, mpsc::UnboundedSender<Vec<u8>>);
+type SessionAgentTools = Option<(Option<AgentToolSet>, Option<SessionAgentPtyTap>)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PromptHistoryDirection {
@@ -547,6 +549,7 @@ impl AppView {
         self.session_agent.pending_task = None;
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
+        self.session_agent.active_exec_context = None;
         self.session_agent.title = None;
         self.session_agent.last_usage = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
@@ -681,6 +684,7 @@ impl AppView {
         self.session_agent.last_error = None;
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
+        self.session_agent.active_exec_context = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
         self.reset_session_agent_scroll();
         self.status_message = i18n::string("workspace.panel.agent.messages.history_loaded");
@@ -994,6 +998,84 @@ impl AppView {
         self.refresh_chat_sessions();
     }
 
+    fn capture_session_agent_execution_context(&self) -> Option<SessionAgentExecutionContext> {
+        match self.session_agent.exec_mode {
+            AgentExecMode::ExecChannel => {
+                self.active_profile()
+                    .map(|profile| SessionAgentExecutionContext {
+                        profile_id: profile.id.clone(),
+                        exec_mode: AgentExecMode::ExecChannel,
+                        terminal_tab_id: None,
+                    })
+            }
+            AgentExecMode::Pty => {
+                let index = self.active_terminal_session_index()?;
+                let tab = self.workspace_state.tabs.get(index)?;
+                let session = tab.as_session()?;
+                Some(SessionAgentExecutionContext {
+                    profile_id: session.profile_id.clone(),
+                    exec_mode: AgentExecMode::Pty,
+                    terminal_tab_id: Some(tab.id),
+                })
+            }
+        }
+    }
+
+    fn session_agent_profile_for_context(
+        &self,
+        context: &SessionAgentExecutionContext,
+    ) -> Option<SessionProfile> {
+        self.data
+            .sessions
+            .iter()
+            .find(|profile| profile.id == context.profile_id)
+            .cloned()
+    }
+
+    fn session_agent_pty_commands_for_context(
+        &self,
+        context: &SessionAgentExecutionContext,
+    ) -> Result<Option<(usize, miaominal_ssh::SessionCommandSender)>, String> {
+        if context.exec_mode != AgentExecMode::Pty {
+            return Ok(None);
+        }
+
+        let Some(tab_id) = context.terminal_tab_id else {
+            return Err(i18n::string(
+                "workspace.panel.agent.messages.pty_requires_active_session",
+            ));
+        };
+        let Some(session) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_session)
+            .filter(|session| session.purpose == SessionPurpose::Terminal)
+        else {
+            return Err(i18n::string(
+                "workspace.panel.agent.messages.pty_requires_active_session",
+            ));
+        };
+        let Some(commands) = session.commands.clone() else {
+            return Err(i18n::string(
+                "workspace.panel.agent.messages.pty_requires_connected_session",
+            ));
+        };
+
+        Ok(Some((tab_id, commands)))
+    }
+
+    fn set_session_agent_execution_context_error(
+        &mut self,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent.last_error = Some(message.clone());
+        self.status_message = message;
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn submit_session_agent_prompt(
         &mut self,
         window: &mut Window,
@@ -1037,10 +1119,14 @@ impl AppView {
             }
         };
 
+        let exec_context = self.capture_session_agent_execution_context();
+        self.session_agent.active_exec_context = exec_context;
+
         let target_names = self.session_agent.selected_at_targets.clone();
         let mentions = self.resolve_session_agent_mentions(&target_names);
         if !mentions.unresolved.is_empty() {
             self.clear_session_pty_taps_if_same(&mentions.pty_taps);
+            self.session_agent.active_exec_context = None;
             let targets = mentions
                 .unresolved
                 .iter()
@@ -1061,6 +1147,7 @@ impl AppView {
         let Some((tools, active_pty_tap)) =
             self.build_session_agent_tools(mentions.aux_channels, cx)
         else {
+            self.session_agent.active_exec_context = None;
             return;
         };
         let target_guidance = mentions.guidance;
@@ -1157,7 +1244,7 @@ impl AppView {
                             cx,
                         );
                         if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                            this.clear_active_session_pty_tap_if_same(tap);
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                         }
                         this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                     });
@@ -1198,7 +1285,7 @@ impl AppView {
                                     cx,
                                 );
                                 if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                                    this.clear_active_session_pty_tap_if_same(tap);
+                                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                                 }
                                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                             })
@@ -1216,7 +1303,7 @@ impl AppView {
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
                 if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                    this.clear_active_session_pty_tap_if_same(tap);
+                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                 }
                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
@@ -1230,51 +1317,39 @@ impl AppView {
         aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
     ) -> SessionAgentTools {
-        let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
-        let pty_commands = if use_pty {
-            let Some(index) = self.active_terminal_session_index() else {
-                let message =
-                    i18n::string("workspace.panel.agent.messages.pty_requires_active_session");
-                self.session_agent.last_error = Some(message.clone());
-                self.status_message = message;
-                cx.notify();
+        let Some(context) = self.session_agent.active_exec_context.clone() else {
+            return Some((None, None));
+        };
+
+        let Some(profile) = self.session_agent_profile_for_context(&context) else {
+            let message =
+                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
+            self.set_session_agent_execution_context_error(message, cx);
+            return None;
+        };
+
+        let pty_commands = match self.session_agent_pty_commands_for_context(&context) {
+            Ok(commands) => commands,
+            Err(message) => {
+                self.set_session_agent_execution_context_error(message, cx);
                 return None;
-            };
-            let Some(commands) = self
-                .workspace_state
-                .tabs
-                .get(index)
-                .and_then(TabState::as_session)
-                .and_then(|session| session.commands.clone())
-            else {
-                let message =
-                    i18n::string("workspace.panel.agent.messages.pty_requires_connected_session");
-                self.session_agent.last_error = Some(message.clone());
-                self.status_message = message;
-                cx.notify();
-                return None;
-            };
-            Some(commands)
-        } else {
-            None
+            }
         };
 
         let mut active_pty_tap = None;
-        let tools = self.active_profile().cloned().map(|profile| {
-            let mut channel = self.agent_exec_channel_for_profile(profile);
-            if let Some(command_sender) = pty_commands.clone() {
-                let (sender, receiver) = mpsc::unbounded_channel();
-                self.set_active_session_pty_tap(Some(sender.clone()));
-                active_pty_tap = Some(sender);
-                channel = channel.with_terminal_exec(TerminalExecHandle {
-                    command_sender,
-                    output_tap: Arc::new(Mutex::new(Some(receiver))),
-                });
-            }
-            channel = channel.with_aux_channels(aux_channels);
-            let mode = self.session_agent.agent_mode;
-            AgentToolSet::for_channel(channel, mode)
-        });
+        let mut channel = self.agent_exec_channel_for_profile(profile);
+        if let Some((tab_id, command_sender)) = pty_commands {
+            let (sender, receiver) = mpsc::unbounded_channel();
+            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
+            active_pty_tap = Some((tab_id, sender));
+            channel = channel.with_terminal_exec(TerminalExecHandle {
+                command_sender,
+                output_tap: Arc::new(Mutex::new(Some(receiver))),
+            });
+        }
+        channel = channel.with_aux_channels(aux_channels);
+        let mode = self.session_agent.agent_mode;
+        let tools = Some(AgentToolSet::for_channel(channel, mode));
 
         Some((tools, active_pty_tap))
     }
@@ -1290,7 +1365,7 @@ impl AppView {
 
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.finish_stopped_turn();
-        self.set_active_session_pty_tap(None);
+        self.session_agent.active_exec_context = None;
         for tab in &mut self.workspace_state.tabs {
             if let Some(session) = tab.as_session_mut() {
                 session.pty_output_tap = None;
@@ -1312,7 +1387,13 @@ impl AppView {
             cx.notify();
             return;
         };
-        let Some(profile) = self.active_profile().cloned() else {
+        let Some(context) = self.session_agent.active_exec_context.clone() else {
+            self.status_message =
+                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
+            cx.notify();
+            return;
+        };
+        let Some(profile) = self.session_agent_profile_for_context(&context) else {
             self.status_message =
                 i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
             cx.notify();
@@ -1325,34 +1406,19 @@ impl AppView {
         self.status_message = i18n::string("workspace.panel.agent.messages.tool_approved_running");
         let approval_session_id = self.ensure_session_agent_session();
 
-        let use_pty = self.session_agent.exec_mode == AgentExecMode::Pty;
+        let pty_commands = match self.session_agent_pty_commands_for_context(&context) {
+            Ok(commands) => commands,
+            Err(message) => {
+                self.session_agent.fail_tool_call(&tool_id, message.clone());
+                self.set_session_agent_execution_context_error(message, cx);
+                return;
+            }
+        };
         let mut active_pty_tap = None;
-        let pty_handle = if use_pty {
-            let Some(index) = self.active_terminal_session_index() else {
-                let message =
-                    i18n::string("workspace.panel.agent.messages.pty_requires_active_session");
-                self.session_agent.fail_tool_call(&tool_id, message.clone());
-                self.status_message = message;
-                cx.notify();
-                return;
-            };
-            let Some(command_sender) = self
-                .workspace_state
-                .tabs
-                .get(index)
-                .and_then(TabState::as_session)
-                .and_then(|session| session.commands.clone())
-            else {
-                let message =
-                    i18n::string("workspace.panel.agent.messages.pty_requires_connected_session");
-                self.session_agent.fail_tool_call(&tool_id, message.clone());
-                self.status_message = message;
-                cx.notify();
-                return;
-            };
+        let pty_handle = if let Some((tab_id, command_sender)) = pty_commands {
             let (sender, receiver) = mpsc::unbounded_channel();
-            self.set_active_session_pty_tap(Some(sender.clone()));
-            active_pty_tap = Some(sender);
+            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
+            active_pty_tap = Some((tab_id, sender));
             Some(TerminalExecHandle {
                 command_sender,
                 output_tap: Arc::new(Mutex::new(Some(receiver))),
@@ -1419,7 +1485,7 @@ impl AppView {
 
             let _ = this.update(cx, move |this, cx| {
                 if let Some(tap) = active_pty_tap.as_ref() {
-                    this.clear_active_session_pty_tap_if_same(tap);
+                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                 }
                 this.clear_session_pty_taps_if_same(&approval_pty_target_taps);
                 let approval_session_id = approval_session_id.clone();
@@ -1699,7 +1765,7 @@ impl AppView {
                             cx,
                         );
                         if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                            this.clear_active_session_pty_tap_if_same(tap);
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                         }
                         this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                     });
@@ -1742,7 +1808,7 @@ impl AppView {
                                     cx,
                                 );
                                 if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                                    this.clear_active_session_pty_tap_if_same(tap);
+                                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                                 }
                                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
                             })
@@ -1762,7 +1828,7 @@ impl AppView {
             let _ = this.update(cx, move |this, cx| {
                 this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
                 if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                    this.clear_active_session_pty_tap_if_same(tap);
+                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                 }
                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
@@ -2455,7 +2521,7 @@ impl AppView {
         let mut resolved_names = Vec::new();
         let mut pending_pty_taps = Vec::new();
 
-        match self.session_agent.exec_mode {
+        match self.session_agent.execution_mode_for_running_tools() {
             AgentExecMode::ExecChannel => {
                 for profile in &self.data.sessions {
                     let marker = format!("@{}", profile.name);

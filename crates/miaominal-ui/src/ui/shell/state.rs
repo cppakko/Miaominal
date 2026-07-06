@@ -260,6 +260,13 @@ impl AgentExecMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell) struct SessionAgentExecutionContext {
+    pub(in crate::ui::shell) profile_id: String,
+    pub(in crate::ui::shell) exec_mode: AgentExecMode,
+    pub(in crate::ui::shell) terminal_tab_id: Option<usize>,
+}
+
 #[derive(Default)]
 pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) session_id: Option<String>,
@@ -291,6 +298,8 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) search_scroll_target: Option<(usize, usize)>,
     /// Agent mode controlling tool availability, policy enforcement, and confirmation behavior.
     pub(in crate::ui::shell) agent_mode: AgentMode,
+    /// Default execution target captured when the user submitted the prompt.
+    pub(in crate::ui::shell) active_exec_context: Option<SessionAgentExecutionContext>,
     /// Attachments staged in the composer but not yet sent.
     pub(in crate::ui::shell) pending_attachments:
         Vec<miaominal_core::chat_attachment::ChatAttachment>,
@@ -346,6 +355,13 @@ pub(in crate::ui::shell) fn split_message_into_blocks(content: &str) -> Vec<Stri
 }
 
 impl SessionAgentState {
+    pub(in crate::ui::shell) fn execution_mode_for_running_tools(&self) -> AgentExecMode {
+        self.active_exec_context
+            .as_ref()
+            .map(|context| context.exec_mode)
+            .unwrap_or(self.exec_mode)
+    }
+
     pub(in crate::ui::shell) fn assign_enter_motion(&mut self, message: &mut SessionAgentMessage) {
         self.next_message_motion_key = self.next_message_motion_key.wrapping_add(1).max(1);
         message.motion.enter_key = Some(self.next_message_motion_key);
@@ -1844,6 +1860,50 @@ mod tests {
             Some(stopped_by_user.as_str())
         );
         assert!(!state.has_active_tool_call());
+    }
+
+    #[test]
+    fn session_agent_running_tool_execution_mode_uses_captured_context_over_current_ui_mode() {
+        let mut state = SessionAgentState {
+            exec_mode: AgentExecMode::Pty,
+            active_exec_context: Some(SessionAgentExecutionContext {
+                profile_id: "profile-a".to_string(),
+                exec_mode: AgentExecMode::ExecChannel,
+                terminal_tab_id: None,
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            state.execution_mode_for_running_tools(),
+            AgentExecMode::ExecChannel
+        );
+
+        state.exec_mode = AgentExecMode::ExecChannel;
+        state.active_exec_context = Some(SessionAgentExecutionContext {
+            profile_id: "profile-a".to_string(),
+            exec_mode: AgentExecMode::Pty,
+            terminal_tab_id: Some(42),
+        });
+
+        assert_eq!(state.execution_mode_for_running_tools(), AgentExecMode::Pty);
+    }
+
+    #[test]
+    fn session_agent_running_tool_execution_mode_falls_back_to_current_ui_mode_without_context() {
+        let mut state = SessionAgentState {
+            exec_mode: AgentExecMode::Pty,
+            ..Default::default()
+        };
+
+        assert_eq!(state.execution_mode_for_running_tools(), AgentExecMode::Pty);
+
+        state.exec_mode = AgentExecMode::ExecChannel;
+
+        assert_eq!(
+            state.execution_mode_for_running_tools(),
+            AgentExecMode::ExecChannel
+        );
     }
 
     #[test]
