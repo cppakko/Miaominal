@@ -145,7 +145,7 @@ pub(crate) struct HintedInput {
 impl HintedInput {
     pub(crate) fn new(state: &Entity<InputState>) -> Self {
         Self {
-            input: Input::new(state),
+            input: Input::new(state).focus_bordered(false).border_0(),
             state: state.clone(),
             size: Size::default(),
             hint_left: None,
