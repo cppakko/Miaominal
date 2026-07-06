@@ -3,6 +3,15 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
+pub enum ProfileKind {
+    #[default]
+    Ssh,
+    Telnet,
+    Rdp,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum AuthMethod {
     #[default]
     Password,
@@ -73,6 +82,8 @@ pub struct SessionProfile {
     pub group: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub kind: ProfileKind,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -123,6 +134,7 @@ impl SessionProfile {
             name: format!("Session {}", ordinal),
             group: String::new(),
             tags: Vec::new(),
+            kind: ProfileKind::Ssh,
             host: String::new(),
             port: 22,
             username: String::new(),
@@ -353,5 +365,12 @@ mod tests {
         profile.has_stored_password = true;
 
         assert_eq!(profile.effective_auth_method(), AuthMethod::Password);
+    }
+
+    #[test]
+    fn blank_profiles_default_to_ssh_kind() {
+        let profile = SessionProfile::blank("session-3", 1);
+
+        assert_eq!(profile.kind, ProfileKind::Ssh);
     }
 }

@@ -121,7 +121,7 @@ impl SnippetStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_core::profile::{AuthMethod, PortForwardKind, PortForwardRule};
+    use miaominal_core::profile::{AuthMethod, PortForwardKind, PortForwardRule, ProfileKind};
 
     #[test]
     fn legacy_private_key_profiles_default_to_key_file_auth() {
@@ -172,7 +172,27 @@ mod tests {
             .expect("profile exists");
 
         assert!(profile.group.is_empty());
+        assert_eq!(profile.kind, ProfileKind::Ssh);
         assert!(profile.port_forwarding_rules.is_empty());
+    }
+
+    #[test]
+    fn session_profiles_round_trip_profile_kind() {
+        let mut profile = SessionProfile::blank("session-5", 1);
+        profile.name = "Jumpbox".into();
+        profile.host = "example.com".into();
+        profile.username = "akko".into();
+        profile.kind = ProfileKind::Telnet;
+
+        let content = toml::to_string_pretty(&SessionsDocument {
+            sessions: vec![profile],
+        })
+        .expect("profile should serialize");
+        let parsed: SessionsDocument =
+            toml::from_str(&content).expect("profile should deserialize");
+
+        assert_eq!(parsed.sessions.len(), 1);
+        assert_eq!(parsed.sessions[0].kind, ProfileKind::Telnet);
     }
 
     #[test]

@@ -1126,6 +1126,7 @@ impl AppView {
             name,
             group,
             tags,
+            kind: existing.map(|profile| profile.kind).unwrap_or_default(),
             host,
             port,
             username,
