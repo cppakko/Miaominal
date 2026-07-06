@@ -1035,173 +1035,65 @@ fn web_search_settings_group(entity: Entity<AppView>) -> SettingGroup {
             .description(i18n::string("settings.web_search.enabled.description")),
             SettingItem::new(
                 i18n::string("settings.web_search.kind.label"),
-                SettingField::element(WebSearchProviderField::new(entity.clone())),
+                SettingField::render({
+                    let entity = entity.clone();
+                    move |_, _, cx| render_web_search_config_field(entity.clone(), cx)
+                }),
             )
             .description(i18n::string("settings.web_search.kind.description")),
-            SettingItem::new(
-                i18n::string("settings.web_search.api_key.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .web_search_api_key_input
-                            .clone();
-                        let save_in_progress = entity.read(cx).web_search_save_in_progress();
-                        let reveal_icon = entity
-                            .read(cx)
-                            .secret_reveal_icon(SecretRevealTarget::WebSearchApiKey);
-                        let entity = entity.clone();
-                        surface_secret_text_input(
-                            input,
-                            TextInputSurface::Highest,
-                            options.size,
-                            save_in_progress,
-                            None,
-                            reveal_icon,
-                            move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.toggle_secret_visibility(
-                                        SecretRevealTarget::WebSearchApiKey,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            },
-                        )
-                        .into_any_element()
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.web_search.api_key.description")),
-            SettingItem::new(
-                i18n::string("settings.web_search.endpoint.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .web_search_endpoint_input
-                            .clone();
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        surface_text_input(&input, TextInputSurface::Highest)
-                            .with_size(options.size)
-                            .disabled(false)
-                            .text_color(rgb(roles.on_surface))
-                            .into_any_element()
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string("settings.web_search.endpoint.description")),
-            SettingItem::new(
-                i18n::string("settings.web_search.max_results.label"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |options, _, cx| {
-                        let input = entity
-                            .read(cx)
-                            .panel_forms
-                            .settings
-                            .web_search_max_results_input
-                            .clone();
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        surface_text_input(&input, TextInputSurface::Highest)
-                            .with_size(options.size)
-                            .disabled(false)
-                            .text_color(rgb(roles.on_surface))
-                            .into_any_element()
-                    }
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description(i18n::string_args(
-                "settings.web_search.max_results.description",
-                &[
-                    (
-                        "min",
-                        &miaominal_settings::WEB_SEARCH_MAX_RESULTS_MIN.to_string(),
-                    ),
-                    (
-                        "max",
-                        &miaominal_settings::WEB_SEARCH_MAX_RESULTS_MAX.to_string(),
-                    ),
-                ],
-            )),
-            SettingItem::new(
-                i18n::string("settings.web_search.actions.save"),
-                SettingField::render({
-                    let entity = entity.clone();
-                    move |_, _, cx| {
-                        if entity.read(cx).web_search_save_in_progress() {
-                            return div()
-                                .id("web-search-save-spinner")
-                                .min_w(px(116.0))
-                                .min_h(px(32.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(md3_spinner(18.0))
-                                .into_any_element();
-                        }
-
-                        let entity = entity.clone();
-                        settings_action_button(
-                            "web-search-settings-save",
-                            i18n::string("settings.web_search.actions.save"),
-                            true,
-                            move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.submit_web_search_settings_save(window, cx);
-                                });
-                            },
-                        )
-                        .into_any_element()
-                    }
-                }),
-            )
-            .description(i18n::string("settings.web_search.actions.description")),
         ])
 }
 
-#[derive(Clone)]
-struct WebSearchProviderField {
-    app_view: Entity<AppView>,
-}
+fn render_web_search_config_field(entity: Entity<AppView>, cx: &App) -> AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let web_search = entity.read(cx).settings_store.settings().web_search.clone();
+    let provider_label = i18n::string(web_search_provider_kind_label_key(web_search.kind));
+    let save_in_progress = entity.read(cx).web_search_save_in_progress();
+    let entity_edit = entity.clone();
 
-impl WebSearchProviderField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
-    }
-}
-
-impl SettingFieldElement for WebSearchProviderField {
-    type Element = AnyElement;
-
-    fn render_field(
-        &self,
-        options: &RenderOptions,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> Self::Element {
-        let select_state = self
-            .app_view
-            .read(cx)
-            .panel_forms
-            .settings
-            .web_search_kind_select
-            .clone();
-
-        md3_select(&select_state)
-            .with_size(options.size)
-            .w_full()
+    h_flex()
+        .w_full()
+        .gap_2()
+        .items_center()
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(220.0))
+                .px_3()
+                .py_2()
+                .rounded(px(10.0))
+                .bg(rgb(roles.surface_container_high))
+                .text_color(rgb(roles.on_surface))
+                .text_size(miaominal_settings::FontSize::Input.scaled())
+                .child(provider_label),
+        )
+        .child(if save_in_progress {
+            div()
+                .id("web-search-config-entry-spinner")
+                .size(px(34.0))
+                .rounded(px(12.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(md3_spinner(16.0))
+                .into_any_element()
+        } else {
+            icon_button(
+                AppIcon::Edit,
+                34.0,
+                12.0,
+                None,
+                None,
+                Some(roles.outline_variant),
+                move |window, cx| {
+                    entity_edit.update(cx, |this, cx| {
+                        this.open_web_search_config_popup(window, cx);
+                    });
+                },
+            )
             .into_any_element()
-    }
+        })
+        .into_any_element()
 }
 
 fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) -> AnyElement {

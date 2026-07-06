@@ -80,7 +80,7 @@ pub(crate) use crate::ui::components::{
     editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button, field_label,
     icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
     page_muted_icon_tile, page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
-    pill_label, search_filter_input, setting_field_with_reset_action, surface_secret_text_input,
+    pill_label, search_filter_input, setting_field_with_reset_action,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
     surface_text_input, surface_text_input_stack,
 };
@@ -90,6 +90,7 @@ pub(crate) use crate::ui::utils::{
 pub(in crate::ui::shell) use actions::{
     PromptHistoryDirection, SessionAgentTargetCandidate, ValidationFailure,
     ValidationNotificationKind, ai_provider_kind_label_key, ai_provider_select_options,
+    web_search_provider_kind_label_key,
 };
 use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
 use controllers::ControllerSet;
@@ -116,14 +117,15 @@ pub(in crate::ui::shell) use state::{
     PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
     PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
     PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
-    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState, SecretVisibilityState,
-    SessionAgentAutoScrollState, SessionAgentMessage, SessionAgentMessageMotion,
-    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall,
-    SessionAgentToolStatus, SessionConnectionState, SessionMonitoringState, SessionPurpose,
-    SessionSidePanelView, SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind,
-    SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow,
-    SftpTransferStatus, ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
+    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
+    PendingWebSearchConfigPopupState, SecretVisibilityState, SessionAgentAutoScrollState,
+    SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
+    SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
+    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionSidePanelView,
+    SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState,
+    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus,
+    ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason, SyncUiState, TabKind,
+    TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
     trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
@@ -334,6 +336,7 @@ pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
     SaveSyncProviderConfig(SyncProviderConfigSaveDraft),
     OpenAiProvider(String),
     SaveAiProvider(AiProviderSaveDraft),
+    OpenWebSearchConfig,
     SaveWebSearch(WebSearchSaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),

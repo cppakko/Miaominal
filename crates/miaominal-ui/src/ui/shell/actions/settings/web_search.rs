@@ -8,6 +8,135 @@ impl AppView {
     pub(in crate::ui::shell) fn web_search_save_in_progress(&self) -> bool {
         self.web_search_save_in_progress
     }
+    pub(in crate::ui::shell) fn open_web_search_config_popup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let config = self.settings_store.settings().web_search.clone();
+
+        if self.local_vault_status == LocalVaultStatus::Locked && config.has_api_key {
+            self.prompt_local_vault_unlock_for_action(
+                PendingLocalVaultUnlockAction::OpenWebSearchConfig,
+                window,
+                cx,
+            );
+            return;
+        }
+
+        self.prepare_web_search_config_popup_inputs(&config, window, cx);
+        let popup = PendingWebSearchConfigPopupState;
+        let stable_key = DialogOverlaySnapshot::WebSearchConfigPopup(popup).stable_key();
+        self.dialogs
+            .exiting_dialogs
+            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
+        self.web_search_config_popup = Some(popup);
+        self.panel_forms
+            .settings
+            .web_search_api_key_input
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+    fn prepare_web_search_config_popup_inputs(
+        &mut self,
+        config: &WebSearchConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panel_forms
+            .settings
+            .web_search_kind_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&config.kind, window, cx);
+            });
+
+        let api_key = if config.has_api_key && self.local_vault_status != LocalVaultStatus::Locked {
+            match self
+                .services
+                .secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+            {
+                Ok(api_key) => api_key.unwrap_or_default(),
+                Err(error) => {
+                    self.notify_secret_reveal_failed(window, &error, cx);
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        set_input_value(
+            &self.panel_forms.settings.web_search_api_key_input,
+            api_key,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.web_search_endpoint_input,
+            config.endpoint.clone(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.panel_forms.settings.web_search_max_results_input,
+            config.max_results.to_string(),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.web_search_endpoint_input,
+            web_search_endpoint_placeholder(config.kind),
+            window,
+            cx,
+        );
+        set_input_placeholder(
+            &self.panel_forms.settings.web_search_api_key_input,
+            Self::localized_secret_placeholder(
+                config.has_api_key,
+                "settings.web_search.placeholders.api_key",
+            ),
+            window,
+            cx,
+        );
+        self.set_secret_visibility(
+            SecretRevealTarget::WebSearchApiKey,
+            false,
+            false,
+            window,
+            cx,
+        );
+    }
+    pub(super) fn dismiss_web_search_config_popup(&mut self, cx: &mut Context<Self>) {
+        if let Some(popup) = self.web_search_config_popup.take() {
+            self.start_dialog_exit(DialogOverlaySnapshot::WebSearchConfigPopup(popup), cx);
+            cx.notify();
+        }
+    }
+    pub(in crate::ui::shell) fn close_web_search_config_popup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.web_search_save_in_progress() {
+            return;
+        }
+
+        set_input_value(
+            &self.panel_forms.settings.web_search_api_key_input,
+            "",
+            window,
+            cx,
+        );
+        self.set_secret_visibility(
+            SecretRevealTarget::WebSearchApiKey,
+            false,
+            false,
+            window,
+            cx,
+        );
+        self.dismiss_web_search_config_popup(cx);
+    }
     pub(in crate::ui::shell) fn current_web_search_kind(&self, cx: &App) -> WebSearchProviderKind {
         self.panel_forms
             .settings
@@ -233,6 +362,7 @@ impl AppView {
             window,
             cx,
         );
+        self.dismiss_web_search_config_popup(cx);
         let message = i18n::string("settings.web_search.notifications.saved_message");
         self.status_message = message.clone();
         window.push_notification(

@@ -991,6 +991,9 @@ pub(in crate::ui::shell) struct PendingSyncPassphrasePopupState;
 pub(in crate::ui::shell) struct PendingAiProviderPopupState;
 
 #[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct PendingWebSearchConfigPopupState;
+
+#[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingSyncProviderConfigPopupState {
     pub(in crate::ui::shell) provider: SyncProvider,
 }
@@ -1014,6 +1017,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     SyncPassphraseClearConfirmPopup(PendingSyncPassphraseClearConfirmPopupState),
     SyncPassphrasePopup(PendingSyncPassphrasePopupState),
     AiProviderPopup(PendingAiProviderPopupState),
+    WebSearchConfigPopup(PendingWebSearchConfigPopupState),
     SyncProviderConfigPopup(PendingSyncProviderConfigPopupState),
     LocalVaultPassphrasePopup(LocalVaultPassphrasePopupMode),
     SftpPrompt {
@@ -1042,6 +1046,7 @@ impl DialogOverlaySnapshot {
             Self::SyncPassphraseClearConfirmPopup(_) => "sync-passphrase-clear-confirm".to_string(),
             Self::SyncPassphrasePopup(_) => "sync-passphrase".to_string(),
             Self::AiProviderPopup(_) => "ai-provider".to_string(),
+            Self::WebSearchConfigPopup(_) => "web-search-config".to_string(),
             Self::SyncProviderConfigPopup(popup) => match popup.provider {
                 SyncProvider::None => "sync-provider-none".to_string(),
                 SyncProvider::GithubGist => "sync-provider-gist".to_string(),

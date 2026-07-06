@@ -68,6 +68,9 @@ impl AppView {
             PendingLocalVaultUnlockAction::SaveAiProvider(draft) => {
                 self.continue_save_ai_provider_after_unlock(draft, window, cx);
             }
+            PendingLocalVaultUnlockAction::OpenWebSearchConfig => {
+                self.open_web_search_config_popup(window, cx);
+            }
             PendingLocalVaultUnlockAction::SaveWebSearch(draft) => {
                 self.continue_save_web_search_after_unlock(draft, window, cx);
             }

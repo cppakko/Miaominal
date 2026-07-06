@@ -2,6 +2,7 @@ use super::state::{
     PendingAiProviderPopupState, PendingChatSessionRenameState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
     PendingSyncPassphrasePopupState, PendingSyncProviderConfigPopupState,
+    PendingWebSearchConfigPopupState,
 };
 use super::*;
 use crate::ui::i18n;
@@ -87,6 +88,7 @@ impl Render for AppView {
             self.pending_sync_passphrase_clear_confirm_popup();
         let pending_sync_passphrase_popup = self.pending_sync_passphrase_popup();
         let pending_ai_provider_popup = self.pending_ai_provider_popup();
+        let pending_web_search_config_popup = self.pending_web_search_config_popup();
         let pending_sync_provider_config_popup = self.pending_sync_provider_config_popup();
         let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup();
         let pending_sftp_prompt = self.pending_sftp_prompt();
@@ -289,6 +291,14 @@ impl Render for AppView {
             })
             .when_some(pending_ai_provider_popup, |this, popup| {
                 this.child(self.render_ai_provider_popup(
+                    entity.clone(),
+                    popup,
+                    None,
+                    bottom_popup_viewport_height,
+                ))
+            })
+            .when_some(pending_web_search_config_popup, |this, popup| {
+                this.child(self.render_web_search_config_popup(
                     entity.clone(),
                     popup,
                     None,
@@ -2418,6 +2428,151 @@ impl AppView {
         )
     }
 
+    fn render_web_search_config_popup(
+        &self,
+        entity: Entity<AppView>,
+        _popup: PendingWebSearchConfigPopupState,
+        exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let kind_select = self.panel_forms.settings.web_search_kind_select.clone();
+        let api_key_input = self.panel_forms.settings.web_search_api_key_input.clone();
+        let endpoint_input = self.panel_forms.settings.web_search_endpoint_input.clone();
+        let max_results_input = self
+            .panel_forms
+            .settings
+            .web_search_max_results_input
+            .clone();
+        let save_in_progress = self.web_search_save_in_progress();
+        let current_kind = self.settings_store.settings().web_search.kind;
+        let api_key_required = current_kind.requires_api_key();
+        let endpoint_required = current_kind == miaominal_settings::WebSearchProviderKind::SearXng;
+        let target = SecretRevealTarget::WebSearchApiKey;
+        let reveal_icon = self.secret_reveal_icon(target.clone());
+        let entity_cancel = entity.clone();
+        let entity_submit = entity.clone();
+        let entity_toggle = entity.clone();
+
+        let popup_body = v_flex()
+            .w_full()
+            .gap_5()
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(field_label(
+                        i18n::string("settings.web_search.kind.label"),
+                        true,
+                    ))
+                    .child(
+                        div().w_full().min_w(px(320.0)).child(
+                            md3_select(&kind_select)
+                                .large()
+                                .w_full()
+                                .bg(rgb(roles.surface_container_low)),
+                        ),
+                    ),
+            )
+            .child(surface_secret_text_input_stack(
+                i18n::string("settings.web_search.api_key.label"),
+                api_key_input,
+                crate::ui::components::SecretTextInputStackOptions {
+                    surface: TextInputSurface::Low,
+                    size: gpui_component::Size::Large,
+                    required: api_key_required,
+                    disabled: save_in_progress,
+                    trailing: None,
+                    reveal_icon,
+                },
+                move |window, cx| {
+                    entity_toggle.update(cx, |this, cx| {
+                        this.toggle_secret_visibility(
+                            SecretRevealTarget::WebSearchApiKey,
+                            window,
+                            cx,
+                        );
+                    });
+                },
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.web_search.endpoint.label"),
+                endpoint_input,
+                TextInputSurface::Low,
+                endpoint_required,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.web_search.max_results.label"),
+                max_results_input,
+                TextInputSurface::Low,
+                true,
+            ))
+            .into_any_element();
+
+        let actions = h_flex()
+            .w_full()
+            .justify_end()
+            .gap_3()
+            .child(
+                Button::new("web-search-config-popup-cancel")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .disabled(save_in_progress)
+                    .text_color(rgb(roles.on_surface_variant))
+                    .label(i18n::string("dialogs.common.cancel"))
+                    .on_click(move |_, window, cx| {
+                        entity_cancel.update(cx, |this, cx| {
+                            this.close_web_search_config_popup(window, cx);
+                        });
+                    }),
+            )
+            .child(if save_in_progress {
+                div()
+                    .id("web-search-config-popup-submit-spinner")
+                    .min_w(px(116.0))
+                    .min_h(px(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(crate::ui::components::md3_spinner(18.0))
+                    .into_any_element()
+            } else {
+                Button::new("web-search-config-popup-submit")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .text_color(rgb(roles.primary))
+                    .label(i18n::string("settings.web_search.actions.save"))
+                    .on_click(move |_, window, cx| {
+                        entity_submit.update(cx, |this, cx| {
+                            this.submit_web_search_settings_save(window, cx);
+                        });
+                    })
+                    .into_any_element()
+            })
+            .into_any_element();
+
+        render_bottom_popup(
+            bottom_popup_panel(
+                i18n::string("settings.web_search.group.title"),
+                Some(i18n::string("settings.web_search.group.description")),
+                Some(popup_body),
+                actions,
+                bottom_popup_viewport_height,
+            ),
+            "web-search-config",
+            exit_progress,
+            move |window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.close_web_search_config_popup(window, cx);
+                });
+            },
+        )
+    }
+
     fn render_sync_provider_config_popup(
         &self,
         entity: Entity<AppView>,
@@ -2866,6 +3021,13 @@ impl AppView {
                 Some(exit_progress),
                 bottom_popup_viewport_height,
             ),
+            DialogOverlaySnapshot::WebSearchConfigPopup(popup) => self
+                .render_web_search_config_popup(
+                    entity,
+                    popup,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                ),
             DialogOverlaySnapshot::SyncProviderConfigPopup(popup) => self
                 .render_sync_provider_config_popup(
                     entity,

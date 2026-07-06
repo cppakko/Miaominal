@@ -832,6 +832,9 @@ impl AppView {
                     } else if this.ai_provider_popup.is_some() {
                         this.submit_ai_provider_save(window, cx);
                         submitted_popup = true;
+                    } else if this.web_search_config_popup.is_some() {
+                        this.submit_web_search_settings_save(window, cx);
+                        submitted_popup = true;
                     } else if this.sync_provider_config_popup.is_some() {
                         this.submit_sync_provider_config_popup_action(window, cx);
                         submitted_popup = true;
@@ -1838,6 +1841,7 @@ impl AppView {
             },
             sync_passphrase_popup: None,
             ai_provider_popup: None,
+            web_search_config_popup: None,
             sync_provider_config_popup: None,
             local_vault_passphrase_popup: None,
             pending_local_vault_unlock_action: None,
