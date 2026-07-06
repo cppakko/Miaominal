@@ -1,7 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
 use crate::ui::shell::state::SessionAgentExecutionContext;
-use crate::ui::shell::state::TokenUsage;
 use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
@@ -551,7 +550,6 @@ impl AppView {
         self.session_agent.active_at_targets.clear();
         self.session_agent.active_exec_context = None;
         self.session_agent.title = None;
-        self.session_agent.last_usage = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
         self.reset_session_agent_scroll();
         set_input_value(
@@ -2048,16 +2046,7 @@ impl AppView {
                     None
                 }
             }
-            AgentChatEvent::TokenUsage {
-                input_tokens,
-                output_tokens,
-            } => {
-                self.session_agent.last_usage = Some(TokenUsage {
-                    input_tokens,
-                    output_tokens,
-                });
-                None
-            }
+            AgentChatEvent::TokenUsage { .. } => None,
         };
         self.scroll_session_agent_to_bottom_if_following(
             previous_message_count,

@@ -1,6 +1,5 @@
 use super::super::*;
 use super::session_agent_mentions;
-use super::session_agent_utils::*;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use gpui::{Animation, AnimationExt as _, ClipboardEntry};
@@ -242,12 +241,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     ),
                                 )
                                 .child(div().flex_1())
-                                .child(render_session_agent_token_usage(
-                                    &app.session_agent,
-                                    &app.settings_store,
-                                    text_muted,
-                                ))
-                                .child(div().min_w(px(4.0)))
                                 .child(
                                     div()
                                         .id("session-agent-send-action")
