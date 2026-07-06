@@ -1047,9 +1047,7 @@ impl AppView {
         tab_id: usize,
         window: &mut Window,
     ) -> Option<f32> {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
-            return None;
-        };
+        let tab = self.sftp_tab_mut(tab_id)?;
 
         let Some(transition) = tab.layout.progress_center_transition else {
             return tab.layout.progress_center_visible.then_some(1.0);

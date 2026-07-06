@@ -11,6 +11,8 @@ const DEFAULT_HEIGHT: f32 = 34.0;
 const DEFAULT_PADDING: f32 = 2.0;
 const ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
+type SegmentedSwitchClick = dyn Fn(usize, &mut Window, &mut App);
+
 #[derive(IntoElement)]
 pub(crate) struct SegmentedSwitch {
     id: ElementId,
@@ -19,7 +21,7 @@ pub(crate) struct SegmentedSwitch {
     width: f32,
     height: f32,
     padding: f32,
-    on_click: Option<Rc<dyn Fn(usize, &mut Window, &mut App)>>,
+    on_click: Option<Rc<SegmentedSwitchClick>>,
 }
 
 impl SegmentedSwitch {
@@ -124,7 +126,7 @@ impl RenderOnce for SegmentedSwitch {
                 let selected_state = selected_state.clone();
                 cx.spawn(async move |cx| {
                     cx.background_executor().timer(ANIMATION_DURATION).await;
-                    let _ = selected_state.update(cx, |state, _| *state = selected_index);
+                    selected_state.update(cx, |state, _| *state = selected_index);
                 })
                 .detach();
 
