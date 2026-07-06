@@ -682,11 +682,12 @@ impl AppView {
 
         div()
             .size_full()
+            .overflow_hidden()
             .p_5()
             .child(
                 div()
-                    .flex_1()
                     .min_w(px(0.0))
+                    .min_h(px(0.0))
                     .size_full()
                     .flex()
                     .flex_col()
@@ -765,24 +766,30 @@ impl AppView {
                                     )),
                             ),
                     )
-                    .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(
-                        if filtered.is_empty() {
-                            shell_empty_page(
-                                AppIcon::FingerPrint,
-                                i18n::string("trusted.page.no_matches"),
-                            )
-                            .into_any_element()
-                        } else {
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_4()
-                                .children(filtered.into_iter().map(|view| {
-                                    trusted_host_card(entity.clone(), view).into_any_element()
-                                }))
-                                .into_any_element()
-                        },
-                    )),
+                    .child(
+                        div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
+                            div().size_full().overflow_y_scrollbar().child(
+                                if filtered.is_empty() {
+                                    shell_empty_page(
+                                        AppIcon::FingerPrint,
+                                        i18n::string("trusted.page.no_matches"),
+                                    )
+                                    .into_any_element()
+                                } else {
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap_4()
+                                        .pb_8()
+                                        .children(filtered.into_iter().map(|view| {
+                                            trusted_host_card(entity.clone(), view)
+                                                .into_any_element()
+                                        }))
+                                        .into_any_element()
+                                },
+                            ),
+                        ),
+                    ),
             )
             .into_any_element()
     }
