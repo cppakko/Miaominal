@@ -23,6 +23,12 @@ const SFTP_REMOTE_PANEL_MIN_WIDTH: f32 = 260.0;
 const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 220.0;
 const SFTP_BROWSER_MIN_HEIGHT: f32 = 240.0;
 const SFTP_PROGRESS_CENTER_SLIDE_OFFSET: f32 = 14.0;
+const SFTP_BREADCRUMB_MAX_VISIBLE_ITEMS: usize = 5;
+const SFTP_BREADCRUMB_TRAILING_ITEMS: usize = 3;
+const SFTP_BREADCRUMB_LABEL_MAX_CHARS: usize = 18;
+const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_CHARS: usize = 24;
+const SFTP_BREADCRUMB_LABEL_MAX_WIDTH: f32 = 128.0;
+const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH: f32 = 172.0;
 
 #[derive(Clone)]
 struct SftpSplitDragMarker {
@@ -33,6 +39,39 @@ impl Render for SftpSplitDragMarker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let _ = self.divider;
         div().size(px(1.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_sftp_breadcrumb_indexes_keeps_short_paths() {
+        assert_eq!(
+            visible_sftp_breadcrumb_indexes(5),
+            vec![Some(0), Some(1), Some(2), Some(3), Some(4)]
+        );
+    }
+
+    #[test]
+    fn visible_sftp_breadcrumb_indexes_collapses_middle_segments() {
+        assert_eq!(
+            visible_sftp_breadcrumb_indexes(7),
+            vec![Some(0), None, Some(4), Some(5), Some(6)]
+        );
+    }
+
+    #[test]
+    fn sftp_breadcrumb_display_label_uses_smaller_limit_for_parent_segments() {
+        assert_eq!(
+            sftp_breadcrumb_display_label("abcdefghijklmnopqrstuv", false).as_ref(),
+            "abcdefghijklmno..."
+        );
+        assert_eq!(
+            sftp_breadcrumb_display_label("abcdefghijklmnopqrstuvwxyz", true).as_ref(),
+            "abcdefghijklmnopqrstu..."
+        );
     }
 }
 
@@ -148,23 +187,37 @@ fn sftp_path_button(
         Some(roles.outline_variant),
         on_click,
     )
+    .flex_shrink_0()
 }
 
-fn sftp_path_breadcrumb_shell(content: impl IntoElement) -> impl IntoElement {
+fn sftp_path_tooltip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    let text = text.into();
+
+    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+}
+
+fn sftp_path_breadcrumb_shell(
+    id: impl Into<ElementId>,
+    content: impl IntoElement,
+    full_path: impl Into<SharedString>,
+) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
+    let full_path = full_path.into();
 
     div()
+        .id(id)
         .flex_1()
         .min_w(px(0.0))
         .h(px(30.0))
-        .rounded(px(8.0))
+        .rounded(px(99.0))
         .bg(rgb(roles.surface_container))
-        .border_1()
-        .border_color(rgb(roles.outline_variant))
         .px_3()
         .flex()
         .items_center()
         .overflow_hidden()
+        .tooltip(sftp_path_tooltip(full_path))
         .child(
             div()
                 .flex_1()
@@ -174,6 +227,44 @@ fn sftp_path_breadcrumb_shell(content: impl IntoElement) -> impl IntoElement {
         )
 }
 
+fn visible_sftp_breadcrumb_indexes(items_len: usize) -> Vec<Option<usize>> {
+    if items_len <= SFTP_BREADCRUMB_MAX_VISIBLE_ITEMS {
+        return (0..items_len).map(Some).collect();
+    }
+
+    let trailing_count = SFTP_BREADCRUMB_TRAILING_ITEMS.min(items_len.saturating_sub(1));
+    let trailing_start = items_len - trailing_count;
+    let mut indexes = Vec::with_capacity(2 + trailing_count);
+    indexes.push(Some(0));
+    indexes.push(None);
+    indexes.extend((trailing_start..items_len).map(Some));
+    indexes
+}
+
+fn sftp_breadcrumb_display_label(label: &str, is_current: bool) -> SharedString {
+    let max_chars = if is_current {
+        SFTP_BREADCRUMB_CURRENT_LABEL_MAX_CHARS
+    } else {
+        SFTP_BREADCRUMB_LABEL_MAX_CHARS
+    };
+
+    truncate_with_ellipsis(label, max_chars).into()
+}
+
+fn sftp_breadcrumb_item(label: SharedString, is_current: bool) -> BreadcrumbItem {
+    let max_width = if is_current {
+        SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH
+    } else {
+        SFTP_BREADCRUMB_LABEL_MAX_WIDTH
+    };
+
+    BreadcrumbItem::new(label)
+        .min_w(px(0.0))
+        .max_w(px(max_width))
+        .flex_shrink(1.0)
+        .truncate()
+}
+
 fn local_sftp_breadcrumb_label(path: &Path) -> SharedString {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned().into())
@@ -181,22 +272,39 @@ fn local_sftp_breadcrumb_label(path: &Path) -> SharedString {
 }
 
 fn build_local_sftp_breadcrumb(path: &Path, entity: Entity<AppView>, tab_id: usize) -> Breadcrumb {
-    let mut breadcrumb = Breadcrumb::new();
+    let mut breadcrumb = Breadcrumb::new().w_full().min_w(px(0.0)).overflow_hidden();
     let mut ancestors: Vec<PathBuf> = path
         .ancestors()
         .map(|ancestor| ancestor.to_path_buf())
         .collect();
     ancestors.reverse();
+    let visible_indexes = visible_sftp_breadcrumb_indexes(ancestors.len());
 
-    for ancestor in ancestors {
-        let label = local_sftp_breadcrumb_label(&ancestor);
+    for visible_index in visible_indexes {
+        let Some(index) = visible_index else {
+            breadcrumb = breadcrumb.child(
+                BreadcrumbItem::new("...")
+                    .disabled(true)
+                    .flex_shrink_0()
+                    .truncate(),
+            );
+            continue;
+        };
+
+        let Some(ancestor) = ancestors.get(index) else {
+            continue;
+        };
+
+        let raw_label = local_sftp_breadcrumb_label(ancestor);
         let is_current = ancestor.as_path() == path;
+        let label = sftp_breadcrumb_display_label(raw_label.as_ref(), is_current);
+        let item = sftp_breadcrumb_item(label, is_current);
         let item = if is_current {
-            BreadcrumbItem::new(label).disabled(true)
+            item.disabled(true)
         } else {
             let click_entity = entity.clone();
             let target = ancestor.clone();
-            BreadcrumbItem::new(label).on_click(move |_, _, cx| {
+            item.on_click(move |_, _, cx| {
                 let target = target.clone();
                 click_entity.update(cx, |this, cx| {
                     this.navigate_sftp_local_to_path(tab_id, target.clone(), cx);
@@ -241,15 +349,33 @@ fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usi
         }
     }
 
-    let mut breadcrumb = Breadcrumb::new();
-    for (target_path, label) in segments {
+    let mut breadcrumb = Breadcrumb::new().w_full().min_w(px(0.0)).overflow_hidden();
+    let visible_indexes = visible_sftp_breadcrumb_indexes(segments.len());
+
+    for visible_index in visible_indexes {
+        let Some(index) = visible_index else {
+            breadcrumb = breadcrumb.child(
+                BreadcrumbItem::new("...")
+                    .disabled(true)
+                    .flex_shrink_0()
+                    .truncate(),
+            );
+            continue;
+        };
+
+        let Some((target_path, raw_label)) = segments.get(index) else {
+            continue;
+        };
+
         let is_current = target_path == current_path;
+        let label = sftp_breadcrumb_display_label(raw_label.as_ref(), is_current);
+        let item = sftp_breadcrumb_item(label, is_current);
         let item = if is_current {
-            BreadcrumbItem::new(label).disabled(true)
+            item.disabled(true)
         } else {
             let click_entity = entity.clone();
             let target = target_path.clone();
-            BreadcrumbItem::new(label).on_click(move |_, _, cx| {
+            item.on_click(move |_, _, cx| {
                 let target = target.clone();
                 click_entity.update(cx, |this, cx| {
                     this.request_sftp_remote_directory(tab_id, target.clone(), cx);
@@ -1443,11 +1569,11 @@ impl AppView {
             let up_entity = entity.clone();
             let edit_entity = entity.clone();
             sftp_path_bar(
-                sftp_path_breadcrumb_shell(build_remote_sftp_breadcrumb(
-                    &sftp_tab.remote_path,
-                    breadcrumb_entity,
-                    tab_id,
-                )),
+                sftp_path_breadcrumb_shell(
+                    SharedString::from(format!("session-remote-sftp-path-{tab_id}")),
+                    build_remote_sftp_breadcrumb(&sftp_tab.remote_path, breadcrumb_entity, tab_id),
+                    sftp_tab.remote_path.clone(),
+                ),
                 true,
                 move |_window, cx| {
                     up_entity.update(cx, |this, cx| {
@@ -1775,11 +1901,11 @@ impl AppView {
             let up_entity = entity.clone();
             let edit_entity = entity.clone();
             sftp_path_bar(
-                sftp_path_breadcrumb_shell(build_local_sftp_breadcrumb(
-                    &sftp_tab.local_path,
-                    breadcrumb_entity,
-                    tab_id,
-                )),
+                sftp_path_breadcrumb_shell(
+                    SharedString::from(format!("local-sftp-path-{tab_id}")),
+                    build_local_sftp_breadcrumb(&sftp_tab.local_path, breadcrumb_entity, tab_id),
+                    AppView::display_sftp_local_path(&sftp_tab.local_path),
+                ),
                 true,
                 move |_window, cx| {
                     up_entity.update(cx, |this, cx| {
@@ -1812,11 +1938,11 @@ impl AppView {
             let up_entity = entity.clone();
             let edit_entity = entity.clone();
             sftp_path_bar(
-                sftp_path_breadcrumb_shell(build_remote_sftp_breadcrumb(
-                    &sftp_tab.remote_path,
-                    breadcrumb_entity,
-                    tab_id,
-                )),
+                sftp_path_breadcrumb_shell(
+                    SharedString::from(format!("remote-sftp-path-{tab_id}")),
+                    build_remote_sftp_breadcrumb(&sftp_tab.remote_path, breadcrumb_entity, tab_id),
+                    sftp_tab.remote_path.clone(),
+                ),
                 true,
                 move |_window, cx| {
                     up_entity.update(cx, |this, cx| {
