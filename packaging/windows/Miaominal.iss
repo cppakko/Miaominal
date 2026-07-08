@@ -26,9 +26,14 @@ ArchitecturesAllowed=x64compatible
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+ShowLanguageDialog=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimp"; MessagesFile: "languages\ChineseSimplified.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#BinarySource}"; DestDir: "{app}"; DestName: "miaominal.exe"; Flags: ignoreversion
@@ -36,6 +41,10 @@ Source: "{#BinarySource}"; DestDir: "{app}"; DestName: "miaominal.exe"; Flags: i
 [Icons]
 Name: "{userprograms}\{#AppName}\{#AppName}"; Filename: "{app}\miaominal.exe"; WorkingDir: "{app}"; Comment: "{#AppDescription}"
 Name: "{userprograms}\{#AppName}\Uninstall {#AppName}"; Filename: "{uninstallexe}"; WorkingDir: "{app}"
+Name: "{userdesktop}\{#AppName}"; Filename: "{app}\miaominal.exe"; WorkingDir: "{app}"; Comment: "{#AppDescription}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\miaominal.exe"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Registry]
 Root: HKCU; Subkey: "Software\cppakko\Miaominal"; ValueType: dword; ValueName: "Installed"; ValueData: 1; Flags: uninsdeletekeyifempty
