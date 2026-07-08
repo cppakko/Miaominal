@@ -178,7 +178,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                         .child(
                             h_flex()
                                 .w_full()
-                                .h(px(28.0))
+                                .h(px(32.0))
                                 .items_center()
                                 .gap_2()
                                 .child(
@@ -234,9 +234,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     },
                                 ))
                                 .child(
-                                    div().w(px(80.0)).child(
+                                    div().w(px(108.0)).child(
                                         md3_select(&app.workspace_forms.agent.agent_mode_select)
-                                            .small()
+                                            .with_size(gpui_component::Size::Medium)
                                             .w_full(),
                                     ),
                                 )
