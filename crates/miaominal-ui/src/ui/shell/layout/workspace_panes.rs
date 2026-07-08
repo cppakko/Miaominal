@@ -601,7 +601,6 @@ impl AppView {
                 div()
                     .size_full()
                     .px_4()
-                    .pb_4()
                     .when(!embedded_in_split, |this| this.pt_4())
                     .child(render_terminal_canvas_for_pane(
                         None,
@@ -750,7 +749,6 @@ impl AppView {
                     .rounded(px(16.0))
                     .overflow_hidden()
                     .px_4()
-                    .pb_4()
                     .when(!embedded_in_split, |this| this.pt_4())
                     .bg(rgb(roles.background))
                     .text_color(rgb(roles.on_surface))
