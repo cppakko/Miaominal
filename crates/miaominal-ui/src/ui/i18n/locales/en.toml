@@ -1033,6 +1033,7 @@ value_label = "Value"
 [hosts.menu]
 add_to_favorites = "Add to favorites"
 remove_from_favorites = "Remove from favorites"
+open_sftp = "Open SFTP"
 duplicate_profile = "Duplicate profile"
 delete_profile = "Delete profile"
 
@@ -1040,7 +1041,7 @@ delete_profile = "Delete profile"
 groups = "Groups"
 recent_connections = "Recent Connections"
 favorites = "Favorites"
-active_connections = "Active Connections"
+active_connections = "Connections"
 
 [hosts.empty]
 no_profiles = "No host profiles yet. Click the add button to create your first one."

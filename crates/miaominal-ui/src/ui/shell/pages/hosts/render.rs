@@ -19,6 +19,7 @@ fn build_host_context_menu(
     is_favorite: bool,
 ) -> PopupMenu {
     let fav_entity = entity.clone();
+    let sftp_entity = entity.clone();
     let dup_entity = entity.clone();
     let del_entity = entity;
 
@@ -33,6 +34,13 @@ fn build_host_context_menu(
             this.toggle_profile_favorite(index, cx);
         });
     }))
+    .item(
+        PopupMenuItem::new(i18n::string("hosts.menu.open_sftp")).on_click(move |_, window, cx| {
+            sftp_entity.update(cx, |this, cx| {
+                this.open_sftp_for_profile_at_index(index, window, cx);
+            });
+        }),
+    )
     .item(PopupMenuItem::separator())
     .item(
         PopupMenuItem::new(i18n::string("hosts.menu.duplicate_profile")).on_click(

@@ -410,6 +410,19 @@ impl AppView {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn open_sftp_for_profile_at_index(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile) = self.data.sessions.get(index).cloned() else {
+            return;
+        };
+
+        self.open_sftp_tab(profile, window, cx);
+    }
+
     pub(in crate::ui::shell) fn toggle_profile_favorite(
         &mut self,
         index: usize,
