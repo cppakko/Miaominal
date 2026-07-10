@@ -2,7 +2,9 @@ use crate::backend::{BackendRoute, BackendRouter, ExecMode, SshExecRequest};
 use crate::capabilities::RemoteCapabilities;
 use crate::error::{AgentError, AgentResult};
 use crate::jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult};
-use crate::path_guard::resolve_workspace_path;
+use crate::path_guard::{
+    AuthorizedRemotePath, RemotePathKind, canonical_path_for_shell, resolve_workspace_path,
+};
 use crate::policy::{AgentPathAccess, AgentPolicy};
 use crate::tools::{self, ListEntry};
 use crate::web::{
@@ -417,6 +419,45 @@ impl AgentExecChannel {
         self.terminal_exec.as_ref()
     }
 
+    pub(crate) async fn authorize_existing_path(
+        &self,
+        requested_path: &str,
+        access: AgentPathAccess,
+        expected_kind: RemotePathKind,
+    ) -> AgentResult<AuthorizedRemotePath> {
+        let normalized = resolve_workspace_path(requested_path)?;
+        if self.policy_bypass_enabled() {
+            return Ok(AuthorizedRemotePath::new(normalized));
+        }
+
+        self.policy.enforce_path(access, &normalized, true)?;
+        let mut resolved = miaominal_sftp::resolve_profile_paths(
+            self.profile.clone(),
+            self.all_profiles.clone(),
+            self.secrets.clone(),
+            self.known_hosts.clone(),
+            vec![normalized.clone()],
+        )
+        .await
+        .map_err(|error| AgentError::Denied {
+            tool_name: format!("{access:?}:{normalized}"),
+            reason: format!("remote path could not be resolved safely: {error:#}"),
+        })?;
+        let resolved = resolved.pop().ok_or_else(|| AgentError::Denied {
+            tool_name: format!("{access:?}:{normalized}"),
+            reason: "remote path resolver returned no result".into(),
+        })?;
+
+        authorize_resolved_path(
+            &self.policy,
+            self.shell_type(),
+            access,
+            expected_kind,
+            &normalized,
+            resolved,
+        )
+    }
+
     pub async fn call_tool(
         &self,
         request: AgentToolCallRequest,
@@ -638,6 +679,31 @@ impl AgentExecChannel {
     }
 }
 
+fn authorize_resolved_path(
+    policy: &AgentPolicy,
+    shell_type: ShellType,
+    access: AgentPathAccess,
+    expected_kind: RemotePathKind,
+    normalized_request: &str,
+    resolved: miaominal_sftp::ResolvedRemotePath,
+) -> AgentResult<AuthorizedRemotePath> {
+    policy.enforce_path(access, &resolved.canonical_path, true)?;
+    let kind_matches = match expected_kind {
+        RemotePathKind::File => matches!(resolved.kind, miaominal_sftp::SftpEntryKind::File),
+        RemotePathKind::Directory => {
+            matches!(resolved.kind, miaominal_sftp::SftpEntryKind::Directory)
+        }
+    };
+    if !kind_matches {
+        return Err(AgentError::InvalidPath(format!(
+            "`{normalized_request}` does not resolve to the required {expected_kind:?} path"
+        )));
+    }
+
+    let execution_path = canonical_path_for_shell(&resolved.canonical_path, shell_type)?;
+    Ok(AuthorizedRemotePath::new(execution_path))
+}
+
 fn string_arg<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
     arguments.get(key).and_then(Value::as_str)
 }
@@ -806,18 +872,63 @@ mod tests {
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(std::env::temp_dir().join("agent-known-hosts-policy-read")),
         );
-        let request = AgentToolCallRequest {
-            tool_name: "read".into(),
-            arguments: serde_json::json!({ "path": ".env" }),
-            approved: true,
-            route: None,
-            skip_policy: false,
+        for path in [".env", ".ssh/id_rsa"] {
+            let request = AgentToolCallRequest {
+                tool_name: "read".into(),
+                arguments: serde_json::json!({ "path": path }),
+                approved: true,
+                route: None,
+                skip_policy: false,
+            };
+
+            assert!(matches!(
+                channel.enforce_context_policy(&request),
+                Err(AgentError::Denied { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn canonical_sensitive_link_targets_are_denied() {
+        let resolved = miaominal_sftp::ResolvedRemotePath {
+            requested_path: "safe-link".into(),
+            canonical_path: "/home/user/.ssh/id_rsa".into(),
+            kind: miaominal_sftp::SftpEntryKind::File,
+            is_symlink: true,
         };
 
         assert!(matches!(
-            channel.enforce_context_policy(&request),
+            authorize_resolved_path(
+                &AgentPolicy,
+                ShellType::Posix,
+                AgentPathAccess::Read,
+                RemotePathKind::File,
+                "safe-link",
+                resolved,
+            ),
             Err(AgentError::Denied { .. })
         ));
+    }
+
+    #[test]
+    fn safe_canonical_link_targets_are_allowed_and_used() {
+        let resolved = miaominal_sftp::ResolvedRemotePath {
+            requested_path: "safe-link".into(),
+            canonical_path: "/home/user/project/real.txt".into(),
+            kind: miaominal_sftp::SftpEntryKind::File,
+            is_symlink: true,
+        };
+        let authorized = authorize_resolved_path(
+            &AgentPolicy,
+            ShellType::Posix,
+            AgentPathAccess::Read,
+            RemotePathKind::File,
+            "safe-link",
+            resolved,
+        )
+        .unwrap();
+
+        assert_eq!(authorized.as_str(), "/home/user/project/real.txt");
     }
 
     #[test]

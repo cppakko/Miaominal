@@ -115,22 +115,7 @@ impl Tool for JsonAgentTool {
         let skip_policy = matches!(self.mode, AgentMode::NonBlocking | AgentMode::FullAuto);
         let mode = self.mode;
         async move {
-            if mode == AgentMode::NonBlocking {
-                if name == "ask_user" {
-                    let response = call_tool_on_worker(
-                        channel,
-                        AgentToolCallRequest {
-                            tool_name: name.clone(),
-                            arguments: normalize_tool_arguments(args),
-                            approved,
-                            route: None,
-                            skip_policy: true,
-                        },
-                    )
-                    .await?;
-                    return serde_json::to_string(&response)
-                        .map_err(|error| AgentError::InvalidArguments(error.to_string()));
-                }
+            if mode_requires_confirmation(mode, &name) {
                 let response = AgentToolCallResponse {
                     tool_name: name.clone(),
                     route: BackendRoute::SshExec,
@@ -204,6 +189,10 @@ fn initial_tool_approval(mode: AgentMode, name: &str) -> bool {
         AgentMode::Ask | AgentMode::NonBlocking => false,
         AgentMode::Execute => auto_approve_rig_tool(name),
     }
+}
+
+fn mode_requires_confirmation(mode: AgentMode, name: &str) -> bool {
+    name != "ask_user" && matches!(mode, AgentMode::Ask | AgentMode::NonBlocking)
 }
 
 fn normalize_tool_arguments(arguments: Value) -> Value {
@@ -512,6 +501,55 @@ mod tests {
         assert!(!initial_tool_approval(AgentMode::Execute, "web_fetch"));
         assert!(initial_tool_approval(AgentMode::FullAuto, "web_fetch"));
         assert!(initial_tool_approval(AgentMode::FullAuto, "run_shell"));
+    }
+
+    #[test]
+    fn ask_and_non_blocking_require_confirmation_before_tool_execution() {
+        for name in [
+            "workspace_info",
+            "read",
+            "list",
+            "glob",
+            "grep",
+            "web_search",
+            "web_fetch",
+        ] {
+            assert!(mode_requires_confirmation(AgentMode::Ask, name));
+            assert!(mode_requires_confirmation(AgentMode::NonBlocking, name));
+        }
+
+        assert!(!mode_requires_confirmation(AgentMode::Ask, "ask_user"));
+        assert!(!mode_requires_confirmation(
+            AgentMode::NonBlocking,
+            "ask_user"
+        ));
+        assert!(!mode_requires_confirmation(AgentMode::Execute, "read"));
+        assert!(!mode_requires_confirmation(AgentMode::FullAuto, "read"));
+    }
+
+    #[tokio::test]
+    async fn ask_read_returns_approval_without_contacting_backend() {
+        let mut profile = SessionProfile::blank("ask-no-backend", 1);
+        profile.host = "unreachable.invalid".into();
+        profile.username = "akko".into();
+        let tool = JsonAgentTool {
+            name: "read".into(),
+            channel: AgentExecChannel::for_profile(
+                profile,
+                Vec::new(),
+                SecretStore::new_locked_vault(),
+                KnownHostsStore::with_path(
+                    std::env::temp_dir().join("agent-known-hosts-ask-no-backend"),
+                ),
+            ),
+            mode: AgentMode::Ask,
+        };
+
+        let result = Tool::call(&tool, json!({ "path": "README.md" }))
+            .await
+            .unwrap();
+        let response: AgentToolCallResponse = serde_json::from_str(&result).unwrap();
+        assert!(matches!(response.output, ToolOutput::Approval { .. }));
     }
 
     #[test]

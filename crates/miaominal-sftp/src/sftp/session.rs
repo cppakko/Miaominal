@@ -21,7 +21,7 @@ use miaominal_storage::KnownHostsStore;
 use russh::{Disconnect, client};
 use russh_sftp::{
     client::{SftpSession, error::Error as SftpClientError},
-    protocol::StatusCode,
+    protocol::{FileType, StatusCode},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -215,6 +215,60 @@ pub struct SftpConnection {
     pub events: FuturesUnboundedReceiver<SftpEvent>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRemotePath {
+    pub requested_path: String,
+    pub canonical_path: String,
+    pub kind: miaominal_core::sftp::SftpEntryKind,
+    pub is_symlink: bool,
+}
+
+pub async fn resolve_profile_paths(
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    paths: Vec<String>,
+) -> Result<Vec<ResolvedRemotePath>> {
+    let (event_sender, _event_receiver) = futures_unbounded();
+    let connected_session =
+        connect_authenticated_session(profile, all_profiles, secrets, known_hosts, &event_sender)
+            .await?;
+
+    let result = async {
+        let sftp = open_sftp_session(&connected_session).await?;
+        let mut resolved = Vec::with_capacity(paths.len());
+
+        for requested_path in paths {
+            let link_metadata = sftp
+                .symlink_metadata(requested_path.clone())
+                .await
+                .with_context(|| format!("failed to inspect remote path {requested_path}"))?;
+            let canonical_path = sftp
+                .canonicalize(requested_path.clone())
+                .await
+                .with_context(|| format!("failed to canonicalize remote path {requested_path}"))?;
+            let target_metadata = sftp
+                .metadata(canonical_path.clone())
+                .await
+                .with_context(|| format!("failed to inspect canonical path {canonical_path}"))?;
+
+            resolved.push(ResolvedRemotePath {
+                requested_path,
+                canonical_path,
+                kind: sftp_entry_kind(target_metadata.file_type()),
+                is_symlink: link_metadata.file_type().is_symlink(),
+            });
+        }
+
+        Ok(resolved)
+    }
+    .await;
+
+    connected_session.disconnect().await;
+    result
+}
+
 pub fn start_session(
     runtime: &TokioHandle,
     profile: SessionProfile,
@@ -277,21 +331,7 @@ async fn run_session(
     .await?;
 
     let session_result: Result<()> = async {
-        let channel = connected_session
-            .session
-            .channel_open_session()
-            .await
-            .context("failed to open SSH session channel for SFTP")?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .context("failed to start SFTP subsystem")?;
-
-        let sftp = Arc::new(
-            SftpSession::new(channel.into_stream())
-                .await
-                .context("failed to initialize SFTP session")?,
-        );
+        let sftp = Arc::new(open_sftp_session(&connected_session).await?);
 
         let mut transfer_controls = HashMap::new();
         let mut transfer_tasks = HashMap::new();
@@ -560,6 +600,30 @@ fn is_recoverable_operation_error(error: &anyhow::Error) -> bool {
 struct SftpConnectedSession {
     session: Arc<client::Handle<SftpClientHandler>>,
     jump_sessions: Vec<Arc<client::Handle<SftpClientHandler>>>,
+}
+
+async fn open_sftp_session(connected_session: &SftpConnectedSession) -> Result<SftpSession> {
+    let channel = connected_session
+        .session
+        .channel_open_session()
+        .await
+        .context("failed to open SSH session channel for SFTP")?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .context("failed to start SFTP subsystem")?;
+    SftpSession::new(channel.into_stream())
+        .await
+        .context("failed to initialize SFTP session")
+}
+
+fn sftp_entry_kind(file_type: FileType) -> miaominal_core::sftp::SftpEntryKind {
+    match file_type {
+        FileType::Dir => miaominal_core::sftp::SftpEntryKind::Directory,
+        FileType::File => miaominal_core::sftp::SftpEntryKind::File,
+        FileType::Symlink => miaominal_core::sftp::SftpEntryKind::Symlink,
+        FileType::Other => miaominal_core::sftp::SftpEntryKind::Other,
+    }
 }
 
 impl SftpConnectedSession {

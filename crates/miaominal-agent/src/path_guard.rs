@@ -1,6 +1,27 @@
 use crate::error::{AgentError, AgentResult};
 use miaominal_core::profile::ShellType;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemotePathKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedRemotePath {
+    path: String,
+}
+
+impl AuthorizedRemotePath {
+    pub fn new(path: String) -> Self {
+        Self { path }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.path
+    }
+}
+
 pub fn resolve_workspace_path(path: &str) -> AgentResult<String> {
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed == "." {
@@ -49,7 +70,9 @@ pub fn shell_quote(value: &str, shell_type: ShellType) -> String {
         ShellType::Posix => shell_quote_posix(value),
         ShellType::Fish => shell_quote_fish(value),
         ShellType::PowerShell => shell_quote_powershell(value),
-        ShellType::Cmd => shell_quote_cmd(value),
+        ShellType::Cmd => {
+            panic!("CMD does not have a context-independent quoting rule; use encoded PowerShell")
+        }
     }
 }
 
@@ -58,8 +81,8 @@ fn shell_quote_posix(value: &str) -> String {
 }
 
 fn shell_quote_fish(value: &str) -> String {
-    // Fish uses double-quoted strings; escape backslashes and double-quotes.
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    // Fish single-quoted strings disable variable and command substitution.
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 fn shell_quote_powershell(value: &str) -> String {
@@ -67,10 +90,41 @@ fn shell_quote_powershell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-fn shell_quote_cmd(value: &str) -> String {
-    // Inside SET "NAME=value" the value must not contain double-quotes.
-    // Percent signs are special in CMD; escape them by doubling.
-    value.replace('"', "").replace('%', "%%")
+pub fn canonical_path_for_shell(path: &str, shell_type: ShellType) -> AgentResult<String> {
+    if path.is_empty()
+        || path
+            .chars()
+            .any(|character| matches!(character, '\0' | '\r' | '\n'))
+    {
+        return Err(AgentError::InvalidPath(
+            "canonical path contains unsupported control characters".into(),
+        ));
+    }
+
+    if !matches!(shell_type, ShellType::PowerShell | ShellType::Cmd) {
+        return Ok(path.to_string());
+    }
+
+    let normalized = path.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/' {
+        return Ok(normalized);
+    }
+    if bytes.len() >= 4
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && bytes[3] == b'/'
+    {
+        return Ok(normalized[1..].to_string());
+    }
+    if normalized.starts_with("//") {
+        return Ok(normalized.replace('/', "\\"));
+    }
+
+    Err(AgentError::InvalidPath(format!(
+        "SFTP canonical path `{path}` cannot be represented by the Windows exec shell"
+    )))
 }
 
 // ── Prefix builders ──
@@ -82,9 +136,13 @@ pub fn cd_prefix(shell_type: ShellType, cwd: &str) -> String {
         ShellType::Posix => format!("cd \"$HOME\" && cd {quoted}"),
         ShellType::Fish => format!("cd \"$HOME\"; and cd {quoted}"),
         ShellType::PowerShell => {
-            format!("Set-Location $env:USERPROFILE; Set-Location {quoted}")
+            format!(
+                "Set-Location -LiteralPath $env:USERPROFILE; Set-Location -LiteralPath {quoted}"
+            )
         }
-        ShellType::Cmd => format!("cd /d %USERPROFILE% && cd /d {quoted}"),
+        ShellType::Cmd => {
+            panic!("CMD working directories must use a validated literal or encoded PowerShell")
+        }
     }
 }
 
@@ -207,18 +265,31 @@ mod tests {
     }
 
     #[test]
-    fn fish_quote_wraps_in_double_quotes() {
-        assert_eq!(shell_quote("hello", ShellType::Fish), "\"hello\"");
-        assert_eq!(shell_quote("foo bar", ShellType::Fish), "\"foo bar\"");
+    fn fish_quote_wraps_in_single_quotes() {
+        assert_eq!(shell_quote("hello", ShellType::Fish), "'hello'");
+        assert_eq!(shell_quote("foo bar", ShellType::Fish), "'foo bar'");
     }
 
     #[test]
-    fn fish_quote_escapes_backslash_and_double_quote() {
-        assert_eq!(shell_quote("path\\to", ShellType::Fish), "\"path\\\\to\"");
+    fn fish_quote_escapes_backslash_and_single_quote() {
+        assert_eq!(shell_quote("path\\to", ShellType::Fish), "'path\\\\to'");
         assert_eq!(
-            shell_quote("say \"hi\"", ShellType::Fish),
-            "\"say \\\"hi\\\"\""
+            shell_quote("it's $HOME (whoami)", ShellType::Fish),
+            "'it\\'s $HOME (whoami)'"
         );
+    }
+
+    #[test]
+    fn windows_sftp_paths_convert_to_native_exec_paths() {
+        assert_eq!(
+            canonical_path_for_shell("/C:/Users/akko/project", ShellType::Cmd).unwrap(),
+            "C:/Users/akko/project"
+        );
+        assert_eq!(
+            canonical_path_for_shell("D:/work", ShellType::PowerShell).unwrap(),
+            "D:/work"
+        );
+        assert!(canonical_path_for_shell("/home/akko", ShellType::Cmd).is_err());
     }
 
     #[test]
@@ -228,11 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn cmd_quote_strips_double_quotes_and_doubles_percent() {
-        assert_eq!(shell_quote("hello", ShellType::Cmd), "hello");
-        assert_eq!(shell_quote("say \"hi\"", ShellType::Cmd), "say hi");
-        assert_eq!(shell_quote("100%", ShellType::Cmd), "100%%");
-        assert_eq!(shell_quote("\"100%\"", ShellType::Cmd), "100%%");
+    #[should_panic(expected = "context-independent quoting rule")]
+    fn cmd_quote_requires_an_encoded_command() {
+        let _ = shell_quote("x & whoami", ShellType::Cmd);
     }
 
     // ── cd_prefix tests ──
@@ -246,7 +315,7 @@ mod tests {
     #[test]
     fn cd_prefix_fish() {
         let result = cd_prefix(ShellType::Fish, "/home/user/project");
-        assert_eq!(result, "cd \"$HOME\"; and cd \"/home/user/project\"");
+        assert_eq!(result, "cd \"$HOME\"; and cd '/home/user/project'");
     }
 
     #[test]
@@ -254,18 +323,14 @@ mod tests {
         let result = cd_prefix(ShellType::PowerShell, "C:\\Users\\user\\project");
         assert_eq!(
             result,
-            "Set-Location $env:USERPROFILE; Set-Location 'C:\\Users\\user\\project'"
+            "Set-Location -LiteralPath $env:USERPROFILE; Set-Location -LiteralPath 'C:\\Users\\user\\project'"
         );
     }
 
     #[test]
-    fn cd_prefix_cmd() {
-        let result = cd_prefix(ShellType::Cmd, "C:\\Users\\user\\project");
-        // CMD quoting strips double-quotes, so it has no wrapping
-        assert_eq!(
-            result,
-            "cd /d %USERPROFILE% && cd /d C:\\Users\\user\\project"
-        );
+    #[should_panic(expected = "CMD does not have a context-independent quoting rule")]
+    fn cd_prefix_cmd_requires_an_encoded_command() {
+        let _ = cd_prefix(ShellType::Cmd, "C:\\Users\\user\\project");
     }
 
     #[test]
@@ -275,12 +340,12 @@ mod tests {
         assert_eq!(posix, "cd \"$HOME\" && cd '/home/user/my project'");
         // Fish
         let fish = cd_prefix(ShellType::Fish, "/home/user/my project");
-        assert_eq!(fish, "cd \"$HOME\"; and cd \"/home/user/my project\"");
+        assert_eq!(fish, "cd \"$HOME\"; and cd '/home/user/my project'");
         // PowerShell
         let ps = cd_prefix(ShellType::PowerShell, "C:\\Users\\user\\my project");
         assert_eq!(
             ps,
-            "Set-Location $env:USERPROFILE; Set-Location 'C:\\Users\\user\\my project'"
+            "Set-Location -LiteralPath $env:USERPROFILE; Set-Location -LiteralPath 'C:\\Users\\user\\my project'"
         );
     }
 

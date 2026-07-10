@@ -1,6 +1,7 @@
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{env_setup, resolve_workspace_path, shell_quote};
+use crate::path_guard::{RemotePathKind, env_setup, shell_quote};
+use crate::policy::AgentPathAccess;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
@@ -17,12 +18,10 @@ pub async fn read(channel: &AgentExecChannel, args: ReadArgs) -> AgentResult<Too
         super::workspace_info::ensure_exec_shell_detected(channel).await;
     }
 
-    let path = resolve_workspace_path(&args.path)?;
-    if !channel.policy_bypass_enabled() {
-        channel
-            .policy()
-            .enforce_path(crate::policy::AgentPathAccess::Read, &path, false)?;
-    }
+    let path = channel
+        .authorize_existing_path(&args.path, AgentPathAccess::Read, RemotePathKind::File)
+        .await?;
+    let path = path.as_str();
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let start = args.start_line.unwrap_or(1).max(1);
     let end = args.end_line.unwrap_or(start + 199).max(start);
@@ -34,9 +33,9 @@ pub async fn read(channel: &AgentExecChannel, args: ReadArgs) -> AgentResult<Too
 
     let st = channel.shell_type();
     let command = match st {
-        ShellType::Posix | ShellType::Fish => posix_read_command(&path, start, end, max_bytes, st),
-        ShellType::PowerShell => powershell_read_command(&path, start, end, max_bytes),
-        ShellType::Cmd => cmd_read_command(&path, start, end, max_bytes),
+        ShellType::Posix | ShellType::Fish => posix_read_command(path, start, end, max_bytes, st),
+        ShellType::PowerShell => powershell_read_command(path, start, end, max_bytes),
+        ShellType::Cmd => cmd_read_command(path, start, end, max_bytes),
     };
 
     let output = channel.exec(command).await?;
@@ -192,8 +191,8 @@ mod tests {
     #[test]
     fn fish_read_command_uses_fish_quoting() {
         let cmd = posix_read_command("/home/user/project", 1, 5, 2048, ShellType::Fish);
-        // Fish uses double-quote wrapping
-        assert!(cmd.contains("\"/home/user/project\""));
+        // Fish uses literal single-quote wrapping to disable substitutions.
+        assert!(cmd.contains("'/home/user/project'"));
     }
 
     // ── PowerShell command generation ──

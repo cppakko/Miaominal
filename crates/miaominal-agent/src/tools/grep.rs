@@ -1,6 +1,11 @@
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{cd_prefix, resolve_workspace_path, shell_quote};
+#[cfg(any())]
+use crate::path_guard::cd_prefix;
+#[cfg(test)]
+use crate::path_guard::resolve_workspace_path;
+use crate::path_guard::{RemotePathKind, shell_quote};
+use crate::policy::{AgentPathAccess, posix_find_sensitive_predicate};
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
@@ -22,12 +27,10 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
         super::workspace_info::ensure_exec_shell_detected(channel).await;
     }
 
-    let root = resolve_workspace_path(&args.root)?;
-    if !channel.policy_bypass_enabled() {
-        channel
-            .policy()
-            .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
-    }
+    let root = channel
+        .authorize_existing_path(&args.root, AgentPathAccess::Read, RemotePathKind::Directory)
+        .await?;
+    let root = root.as_str();
 
     // Sensitive pattern policy runs before command generation unless policy is bypassed.
     if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_grep_pattern(&args.pattern) {
@@ -48,11 +51,24 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
     let shell_type = channel.shell_type();
 
     let command = match shell_type {
-        ShellType::PowerShell => build_powershell_grep(&args, &root, max_results, max_bytes),
-        ShellType::Cmd => build_cmd_grep(&args, &root, max_results),
+        ShellType::PowerShell | ShellType::Cmd => build_windows_grep(
+            shell_type,
+            &args,
+            root,
+            max_results,
+            max_bytes,
+            !channel.policy_bypass_enabled(),
+        ),
         _ => {
             // Posix (bash/zsh) and Fish — keep existing rg/grep/find fallback chain
-            build_posix_grep(&args, &root, max_results, max_bytes, shell_type)
+            build_posix_grep(
+                &args,
+                root,
+                max_results,
+                max_bytes,
+                shell_type,
+                !channel.policy_bypass_enabled(),
+            )
         }
     };
 
@@ -64,6 +80,37 @@ pub async fn grep(channel: &AgentExecChannel, args: GrepArgs) -> AgentResult<Too
 
 // ── PowerShell: Select-String via Get-ChildItem ──
 
+fn build_windows_grep(
+    shell_type: ShellType,
+    args: &GrepArgs,
+    root: &str,
+    max_results: usize,
+    _max_bytes: usize,
+    guard_sensitive: bool,
+) -> String {
+    let root_q = shell_quote(root, ShellType::PowerShell);
+    let pattern_q = shell_quote(&args.pattern, ShellType::PowerShell);
+    let case_flag = if args.case_insensitive {
+        ""
+    } else {
+        " -CaseSensitive"
+    };
+    let patterns = args
+        .include
+        .iter()
+        .map(|include| shell_quote(include, ShellType::PowerShell))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let guard_sensitive = if guard_sensitive { "true" } else { "false" };
+
+    let ps_script = format!(
+        "{sensitive_function}; $root={root_q}; $pattern={pattern_q}; $includes=@({patterns}); $guardSensitive=${guard_sensitive}; $max={max_results}; $count=0; $stack=[Collections.Generic.Stack[string]]::new(); $stack.Push($root); while($stack.Count -gt 0 -and $count -lt $max){{ $dir=$stack.Pop(); foreach($item in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)){{ if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){{continue}}; if($guardSensitive -and (Test-MiaominalSensitivePath $item.FullName)){{continue}}; if($item.PSIsContainer){{$stack.Push($item.FullName); continue}}; $includeOk=$includes.Count -eq 0; foreach($include in $includes){{if($item.Name -like $include){{$includeOk=$true; break}}}}; if(-not $includeOk){{continue}}; foreach($match in @(Select-String -LiteralPath $item.FullName -Pattern $pattern{case_flag} -ErrorAction SilentlyContinue)){{ $item.Name + ':' + $match.LineNumber + ':' + $match.Line; $count++; if($count -ge $max){{break}} }}; if($count -ge $max){{break}} }} }}",
+        sensitive_function = super::windows::powershell_sensitive_path_function(),
+    );
+    super::windows::powershell_command_for_shell(shell_type, &ps_script)
+}
+
+#[cfg(any())]
 fn build_powershell_grep(
     args: &GrepArgs,
     root: &str,
@@ -111,12 +158,14 @@ fn build_powershell_grep(
 }
 
 /// PowerShell variable assignment uses single-quoted strings (same as shell_quote output).
+#[cfg(any())]
 fn pattern_q_for_assign(value: &str) -> String {
     shell_quote(value, ShellType::PowerShell)
 }
 
 // ── CMD: findstr fallback ──
 
+#[cfg(any())]
 fn build_cmd_grep(args: &GrepArgs, root: &str, _max_results: usize) -> String {
     let cd = cd_prefix(ShellType::Cmd, root);
     let pattern_q = shell_quote(&args.pattern, ShellType::Cmd);
@@ -141,32 +190,39 @@ fn build_posix_grep(
     max_results: usize,
     max_bytes: usize,
     shell_type: ShellType,
+    guard_sensitive: bool,
 ) -> String {
     let case_flag = if args.case_insensitive { "-i " } else { "" };
-    let include_args = args
-        .include
-        .iter()
-        .map(|include| format!(" --glob {}", shell_quote(include, shell_type)))
-        .collect::<String>();
-    let find_name_filter = args
-        .include
-        .first()
-        .map(|include| format!(" -name {}", shell_quote(include, shell_type)))
-        .unwrap_or_default();
-
-    format!(
-        "cd \"$HOME\" && if command -v rg >/dev/null 2>&1; then \
-         rg -n {case_flag}--max-count {max_results} --max-columns 300{include_args} -- {pattern} {root}; \
-         else find {root} -type f{find_name_filter} -exec grep -n {case_flag}-E -- {pattern} {{}} \\; \
-         | head -n {max_results}; fi | head -c {max_bytes}",
+    let find_name_filter = if args.include.is_empty() {
+        String::new()
+    } else {
+        let filters = args
+            .include
+            .iter()
+            .map(|include| format!("-name {}", shell_quote(include, ShellType::Posix)))
+            .collect::<Vec<_>>()
+            .join(" -o ");
+        format!(" \\( {filters} \\)")
+    };
+    let sensitive_guard = if guard_sensitive {
+        format!("{} -prune -o -type f", posix_find_sensitive_predicate())
+    } else {
+        "-type f".to_string()
+    };
+    let script = format!(
+        "cd \"$HOME\" && find -P {root} {sensitive_guard}{find_name_filter} -exec grep -nH {case_flag}-E -- {pattern} {{}} + | head -n {max_results} | head -c {max_bytes}",
         case_flag = case_flag,
         max_results = max_results,
-        include_args = include_args,
         find_name_filter = find_name_filter,
-        pattern = shell_quote(&args.pattern, shell_type),
-        root = shell_quote(root, shell_type),
+        pattern = shell_quote(&args.pattern, ShellType::Posix),
+        root = shell_quote(root, ShellType::Posix),
         max_bytes = max_bytes,
-    )
+    );
+    if matches!(shell_type, ShellType::Fish) {
+        format!("sh -lc {}", shell_quote(&script, ShellType::Fish))
+    } else {
+        script
+    }
 }
 
 fn default_dot() -> String {
@@ -176,10 +232,100 @@ fn default_dot() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+
+    fn decode_powershell_command(command: &str) -> String {
+        let payload = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("encoded PowerShell command");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("valid base64");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).expect("valid UTF-16LE")
+    }
+
+    #[test]
+    fn encoded_windows_grep_hides_untrusted_arguments_and_skips_links() {
+        let args = GrepArgs {
+            pattern: "error & whoami".into(),
+            root: String::new(),
+            include: vec!["*.log".into()],
+            max_results: Some(100),
+            max_bytes: Some(65536),
+            case_insensitive: false,
+        };
+        let powershell = build_windows_grep(
+            ShellType::PowerShell,
+            &args,
+            "C:/x & whoami & rem",
+            100,
+            65536,
+            true,
+        );
+        assert!(!powershell.contains("whoami"));
+        let script = decode_powershell_command(&powershell);
+        assert!(script.contains("ReparsePoint"));
+        assert!(script.contains("Test-MiaominalSensitivePath"));
+        assert!(script.contains("Select-String -LiteralPath"));
+
+        let cmd = build_windows_grep(
+            ShellType::Cmd,
+            &args,
+            "C:/x & whoami & rem",
+            100,
+            65536,
+            true,
+        );
+        assert!(cmd.starts_with("set MIAOMINAL_AGENT_PS_GZIP="));
+        assert!(!cmd.contains("whoami"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_grep_prunes_sensitive_tree_and_does_not_inject() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("x & echo MIAOMINAL_INJECTED & rem");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("safe.log"), "MIAOMINAL_MATCH").unwrap();
+        std::fs::create_dir(root.join(".ssh")).unwrap();
+        std::fs::write(root.join(".ssh").join("secret.log"), "MIAOMINAL_MATCH").unwrap();
+        let args = GrepArgs {
+            pattern: "MIAOMINAL_MATCH".into(),
+            root: String::new(),
+            include: vec!["*.log".into()],
+            max_results: Some(100),
+            max_bytes: Some(65536),
+            case_insensitive: false,
+        };
+
+        let command = build_windows_grep(
+            ShellType::Cmd,
+            &args,
+            root.to_string_lossy().as_ref(),
+            100,
+            65536,
+            true,
+        );
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", &command])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert!(stdout.contains("safe.log"));
+        assert!(!stdout.contains("secret.log"));
+        assert!(!stdout.contains("MIAOMINAL_INJECTED"));
+    }
 
     // ── PowerShell command generation ──
 
     #[test]
+    #[cfg(any())]
     fn powershell_grep_command_basic() {
         let args = GrepArgs {
             pattern: "fn main".into(),
@@ -219,6 +365,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())]
     fn powershell_grep_command_case_insensitive() {
         let args = GrepArgs {
             pattern: "hello".into(),
@@ -238,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())]
     fn powershell_grep_command_with_includes() {
         let args = GrepArgs {
             pattern: "struct".into(),
@@ -269,6 +417,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())]
     fn powershell_grep_command_output_format() {
         let args = GrepArgs {
             pattern: "test".into(),
@@ -291,6 +440,7 @@ mod tests {
     // ── CMD command generation ──
 
     #[test]
+    #[cfg(any())]
     fn cmd_grep_command_basic() {
         let args = GrepArgs {
             pattern: "fn main".into(),
@@ -323,6 +473,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())]
     fn cmd_grep_command_case_insensitive() {
         let args = GrepArgs {
             pattern: "hello".into(),
@@ -342,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())]
     fn cmd_grep_command_cd_prefix() {
         let args = GrepArgs {
             pattern: "test".into(),
@@ -410,7 +562,7 @@ mod tests {
     // ── Posix command generation (existing path — sanity checks) ──
 
     #[test]
-    fn posix_grep_command_uses_rg_first() {
+    fn posix_grep_command_uses_no_follow_find() {
         let args = GrepArgs {
             pattern: "fn main".into(),
             root: ".".into(),
@@ -420,12 +572,18 @@ mod tests {
             case_insensitive: false,
         };
         let root = resolve_workspace_path(&args.root).unwrap();
-        let cmd = build_posix_grep(&args, &root, 100, 65536, ShellType::Posix);
+        let cmd = build_posix_grep(&args, &root, 100, 65536, ShellType::Posix, true);
 
         assert!(
-            cmd.contains("rg -n"),
-            "Posix command should prefer rg, got: {cmd}"
+            cmd.contains("find -P"),
+            "Posix command should not follow links, got: {cmd}"
         );
+        assert!(cmd.contains("-iname '.ssh'"));
+        assert!(cmd.contains("-ipath '/etc/shadow'"));
+        assert!(cmd.contains("-ipath '/etc/sudoers'"));
+        assert!(cmd.contains("-iname '*.env.*'"));
+        assert!(cmd.contains("-iname '*.rdp'"));
+        assert!(cmd.contains("-iname '*.kdbx'"));
         assert!(
             cmd.contains("head -c"),
             "Posix command should limit bytes with head -c, got: {cmd}"
@@ -443,7 +601,7 @@ mod tests {
             case_insensitive: true,
         };
         let root = resolve_workspace_path(&args.root).unwrap();
-        let cmd = build_posix_grep(&args, &root, 50, 65536, ShellType::Posix);
+        let cmd = build_posix_grep(&args, &root, 50, 65536, ShellType::Posix, true);
 
         assert!(
             cmd.contains("-i "),

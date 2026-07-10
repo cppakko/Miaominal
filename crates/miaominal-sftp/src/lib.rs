@@ -8,7 +8,9 @@ mod paths;
 mod transfer;
 
 pub use miaominal_core::sftp::{SftpEntry, SftpEntryKind, TransferDirection, TransferId};
-pub use session::{SftpCommandSender, SftpEvent, start_session};
+pub use session::{
+    ResolvedRemotePath, SftpCommandSender, SftpEvent, resolve_profile_paths, start_session,
+};
 
 #[allow(unused_imports)]
 pub use session::SftpConnection;

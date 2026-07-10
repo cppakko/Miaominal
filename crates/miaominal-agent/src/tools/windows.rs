@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use miaominal_core::profile::ShellType;
 use std::io::Write as _;
 
 pub(crate) fn powershell_encoded_payload(script: &str) -> String {
@@ -16,6 +17,28 @@ pub(crate) fn powershell_encoded_command(script: &str) -> String {
         "powershell.exe -NoProfile -EncodedCommand {}",
         powershell_encoded_payload(script)
     )
+}
+
+pub(crate) fn powershell_command_for_shell(shell_type: ShellType, script: &str) -> String {
+    match shell_type {
+        ShellType::PowerShell => powershell_encoded_command(script),
+        ShellType::Cmd => powershell_compressed_command_for_cmd(script),
+        _ => unreachable!("PowerShell wrapper requested for non-Windows shell"),
+    }
+}
+
+pub(crate) fn powershell_sensitive_path_function() -> &'static str {
+    r#"function Test-MiaominalSensitivePath([string]$Path) {
+  $normalized=$Path.Replace('\','/').ToLowerInvariant();
+  $parts=@($normalized.Split('/',[StringSplitOptions]::RemoveEmptyEntries));
+  $base=if($parts.Count -gt 0){$parts[$parts.Count-1]}else{''};
+  if($parts -contains '.ssh'){return $true};
+  if(@('id_rsa','id_dsa','id_ecdsa','id_ed25519') -contains $base){return $true};
+  if($base.EndsWith('.env') -or $base.Contains('.env.') -or $base.EndsWith('.pem') -or $base.EndsWith('.key') -or $base.EndsWith('.p12') -or $base.EndsWith('.pfx') -or $base.EndsWith('.rdp') -or $base.EndsWith('.kdbx')){return $true};
+  $windows=$normalized.TrimStart('/');
+  if($windows.StartsWith('c:/windows/system32/config/') -or $normalized.Contains('ntds.dit') -or $normalized.Contains('appdata/roaming/mozilla/firefox/profiles') -or $normalized.Contains('appdata/local/google/chrome/user data/default')){return $true};
+  return $false
+}"#
 }
 
 /// Encode a large PowerShell script behind a small gzip bootstrap.

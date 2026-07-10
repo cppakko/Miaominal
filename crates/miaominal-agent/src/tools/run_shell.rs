@@ -1,7 +1,8 @@
 use crate::backend::{BackendRoute, ExecMode};
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ShellCommandResult, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{cd_prefix, env_setup, resolve_workspace_path, shell_quote};
+use crate::path_guard::{RemotePathKind, cd_prefix, env_setup, shell_quote};
+use crate::policy::AgentPathAccess;
 use anyhow::anyhow;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
@@ -20,7 +21,14 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
         super::workspace_info::ensure_exec_shell_detected(channel).await;
     }
 
-    let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
+    let cwd = channel
+        .authorize_existing_path(
+            args.cwd.as_deref().unwrap_or("."),
+            AgentPathAccess::Read,
+            RemotePathKind::Directory,
+        )
+        .await?;
+    let cwd = cwd.as_str().to_string();
     let timeout_secs = args.timeout_seconds.unwrap_or(20).max(1);
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
     let explicit_shell = args.shell.is_some();
@@ -28,8 +36,6 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
     let st = shell_type_from_label(shell).ok_or_else(|| {
         AgentError::PosixOnly("run_shell v1 supports posix-sh, sh, fish, powershell, or cmd".into())
     })?;
-    let is_fish = matches!(st, ShellType::Fish);
-
     let sentinel = format!(
         "MIAOMINAL_{:016x}_",
         std::time::SystemTime::now()
@@ -38,45 +44,29 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             .unwrap_or(0),
     );
 
-    let (command, terminal_command) = match st {
-        ShellType::PowerShell => (
-            build_powershell_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
-            build_powershell_terminal(&args.command, &cwd, &sentinel, st),
-        ),
-        ShellType::Cmd => (
-            build_cmd_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
-            build_cmd_terminal(&args.command, &cwd, &sentinel, st),
-        ),
-        _ => {
-            let cmd = build_posix_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st);
-            let tc = if is_fish {
-                format!(
-                    "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
-                    cwd = shell_quote(&cwd, st),
-                    user_command = args.command,
-                    sentinel = sentinel,
-                )
-            } else {
-                format!(
-                    "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
-                    cwd = shell_quote(&cwd, st),
-                    user_command = args.command,
-                    sentinel = sentinel,
-                )
-            };
-            (cmd, tc)
-        }
-    };
-
-    let exec_path = select_exec_path(
+    let exec_path = select_exec_path_for_shell(
+        st,
         channel.terminal_exec().is_some(),
         channel.uses_pty(),
         explicit_shell,
+        &cwd,
     );
+    let command = match st {
+        ShellType::PowerShell => {
+            build_powershell_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st)
+        }
+        ShellType::Cmd => build_cmd_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
+        _ => build_posix_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st),
+    };
+    let terminal_command = build_terminal_command(exec_path, st, &args.command, &cwd, &sentinel);
     let output = match exec_path {
         ShellExecPath::Terminal => {
             channel
-                .exec_via_terminal(terminal_command, &sentinel, timeout_secs + 5)
+                .exec_via_terminal(
+                    terminal_command.expect("terminal path must have a terminal wrapper"),
+                    &sentinel,
+                    timeout_secs + 5,
+                )
                 .await?
         }
         ShellExecPath::Pty => {
@@ -118,6 +108,49 @@ fn select_exec_path(
     } else {
         ShellExecPath::Exec
     }
+}
+
+fn select_exec_path_for_shell(
+    shell_type: ShellType,
+    terminal_available: bool,
+    pty_enabled: bool,
+    explicit_shell: bool,
+    cwd: &str,
+) -> ShellExecPath {
+    let selected = select_exec_path(terminal_available, pty_enabled, explicit_shell);
+    if matches!(shell_type, ShellType::Cmd)
+        && matches!(selected, ShellExecPath::Terminal)
+        && !cmd_terminal_cwd_is_safe(cwd)
+    {
+        ShellExecPath::Exec
+    } else {
+        selected
+    }
+}
+
+fn build_terminal_command(
+    exec_path: ShellExecPath,
+    shell_type: ShellType,
+    user_command: &str,
+    cwd: &str,
+    sentinel: &str,
+) -> Option<String> {
+    if !matches!(exec_path, ShellExecPath::Terminal) {
+        return None;
+    }
+
+    Some(match shell_type {
+        ShellType::PowerShell => build_powershell_terminal(user_command, cwd, sentinel, shell_type),
+        ShellType::Cmd => build_cmd_terminal(user_command, cwd, sentinel, shell_type),
+        ShellType::Fish => format!(
+            "cd \"$HOME\"; and cd {cwd}; and set -x PAGER cat; set -x SYSTEMD_PAGER \"\"; set -x GIT_PAGER cat; set -x LESS \"\"; set -x LANG C.UTF-8; set -x NO_COLOR 1; set -x CLICOLOR 0; set -x TERM xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' $status $PWD",
+            cwd = shell_quote(cwd, shell_type),
+        ),
+        ShellType::Posix => format!(
+            "cd \"$HOME\" && cd {cwd} && export PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= LANG=C.UTF-8 NO_COLOR=1 CLICOLOR=0 TERM=xterm-256color; {user_command}; printf '\\n{sentinel}%d:%s\\n' \"$?\" \"$PWD\"",
+            cwd = shell_quote(cwd, shell_type),
+        ),
+    })
 }
 
 fn shell_type_from_label(label: &str) -> Option<ShellType> {
@@ -373,7 +406,8 @@ fn build_cmd_terminal(
     sentinel: &str,
     shell_type: ShellType,
 ) -> String {
-    let cd = cd_prefix(shell_type, cwd);
+    debug_assert!(cmd_terminal_cwd_is_safe(cwd));
+    let cd = format!("cd /d \"%USERPROFILE%\" && cd /d \"{cwd}\"");
     let env = env_setup(shell_type);
     format!(
         "setlocal enabledelayedexpansion & {cd} & {env} & {user_command} & echo( & echo {sentinel}!ERRORLEVEL!:!CD! & endlocal",
@@ -382,6 +416,11 @@ fn build_cmd_terminal(
         user_command = user_command,
         sentinel = sentinel,
     )
+}
+
+fn cmd_terminal_cwd_is_safe(cwd: &str) -> bool {
+    !cwd.chars()
+        .any(|character| matches!(character, '%' | '!' | '^' | '"' | '\r' | '\n' | '\0'))
 }
 
 pub fn parse_shell_result(output: &str) -> AgentResult<ShellCommandResult> {
@@ -814,6 +853,39 @@ mod tests {
         assert_eq!(select_exec_path(false, false, false), ShellExecPath::Exec);
     }
 
+    #[test]
+    fn cmd_unsafe_terminal_cwd_falls_back_before_wrapper_construction() {
+        for cwd in [r#"C:\work\100%"#, r#"C:\work\wow!"#, r#"C:\work\a^b"#] {
+            let exec_path = select_exec_path_for_shell(ShellType::Cmd, true, true, false, cwd);
+
+            assert_eq!(exec_path, ShellExecPath::Exec);
+            assert!(
+                build_terminal_command(
+                    exec_path,
+                    ShellType::Cmd,
+                    "echo ok",
+                    cwd,
+                    "MIAOMINAL_TEST_",
+                )
+                .is_none()
+            );
+        }
+
+        let safe_cwd = r#"C:\work\x & whoami & rem"#;
+        let exec_path = select_exec_path_for_shell(ShellType::Cmd, true, true, false, safe_cwd);
+        assert_eq!(exec_path, ShellExecPath::Terminal);
+        assert!(
+            build_terminal_command(
+                exec_path,
+                ShellType::Cmd,
+                "echo ok",
+                safe_cwd,
+                "MIAOMINAL_TEST_",
+            )
+            .is_some()
+        );
+    }
+
     // ── PowerShell / CMD wrapper tests ──
 
     #[test]
@@ -877,6 +949,21 @@ mod tests {
             args,
             "/d /c \"Remove-Item -Path \\\"C:\\nope\\\" -Force -ErrorAction Stop\""
         );
+    }
+
+    #[test]
+    fn cmd_terminal_cwd_quotes_control_operators_and_rejects_expansion() {
+        let wrapper = build_cmd_terminal(
+            "echo ok",
+            r#"C:\work\x & whoami & rem"#,
+            "MIAOMINAL_TEST_",
+            ShellType::Cmd,
+        );
+        assert!(wrapper.contains(r#"cd /d "C:\work\x & whoami & rem""#));
+        assert!(cmd_terminal_cwd_is_safe(r#"C:\work\x & whoami"#));
+        for unsafe_path in [r#"C:\work\100%"#, r#"C:\work\wow!"#, r#"C:\work\a^b"#] {
+            assert!(!cmd_terminal_cwd_is_safe(unsafe_path));
+        }
     }
 
     #[test]

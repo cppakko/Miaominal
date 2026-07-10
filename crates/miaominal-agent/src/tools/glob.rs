@@ -1,6 +1,7 @@
 use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{cd_prefix, resolve_workspace_path, shell_quote};
+use crate::path_guard::{RemotePathKind, shell_quote};
+use crate::policy::{AgentPathAccess, posix_find_sensitive_predicate};
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
 
@@ -19,13 +20,11 @@ pub async fn glob(channel: &AgentExecChannel, args: GlobArgs) -> AgentResult<Too
         super::workspace_info::ensure_exec_shell_detected(channel).await;
     }
 
-    let root = resolve_workspace_path(&args.root)?;
-    if !channel.policy_bypass_enabled() {
-        channel
-            .policy()
-            .enforce_path(crate::policy::AgentPathAccess::Read, &root, false)?;
-    }
-    if is_overbroad_root(&root) {
+    let root = channel
+        .authorize_existing_path(&args.root, AgentPathAccess::Read, RemotePathKind::Directory)
+        .await?;
+    let root = root.as_str();
+    if is_overbroad_root(root) {
         return Err(AgentError::InvalidPath(
             "glob requires a narrowed workspace root".into(),
         ));
@@ -35,13 +34,22 @@ pub async fn glob(channel: &AgentExecChannel, args: GlobArgs) -> AgentResult<Too
     let st = channel.shell_type();
 
     let command = match st {
-        ShellType::Posix | ShellType::Fish => {
-            glob_posix_command(&root, &name_pattern, max_results, args.include_hidden, st)
-        }
-        ShellType::PowerShell => {
-            glob_powershell_command(&root, &name_pattern, max_results, args.include_hidden)
-        }
-        ShellType::Cmd => glob_cmd_command(&root, &name_pattern, max_results, args.include_hidden),
+        ShellType::Posix | ShellType::Fish => glob_posix_command(
+            root,
+            &name_pattern,
+            max_results,
+            args.include_hidden,
+            st,
+            !channel.policy_bypass_enabled(),
+        ),
+        ShellType::PowerShell | ShellType::Cmd => glob_windows_command(
+            st,
+            root,
+            &name_pattern,
+            max_results,
+            args.include_hidden,
+            !channel.policy_bypass_enabled(),
+        ),
     };
 
     let output = channel.exec(command).await?;
@@ -59,6 +67,7 @@ fn glob_posix_command(
     max_results: usize,
     include_hidden: bool,
     st: ShellType,
+    guard_sensitive: bool,
 ) -> String {
     let quoted_root = shell_quote(root, st);
     let quoted_pattern = shell_quote(pattern, st);
@@ -67,10 +76,15 @@ fn glob_posix_command(
     } else {
         " | awk -F/ '{ for (i=1; i<=NF; i++) if ($i ~ /^\\./) next; print }'".to_string()
     };
+    let sensitive_guard = if guard_sensitive {
+        format!("{} -prune -o -type f", posix_find_sensitive_predicate())
+    } else {
+        "-type f".to_string()
+    };
     let max = max_results + 1;
     match st {
         ShellType::Posix => format!(
-            "cd \"$HOME\" && find {root} -type f -name {pattern} -print{hidden_filter} \
+            "cd \"$HOME\" && find -P {root} {sensitive_guard} -name {pattern} -print{hidden_filter} \
              | sed 's#^./##' | sort | head -n {max}",
             root = quoted_root,
             pattern = quoted_pattern,
@@ -78,7 +92,7 @@ fn glob_posix_command(
             max = max,
         ),
         ShellType::Fish => format!(
-            "cd \"$HOME\"; and find {root} -type f -name {pattern} -print{hidden_filter} \
+            "cd \"$HOME\"; and find -P {root} {sensitive_guard} -name {pattern} -print{hidden_filter} \
              | sed 's#^./##' | sort | head -n {max}",
             root = quoted_root,
             pattern = quoted_pattern,
@@ -89,54 +103,27 @@ fn glob_posix_command(
     }
 }
 
-fn glob_powershell_command(
+fn glob_windows_command(
+    shell_type: ShellType,
     root: &str,
     pattern: &str,
     max_results: usize,
     include_hidden: bool,
+    guard_sensitive: bool,
 ) -> String {
-    let st = ShellType::PowerShell;
-    let cd = cd_prefix(st, root);
-    let quoted_pattern = shell_quote(pattern, st);
+    let quoted_root = shell_quote(root, ShellType::PowerShell);
+    let quoted_pattern = shell_quote(pattern, ShellType::PowerShell);
     let max = max_results + 1;
-    let hidden_clause = if include_hidden {
-        String::new()
-    } else {
-        " | Where-Object { ($_.FullName -split '[\\\\/]') -notmatch '^\\.' }".to_string()
-    };
     let ps_script = format!(
-        "{cd}; Get-ChildItem -Recurse -Filter {pattern} -File -ErrorAction SilentlyContinue{hidden_clause} \
-         | ForEach-Object {{ $_.FullName.Replace((Get-Location).Path + '\\', '').Replace('\\', '/') }} \
-         | Sort-Object | Select-Object -First {max}",
-        cd = cd,
+        "{sensitive_function}; $root={root}; $pattern={pattern}; $includeHidden=${include_hidden}; $guardSensitive=${guard_sensitive}; $max={max}; $stack=[Collections.Generic.Stack[string]]::new(); $results=[Collections.Generic.List[string]]::new(); $stack.Push($root); while($stack.Count -gt 0 -and $results.Count -lt $max){{ $dir=$stack.Pop(); foreach($item in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)){{ if(-not $includeHidden -and $item.Name.StartsWith('.')){{continue}}; if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){{continue}}; if($guardSensitive -and (Test-MiaominalSensitivePath $item.FullName)){{continue}}; if($item.PSIsContainer){{$stack.Push($item.FullName); continue}}; if($item.Name -like $pattern){{$relative=$item.FullName.Substring($root.TrimEnd('\\','/').Length).TrimStart('\\','/').Replace('\\','/'); $results.Add($relative)}} }} }}; $results | Sort-Object | Select-Object -First $max",
+        sensitive_function = super::windows::powershell_sensitive_path_function(),
+        root = quoted_root,
         pattern = quoted_pattern,
-        hidden_clause = hidden_clause,
+        include_hidden = if include_hidden { "true" } else { "false" },
+        guard_sensitive = if guard_sensitive { "true" } else { "false" },
         max = max,
     );
-    format!("powershell.exe -NoProfile -Command \"{ps_script}\"")
-}
-
-fn glob_cmd_command(
-    root: &str,
-    pattern: &str,
-    _max_results: usize,
-    include_hidden: bool,
-) -> String {
-    let st = ShellType::Cmd;
-    let cd = cd_prefix(st, root);
-    // CMD shell_quote strips double-quotes and doubles percents;
-    // the pattern is already safe (no % or " from find_name_pattern output).
-    let quoted_pattern = shell_quote(pattern, st);
-    let attr = if include_hidden { "/a:-d" } else { "/a:-d-h" };
-    // dir /s /b outputs relative paths. 2>nul suppresses "File Not Found".
-    // We deliberately omit | head so that all results flow through Rust-side truncation
-    // (CMD has no built-in equivalent to `head`).
-    format!(
-        "{cd} && dir {attr} /s /b {pattern} 2>nul",
-        cd = cd,
-        attr = attr,
-        pattern = quoted_pattern,
-    )
+    super::windows::powershell_command_for_shell(shell_type, &ps_script)
 }
 
 // ── Helpers ──
@@ -164,6 +151,21 @@ fn is_overbroad_root(root: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+
+    fn decode_powershell_command(command: &str) -> String {
+        let payload = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("encoded PowerShell command");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("valid base64");
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).expect("valid UTF-16LE")
+    }
 
     // ── find_name_pattern ──
 
@@ -189,64 +191,123 @@ mod tests {
 
     #[test]
     fn powershell_glob_command_without_hidden() {
-        let cmd = glob_powershell_command(".", "*.rs", 200, false);
-        assert!(cmd.contains("Set-Location $env:USERPROFILE"));
-        assert!(cmd.contains("Get-ChildItem -Recurse -Filter '*.rs' -File"));
-        assert!(cmd.contains("Where-Object"));
-        assert!(cmd.contains("notmatch"));
-        assert!(cmd.contains("Select-Object -First 201"));
+        let command =
+            glob_windows_command(ShellType::PowerShell, "C:/work", "*.rs", 200, false, true);
+        let cmd = decode_powershell_command(&command);
+        assert!(cmd.contains("Get-ChildItem -LiteralPath $dir -Force"));
+        assert!(cmd.contains("ReparsePoint"));
+        assert!(cmd.contains("Test-MiaominalSensitivePath"));
+        assert!(cmd.contains("$pattern='*.rs'"));
+        assert!(cmd.contains("$max=201"));
     }
 
     #[test]
     fn powershell_glob_command_with_hidden() {
-        let cmd = glob_powershell_command("src", "*.toml", 50, true);
-        assert!(cmd.contains("Get-ChildItem -Recurse -Filter '*.toml' -File"));
-        assert!(!cmd.contains("Where-Object"));
-        assert!(cmd.contains("Select-Object -First 51"));
-        assert!(cmd.contains("ForEach-Object"));
-        assert!(cmd.contains("Sort-Object"));
+        let command =
+            glob_windows_command(ShellType::PowerShell, "C:/work", "*.toml", 50, true, false);
+        let cmd = decode_powershell_command(&command);
+        assert!(cmd.contains("$includeHidden=$true"));
+        assert!(cmd.contains("$guardSensitive=$false"));
+        assert!(cmd.contains("$max=51"));
     }
 
     // ── cmd_glob_command ──
 
     #[test]
     fn cmd_glob_command_without_hidden() {
-        let cmd = glob_cmd_command(".", "*.rs", 200, false);
-        assert!(cmd.contains("cd /d %USERPROFILE%"));
-        assert!(cmd.contains("dir /a:-d-h /s /b *.rs"));
-        assert!(cmd.contains("2>nul"));
+        let cmd = glob_windows_command(
+            ShellType::Cmd,
+            "C:/x & whoami & rem",
+            "*.rs & whoami",
+            200,
+            false,
+            true,
+        );
+        assert!(cmd.starts_with("set MIAOMINAL_AGENT_PS_GZIP="));
+        assert!(!cmd.contains("whoami"));
     }
 
     #[test]
     fn cmd_glob_command_with_hidden() {
-        let cmd = glob_cmd_command("src", "*", 100, true);
-        assert!(cmd.contains("cd /d %USERPROFILE%"));
-        assert!(cmd.contains("dir /a:-d /s /b * 2>nul"));
-        assert!(!cmd.contains("-d-h"));
+        let cmd = glob_windows_command(ShellType::Cmd, "C:/src", "*", 100, true, false);
+        assert!(cmd.contains("powershell.exe -NoProfile -EncodedCommand "));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_glob_prunes_sensitive_tree_and_does_not_inject() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("x & echo MIAOMINAL_INJECTED & rem");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("safe.rs"), "fn safe() {}").unwrap();
+        std::fs::create_dir(root.join(".ssh")).unwrap();
+        std::fs::write(root.join(".ssh").join("secret.rs"), "private").unwrap();
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("linked-secret.rs"), "private").unwrap();
+        let junction = root.join("linked");
+        let junction_command = format!(
+            r#"mklink /J "{}" "{}""#,
+            junction.display(),
+            outside.display()
+        );
+        let junction_created = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", &junction_command])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+
+        let command = glob_windows_command(
+            ShellType::Cmd,
+            root.to_string_lossy().as_ref(),
+            "*.rs",
+            100,
+            true,
+            true,
+        );
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", &command])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert!(stdout.contains("safe.rs"));
+        assert!(!stdout.contains("secret.rs"));
+        if junction_created {
+            assert!(!stdout.contains("linked-secret.rs"));
+        }
+        assert!(!stdout.contains("MIAOMINAL_INJECTED"));
     }
 
     // ── posix_glob_command ──
 
     #[test]
     fn posix_glob_command_without_hidden() {
-        let cmd = glob_posix_command(".", "*.rs", 200, false, ShellType::Posix);
-        assert!(cmd.starts_with("cd \"$HOME\" && find"));
+        let cmd = glob_posix_command(".", "*.rs", 200, false, ShellType::Posix, true);
+        assert!(cmd.starts_with("cd \"$HOME\" && find -P"));
         assert!(cmd.contains("-name '*.rs'"));
+        assert!(cmd.contains("-iname '.ssh'"));
+        assert!(cmd.contains("-ipath '/etc/shadow'"));
+        assert!(cmd.contains("-ipath '/etc/sudoers'"));
+        assert!(cmd.contains("-iname '*.env.*'"));
+        assert!(cmd.contains("-iname '*.rdp'"));
+        assert!(cmd.contains("-iname '*.kdbx'"));
         assert!(cmd.contains("awk"));
         assert!(cmd.contains("head -n 201"));
     }
 
     #[test]
     fn posix_glob_command_with_hidden() {
-        let cmd = glob_posix_command("src", "*.toml", 50, true, ShellType::Posix);
-        assert!(cmd.contains("find 'src' -type f -name '*.toml'"));
+        let cmd = glob_posix_command("src", "*.toml", 50, true, ShellType::Posix, false);
+        assert!(cmd.contains("find -P 'src' -type f -name '*.toml'"));
         assert!(!cmd.contains("awk"));
     }
 
     #[test]
     fn fish_glob_command_uses_semicolon_and() {
-        let cmd = glob_posix_command(".", "*.rs", 200, false, ShellType::Fish);
-        assert!(cmd.starts_with("cd \"$HOME\"; and find"));
+        let cmd = glob_posix_command(".", "*.rs", 200, false, ShellType::Fish, true);
+        assert!(cmd.starts_with("cd \"$HOME\"; and find -P"));
         assert!(cmd.contains("; and "));
     }
 }

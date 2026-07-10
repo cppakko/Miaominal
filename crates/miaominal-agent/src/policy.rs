@@ -302,10 +302,8 @@ fn classify_simple_command(tokens: &[String]) -> AgentRiskLevel {
         {
             AgentRiskLevel::L1LowMutation
         }
-        "pwd" | "whoami" | "uptime" | "df" | "free" | "journalctl" | "ss" | "grep" | "rg"
-        | "find" | "cat" | "get-service" | "get-process" | "get-eventlog" | "get-content"
-        | "select-string" | "where" | "dir" | "type" | "get-childitem" | "test-path"
-        | "get-itemproperty" => AgentRiskLevel::L0ReadOnly,
+        "pwd" | "whoami" | "uptime" | "df" | "free" | "journalctl" | "ss" | "get-service"
+        | "get-process" | "get-eventlog" | "where" => AgentRiskLevel::L0ReadOnly,
         _ => AgentRiskLevel::L1LowMutation,
     }
 }
@@ -387,29 +385,94 @@ fn sensitive_path_in_command(command: &str) -> Option<String> {
     None
 }
 
+const SENSITIVE_EXACT_PATHS: &[&str] = &["/etc/shadow", "/etc/sudoers"];
+const SENSITIVE_PATH_TREES: &[&str] = &["/root", "/var/lib/mysql", "/var/lib/postgresql"];
+const SENSITIVE_COMPONENTS: &[&str] = &[".ssh"];
+const SENSITIVE_BASENAMES: &[&str] = &["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
+const SENSITIVE_BASENAME_SUFFIXES: &[&str] =
+    &[".env", ".pem", ".key", ".p12", ".pfx", ".rdp", ".kdbx"];
+const SENSITIVE_BASENAME_CONTAINS: &[&str] = &[".env."];
+const SENSITIVE_WINDOWS_PATH_TREES: &[&str] = &["c:/windows/system32/config"];
+const SENSITIVE_PATH_CONTAINS: &[&str] = &[
+    "ntds.dit",
+    "appdata/roaming/mozilla/firefox/profiles",
+    "appdata/local/google/chrome/user data/default",
+];
+
 pub fn is_sensitive_path(path: &str) -> bool {
     let normalized = normalize_path(path);
-    normalized == "/etc/shadow"
-        || normalized == "/etc/sudoers"
-        || normalized.starts_with("/root/")
-        || normalized == "/root"
-        || normalized.contains("/.ssh/")
-        || normalized.ends_with("/.ssh")
-        || normalized.ends_with(".env")
-        || normalized.contains(".env.")
-        || normalized.ends_with(".pem")
-        || normalized.ends_with(".key")
-        || normalized.ends_with(".p12")
-        || normalized.ends_with(".pfx")
-        || normalized.starts_with("/var/lib/mysql/")
-        || normalized.starts_with("/var/lib/postgresql/")
+    let windows_normalized = normalized.trim_start_matches('/');
+    let components = normalized
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    let basename = components.last().copied().unwrap_or_default();
+    SENSITIVE_EXACT_PATHS.contains(&normalized.as_str())
+        || SENSITIVE_PATH_TREES
+            .iter()
+            .any(|root| path_is_within(&normalized, root))
+        || components
+            .iter()
+            .any(|component| SENSITIVE_COMPONENTS.contains(component))
+        || SENSITIVE_BASENAMES.contains(&basename)
+        || SENSITIVE_BASENAME_SUFFIXES
+            .iter()
+            .any(|suffix| basename.ends_with(suffix))
+        || SENSITIVE_BASENAME_CONTAINS
+            .iter()
+            .any(|needle| basename.contains(needle))
         // Windows-sensitive paths (normalized: \ → /, lowercase)
-        || normalized.contains("c:/windows/system32/config/")
-        || normalized.ends_with(".rdp")
-        || normalized.ends_with(".kdbx")
-        || normalized.contains("ntds.dit")
-        || normalized.contains("appdata/roaming/mozilla/firefox/profiles")
-        || normalized.contains("appdata/local/google/chrome/user data/default")
+        || SENSITIVE_WINDOWS_PATH_TREES
+            .iter()
+            .any(|root| path_is_within(windows_normalized, root))
+        || SENSITIVE_PATH_CONTAINS
+            .iter()
+            .any(|needle| normalized.contains(needle))
+}
+
+fn path_is_within(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// Build the `find` predicate used by recursive POSIX read-only tools.
+///
+/// This is generated from the same rule constants as [`is_sensitive_path`].
+/// Callers either prune matching paths during traversal or negate the
+/// predicate before printing directory entries.
+pub(crate) fn posix_find_sensitive_predicate() -> String {
+    let mut tests = Vec::new();
+
+    for path in SENSITIVE_EXACT_PATHS {
+        tests.push(format!("-ipath '{path}'"));
+    }
+    for root in SENSITIVE_PATH_TREES {
+        tests.push(format!("-ipath '{root}'"));
+        tests.push(format!("-ipath '{root}/*'"));
+    }
+    for component in SENSITIVE_COMPONENTS {
+        tests.push(format!("-iname '{component}'"));
+    }
+    for basename in SENSITIVE_BASENAMES {
+        tests.push(format!("-iname '{basename}'"));
+    }
+    for suffix in SENSITIVE_BASENAME_SUFFIXES {
+        tests.push(format!("-iname '*{suffix}'"));
+    }
+    for needle in SENSITIVE_BASENAME_CONTAINS {
+        tests.push(format!("-iname '*{needle}*'"));
+    }
+    for root in SENSITIVE_WINDOWS_PATH_TREES {
+        tests.push(format!("-ipath '*{root}'"));
+        tests.push(format!("-ipath '*{root}/*'"));
+    }
+    for needle in SENSITIVE_PATH_CONTAINS {
+        tests.push(format!("-ipath '*{needle}*'"));
+    }
+
+    format!("\\( {} \\)", tests.join(" -o "))
 }
 
 pub fn is_sensitive_grep_pattern(pattern: &str) -> bool {
@@ -463,7 +526,26 @@ fn normalize_command(command: &str) -> String {
 }
 
 fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/").to_lowercase()
+    let replaced = path.replace('\\', "/").to_lowercase();
+    let absolute = replaced.starts_with('/');
+    let mut components = Vec::new();
+
+    for component in replaced.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            component => components.push(component),
+        }
+    }
+
+    let normalized = components.join("/");
+    if absolute {
+        format!("/{normalized}")
+    } else {
+        normalized
+    }
 }
 
 #[cfg(test)]
@@ -549,6 +631,55 @@ mod tests {
             policy.decide_path(AgentPathAccess::Edit, "/home/app/.ssh/id_rsa", true),
             AgentPolicyDecision::Deny { .. }
         ));
+        for path in [
+            ".ssh",
+            ".ssh/id_rsa",
+            ".\\.ssh\\id_ed25519",
+            "fixtures/id_ecdsa",
+        ] {
+            assert!(
+                matches!(
+                    policy.decide_path(AgentPathAccess::Read, path, true),
+                    AgentPolicyDecision::Deny { .. }
+                ),
+                "expected sensitive relative path to be denied: {path}"
+            );
+        }
+        assert!(!is_sensitive_path(".ssh-not/id_rsa.pub"));
+        assert!(!is_sensitive_path("fixtures/id_ed25519.pub"));
+        for path in [
+            "/ETC/SHADOW",
+            "/etc/SUDOERS",
+            "config/foo.ENV.local",
+            "connections/PROD.RDP",
+            "vault/PASSWORDS.KDBX",
+        ] {
+            assert!(is_sensitive_path(path), "expected sensitive path: {path}");
+        }
+    }
+
+    #[test]
+    fn posix_find_predicate_covers_central_sensitive_rules() {
+        let predicate = posix_find_sensitive_predicate();
+
+        for expected in [
+            "-ipath '/etc/shadow'",
+            "-ipath '/etc/sudoers'",
+            "-iname '.ssh'",
+            "-iname 'id_ed25519'",
+            "-iname '*.env'",
+            "-iname '*.env.*'",
+            "-iname '*.pem'",
+            "-iname '*.rdp'",
+            "-iname '*.kdbx'",
+            "-ipath '*ntds.dit*'",
+            "-ipath '*appdata/roaming/mozilla/firefox/profiles*'",
+        ] {
+            assert!(
+                predicate.contains(expected),
+                "missing `{expected}` from {predicate}"
+            );
+        }
     }
 
     #[test]
@@ -636,13 +767,21 @@ mod tests {
             AgentPolicyDecision::Allow
         );
         assert_eq!(
-            policy.decide_command("cat README.md", false),
+            policy.decide_command("whoami", false),
             AgentPolicyDecision::Allow
         );
-        assert_eq!(
-            policy.decide_command("Get-Content C:\\logs\\app.log", false),
-            AgentPolicyDecision::Allow
-        );
+
+        for command in [
+            "cat README.md",
+            "grep error app.log",
+            "Get-Content C:\\logs\\app.log",
+            "Get-ChildItem C:\\Users",
+        ] {
+            assert!(matches!(
+                policy.decide_command(command, false),
+                AgentPolicyDecision::NeedsApproval { .. }
+            ));
+        }
     }
 
     #[test]
@@ -699,14 +838,16 @@ mod tests {
     fn quoted_shell_metacharacters_do_not_create_false_segments() {
         let policy = AgentPolicy;
 
-        assert_eq!(
-            policy.decide_command("Select-String -Pattern 'error|warning' app.log", false),
-            AgentPolicyDecision::Allow
-        );
-        assert_eq!(
-            policy.decide_command("cat 'file;name.txt'", false),
-            AgentPolicyDecision::Allow
-        );
+        for command in [
+            "Select-String -Pattern 'error|warning' app.log",
+            "cat 'file;name.txt'",
+        ] {
+            assert!(!analyze_shell_command(command).has_control_operator);
+            assert!(matches!(
+                policy.decide_command(command, false),
+                AgentPolicyDecision::NeedsApproval { .. }
+            ));
+        }
     }
 
     #[test]
@@ -714,6 +855,7 @@ mod tests {
         let policy = AgentPolicy;
         let commands = [
             "cat ~/.ssh/id_rsa",
+            "cat .ssh/id_rsa",
             "cat /etc/shadow",
             "Get-Content \"C:\\Users\\user\\.ssh\\id_rsa\"",
             "type --file=.env",
@@ -855,14 +997,7 @@ mod tests {
             "Get-Service wuauserv",
             "Get-Process",
             "Get-EventLog -LogName System -Newest 10",
-            "Get-Content C:\\logs\\app.log",
-            "Select-String -Path C:\\logs\\*.log -Pattern ERROR",
             "where.exe notepad",
-            "dir C:\\Windows",
-            "type C:\\logs\\app.log",
-            "Get-ChildItem C:\\Users",
-            "Test-Path C:\\data\\config.json",
-            "Get-ItemProperty HKLM:\\Software\\App",
         ];
 
         for cmd in &readonly {
@@ -871,6 +1006,21 @@ mod tests {
                 AgentPolicyDecision::Allow,
                 "expected Allow for L0 read-only: {cmd}"
             );
+        }
+
+        for cmd in [
+            "Get-Content C:\\logs\\app.log",
+            "Select-String -Path C:\\logs\\*.log -Pattern ERROR",
+            "dir C:\\Windows",
+            "type C:\\logs\\app.log",
+            "Get-ChildItem C:\\Users",
+            "Test-Path C:\\data\\config.json",
+            "Get-ItemProperty HKLM:\\Software\\App",
+        ] {
+            assert!(matches!(
+                policy.decide_command(cmd, false),
+                AgentPolicyDecision::NeedsApproval { .. }
+            ));
         }
     }
 }

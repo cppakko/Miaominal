@@ -1,6 +1,7 @@
 use crate::channel::{AgentExecChannel, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::path_guard::{cd_prefix, resolve_workspace_path, shell_quote};
+use crate::path_guard::{RemotePathKind, cd_prefix, resolve_workspace_path, shell_quote};
+use crate::policy::AgentPathAccess;
 use base64::Engine as _;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
@@ -27,18 +28,22 @@ pub async fn apply_patch(
         super::workspace_info::ensure_exec_shell_detected(channel).await;
     }
 
-    let base_dir = resolve_workspace_path(&args.base_dir)?;
-    if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_path(&base_dir) {
-        channel
-            .policy()
-            .enforce_path(crate::policy::AgentPathAccess::Edit, &base_dir, false)?;
-    }
+    let base_dir = channel
+        .authorize_existing_path(
+            &args.base_dir,
+            AgentPathAccess::Edit,
+            RemotePathKind::Directory,
+        )
+        .await?;
+    let base_dir = base_dir.as_str().to_string();
+    let patch_paths = extract_patch_target_paths(&args.patch)?;
 
-    for path in extract_patch_paths(&args.patch) {
-        if !channel.policy_bypass_enabled() && crate::policy::is_sensitive_path(&path) {
+    if !channel.policy_bypass_enabled() {
+        for path in &patch_paths {
+            let full_path = format!("{}/{}", base_dir.trim_end_matches(['/', '\\']), path);
             channel
                 .policy()
-                .enforce_path(crate::policy::AgentPathAccess::Edit, &path, false)?;
+                .enforce_path(AgentPathAccess::Edit, &full_path, true)?;
         }
     }
 
@@ -52,6 +57,16 @@ pub async fn apply_patch(
     );
 
     let is_windows = matches!(original_shell, ShellType::PowerShell | ShellType::Cmd);
+
+    if !is_windows && !channel.policy_bypass_enabled() {
+        ensure_posix_patch_targets_do_not_follow_links(
+            channel,
+            original_shell,
+            &base_dir,
+            &patch_paths,
+        )
+        .await?;
+    }
 
     let patch_output = if is_windows {
         apply_patch_windows(channel, original_shell, &base_dir, &args.patch).await?
@@ -343,10 +358,43 @@ fn build_windows_delete_file_command(base_dir: &str, target_path: &str) -> Strin
 
 fn ps_path_setup(base_dir: &str, target_path: &str) -> String {
     format!(
-        "{cd}; $path = '{path}'; $full = if ([IO.Path]::IsPathRooted($path)) {{ $path }} else {{ Join-Path (Get-Location).Path $path }}",
+        "{cd}; $path = '{path}'; $base=(Get-Location).Path; $cursor=$base; foreach($segment in $path.Replace('\\','/').Split('/')) {{ if([string]::IsNullOrWhiteSpace($segment)){{continue}}; $cursor=Join-Path $cursor $segment; if(Test-Path -LiteralPath $cursor){{ $item=Get-Item -LiteralPath $cursor -Force; if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){{ throw ('patch target traverses a symbolic link or reparse point: ' + $path) }} }} }}; $full = if ([IO.Path]::IsPathRooted($path)) {{ $path }} else {{ Join-Path $base $path }}",
         cd = cd_prefix(ShellType::PowerShell, base_dir),
         path = ps_escape_single_quoted(target_path),
     )
+}
+
+async fn ensure_posix_patch_targets_do_not_follow_links(
+    channel: &AgentExecChannel,
+    shell_type: ShellType,
+    base_dir: &str,
+    paths: &[String],
+) -> AgentResult<()> {
+    let mut checks = String::new();
+    for path in paths {
+        let mut prefix = String::new();
+        for component in path.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            let quoted = shell_quote(&prefix, ShellType::Posix);
+            checks.push_str(&format!(
+                "if [ -L {quoted} ]; then printf 'patch target traverses a symbolic link: %s\\n' {quoted} >&2; exit 4; fi; "
+            ));
+        }
+    }
+
+    let script = format!(
+        "cd \"$HOME\" && cd {base_dir} && {checks}",
+        base_dir = shell_quote(base_dir, ShellType::Posix),
+    );
+    let command = if matches!(shell_type, ShellType::Fish) {
+        format!("sh -lc {}", shell_quote(&script, ShellType::Fish))
+    } else {
+        script
+    };
+    channel.exec(command).await.map(|_| ())
 }
 
 fn ps_escape_single_quoted(value: &str) -> String {
@@ -408,20 +456,40 @@ fn fish_double_quote_arg(value: &str) -> String {
     )
 }
 
-fn extract_patch_paths(patch: &str) -> Vec<String> {
+fn extract_patch_target_paths(patch: &str) -> AgentResult<Vec<String>> {
     let mut paths = Vec::new();
     for line in patch.lines() {
-        let rest = line
+        let Some(rest) = line
             .strip_prefix("--- ")
-            .or_else(|| line.strip_prefix("+++ "));
-        let Some(rest) = rest else { continue };
-        let path = rest.split('\t').next().unwrap_or("");
-        if path.is_empty() || path == "/dev/null" {
+            .or_else(|| line.strip_prefix("+++ "))
+        else {
+            continue;
+        };
+        let raw_path = rest.split('\t').next().unwrap_or("");
+        if raw_path.is_empty() || raw_path == "/dev/null" {
             continue;
         }
-        paths.push(path.to_string());
+        let raw_target = resolve_patch_target_path(raw_path)
+            .map_err(|error| AgentError::InvalidPath(error.to_string()))?;
+        if !paths.contains(&raw_target) {
+            paths.push(raw_target);
+        }
+        let engine_path = raw_path
+            .strip_prefix("a/")
+            .or_else(|| raw_path.strip_prefix("b/"))
+            .unwrap_or(raw_path);
+        let engine_target = resolve_patch_target_path(engine_path)
+            .map_err(|error| AgentError::InvalidPath(error.to_string()))?;
+        if !paths.contains(&engine_target) {
+            paths.push(engine_target);
+        }
     }
-    paths
+    if paths.is_empty() {
+        return Err(AgentError::InvalidArguments(
+            "patch does not contain a target path".into(),
+        ));
+    }
+    Ok(paths)
 }
 
 fn default_dot() -> String {
@@ -624,6 +692,7 @@ mod tests {
 
         assert!(script.contains("Remove-Item -LiteralPath $full"));
         assert!(script.contains("src/[literal].rs"));
+        assert!(script.contains("ReparsePoint"));
     }
 
     #[test]
@@ -636,5 +705,14 @@ mod tests {
     fn patch_target_path_rejects_absolute_windows_drive() {
         let err = resolve_patch_target_path("C:/outside.txt").unwrap_err();
         assert!(err.to_string().contains("relative"));
+    }
+
+    #[test]
+    fn patch_target_extraction_strips_diff_prefixes() {
+        let paths = extract_patch_target_paths(
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new",
+        )
+        .unwrap();
+        assert_eq!(paths, vec!["a/src/lib.rs", "src/lib.rs", "b/src/lib.rs"]);
     }
 }

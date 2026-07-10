@@ -1,7 +1,8 @@
 use crate::channel::{AgentExecChannel, DEFAULT_MAX_OUTPUT_BYTES, ToolOutput};
 use crate::error::{AgentError, AgentResult};
 use crate::jobs::{AgentJobId, JobPollResult, JobStatus};
-use crate::path_guard::{resolve_workspace_path, shell_quote};
+use crate::path_guard::{RemotePathKind, shell_quote};
+use crate::policy::AgentPathAccess;
 use base64::Engine as _;
 use miaominal_core::profile::ShellType;
 use serde::Deserialize;
@@ -658,17 +659,24 @@ fn make_windows_stop_script(marker: &str) -> String {
 }
 
 pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentResult<ToolOutput> {
-    let cwd = resolve_workspace_path(args.cwd.as_deref().unwrap_or("."))?;
     // Approval execution and later agent turns can use a newly constructed
     // channel. Revalidate before launching so a stale profile/cache cannot
     // select CMD when this SSH exec channel is actually PowerShell.
     if matches!(channel.shell_type(), ShellType::PowerShell | ShellType::Cmd) {
         super::workspace_info::refresh_exec_shell_detected(channel).await;
     }
+    let cwd = channel
+        .authorize_existing_path(
+            args.cwd.as_deref().unwrap_or("."),
+            AgentPathAccess::Read,
+            RemotePathKind::Directory,
+        )
+        .await?;
+    let cwd = cwd.as_str();
     let shell_type = channel.shell_type();
     let job_id = AgentJobId::new();
     let marker = job_id.remote_marker_for_shell(shell_type)?;
-    let command = make_start_job_command(shell_type, &cwd, &args.command, &marker);
+    let command = make_start_job_command(shell_type, cwd, &args.command, &marker);
     let launch = make_start_job_launch(shell_type, &command, &marker);
     ensure_windows_command_fits(&launch, shell_type)?;
     scavenge_jobs(channel, shell_type).await;

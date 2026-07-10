@@ -5271,6 +5271,7 @@ dependencies = [
  "miaominal-core",
  "miaominal-secrets",
  "miaominal-settings",
+ "miaominal-sftp",
  "miaominal-ssh",
  "miaominal-storage",
  "reqwest",
@@ -5278,6 +5279,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "uuid",
 ]
