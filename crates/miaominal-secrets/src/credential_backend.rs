@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
 use keyring::Entry;
-use miaominal_paths as paths;
+use miaominal_paths::{self as paths, atomic_write};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -422,8 +422,7 @@ impl VaultCredentialBackend {
         let stored = self.encrypt_document(&document)?;
         let serialized =
             serde_json::to_string_pretty(&stored).context("failed to serialize vault document")?;
-        fs::write(&self.file_path, serialized)
-            .with_context(|| format!("failed to write {}", self.file_path.display()))
+        atomic_write(&self.file_path, serialized)
     }
 
     fn encrypt_document(&self, document: &VaultDocument) -> Result<StoredVaultDocument> {

@@ -94,6 +94,7 @@ rust-embed = "8.11.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.3"
+tempfile = "3.27.0"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 tokio = { version = "1", features = [
     "fs",

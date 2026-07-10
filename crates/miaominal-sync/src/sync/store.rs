@@ -1,6 +1,6 @@
 use crate::SyncConfig;
 use anyhow::{Context, Result};
-use miaominal_paths as paths;
+use miaominal_paths::{self as paths, atomic_write};
 use miaominal_secrets::{
     APP_CREDENTIAL_SERVICE, CredentialStore, LockedCredentialBackend, VaultCredentialBackend,
 };
@@ -110,9 +110,12 @@ impl SyncConfigStore {
     }
 
     pub fn update<F: FnOnce(&mut SyncConfig)>(&mut self, f: F) -> Result<()> {
-        f(&mut self.config);
-        self.config.normalize_legacy_provider_flags();
-        self.persist()
+        let mut next = self.config.clone();
+        f(&mut next);
+        next.normalize_legacy_provider_flags();
+        self.persist_config(&next)?;
+        self.config = next;
+        Ok(())
     }
 
     pub fn sync_from_disk(&mut self) {
@@ -127,14 +130,17 @@ impl SyncConfigStore {
     }
 
     fn persist(&self) -> Result<()> {
+        self.persist_config(&self.config)
+    }
+
+    fn persist_config(&self, config: &SyncConfig) -> Result<()> {
         if let Some(parent) = self.config_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
         let serialized =
-            toml::to_string_pretty(&self.config).context("failed to serialize sync config")?;
-        fs::write(&self.config_file, serialized)
-            .with_context(|| format!("failed to write {}", self.config_file.display()))?;
+            toml::to_string_pretty(config).context("failed to serialize sync config")?;
+        atomic_write(&self.config_file, serialized)?;
         Ok(())
     }
 

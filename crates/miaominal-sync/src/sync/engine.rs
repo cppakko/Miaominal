@@ -216,11 +216,12 @@ impl SyncEngine {
             key_store,
             secret_store,
             settings_store,
+            || {
+                self.config_store.update(|c| {
+                    c.last_sync_at = remote_synced_at;
+                })
+            },
         )?;
-
-        self.config_store.update(|c| {
-            c.last_sync_at = remote_synced_at;
-        })?;
 
         Ok(SyncStatus::Pulled {
             at: remote_synced_at,

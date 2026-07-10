@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use miaominal_paths as paths;
+use miaominal_paths::{self as paths, atomic_write};
 use miaominal_settings::{AppSettings, CURRENT_ONBOARDING_VERSION, changed, install};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,8 @@ impl SettingsStore {
         Self::load_with_path(paths::config_file("settings.toml")?)
     }
 
-    fn load_with_path(settings_file: PathBuf) -> Result<Self> {
+    #[doc(hidden)]
+    pub fn load_with_path(settings_file: PathBuf) -> Result<Self> {
         let settings_file_exists = settings_file.exists();
         let existing_app_data = has_existing_app_data(&settings_file)?;
 
@@ -79,9 +80,9 @@ impl SettingsStore {
         let before = self.settings.clone();
         settings.sanitize();
         if changed(&before, &settings) {
+            self.persist_settings(&settings)?;
             self.settings = settings;
             install(self.settings.clone());
-            self.persist()?;
             Ok(true)
         } else {
             Ok(false)
@@ -89,14 +90,17 @@ impl SettingsStore {
     }
 
     fn persist(&self) -> Result<()> {
+        self.persist_settings(&self.settings)
+    }
+
+    fn persist_settings(&self, settings: &AppSettings) -> Result<()> {
         if let Some(parent) = self.settings_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
         let serialized =
-            toml::to_string_pretty(&self.settings).context("failed to serialize settings")?;
-        fs::write(&self.settings_file, serialized)
-            .with_context(|| format!("failed to write {}", self.settings_file.display()))?;
+            toml::to_string_pretty(settings).context("failed to serialize settings")?;
+        atomic_write(&self.settings_file, serialized)?;
         Ok(())
     }
 }

@@ -5294,6 +5294,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "log",
+ "tempfile",
 ]
 
 [[package]]

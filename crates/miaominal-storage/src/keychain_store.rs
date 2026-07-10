@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use miaominal_core::keychain::{ManagedKeyRecord, ManagedKeySource};
-use miaominal_paths as paths;
+use miaominal_paths::{self as paths, atomic_write};
 use russh::keys::{self, Algorithm, PrivateKey, PublicKey};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -22,6 +22,11 @@ impl ManagedKeyStore {
         Ok(Self {
             keys_file: paths::config_file("managed_keys.toml")?,
         })
+    }
+
+    #[doc(hidden)]
+    pub fn with_path(keys_file: PathBuf) -> Self {
+        Self { keys_file }
     }
 
     pub fn load(&self) -> Result<Vec<ManagedKeyRecord>> {
@@ -52,8 +57,7 @@ impl ManagedKeyStore {
         })
         .context("failed to serialize managed keys")?;
 
-        fs::write(&self.keys_file, content)
-            .with_context(|| format!("failed to write {}", self.keys_file.display()))?;
+        atomic_write(&self.keys_file, content)?;
 
         Ok(())
     }

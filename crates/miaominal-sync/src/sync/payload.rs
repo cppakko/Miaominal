@@ -3,7 +3,7 @@ use crate::{
     AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret,
     SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload, WebSearchSecret,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::SessionProfile;
@@ -74,6 +74,52 @@ pub fn apply_plaintext_payload(
     key_store: &ManagedKeyStore,
     secret_store: &SecretStore,
     settings_store: &mut SettingsStore,
+    finalize: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let snapshot = PayloadSnapshot::capture(
+        payload,
+        session_store,
+        snippet_store,
+        key_store,
+        secret_store,
+        settings_store,
+    )?;
+
+    let apply_result = apply_payload_changes(
+        payload,
+        session_store,
+        snippet_store,
+        key_store,
+        secret_store,
+        settings_store,
+    )
+    .and_then(|()| finalize().context("failed to finalize sync pull"));
+
+    if let Err(error) = apply_result {
+        return match snapshot.restore(
+            session_store,
+            snippet_store,
+            key_store,
+            secret_store,
+            settings_store,
+        ) {
+            Ok(()) => Err(error.context("sync pull failed; local changes were rolled back")),
+            Err(rollback_error) => Err(anyhow!(
+                "sync pull failed: {error:#}; rollback also failed: {rollback_error:#}"
+            )),
+        };
+    }
+
+    Ok(())
+}
+
+fn apply_payload_changes(
+    payload: &SyncPlaintextPayload,
+    session_store: &SessionStore,
+    snippet_store: &SnippetStore,
+    key_store: &ManagedKeyStore,
+    secret_store: &SecretStore,
+    settings_store: &mut SettingsStore,
 ) -> Result<()> {
     let old_sessions = session_store
         .read_sessions_content()?
@@ -130,9 +176,169 @@ pub fn apply_plaintext_payload(
         &old_keys,
         &old_ai_provider_ids,
         secret_store,
-    );
+    )?;
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct PayloadSnapshot {
+    sessions: Vec<SessionProfile>,
+    snippets: Vec<SnippetRecord>,
+    managed_keys: Vec<ManagedKeyRecord>,
+    settings: AppSettings,
+    secrets: Vec<SecretSnapshot>,
+}
+
+impl PayloadSnapshot {
+    fn capture(
+        payload: &SyncPlaintextPayload,
+        session_store: &SessionStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+        secret_store: &SecretStore,
+        settings_store: &SettingsStore,
+    ) -> Result<Self> {
+        let sessions = session_store
+            .read_sessions_content()?
+            .map(|content| session_store.parse_sessions(&content))
+            .transpose()?
+            .unwrap_or_default();
+        let snippets = snippet_store.load()?;
+        let managed_keys = key_store.load()?;
+        let settings = settings_store.settings().clone();
+        let secrets =
+            capture_affected_secrets(payload, &sessions, &managed_keys, &settings, secret_store)?;
+
+        Ok(Self {
+            sessions,
+            snippets,
+            managed_keys,
+            settings,
+            secrets,
+        })
+    }
+
+    fn restore(
+        self,
+        session_store: &SessionStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+        secret_store: &SecretStore,
+        settings_store: &mut SettingsStore,
+    ) -> Result<()> {
+        let mut errors = Vec::new();
+
+        if let Err(error) = session_store.save(&self.sessions) {
+            errors.push(format!("sessions: {error:#}"));
+        }
+        if let Err(error) = snippet_store.save(&self.snippets) {
+            errors.push(format!("snippets: {error:#}"));
+        }
+        if let Err(error) = key_store.save(&self.managed_keys) {
+            errors.push(format!("managed keys: {error:#}"));
+        }
+        if let Err(error) = settings_store.replace(self.settings) {
+            errors.push(format!("settings: {error:#}"));
+        }
+        for secret in self.secrets {
+            if let Err(error) = secret.restore(secret_store) {
+                errors.push(format!(
+                    "secret {}/{}: {error:#}",
+                    secret.id,
+                    secret_kind_label(secret.kind)
+                ));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(errors.join("; ")))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SecretSnapshot {
+    id: String,
+    kind: SecretKind,
+    value: Option<String>,
+}
+
+impl SecretSnapshot {
+    fn restore(&self, secret_store: &SecretStore) -> Result<()> {
+        match &self.value {
+            Some(value) => secret_store.set(&self.id, self.kind, value),
+            None => secret_store.delete(&self.id, self.kind),
+        }
+    }
+}
+
+fn capture_affected_secrets(
+    payload: &SyncPlaintextPayload,
+    old_sessions: &[SessionProfile],
+    old_keys: &[ManagedKeyRecord],
+    old_settings: &AppSettings,
+    secret_store: &SecretStore,
+) -> Result<Vec<SecretSnapshot>> {
+    let mut targets = Vec::new();
+
+    for session in old_sessions.iter().chain(&payload.sessions) {
+        add_secret_target(&mut targets, &session.id, SecretKind::Password);
+        add_secret_target(&mut targets, &session.id, SecretKind::Passphrase);
+    }
+    for secret in &payload.secrets.profile_secrets {
+        add_secret_target(&mut targets, &secret.id, SecretKind::Password);
+        add_secret_target(&mut targets, &secret.id, SecretKind::Passphrase);
+    }
+
+    for key in old_keys.iter().chain(&payload.managed_keys) {
+        add_secret_target(&mut targets, &key.id, SecretKind::ManagedPrivateKey);
+    }
+    for secret in &payload.secrets.key_secrets {
+        add_secret_target(&mut targets, &secret.id, SecretKind::ManagedPrivateKey);
+    }
+
+    for provider in old_settings
+        .ai_providers
+        .iter()
+        .chain(&payload.settings.ai_providers)
+    {
+        add_secret_target(&mut targets, &provider.id, SecretKind::AiProviderApiKey);
+    }
+    for secret in &payload.secrets.ai_provider_secrets {
+        add_secret_target(&mut targets, &secret.id, SecretKind::AiProviderApiKey);
+    }
+    add_secret_target(&mut targets, "web_search", SecretKind::WebSearchApiKey);
+
+    targets
+        .into_iter()
+        .map(|(id, kind)| {
+            let value = secret_store.get(&id, kind)?;
+            Ok(SecretSnapshot { id, kind, value })
+        })
+        .collect()
+}
+
+fn add_secret_target(targets: &mut Vec<(String, SecretKind)>, id: &str, kind: SecretKind) {
+    if targets
+        .iter()
+        .any(|(existing_id, existing_kind)| existing_id == id && *existing_kind == kind)
+    {
+        return;
+    }
+    targets.push((id.to_string(), kind));
+}
+
+fn secret_kind_label(kind: SecretKind) -> &'static str {
+    match kind {
+        SecretKind::Password => "password",
+        SecretKind::Passphrase => "passphrase",
+        SecretKind::ManagedPrivateKey => "managed-private-key",
+        SecretKind::AiProviderApiKey => "ai-provider-api-key",
+        SecretKind::WebSearchApiKey => "web-search-api-key",
+    }
 }
 
 fn decrypt_payload(payload: &SyncPayload, passphrase: &str) -> Result<SyncPlaintextPayload> {
@@ -306,7 +512,7 @@ fn cleanup_removed_secrets(
     old_keys: &[ManagedKeyRecord],
     old_ai_provider_ids: &[String],
     secret_store: &SecretStore,
-) {
+) -> Result<()> {
     let profile_ids: HashSet<&str> = payload
         .sessions
         .iter()
@@ -314,7 +520,8 @@ fn cleanup_removed_secrets(
         .collect();
     for session in old_sessions {
         if !profile_ids.contains(session.id.as_str()) {
-            secret_store.delete_all(&session.id);
+            secret_store.delete(&session.id, SecretKind::Password)?;
+            secret_store.delete(&session.id, SecretKind::Passphrase)?;
         }
     }
 
@@ -325,7 +532,7 @@ fn cleanup_removed_secrets(
         .collect();
     for key in old_keys {
         if !key_ids.contains(key.id.as_str()) {
-            secret_store.delete_managed_key(&key.id);
+            secret_store.delete(&key.id, SecretKind::ManagedPrivateKey)?;
         }
     }
 
@@ -337,23 +544,29 @@ fn cleanup_removed_secrets(
         .collect();
     for provider in &payload.settings.ai_providers {
         if !provider.has_api_key {
-            secret_store.delete_ai_provider_api_key(&provider.id);
+            secret_store.delete(&provider.id, SecretKind::AiProviderApiKey)?;
         }
     }
     for old_provider_id in old_ai_provider_ids {
         if !provider_ids.contains(old_provider_id.as_str()) {
-            secret_store.delete_ai_provider_api_key(old_provider_id);
+            secret_store.delete(old_provider_id, SecretKind::AiProviderApiKey)?;
         }
     }
 
     if !payload.settings.web_search.has_api_key {
-        secret_store.delete_web_search_api_key();
+        secret_store.delete("web_search", SecretKind::WebSearchApiKey)?;
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_core::keychain::ManagedKeySource;
+    use miaominal_secrets::{
+        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+    };
 
     #[test]
     fn payload_decrypts_with_remote_salt() {
@@ -431,10 +644,6 @@ mod tests {
 
     #[test]
     fn collect_secrets_includes_ai_provider_api_keys() {
-        use miaominal_secrets::{
-            APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend,
-            set_vault_test_parameters,
-        };
         set_vault_test_parameters();
 
         let provider = miaominal_settings::AiProviderConfig {
@@ -478,6 +687,118 @@ mod tests {
         assert_eq!(secrets.ai_provider_secrets[0].id, "provider-1");
         assert_eq!(secrets.ai_provider_secrets[0].api_key, "sk-test");
         let _ = std::fs::remove_file(vault_path);
+    }
+
+    #[test]
+    fn apply_payload_rolls_back_every_store_when_final_commit_fails() {
+        set_vault_test_parameters();
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-payload-transaction-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let session_store = SessionStore::with_path(root.join("sessions.toml"));
+        let snippet_store = SnippetStore::with_path(root.join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(root.join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(root.join("settings.toml"))
+            .expect("settings store should load");
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                root.join("secret_vault.json"),
+                "vault-passphrase",
+            ),
+        );
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let mut old_session = SessionProfile::blank("old-session", 1);
+        old_session.host = "old.example.com".into();
+        let old_snippet = SnippetRecord {
+            id: "old-snippet".into(),
+            description: "Old snippet".into(),
+            package: "ops".into(),
+            language: "bash".into(),
+            script: "echo old".into(),
+        };
+        let old_key = ManagedKeyRecord {
+            id: "old-key".into(),
+            name: "Old key".into(),
+            algorithm: "ssh-ed25519".into(),
+            public_key: "ssh-ed25519 AAAA".into(),
+            source: ManagedKeySource::Generated,
+        };
+        session_store
+            .save(std::slice::from_ref(&old_session))
+            .expect("old sessions should save");
+        snippet_store
+            .save(std::slice::from_ref(&old_snippet))
+            .expect("old snippets should save");
+        key_store
+            .save(std::slice::from_ref(&old_key))
+            .expect("old keys should save");
+        secret_store
+            .set("old-session", SecretKind::Password, "old-password")
+            .expect("old password should save");
+        secret_store
+            .set("old-key", SecretKind::ManagedPrivateKey, "old-private-key")
+            .expect("old private key should save");
+        let mut old_settings = settings_store.settings().clone();
+        old_settings.font_family = "Old Font".into();
+        settings_store
+            .replace(old_settings.clone())
+            .expect("old settings should save");
+
+        let result = apply_plaintext_payload(
+            &sample_plaintext(),
+            &session_store,
+            &snippet_store,
+            &key_store,
+            &secret_store,
+            &mut settings_store,
+            || Err(anyhow!("simulated sync config failure")),
+        );
+
+        let error = result.expect_err("final commit should fail");
+        assert!(error.to_string().contains("rolled back"));
+        let restored_sessions = session_store
+            .read_sessions_content()
+            .expect("sessions should read")
+            .map(|content| session_store.parse_sessions(&content))
+            .transpose()
+            .expect("sessions should parse")
+            .unwrap_or_default();
+        assert_eq!(restored_sessions.len(), 1);
+        assert_eq!(restored_sessions[0].id, old_session.id);
+        assert_eq!(
+            snippet_store.load().expect("snippets should load"),
+            vec![old_snippet]
+        );
+        assert_eq!(key_store.load().expect("keys should load"), vec![old_key]);
+        assert_eq!(
+            settings_store.settings().font_family,
+            old_settings.font_family
+        );
+        assert_eq!(
+            secret_store
+                .get("old-session", SecretKind::Password)
+                .expect("old password should read")
+                .as_deref(),
+            Some("old-password")
+        );
+        assert_eq!(
+            secret_store
+                .get("old-key", SecretKind::ManagedPrivateKey)
+                .expect("old private key should read")
+                .as_deref(),
+            Some("old-private-key")
+        );
+        assert_eq!(
+            secret_store
+                .get("session-1", SecretKind::Password)
+                .expect("new password state should read"),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn encrypted_payload(passphrase: &str, plaintext: &SyncPlaintextPayload) -> SyncPayload {

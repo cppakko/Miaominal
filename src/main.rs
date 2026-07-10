@@ -113,6 +113,10 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
 fn main() {
     init_logging();
 
+    if let Err(error) = miaominal_paths::cleanup_stale_atomic_write_files() {
+        log::warn!("failed to clean stale atomic-write files: {error:?}");
+    }
+
     if let Err(message) = ensure_graphical_session() {
         eprintln!("{message}");
         std::process::exit(1);

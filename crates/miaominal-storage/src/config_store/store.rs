@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::snippet::SnippetRecord;
-use miaominal_paths as paths;
+use miaominal_paths::{self as paths, atomic_write};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -28,6 +28,11 @@ impl SessionStore {
         Ok(Self {
             sessions_file: paths::config_file("sessions.toml")?,
         })
+    }
+
+    #[doc(hidden)]
+    pub fn with_path(sessions_file: PathBuf) -> Self {
+        Self { sessions_file }
     }
 
     pub fn read_sessions_content(&self) -> Result<Option<String>> {
@@ -63,8 +68,7 @@ impl SessionStore {
         })
         .context("failed to serialize session profiles")?;
 
-        fs::write(&self.sessions_file, content)
-            .with_context(|| format!("failed to write {}", self.sessions_file.display()))?;
+        atomic_write(&self.sessions_file, content)?;
 
         Ok(())
     }
@@ -80,6 +84,11 @@ impl SnippetStore {
         Ok(Self {
             snippets_file: paths::config_file("snippets.toml")?,
         })
+    }
+
+    #[doc(hidden)]
+    pub fn with_path(snippets_file: PathBuf) -> Self {
+        Self { snippets_file }
     }
 
     pub fn load(&self) -> Result<Vec<SnippetRecord>> {
@@ -111,8 +120,7 @@ impl SnippetStore {
         })
         .context("failed to serialize snippets")?;
 
-        fs::write(&self.snippets_file, content)
-            .with_context(|| format!("failed to write {}", self.snippets_file.display()))?;
+        atomic_write(&self.snippets_file, content)?;
 
         Ok(())
     }

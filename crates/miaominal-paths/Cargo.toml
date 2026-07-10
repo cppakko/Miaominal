@@ -7,3 +7,5 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 directories.workspace = true
+log.workspace = true
+tempfile.workspace = true
