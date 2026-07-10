@@ -104,6 +104,14 @@ impl AgentPolicy {
     }
 
     pub fn decide_command(&self, command: &str, approved: bool) -> AgentPolicyDecision {
+        if let Some(path) = sensitive_path_in_command(command) {
+            return AgentPolicyDecision::Deny {
+                reason: format!(
+                    "command `{command}` references sensitive path `{path}`, which is blocked by the sensitive path denylist"
+                ),
+            };
+        }
+
         let risk = classify_command(command);
         if risk == AgentRiskLevel::L4Forbidden {
             return AgentPolicyDecision::Deny {
@@ -134,91 +142,249 @@ impl AgentPolicy {
 }
 
 pub fn classify_command(command: &str) -> AgentRiskLevel {
+    let analysis = analyze_shell_command(command);
     let normalized = normalize_command(command);
     if is_forbidden_command(&normalized) {
         return AgentRiskLevel::L4Forbidden;
     }
-    if contains_any(
-        &normalized,
-        &[
-            " systemctl restart ",
-            " systemctl reload ",
-            " docker restart ",
-            " docker compose ",
-            " apt install ",
-            " apt-get install ",
-            " brew install ",
-            " restart-service ",
-            " stop-service ",
-            " set-service ",
-            " net stop ",
-            " sc stop ",
-            " sc config ",
-        ],
-    ) {
-        return AgentRiskLevel::L2ServiceImpacting;
+
+    // Shell control syntax can introduce additional commands or write output. We do not
+    // auto-approve compound shell programs, even when one segment happens to be read-only.
+    if analysis.has_control_operator {
+        return AgentRiskLevel::L1LowMutation;
     }
-    if contains_any(
-        &normalized,
-        &[
-            " sudo ",
-            " mv ",
-            " cp ",
-            " install ",
-            " chmod ",
-            " chown ",
-            " tee ",
-            " patch ",
-            " git apply ",
-            " move-item ",
-            " set-acl ",
-            " icacls ",
-            " takeown ",
-            " new-localuser ",
-            " add-localgroupmember ",
-            " set-executionpolicy ",
-            " net user ",
-            " net localgroup ",
-            " reg add ",
-        ],
-    ) {
-        return AgentRiskLevel::L3Dangerous;
+
+    classify_simple_command(&analysis.tokens)
+}
+
+#[derive(Debug, Default)]
+struct ShellCommandAnalysis {
+    tokens: Vec<String>,
+    has_control_operator: bool,
+}
+
+fn analyze_shell_command(command: &str) -> ShellCommandAnalysis {
+    let mut analysis = ShellCommandAnalysis::default();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut characters = command.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        if let Some(expected_quote) = quote {
+            if character == expected_quote {
+                quote = None;
+            } else {
+                // Command substitution remains active inside double quotes in POSIX shells
+                // and PowerShell. Treat it like other compound shell syntax.
+                if expected_quote == '"'
+                    && (character == '`' || (character == '$' && characters.peek() == Some(&'(')))
+                {
+                    analysis.has_control_operator = true;
+                }
+                token.push(character);
+            }
+            continue;
+        }
+
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '|' | '&' | ';' | '<' | '>' | '(' | ')' | '`' => {
+                push_shell_token(&mut analysis.tokens, &mut token);
+                analysis.has_control_operator = true;
+            }
+            '\r' | '\n' => {
+                push_shell_token(&mut analysis.tokens, &mut token);
+                analysis.has_control_operator = true;
+            }
+            character if character.is_whitespace() => {
+                push_shell_token(&mut analysis.tokens, &mut token);
+            }
+            _ => token.push(character),
+        }
     }
-    if contains_any(
-        &normalized,
-        &[
-            " pwd ",
-            " whoami ",
-            " uptime ",
-            " df ",
-            " free ",
-            " systemctl status ",
-            " journalctl ",
-            " ss ",
-            " docker ps ",
-            " docker logs ",
-            " nginx -t ",
-            " grep ",
-            " rg ",
-            " find ",
-            " cat ",
-            " sed ",
-            " get-service ",
-            " get-process ",
-            " get-eventlog ",
-            " get-content ",
-            " select-string ",
-            " where.exe ",
-            " dir ",
-            " type ",
-            " get-childitem ",
-            " test-path ",
-            " get-itemproperty ",
-        ],
-    ) {
-        return AgentRiskLevel::L0ReadOnly;
+
+    push_shell_token(&mut analysis.tokens, &mut token);
+    analysis
+}
+
+fn push_shell_token(tokens: &mut Vec<String>, token: &mut String) {
+    if !token.is_empty() {
+        tokens.push(std::mem::take(token));
     }
-    AgentRiskLevel::L1LowMutation
+}
+
+fn classify_simple_command(tokens: &[String]) -> AgentRiskLevel {
+    let Some((program, arguments)) = command_and_arguments(tokens) else {
+        return AgentRiskLevel::L1LowMutation;
+    };
+
+    match program.as_str() {
+        "systemctl" => match first_argument(arguments).as_deref() {
+            Some("restart" | "reload") => AgentRiskLevel::L2ServiceImpacting,
+            Some("status") => AgentRiskLevel::L0ReadOnly,
+            _ => AgentRiskLevel::L1LowMutation,
+        },
+        "docker" => match first_argument(arguments).as_deref() {
+            Some("restart" | "compose") => AgentRiskLevel::L2ServiceImpacting,
+            Some("ps" | "logs") => AgentRiskLevel::L0ReadOnly,
+            _ => AgentRiskLevel::L1LowMutation,
+        },
+        "apt" | "apt-get" | "brew" if has_argument(arguments, "install") => {
+            AgentRiskLevel::L2ServiceImpacting
+        }
+        "restart-service" | "stop-service" | "set-service" => AgentRiskLevel::L2ServiceImpacting,
+        "sc" if matches!(
+            first_argument(arguments).as_deref(),
+            Some("stop" | "config")
+        ) =>
+        {
+            AgentRiskLevel::L2ServiceImpacting
+        }
+        "net" if matches!(first_argument(arguments).as_deref(), Some("stop")) => {
+            AgentRiskLevel::L2ServiceImpacting
+        }
+        "net"
+            if matches!(
+                first_argument(arguments).as_deref(),
+                Some("user" | "localgroup")
+            ) =>
+        {
+            AgentRiskLevel::L3Dangerous
+        }
+        "reg" if matches!(first_argument(arguments).as_deref(), Some("add")) => {
+            AgentRiskLevel::L3Dangerous
+        }
+        "git" if matches!(first_argument(arguments).as_deref(), Some("apply")) => {
+            AgentRiskLevel::L3Dangerous
+        }
+        "sudo"
+        | "mv"
+        | "cp"
+        | "install"
+        | "chmod"
+        | "chown"
+        | "tee"
+        | "patch"
+        | "move-item"
+        | "set-acl"
+        | "icacls"
+        | "takeown"
+        | "new-localuser"
+        | "add-localgroupmember"
+        | "set-executionpolicy" => AgentRiskLevel::L3Dangerous,
+        "nginx" if has_argument(arguments, "-t") => AgentRiskLevel::L0ReadOnly,
+        "find"
+            if has_any_argument(
+                arguments,
+                &[
+                    "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls", "-fprint",
+                ],
+            ) =>
+        {
+            AgentRiskLevel::L3Dangerous
+        }
+        "rg" if has_any_argument(arguments, &["--pre", "--pre-glob"]) => {
+            AgentRiskLevel::L1LowMutation
+        }
+        "journalctl"
+            if has_any_argument(
+                arguments,
+                &[
+                    "--flush",
+                    "--rotate",
+                    "--sync",
+                    "--vacuum-size",
+                    "--vacuum-time",
+                    "--vacuum-files",
+                    "--relinquish-var",
+                ],
+            ) =>
+        {
+            AgentRiskLevel::L1LowMutation
+        }
+        "pwd" | "whoami" | "uptime" | "df" | "free" | "journalctl" | "ss" | "grep" | "rg"
+        | "find" | "cat" | "get-service" | "get-process" | "get-eventlog" | "get-content"
+        | "select-string" | "where" | "dir" | "type" | "get-childitem" | "test-path"
+        | "get-itemproperty" => AgentRiskLevel::L0ReadOnly,
+        _ => AgentRiskLevel::L1LowMutation,
+    }
+}
+
+fn command_and_arguments(tokens: &[String]) -> Option<(String, &[String])> {
+    let command_index = tokens
+        .iter()
+        .position(|token| !looks_like_environment_assignment(token))?;
+    let command_token = &tokens[command_index];
+    if command_token.contains('/') || command_token.contains('\\') {
+        // A path-qualified executable can merely be named like a trusted read-only command.
+        // Keep it outside the auto-approved allowlist.
+        return Some((command_token.to_lowercase(), &tokens[command_index + 1..]));
+    }
+
+    let program = command_token.to_lowercase();
+    let program = program
+        .strip_suffix(".exe")
+        .or_else(|| program.strip_suffix(".cmd"))
+        .or_else(|| program.strip_suffix(".bat"))
+        .unwrap_or(&program)
+        .to_string();
+    Some((program, &tokens[command_index + 1..]))
+}
+
+fn looks_like_environment_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn first_argument(arguments: &[String]) -> Option<String> {
+    arguments.first().map(|argument| argument.to_lowercase())
+}
+
+fn has_argument(arguments: &[String], expected: &str) -> bool {
+    arguments
+        .iter()
+        .any(|argument| argument.eq_ignore_ascii_case(expected))
+}
+
+fn has_any_argument(arguments: &[String], expected: &[&str]) -> bool {
+    arguments.iter().any(|argument| {
+        expected.iter().any(|expected| {
+            argument.eq_ignore_ascii_case(expected)
+                || argument.to_lowercase().starts_with(&format!("{expected}="))
+        })
+    })
+}
+
+fn sensitive_path_in_command(command: &str) -> Option<String> {
+    let analysis = analyze_shell_command(command);
+
+    for token in &analysis.tokens {
+        let mut candidates = vec![token.as_str()];
+        if let Some((_, value)) = token.split_once('=') {
+            candidates.push(value);
+        }
+        if token.starts_with('-')
+            && let Some((_, value)) = token.split_once(':')
+        {
+            candidates.push(value);
+        }
+
+        for candidate in candidates {
+            let candidate = candidate
+                .trim_matches(|character: char| matches!(character, ',' | '[' | ']' | '{' | '}'));
+            let candidate = candidate.strip_prefix("file://").unwrap_or(candidate);
+            if is_sensitive_path(candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 pub fn is_sensitive_path(path: &str) -> bool {
@@ -283,10 +449,6 @@ fn is_forbidden_command(normalized: &str) -> bool {
         || normalized.contains(" clear-recyclebin -force")
         || normalized.contains(" stop-computer")
         || normalized.contains(" restart-computer")
-}
-
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 fn normalize_command(command: &str) -> String {
@@ -473,6 +635,107 @@ mod tests {
             policy.decide_command("systemctl status nginx --no-pager", false),
             AgentPolicyDecision::Allow
         );
+        assert_eq!(
+            policy.decide_command("cat README.md", false),
+            AgentPolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.decide_command("Get-Content C:\\logs\\app.log", false),
+            AgentPolicyDecision::Allow
+        );
+    }
+
+    #[test]
+    fn readonly_words_do_not_make_other_commands_readonly() {
+        let policy = AgentPolicy;
+
+        for command in [
+            "echo cat",
+            "Write-Output Get-Content",
+            "printf whoami",
+            "./cat README.md",
+            "C:\\temp\\Get-Content.exe file",
+        ] {
+            assert!(
+                matches!(
+                    policy.decide_command(command, false),
+                    AgentPolicyDecision::NeedsApproval { .. }
+                ),
+                "expected approval for command containing a read-only word: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn compound_commands_and_redirections_need_approval() {
+        let policy = AgentPolicy;
+        let commands = [
+            "cat file && rm -rf \"$HOME/project\"",
+            "Get-Content file | Remove-Item other-file",
+            "cat file > copy",
+            "cat file; rm file",
+            "cat file\nrm file",
+            "cat \"$(rm file)\"",
+            "cat \"`rm file`\"",
+        ];
+
+        for command in commands {
+            assert!(
+                matches!(
+                    policy.decide_command(command, false),
+                    AgentPolicyDecision::NeedsApproval { .. }
+                ),
+                "expected approval for compound shell command: {command}"
+            );
+            assert_eq!(
+                policy.decide_command(command, true),
+                AgentPolicyDecision::Allow,
+                "expected approved non-forbidden command to be allowed: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_shell_metacharacters_do_not_create_false_segments() {
+        let policy = AgentPolicy;
+
+        assert_eq!(
+            policy.decide_command("Select-String -Pattern 'error|warning' app.log", false),
+            AgentPolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.decide_command("cat 'file;name.txt'", false),
+            AgentPolicyDecision::Allow
+        );
+    }
+
+    #[test]
+    fn sensitive_shell_arguments_are_denied_even_when_approved() {
+        let policy = AgentPolicy;
+        let commands = [
+            "cat ~/.ssh/id_rsa",
+            "cat /etc/shadow",
+            "Get-Content \"C:\\Users\\user\\.ssh\\id_rsa\"",
+            "type --file=.env",
+            "Get-Content -LiteralPath:C:\\Windows\\System32\\config\\SAM",
+        ];
+
+        for command in commands {
+            assert!(
+                matches!(
+                    policy.decide_command(command, false),
+                    AgentPolicyDecision::Deny { .. }
+                ),
+                "expected sensitive shell path to be denied: {command}"
+            );
+            assert!(
+                matches!(
+                    policy.decide_command(command, true),
+                    AgentPolicyDecision::Deny { .. }
+                ),
+                "approval must not bypass sensitive shell path policy: {command}"
+            );
+        }
     }
 
     #[test]
