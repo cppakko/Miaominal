@@ -15,8 +15,8 @@ use miaominal_storage::known_hosts_store::KnownHostsStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
@@ -91,6 +91,8 @@ pub enum ToolOutput {
     },
     JobStarted {
         job_id: AgentJobId,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        exec_shell: String,
         poll_after_ms: u64,
         next_action: String,
     },
@@ -139,6 +141,65 @@ pub struct ShellCommandResult {
     pub truncated: bool,
 }
 
+/// Shared cache for the actual shell used by SSH exec channels.
+///
+/// `AgentExecChannel` instances are intentionally cheap to rebuild, but the
+/// detected shell must survive those rebuilds. Entries are scoped to a
+/// profile connection fingerprint so editing the destination, user, proxy
+/// route, or configured shell starts with a fresh detection state.
+#[derive(Clone, Default)]
+pub struct AgentShellRegistry {
+    entries: Arc<StdMutex<HashMap<String, AgentShellRegistryEntry>>>,
+}
+
+struct AgentShellRegistryEntry {
+    connection_fingerprint: String,
+    detected_shell: Arc<AtomicU8>,
+}
+
+impl AgentShellRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn detected_shell_for_profile(&self, profile: &SessionProfile) -> Arc<AtomicU8> {
+        let fingerprint = shell_connection_fingerprint(profile);
+        let Ok(mut entries) = self.entries.lock() else {
+            return Arc::new(AtomicU8::new(0));
+        };
+        let entry = entries
+            .entry(profile.id.clone())
+            .or_insert_with(|| AgentShellRegistryEntry {
+                connection_fingerprint: fingerprint.clone(),
+                detected_shell: Arc::new(AtomicU8::new(0)),
+            });
+        if entry.connection_fingerprint != fingerprint {
+            *entry = AgentShellRegistryEntry {
+                connection_fingerprint: fingerprint,
+                detected_shell: Arc::new(AtomicU8::new(0)),
+            };
+        }
+        entry.detected_shell.clone()
+    }
+}
+
+fn shell_connection_fingerprint(profile: &SessionProfile) -> String {
+    let configured_shell = match profile.shell_type {
+        ShellType::Posix => 1,
+        ShellType::Fish => 2,
+        ShellType::PowerShell => 3,
+        ShellType::Cmd => 4,
+    };
+    format!(
+        "{}\0{}\0{}\0{}\0{}",
+        profile.host.trim().to_ascii_lowercase(),
+        profile.port,
+        profile.username,
+        configured_shell,
+        profile.proxy_jump_profile_ids.join("\0"),
+    )
+}
+
 #[derive(Clone)]
 pub struct AgentExecChannel {
     profile: SessionProfile,
@@ -184,6 +245,43 @@ impl AgentExecChannel {
         known_hosts: KnownHostsStore,
         jobs: AgentJobRegistry,
     ) -> Self {
+        Self::for_profile_with_state(
+            profile,
+            all_profiles,
+            secrets,
+            known_hosts,
+            jobs,
+            Arc::new(AtomicU8::new(0)),
+        )
+    }
+
+    pub fn for_profile_with_registries(
+        profile: SessionProfile,
+        all_profiles: Vec<SessionProfile>,
+        secrets: SecretStore,
+        known_hosts: KnownHostsStore,
+        jobs: AgentJobRegistry,
+        shells: AgentShellRegistry,
+    ) -> Self {
+        let detected_shell = shells.detected_shell_for_profile(&profile);
+        Self::for_profile_with_state(
+            profile,
+            all_profiles,
+            secrets,
+            known_hosts,
+            jobs,
+            detected_shell,
+        )
+    }
+
+    fn for_profile_with_state(
+        profile: SessionProfile,
+        all_profiles: Vec<SessionProfile>,
+        secrets: SecretStore,
+        known_hosts: KnownHostsStore,
+        jobs: AgentJobRegistry,
+        detected_shell: Arc<AtomicU8>,
+    ) -> Self {
         Self {
             profile,
             all_profiles,
@@ -199,7 +297,7 @@ impl AgentExecChannel {
             terminal_exec: None,
             aux_channels: HashMap::new(),
             policy_bypass: false,
-            detected_shell: Arc::new(AtomicU8::new(0)),
+            detected_shell,
         }
     }
 
@@ -669,6 +767,22 @@ mod tests {
 
         assert_eq!(channel.detected_shell_type(), Some(ShellType::Cmd));
         assert_eq!(channel.shell_label(), "cmd");
+    }
+
+    #[test]
+    fn legacy_job_started_output_defaults_exec_shell() {
+        let value = serde_json::json!({
+            "kind": "job_started",
+            "job_id": AgentJobId::new(),
+            "poll_after_ms": 1000,
+            "next_action": "poll"
+        });
+        let output: ToolOutput = serde_json::from_value(value).unwrap();
+
+        match output {
+            ToolOutput::JobStarted { exec_shell, .. } => assert!(exec_shell.is_empty()),
+            other => panic!("unexpected output: {other:?}"),
+        }
     }
 
     #[test]

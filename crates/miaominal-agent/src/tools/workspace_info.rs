@@ -106,6 +106,10 @@ pub(crate) async fn ensure_exec_shell_detected(channel: &AgentExecChannel) {
         return;
     }
 
+    refresh_exec_shell_detected(channel).await;
+}
+
+pub(crate) async fn refresh_exec_shell_detected(channel: &AgentExecChannel) {
     if let Some(actual) = detect_exec_shell(channel).await {
         let before = channel.shell_type();
         if actual != before {
@@ -155,27 +159,46 @@ fn probe_attempts(label: &'static str) -> Vec<(&'static str, &'static str, Probe
 }
 
 async fn detect_exec_shell(channel: &AgentExecChannel) -> Option<ShellType> {
-    if let Ok(out) = channel
-        .exec("if defined ComSpec echo MIAOMINAL_EXEC_SHELL=cmd")
-        .await
-        && out
-            .lines()
-            .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=cmd")
-    {
-        return Some(ShellType::Cmd);
+    async fn is_cmd(channel: &AgentExecChannel) -> bool {
+        channel
+            .exec("if defined ComSpec echo MIAOMINAL_EXEC_SHELL=cmd")
+            .await
+            .is_ok_and(|out| {
+                out.lines()
+                    .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=cmd")
+            })
     }
 
-    if let Ok(out) = channel
-        .exec("if ($PSVersionTable) { Write-Output 'MIAOMINAL_EXEC_SHELL=powershell' }")
-        .await
-        && out
-            .lines()
-            .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=powershell")
-    {
-        return Some(ShellType::PowerShell);
+    async fn is_powershell(channel: &AgentExecChannel) -> bool {
+        channel
+            .exec("if ($PSVersionTable) { Write-Output 'MIAOMINAL_EXEC_SHELL=powershell' }")
+            .await
+            .is_ok_and(|out| {
+                out.lines()
+                    .any(|line| line.trim() == "MIAOMINAL_EXEC_SHELL=powershell")
+            })
     }
 
-    None
+    match channel.shell_type() {
+        ShellType::PowerShell => {
+            if is_powershell(channel).await {
+                Some(ShellType::PowerShell)
+            } else if is_cmd(channel).await {
+                Some(ShellType::Cmd)
+            } else {
+                None
+            }
+        }
+        _ => {
+            if is_cmd(channel).await {
+                Some(ShellType::Cmd)
+            } else if is_powershell(channel).await {
+                Some(ShellType::PowerShell)
+            } else {
+                None
+            }
+        }
+    }
 }
 
 // ── Probe output validation ──

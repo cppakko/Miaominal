@@ -98,6 +98,15 @@ pub(in crate::ui::shell::layout) fn number_field(
     value?.get(key).and_then(serde_json::Value::as_i64)
 }
 
+pub(in crate::ui::shell::layout) fn poll_job_output_truncated(
+    result: Option<&serde_json::Value>,
+) -> bool {
+    result
+        .and_then(|value| value.get("truncated"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub(in crate::ui::shell::layout) fn list_entries_text(
     value: Option<&serde_json::Value>,
 ) -> Option<String> {
@@ -412,4 +421,21 @@ pub(in crate::ui::shell::layout) fn format_tool_call_copy_text(
         text.push_str(result);
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_job_output_truncated_requires_true_boolean_flag() {
+        let truncated = serde_json::json!({ "truncated": true });
+        let complete = serde_json::json!({ "truncated": false });
+        let legacy = serde_json::json!({});
+
+        assert!(poll_job_output_truncated(Some(&truncated)));
+        assert!(!poll_job_output_truncated(Some(&complete)));
+        assert!(!poll_job_output_truncated(Some(&legacy)));
+        assert!(!poll_job_output_truncated(None));
+    }
 }

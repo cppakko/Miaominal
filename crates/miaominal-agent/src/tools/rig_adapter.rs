@@ -272,7 +272,8 @@ fn string_array_schema(description: &str) -> Value {
 
 fn tool_parameters(name: &str) -> Value {
     match name {
-        "workspace_info" | "list_jobs" | "approval" => object_schema(Vec::new(), &[]),
+        "workspace_info" | "list_jobs" => object_schema(vec![("target", target_schema())], &[]),
+        "approval" => object_schema(Vec::new(), &[]),
         "read" => object_schema(
             vec![
                 ("path", string_schema("Remote workspace file path to read.")),

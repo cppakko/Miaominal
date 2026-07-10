@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use miaominal_agent::{
-    AgentExecChannel, AgentJobRegistry, AgentToolCallRequest, AgentToolCallResponse,
+    AgentExecChannel, AgentJobRegistry, AgentShellRegistry, AgentToolCallRequest,
+    AgentToolCallResponse,
 };
 use miaominal_core::profile::SessionProfile;
 use miaominal_secrets::SecretKind;
@@ -15,6 +16,7 @@ pub struct AgentService {
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     jobs: AgentJobRegistry,
+    shells: AgentShellRegistry,
     web_search: WebSearchConfig,
 }
 
@@ -25,6 +27,7 @@ impl AgentService {
             secrets,
             known_hosts,
             jobs: AgentJobRegistry::new(),
+            shells: AgentShellRegistry::new(),
             web_search: WebSearchConfig::default(),
         }
     }
@@ -45,16 +48,39 @@ impl AgentService {
             .cloned()
             .ok_or_else(|| anyhow!("profile `{profile_id}` was not found"))?;
 
-        let mut channel = AgentExecChannel::for_profile_with_jobs(
+        Ok(self.channel_for_profile_snapshot(profile, sessions))
+    }
+
+    pub fn channel_for_profile_snapshot(
+        &self,
+        profile: SessionProfile,
+        sessions: &[SessionProfile],
+    ) -> AgentExecChannel {
+        self.channel_for_profile_snapshot_with_stores(
             profile,
-            sessions.to_vec(),
+            sessions,
             self.secrets.clone(),
             self.known_hosts.clone(),
+        )
+    }
+
+    pub fn channel_for_profile_snapshot_with_stores(
+        &self,
+        profile: SessionProfile,
+        sessions: &[SessionProfile],
+        secrets: SecretStore,
+        known_hosts: KnownHostsStore,
+    ) -> AgentExecChannel {
+        let mut channel = AgentExecChannel::for_profile_with_registries(
+            profile,
+            sessions.to_vec(),
+            secrets.clone(),
+            known_hosts,
             self.jobs.clone(),
+            self.shells.clone(),
         );
         if self.web_search.enabled {
-            let web_search_api_key = self
-                .secrets
+            let web_search_api_key = secrets
                 .get("web_search", SecretKind::WebSearchApiKey)
                 .unwrap_or_else(|error| {
                     log::warn!("failed to load web search API key: {error:?}");
@@ -63,7 +89,7 @@ impl AgentService {
             channel = channel.with_web_search_config(self.web_search.clone(), web_search_api_key);
         }
 
-        Ok(channel)
+        channel
     }
 
     pub fn call_tool(
@@ -137,5 +163,41 @@ mod tests {
         service
             .channel_for_profile("session-1", &[profile("session-1", ShellType::Cmd)])
             .expect("Cmd profile should be accepted");
+    }
+
+    #[test]
+    fn detected_shell_is_shared_across_rebuilt_channels() {
+        let service = service();
+        let sessions = [profile("session-1", ShellType::Cmd)];
+
+        let first = service
+            .channel_for_profile("session-1", &sessions)
+            .expect("first channel should build");
+        first.set_detected_shell(ShellType::PowerShell);
+
+        let second = service
+            .channel_for_profile("session-1", &sessions)
+            .expect("second channel should build");
+        assert_eq!(second.detected_shell_type(), Some(ShellType::PowerShell));
+        assert_eq!(second.shell_type(), ShellType::PowerShell);
+    }
+
+    #[test]
+    fn changing_connection_fingerprint_resets_detected_shell() {
+        let service = service();
+        let original = profile("session-1", ShellType::PowerShell);
+        let first = service
+            .channel_for_profile("session-1", std::slice::from_ref(&original))
+            .expect("first channel should build");
+        first.set_detected_shell(ShellType::Cmd);
+
+        let mut changed = original;
+        changed.host = "other.example.com".into();
+        let second = service
+            .channel_for_profile("session-1", std::slice::from_ref(&changed))
+            .expect("changed channel should build");
+
+        assert_eq!(second.detected_shell_type(), None);
+        assert_eq!(second.shell_type(), ShellType::PowerShell);
     }
 }

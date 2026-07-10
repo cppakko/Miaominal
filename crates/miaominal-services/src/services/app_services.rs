@@ -9,7 +9,7 @@ use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::ChatService;
+use crate::{AgentService, ChatService};
 
 pub struct AppServices {
     pub runtime: TokioHandle,
@@ -19,6 +19,7 @@ pub struct AppServices {
     pub known_hosts: KnownHostsStore,
     pub keychain_store: Option<ManagedKeyStore>,
     pub chat_service: Option<ChatService>,
+    pub agent_service: AgentService,
 }
 
 pub struct LoadedAppData {
@@ -42,6 +43,8 @@ impl AppServices {
         keychain_store: Option<ManagedKeyStore>,
         chat_service: Option<ChatService>,
     ) -> Self {
+        let agent_service =
+            AgentService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
         Self {
             runtime,
             session_store,
@@ -50,6 +53,7 @@ impl AppServices {
             known_hosts,
             keychain_store,
             chat_service,
+            agent_service,
         }
     }
 

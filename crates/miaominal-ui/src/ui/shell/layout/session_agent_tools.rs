@@ -449,6 +449,7 @@ pub(in crate::ui::shell::layout) fn render_poll_job_tool_body(
     }
     let stdout = result.and_then(|value| string_field(Some(value), "stdout"));
     let stderr = result.and_then(|value| string_field(Some(value), "stderr"));
+    let output_truncated = poll_job_output_truncated(result);
 
     v_flex()
         .w_full()
@@ -481,6 +482,16 @@ pub(in crate::ui::shell::layout) fn render_poll_job_tool_body(
                 ))
             },
         )
+        .when(output_truncated, |this| {
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                tool_field_label("result"),
+                None,
+                i18n::string("workspace.panel.agent.tool_result.output_truncated"),
+                colors,
+                false,
+            ))
+        })
         .when(result.is_none(), |this| {
             this.when_some(tool_display_result(tool_call), |this, content| {
                 this.child(render_tool_terminal_block(

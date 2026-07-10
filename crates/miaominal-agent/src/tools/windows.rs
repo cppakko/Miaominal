@@ -1,4 +1,7 @@
 use base64::Engine as _;
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use std::io::Write as _;
 
 pub(crate) fn powershell_encoded_payload(script: &str) -> String {
     let mut bytes = Vec::with_capacity(script.len() * 2);
@@ -13,4 +16,82 @@ pub(crate) fn powershell_encoded_command(script: &str) -> String {
         "powershell.exe -NoProfile -EncodedCommand {}",
         powershell_encoded_payload(script)
     )
+}
+
+/// Encode a large PowerShell script behind a small gzip bootstrap.
+///
+/// CMD limits command lines to roughly 8 KiB. Plain UTF-16 `EncodedCommand`
+/// expands the job-management scripts beyond that limit, so compress the real
+/// script and only encode the compact decompressor as UTF-16.
+pub(crate) fn powershell_compressed_command(script: &str) -> String {
+    let payload = powershell_compressed_payload(script);
+    let bootstrap = format!(
+        concat!(
+            "$b=[Convert]::FromBase64String('{payload}');",
+            "$m=New-Object IO.MemoryStream(,$b);",
+            "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);",
+            "$r=New-Object IO.StreamReader($g,[Text.Encoding]::UTF8);",
+            "& ([ScriptBlock]::Create($r.ReadToEnd()))"
+        ),
+        payload = payload,
+    );
+    powershell_encoded_command(&bootstrap)
+}
+
+/// Encode a large PowerShell script for a CMD exec channel without encoding
+/// the compressed payload twice. The base64 gzip data is safe in an unquoted
+/// `set NAME=value` assignment; the short encoded bootstrap removes it before
+/// real script starts, so detached children do not inherit the staging value.
+pub(crate) fn powershell_compressed_command_for_cmd(script: &str) -> String {
+    const ENV_NAME: &str = "MIAOMINAL_AGENT_PS_GZIP";
+    let payload = powershell_compressed_payload(script);
+    let bootstrap = format!(
+        concat!(
+            "$p=$env:{env_name};",
+            "Remove-Item Env:{env_name} -ErrorAction SilentlyContinue;",
+            "$b=[Convert]::FromBase64String($p);",
+            "$m=New-Object IO.MemoryStream(,$b);",
+            "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);",
+            "$r=New-Object IO.StreamReader($g,[Text.Encoding]::UTF8);",
+            "& ([ScriptBlock]::Create($r.ReadToEnd()))"
+        ),
+        env_name = ENV_NAME,
+    );
+    format!(
+        "set {ENV_NAME}={payload}& {}",
+        powershell_encoded_command(&bootstrap)
+    )
+}
+
+pub(crate) fn powershell_compressed_payload(script: &str) -> String {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder
+        .write_all(script.as_bytes())
+        .expect("writing gzip data to memory cannot fail");
+    let compressed = encoder
+        .finish()
+        .expect("finishing gzip data in memory cannot fail");
+    base64::engine::general_purpose::STANDARD.encode(compressed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compressed_command_stays_below_cmd_limit_for_repetitive_scripts() {
+        let script = "Write-Output 'hello';".repeat(2_000);
+        let command = powershell_compressed_command(&script);
+        assert!(command.len() < 8_191, "command was {} bytes", command.len());
+    }
+
+    #[test]
+    fn cmd_compressed_command_stages_payload_only_once() {
+        let script = "Write-Output 'hello';".repeat(2_000);
+        let command = powershell_compressed_command_for_cmd(&script);
+
+        assert!(command.starts_with("set MIAOMINAL_AGENT_PS_GZIP="));
+        assert!(command.contains("& powershell.exe -NoProfile -EncodedCommand "));
+        assert!(command.len() < 8_191, "command was {} bytes", command.len());
+    }
 }

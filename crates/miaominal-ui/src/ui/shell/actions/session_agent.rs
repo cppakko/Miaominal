@@ -1427,6 +1427,7 @@ impl AppView {
         let approval_mentions = self.resolve_mentions_from_tool_arguments(&arguments);
         let approval_pty_target_taps = approval_mentions.pty_taps.clone();
         let sessions = self.data.sessions.clone();
+        let agent_service = self.services.agent_service.clone();
         let secrets = self.services.secrets.clone();
         let known_hosts = self.services.known_hosts.clone();
         let web_search_config = self.settings_store.settings().web_search.clone();
@@ -1444,9 +1445,9 @@ impl AppView {
                     .build()
                     .map_err(|error| anyhow::anyhow!(error))?;
                 runtime.block_on(async move {
-                    let mut channel = AgentExecChannel::for_profile(
+                    let mut channel = agent_service.channel_for_profile_snapshot_with_stores(
                         profile,
-                        sessions,
+                        &sessions,
                         secrets.clone(),
                         known_hosts,
                     );
@@ -2480,12 +2481,15 @@ impl AppView {
     }
 
     fn agent_exec_channel_for_profile(&self, profile: SessionProfile) -> AgentExecChannel {
-        let mut channel = AgentExecChannel::for_profile(
-            profile,
-            self.data.sessions.clone(),
-            self.services.secrets.clone(),
-            self.services.known_hosts.clone(),
-        );
+        let mut channel = self
+            .services
+            .agent_service
+            .channel_for_profile_snapshot_with_stores(
+                profile,
+                &self.data.sessions,
+                self.services.secrets.clone(),
+                self.services.known_hosts.clone(),
+            );
         let web_search_config = self.settings_store.settings().web_search.clone();
         if web_search_config.enabled {
             let web_search_api_key = self

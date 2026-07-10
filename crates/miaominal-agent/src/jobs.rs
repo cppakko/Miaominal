@@ -1,4 +1,5 @@
 use crate::error::{AgentError, AgentResult};
+use miaominal_core::profile::ShellType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -17,6 +18,18 @@ impl AgentJobId {
         Uuid::from_str(&self.0)
             .map_err(|_| AgentError::JobNotFound(self.0.clone()))
             .map(|uuid| format!("/tmp/miaominal-agent-{uuid}.status"))
+    }
+
+    pub fn remote_marker_for_shell(&self, shell_type: ShellType) -> AgentResult<String> {
+        let uuid = Uuid::from_str(&self.0).map_err(|_| AgentError::JobNotFound(self.0.clone()))?;
+        Ok(match shell_type {
+            ShellType::Posix | ShellType::Fish => {
+                format!("/tmp/miaominal-agent-{uuid}.status")
+            }
+            ShellType::PowerShell | ShellType::Cmd => {
+                format!(r"%TEMP%\miaominal-agent-{uuid}.status")
+            }
+        })
     }
 }
 
@@ -42,6 +55,8 @@ pub struct JobPollResult {
     pub exit_status: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +123,19 @@ impl AgentJobRegistry {
             .map_or_else(|| job_id.remote_marker(), Ok)
     }
 
+    pub fn remote_marker_for_shell(
+        &self,
+        job_id: &AgentJobId,
+        shell_type: ShellType,
+    ) -> AgentResult<String> {
+        self.jobs
+            .lock()
+            .map_err(|_| AgentError::Backend(anyhow::anyhow!("job registry is poisoned")))?
+            .get(job_id)
+            .map(|record| record.marker.clone())
+            .map_or_else(|| job_id.remote_marker_for_shell(shell_type), Ok)
+    }
+
     pub fn list(&self) -> AgentResult<Vec<AgentJobSummary>> {
         let mut jobs = self
             .jobs
@@ -171,6 +199,25 @@ mod tests {
     }
 
     #[test]
+    fn registry_recovers_windows_marker_from_temp_directory() {
+        let registry = AgentJobRegistry::new();
+        let job_id = AgentJobId::new();
+
+        assert_eq!(
+            registry
+                .remote_marker_for_shell(&job_id, ShellType::PowerShell)
+                .unwrap(),
+            format!(r"%TEMP%\miaominal-agent-{}.status", job_id.0)
+        );
+        assert_eq!(
+            registry
+                .remote_marker_for_shell(&job_id, ShellType::Cmd)
+                .unwrap(),
+            format!(r"%TEMP%\miaominal-agent-{}.status", job_id.0)
+        );
+    }
+
+    #[test]
     fn registry_rejects_untrusted_job_id_paths() {
         let registry = AgentJobRegistry::new();
         let job_id = AgentJobId("../../etc/passwd".into());
@@ -179,5 +226,19 @@ mod tests {
             registry.remote_marker(&job_id),
             Err(AgentError::JobNotFound(_))
         ));
+    }
+
+    #[test]
+    fn legacy_poll_result_defaults_truncated_to_false() {
+        let value = serde_json::json!({
+            "job_id": AgentJobId::new(),
+            "status": "exited",
+            "exit_status": 0,
+            "stdout": "done",
+            "stderr": ""
+        });
+        let result: JobPollResult = serde_json::from_value(value).unwrap();
+
+        assert!(!result.truncated);
     }
 }
