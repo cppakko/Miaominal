@@ -219,6 +219,11 @@ pub(super) struct ConnectedSession {
     pub jump_sessions: Vec<Arc<client::Handle<ClientHandler>>>,
 }
 
+struct ConnectedClient {
+    handle: client::Handle<ClientHandler>,
+    remote_forward_targets: RemoteForwardTargets,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn start_session(
     runtime: &TokioHandle,
@@ -975,14 +980,15 @@ fn build_client_handler(
     profile: &SessionProfile,
     known_hosts: KnownHostsStore,
     event_sender: &FuturesUnboundedSender<SessionEvent>,
-    remote_forward_targets: &RemoteForwardTargets,
 ) -> (
     ClientHandler,
     Arc<Mutex<Option<oneshot::Sender<HostKeyDecision>>>>,
+    RemoteForwardTargets,
 ) {
     let (decision_sender, decision_receiver) = oneshot::channel();
     let decision_inbox = Arc::new(Mutex::new(Some(decision_receiver)));
     let pending_decision = Arc::new(Mutex::new(Some(decision_sender)));
+    let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
 
     (
         ClientHandler {
@@ -995,6 +1001,7 @@ fn build_client_handler(
             agent_forwarding_allowed: profile.agent_forwarding,
         },
         pending_decision,
+        remote_forward_targets,
     )
 }
 
@@ -1058,11 +1065,10 @@ pub(super) async fn connect_authenticated_session_internal(
         .map(|profile| hydrate_profile_from_secrets(profile, &secrets))
         .collect::<Vec<_>>();
     let mut configured_port_forward_rules = profile.port_forwarding_rules.clone();
-    let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
     let config = connection::default_client_config();
     let mut jump_sessions = Vec::new();
 
-    let session = if let Some(first_hop) = proxy_jump_profiles.first() {
+    let (session, remote_forward_targets) = if let Some(first_hop) = proxy_jump_profiles.first() {
         emit_status(
             event_sender,
             format!(
@@ -1072,13 +1078,15 @@ pub(super) async fn connect_authenticated_session_internal(
             ),
         )?;
 
-        let mut current_session = connect_profile_session(
+        let ConnectedClient {
+            handle: mut current_session,
+            remote_forward_targets: mut current_remote_forward_targets,
+        } = connect_profile_session(
             first_hop,
             config.clone(),
             known_hosts.clone(),
             command_receiver,
             event_sender,
-            &remote_forward_targets,
             &mut configured_port_forward_rules,
         )
         .await?;
@@ -1130,14 +1138,16 @@ pub(super) async fn connect_authenticated_session_internal(
                 })?
                 .into_stream();
 
-            let mut next_session = connect_profile_stream(
+            let ConnectedClient {
+                handle: mut next_session,
+                remote_forward_targets: next_remote_forward_targets,
+            } = connect_profile_stream(
                 &next_profile,
                 transport,
                 config.clone(),
                 known_hosts.clone(),
                 command_receiver,
                 event_sender,
-                &remote_forward_targets,
                 &mut configured_port_forward_rules,
             )
             .await?;
@@ -1160,18 +1170,21 @@ pub(super) async fn connect_authenticated_session_internal(
 
             jump_sessions.push(current_session);
             current_session = Arc::new(next_session);
+            current_remote_forward_targets = next_remote_forward_targets;
         }
 
-        current_session
+        (current_session, current_remote_forward_targets)
     } else {
         emit_status(event_sender, format!("Connecting to {remote_label}"))?;
-        let mut session = connect_profile_session(
+        let ConnectedClient {
+            handle: mut session,
+            remote_forward_targets,
+        } = connect_profile_session(
             &profile,
             config,
             known_hosts,
             command_receiver,
             event_sender,
-            &remote_forward_targets,
             &mut configured_port_forward_rules,
         )
         .await?;
@@ -1184,7 +1197,7 @@ pub(super) async fn connect_authenticated_session_internal(
             event_sender,
         )
         .await?;
-        Arc::new(session)
+        (Arc::new(session), remote_forward_targets)
     };
 
     Ok(ConnectedSession {
@@ -1201,11 +1214,10 @@ async fn connect_profile_session(
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &FuturesUnboundedSender<SessionEvent>,
-    remote_forward_targets: &RemoteForwardTargets,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
-) -> Result<client::Handle<ClientHandler>> {
-    let (handler, pending_decision) =
-        build_client_handler(profile, known_hosts, event_sender, remote_forward_targets);
+) -> Result<ConnectedClient> {
+    let (handler, pending_decision, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender);
     let host = profile.host.clone();
     let port = profile.port;
     let connect_future = async move {
@@ -1214,13 +1226,18 @@ async fn connect_profile_session(
             .with_context(|| format!("failed to connect to {}:{}", host, port))
     };
 
-    await_session_connect(
+    let handle = await_session_connect(
         connect_future,
         command_receiver,
         pending_decision,
         configured_port_forward_rules,
     )
-    .await
+    .await?;
+
+    Ok(ConnectedClient {
+        handle,
+        remote_forward_targets,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1231,14 +1248,13 @@ async fn connect_profile_stream<R>(
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &FuturesUnboundedSender<SessionEvent>,
-    remote_forward_targets: &RemoteForwardTargets,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
-) -> Result<client::Handle<ClientHandler>>
+) -> Result<ConnectedClient>
 where
     R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let (handler, pending_decision) =
-        build_client_handler(profile, known_hosts, event_sender, remote_forward_targets);
+    let (handler, pending_decision, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender);
     let host = profile.host.clone();
     let port = profile.port;
     let connect_future = async move {
@@ -1247,13 +1263,18 @@ where
             .with_context(|| format!("failed to connect to {}:{} through ProxyJump", host, port))
     };
 
-    await_session_connect(
+    let handle = await_session_connect(
         connect_future,
         command_receiver,
         pending_decision,
         configured_port_forward_rules,
     )
-    .await
+    .await?;
+
+    Ok(ConnectedClient {
+        handle,
+        remote_forward_targets,
+    })
 }
 
 fn emit_status(event_sender: &FuturesUnboundedSender<SessionEvent>, message: String) -> Result<()> {
@@ -1343,6 +1364,7 @@ fn shell_quote_cmd(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forwarding::RemoteForwardTarget;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[tokio::test]
@@ -1404,7 +1426,6 @@ mod tests {
     #[test]
     fn client_handler_copies_agent_forwarding_authorization_from_profile() {
         let (event_sender, _event_receiver) = futures_unbounded();
-        let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
 
         for agent_forwarding_allowed in [false, true] {
             let mut profile = SessionProfile::blank("test-profile", 1);
@@ -1413,14 +1434,65 @@ mod tests {
                 std::env::temp_dir().join("miaominal-agent-forwarding-known-hosts"),
             );
 
-            let (handler, _pending_decision) = build_client_handler(
-                &profile,
-                known_hosts,
-                &event_sender,
-                &remote_forward_targets,
-            );
+            let (handler, _pending_decision, _remote_forward_targets) =
+                build_client_handler(&profile, known_hosts, &event_sender);
 
             assert_eq!(handler.agent_forwarding_allowed, agent_forwarding_allowed);
         }
+    }
+
+    #[test]
+    fn client_handlers_isolate_remote_forward_targets_by_connection() {
+        let (event_sender, _event_receiver) = futures_unbounded();
+        let known_hosts_path =
+            std::env::temp_dir().join("miaominal-remote-forward-isolation-known-hosts");
+        let jump_profile = SessionProfile::blank("jump-profile", 1);
+        let target_profile = SessionProfile::blank("target-profile", 2);
+
+        let (jump_handler, _jump_pending_decision, jump_targets) = build_client_handler(
+            &jump_profile,
+            KnownHostsStore::with_path(known_hosts_path.clone()),
+            &event_sender,
+        );
+        let (target_handler, _target_pending_decision, target_targets) = build_client_handler(
+            &target_profile,
+            KnownHostsStore::with_path(known_hosts_path),
+            &event_sender,
+        );
+
+        assert!(Arc::ptr_eq(
+            &jump_handler.remote_forward_targets,
+            &jump_targets
+        ));
+        assert!(Arc::ptr_eq(
+            &target_handler.remote_forward_targets,
+            &target_targets
+        ));
+        assert!(!Arc::ptr_eq(&jump_targets, &target_targets));
+
+        let key = ("127.0.0.1".to_string(), 5432);
+        target_targets.lock().expect("target registry lock").insert(
+            key.clone(),
+            RemoteForwardTarget {
+                label: "database".into(),
+                target_host: "127.0.0.1".into(),
+                target_port: 5432,
+            },
+        );
+
+        assert!(
+            target_handler
+                .remote_forward_targets
+                .lock()
+                .expect("target handler registry lock")
+                .contains_key(&key)
+        );
+        assert!(
+            !jump_handler
+                .remote_forward_targets
+                .lock()
+                .expect("jump handler registry lock")
+                .contains_key(&key)
+        );
     }
 }
