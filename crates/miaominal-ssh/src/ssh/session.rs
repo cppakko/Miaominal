@@ -513,6 +513,14 @@ where
     connector().await.map(Some)
 }
 
+async fn spawn_forwarding_relay<F>(relay: F) -> Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    drop(tokio::spawn(relay));
+    Ok(())
+}
+
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
@@ -604,7 +612,7 @@ impl client::Handler for ClientHandler {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let event_sender = self.event_sender.clone();
         let agent_forwarding_allowed = self.agent_forwarding_allowed;
-        async move {
+        spawn_forwarding_relay(async move {
             match connect_agent_if_authorized(agent_forwarding_allowed, connect_local_agent_stream)
                 .await
             {
@@ -634,9 +642,7 @@ impl client::Handler for ClientHandler {
                     }
                 }
             }
-
-            Ok(())
-        }
+        })
     }
 
     fn server_channel_open_forwarded_tcpip(
@@ -653,7 +659,7 @@ impl client::Handler for ClientHandler {
         let connected_address = connected_address.to_string();
         let originator_address = originator_address.to_string();
 
-        async move {
+        spawn_forwarding_relay(async move {
             let connected_port = match u16::try_from(connected_port) {
                 Ok(port) => port,
                 Err(_) => {
@@ -667,7 +673,7 @@ impl client::Handler for ClientHandler {
                     if let Err(error) = channel.close().await {
                         log::debug!("failed to close forwarded tcpip channel: {error:?}");
                     }
-                    return Ok(());
+                    return;
                 }
             };
 
@@ -695,7 +701,7 @@ impl client::Handler for ClientHandler {
                 if let Err(error) = channel.close().await {
                     log::debug!("failed to close forwarded tcpip channel: {error:?}");
                 }
-                return Ok(());
+                return;
             };
 
             let local_target = format!("{}:{}", target.target_host, target.target_port);
@@ -727,9 +733,7 @@ impl client::Handler for ClientHandler {
                     }
                 }
             }
-
-            Ok(())
-        }
+        })
     }
 }
 
@@ -1367,6 +1371,34 @@ mod tests {
 
         assert_eq!(result, Ok(Some("connected")));
         assert!(connector_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn forwarding_relay_dispatch_does_not_wait_for_relay_completion() {
+        let (started_sender, started_receiver) = oneshot::channel();
+        let (release_sender, release_receiver) = oneshot::channel();
+        let (finished_sender, finished_receiver) = oneshot::channel();
+
+        let dispatch = spawn_forwarding_relay(async move {
+            let _ = started_sender.send(());
+            let _ = release_receiver.await;
+            let _ = finished_sender.send(());
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), dispatch)
+            .await
+            .expect("forwarding relay dispatch should return immediately")
+            .expect("forwarding relay dispatch should succeed");
+        tokio::time::timeout(Duration::from_secs(1), started_receiver)
+            .await
+            .expect("forwarding relay should start in the background")
+            .expect("forwarding relay should report that it started");
+
+        let _ = release_sender.send(());
+        tokio::time::timeout(Duration::from_secs(1), finished_receiver)
+            .await
+            .expect("forwarding relay should finish after it is released")
+            .expect("forwarding relay should report that it finished");
     }
 
     #[test]
