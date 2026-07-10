@@ -235,14 +235,10 @@ async fn upload_path(
     control: &TransferControl,
     event_sender: &FuturesUnboundedSender<SftpEvent>,
 ) -> Result<TransferOutcome> {
-    let metadata = tokio::fs::metadata(local_path)
-        .await
-        .with_context(|| format!("failed to read metadata for {}", local_path.display()))?;
-
-    let bytes_total = if metadata.is_dir() {
-        Some(compute_local_directory_size(local_path).await?)
-    } else {
-        Some(metadata.len())
+    let source = inspect_local_upload_source(local_path).await?;
+    let bytes_total = match source {
+        LocalUploadSource::Directory => Some(compute_local_directory_size(local_path).await?),
+        LocalUploadSource::File { len } => Some(len),
     };
     let mut bytes_complete = 0_u64;
     let mut progress = TransferProgress {
@@ -252,17 +248,63 @@ async fn upload_path(
         bytes_complete: &mut bytes_complete,
     };
 
-    if metadata.is_dir() {
-        upload_directory(sftp, local_path, remote_path, control, &mut progress).await
-    } else {
-        upload_regular_file(sftp, local_path, remote_path, control, &mut progress).await
+    match source {
+        LocalUploadSource::Directory => {
+            upload_directory(sftp, local_path, remote_path, control, &mut progress).await
+        }
+        LocalUploadSource::File { .. } => {
+            upload_regular_file(sftp, local_path, remote_path, control, &mut progress).await
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LocalUploadSource {
+    Directory,
+    File { len: u64 },
+}
+
+async fn inspect_local_upload_source(local_path: &Path) -> Result<LocalUploadSource> {
+    let metadata = tokio::fs::symlink_metadata(local_path)
+        .await
+        .with_context(|| format!("failed to read metadata for {}", local_path.display()))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        return Err(anyhow!(
+            "refusing to upload symbolic link {}",
+            local_path.display()
+        ));
+    }
+    if file_type.is_dir() {
+        return Ok(LocalUploadSource::Directory);
+    }
+    if file_type.is_file() {
+        return Ok(LocalUploadSource::File {
+            len: metadata.len(),
+        });
+    }
+
+    Err(anyhow!(
+        "refusing to upload unsupported file type {}",
+        local_path.display()
+    ))
 }
 
 async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
     let mut total = 0_u64;
     let mut stack = vec![local_root.to_path_buf()];
     while let Some(local_dir) = stack.pop() {
+        if !matches!(
+            inspect_local_upload_source(&local_dir).await?,
+            LocalUploadSource::Directory
+        ) {
+            return Err(anyhow!(
+                "expected local upload directory {}",
+                local_dir.display()
+            ));
+        }
+
         let mut entries = tokio::fs::read_dir(&local_dir)
             .await
             .with_context(|| format!("failed to read {}", local_dir.display()))?;
@@ -271,13 +313,10 @@ async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
             .await
             .with_context(|| format!("failed to iterate {}", local_dir.display()))?
         {
-            let metadata = entry.metadata().await.with_context(|| {
-                format!("failed to read metadata for {}", entry.path().display())
-            })?;
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            } else {
-                total += metadata.len();
+            let local_child = entry.path();
+            match inspect_local_upload_source(&local_child).await? {
+                LocalUploadSource::Directory => stack.push(local_child),
+                LocalUploadSource::File { len } => total += len,
             }
         }
     }
@@ -298,6 +337,16 @@ async fn upload_directory(
         return Ok(TransferOutcome::Cancelled);
     }
 
+    if !matches!(
+        inspect_local_upload_source(local_root).await?,
+        LocalUploadSource::Directory
+    ) {
+        return Err(anyhow!(
+            "expected local upload directory {}",
+            local_root.display()
+        ));
+    }
+
     let _ = sftp.create_dir(remote_root.to_string()).await;
     progress.emit()?;
 
@@ -309,6 +358,16 @@ async fn upload_directory(
             TransferControlState::Cancelled
         ) {
             return Ok(TransferOutcome::Cancelled);
+        }
+
+        if !matches!(
+            inspect_local_upload_source(&local_dir).await?,
+            LocalUploadSource::Directory
+        ) {
+            return Err(anyhow!(
+                "expected local upload directory {}",
+                local_dir.display()
+            ));
         }
 
         let _ = sftp.create_dir(remote_dir.clone()).await;
@@ -324,19 +383,17 @@ async fn upload_directory(
             let local_child = entry.path();
             let filename = entry.file_name().to_string_lossy().into_owned();
             let remote_child = join_remote_path(&remote_dir, &filename);
-            let metadata = entry.metadata().await.with_context(|| {
-                format!("failed to read metadata for {}", local_child.display())
-            })?;
-            if metadata.is_dir() {
-                stack.push((local_child, remote_child));
-                continue;
-            }
-
-            if matches!(
-                upload_regular_file(sftp, &local_child, &remote_child, control, progress,).await?,
-                TransferOutcome::Cancelled
-            ) {
-                return Ok(TransferOutcome::Cancelled);
+            match inspect_local_upload_source(&local_child).await? {
+                LocalUploadSource::Directory => stack.push((local_child, remote_child)),
+                LocalUploadSource::File { .. } => {
+                    if matches!(
+                        upload_regular_file(sftp, &local_child, &remote_child, control, progress,)
+                            .await?,
+                        TransferOutcome::Cancelled
+                    ) {
+                        return Ok(TransferOutcome::Cancelled);
+                    }
+                }
             }
         }
     }
@@ -351,6 +408,16 @@ async fn upload_regular_file(
     control: &TransferControl,
     progress: &mut TransferProgress<'_>,
 ) -> Result<TransferOutcome> {
+    if !matches!(
+        inspect_local_upload_source(local_path).await?,
+        LocalUploadSource::File { .. }
+    ) {
+        return Err(anyhow!(
+            "expected regular file for upload {}",
+            local_path.display()
+        ));
+    }
+
     let mut local_file = TokioFile::open(local_path)
         .await
         .with_context(|| format!("failed to open {} for upload", local_path.display()))?;
@@ -854,6 +921,40 @@ mod tests {
             .expect("build current-thread runtime")
     }
 
+    #[cfg(unix)]
+    fn create_file_symlink(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).expect("create file symlink");
+        true
+    }
+
+    #[cfg(unix)]
+    fn create_directory_symlink(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).expect("create directory symlink");
+        true
+    }
+
+    #[cfg(windows)]
+    fn windows_symlink_created(result: std::io::Result<()>, kind: &str) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                eprintln!("skipping {kind} symlink test without symlink privilege");
+                false
+            }
+            Err(error) => panic!("create {kind} symlink: {error}"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn create_file_symlink(target: &Path, link: &Path) -> bool {
+        windows_symlink_created(std::os::windows::fs::symlink_file(target, link), "file")
+    }
+
+    #[cfg(windows)]
+    fn create_directory_symlink(target: &Path, link: &Path) -> bool {
+        windows_symlink_created(std::os::windows::fs::symlink_dir(target, link), "directory")
+    }
+
     #[test]
     fn new_control_starts_active() {
         rt().block_on(async {
@@ -1030,6 +1131,96 @@ mod tests {
                 dropped.load(Ordering::Relaxed),
                 "aborted task should be dropped before cancellation returns"
             );
+        });
+    }
+
+    #[test]
+    fn compute_local_directory_size_counts_regular_files() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let nested = directory.path().join("nested");
+            std::fs::create_dir(&nested).expect("create nested directory");
+            std::fs::write(directory.path().join("first.txt"), b"abc").expect("write first file");
+            std::fs::write(nested.join("second.txt"), b"defgh").expect("write second file");
+
+            let size = compute_local_directory_size(directory.path())
+                .await
+                .expect("compute directory size");
+            assert_eq!(size, 8);
+        });
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn inspect_local_upload_source_rejects_directory_symlink() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let target = directory.path().join("target");
+            let selected = directory.path().join("selected");
+            std::fs::create_dir(&target).expect("create symlink target");
+            if !create_directory_symlink(&target, &selected) {
+                return;
+            }
+
+            let error = inspect_local_upload_source(&selected)
+                .await
+                .expect_err("top-level directory symlink must be rejected");
+            let message = format!("{error:#}");
+            assert!(message.contains("symbolic link"));
+            assert!(message.contains(selected.to_string_lossy().as_ref()));
+        });
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn compute_local_directory_size_rejects_file_symlink() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let selected = directory.path().join("selected");
+            let outside = directory.path().join("secret.txt");
+            let link = selected.join("secret-link.txt");
+            std::fs::create_dir(&selected).expect("create selected directory");
+            std::fs::write(&outside, b"secret").expect("write outside file");
+            if !create_file_symlink(&outside, &link) {
+                return;
+            }
+
+            let error = timeout(
+                Duration::from_secs(1),
+                compute_local_directory_size(&selected),
+            )
+            .await
+            .expect("symlink inspection must not hang")
+            .expect_err("file symlink must be rejected");
+            let message = format!("{error:#}");
+            assert!(message.contains("symbolic link"));
+            assert!(message.contains(link.to_string_lossy().as_ref()));
+        });
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn compute_local_directory_size_rejects_parent_symlink_cycle() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let selected = directory.path().join("selected");
+            let child = selected.join("child");
+            let back = child.join("back");
+            std::fs::create_dir_all(&child).expect("create nested directory");
+            if !create_directory_symlink(&selected, &back) {
+                return;
+            }
+
+            let error = timeout(
+                Duration::from_secs(1),
+                compute_local_directory_size(&selected),
+            )
+            .await
+            .expect("symlink cycle inspection must terminate")
+            .expect_err("parent symlink cycle must be rejected");
+            let message = format!("{error:#}");
+            assert!(message.contains("symbolic link"));
+            assert!(message.contains(back.to_string_lossy().as_ref()));
         });
     }
 
