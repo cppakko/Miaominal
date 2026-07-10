@@ -14,4 +14,5 @@ miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }
 russh.workspace = true
 russh-sftp.workspace = true
+tempfile.workspace = true
 tokio.workspace = true

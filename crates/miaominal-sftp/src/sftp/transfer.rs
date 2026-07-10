@@ -8,14 +8,27 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
+use std::time::Duration;
+use tempfile::{Builder as TempFileBuilder, TempPath};
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 const TRANSFER_CHUNK_SIZE: usize = 256 * 1024;
+const TRANSFER_CANCEL_TIMEOUT: Duration = Duration::from_secs(15);
+const TRANSFER_TEMP_PREFIX: &str = ".miaominal-transfer-";
+const TRANSFER_TEMP_SUFFIX: &str = ".part";
+static TRANSFER_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct LocalTemporaryFile {
+    // Struct fields are dropped in declaration order, so the open handle is
+    // always closed before TempPath attempts to remove the temporary file.
+    file: TokioFile,
+    path: TempPath,
+}
 
 pub(super) struct TransferControl {
     cancelled: AtomicBool,
@@ -92,20 +105,54 @@ pub(super) fn cleanup_finished_transfers(
     }
 }
 
-pub(super) fn cancel_all_transfers(
+pub(super) async fn cancel_all_transfers(
     transfer_tasks: &mut HashMap<TransferId, JoinHandle<()>>,
     transfer_controls: &mut HashMap<TransferId, Arc<TransferControl>>,
+) {
+    cancel_all_transfers_with_timeout(transfer_tasks, transfer_controls, TRANSFER_CANCEL_TIMEOUT)
+        .await;
+}
+
+async fn cancel_all_transfers_with_timeout(
+    transfer_tasks: &mut HashMap<TransferId, JoinHandle<()>>,
+    transfer_controls: &mut HashMap<TransferId, Arc<TransferControl>>,
+    timeout_duration: Duration,
 ) {
     for control in transfer_controls.values() {
         control.cancel();
     }
 
-    for handle in transfer_tasks.values() {
-        handle.abort();
-    }
-
-    transfer_tasks.clear();
     transfer_controls.clear();
+    let mut handles: Vec<_> = transfer_tasks.drain().map(|(_, handle)| handle).collect();
+    let task_count = handles.len();
+
+    let timed_out = tokio::time::timeout(timeout_duration, async {
+        for handle in &mut handles {
+            if let Err(error) = handle.await
+                && !error.is_cancelled()
+            {
+                log::debug!("SFTP transfer task failed while cancelling: {error}");
+            }
+        }
+    })
+    .await
+    .is_err();
+
+    if timed_out {
+        log::warn!(
+            "timed out after {timeout_duration:?} while cancelling {task_count} SFTP transfer task(s); aborting remaining tasks"
+        );
+        let pending_handles: Vec<_> = handles
+            .into_iter()
+            .filter(|handle| !handle.is_finished())
+            .collect();
+        for handle in &pending_handles {
+            handle.abort();
+        }
+        for handle in pending_handles {
+            let _ = handle.await;
+        }
+    }
 }
 
 pub(super) fn spawn_upload_task(
@@ -307,46 +354,116 @@ async fn upload_regular_file(
     let mut local_file = TokioFile::open(local_path)
         .await
         .with_context(|| format!("failed to open {} for upload", local_path.display()))?;
+    let temporary_path = remote_temporary_path(remote_path, progress.transfer_id);
     let mut remote_file = sftp
         .open_with_flags(
-            remote_path.to_string(),
-            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            temporary_path.clone(),
+            OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
         )
         .await
-        .with_context(|| format!("failed to open remote file {remote_path} for upload"))?;
+        .with_context(|| {
+            format!("failed to create temporary remote file {temporary_path} for upload")
+        })?;
 
     let mut buffer = vec![0; TRANSFER_CHUNK_SIZE];
+    let transfer_result = async {
+        loop {
+            if matches!(
+                control.wait_until_active().await,
+                TransferControlState::Cancelled
+            ) {
+                return Ok(TransferOutcome::Cancelled);
+            }
 
-    loop {
+            let read = local_file.read(&mut buffer).await.with_context(|| {
+                format!("failed to read {} while uploading", local_path.display())
+            })?;
+            if read == 0 {
+                break;
+            }
+
+            remote_file
+                .write_all(&buffer[..read])
+                .await
+                .with_context(|| {
+                    format!("failed to write temporary remote file {temporary_path}")
+                })?;
+
+            progress.advance(read as u64)?;
+        }
+
+        remote_file
+            .sync_all()
+            .await
+            .with_context(|| format!("failed to sync temporary remote file {temporary_path}"))?;
+
         if matches!(
             control.wait_until_active().await,
             TransferControlState::Cancelled
         ) {
-            let _ = remote_file.shutdown().await;
             return Ok(TransferOutcome::Cancelled);
         }
-
-        let read = local_file
-            .read(&mut buffer)
-            .await
-            .with_context(|| format!("failed to read {} while uploading", local_path.display()))?;
-        if read == 0 {
-            break;
-        }
-
-        remote_file
-            .write_all(&buffer[..read])
-            .await
-            .with_context(|| format!("failed to write remote file {remote_path}"))?;
-
-        progress.advance(read as u64)?;
+        Ok(TransferOutcome::Done)
     }
+    .await;
 
-    remote_file
+    let shutdown_result = remote_file
         .shutdown()
         .await
-        .with_context(|| format!("failed to finalize remote file {remote_path}"))?;
-    Ok(TransferOutcome::Done)
+        .with_context(|| format!("failed to close temporary remote file {temporary_path}"));
+
+    match transfer_result {
+        Ok(TransferOutcome::Done) => {
+            if let Err(error) = shutdown_result {
+                remove_remote_temporary_file(sftp, &temporary_path).await;
+                return Err(error);
+            }
+
+            if let Err(error) = sftp
+                .rename(temporary_path.clone(), remote_path.to_string())
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to atomically replace remote file {remote_path} with {temporary_path}"
+                    )
+                })
+            {
+                remove_remote_temporary_file(sftp, &temporary_path).await;
+                return Err(error);
+            }
+
+            Ok(TransferOutcome::Done)
+        }
+        Ok(TransferOutcome::Cancelled) => {
+            remove_remote_temporary_file(sftp, &temporary_path).await;
+            Ok(TransferOutcome::Cancelled)
+        }
+        Err(error) => {
+            remove_remote_temporary_file(sftp, &temporary_path).await;
+            Err(error)
+        }
+    }
+}
+
+fn remote_temporary_path(remote_path: &str, transfer_id: TransferId) -> String {
+    let parent = match remote_path.rsplit_once('/') {
+        Some(("", _)) => "/",
+        Some((parent, _)) => parent,
+        None => ".",
+    };
+    let sequence = TRANSFER_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary_name = format!(
+        "{TRANSFER_TEMP_PREFIX}{}-{}-{sequence}{TRANSFER_TEMP_SUFFIX}",
+        std::process::id(),
+        transfer_id.0,
+    );
+    join_remote_path(parent, &temporary_name)
+}
+
+async fn remove_remote_temporary_file(sftp: &SftpSession, temporary_path: &str) {
+    if let Err(error) = sftp.remove_file(temporary_path.to_string()).await {
+        log::warn!("failed to remove temporary remote file {temporary_path}: {error}");
+    }
 }
 
 async fn download_path(
@@ -482,9 +599,7 @@ async fn download_regular_file(
         .open(remote_path.to_string())
         .await
         .with_context(|| format!("failed to open remote file {remote_path} for download"))?;
-    let mut local_file = TokioFile::create(local_path)
-        .await
-        .with_context(|| format!("failed to create {} for download", local_path.display()))?;
+    let mut temporary_file = create_local_temporary_file(local_path)?;
 
     let mut buffer = vec![0; TRANSFER_CHUNK_SIZE];
     loop {
@@ -492,7 +607,7 @@ async fn download_regular_file(
             control.wait_until_active().await,
             TransferControlState::Cancelled
         ) {
-            let _ = local_file.shutdown().await;
+            let _ = temporary_file.file.shutdown().await;
             return Ok(TransferOutcome::Cancelled);
         }
 
@@ -504,21 +619,74 @@ async fn download_regular_file(
             break;
         }
 
-        local_file
+        temporary_file
+            .file
             .write_all(&buffer[..read])
             .await
             .with_context(|| {
-                format!("failed to write {} while downloading", local_path.display())
+                format!(
+                    "failed to write temporary file for {} while downloading",
+                    local_path.display()
+                )
             })?;
 
         progress.advance(read as u64)?;
     }
 
-    local_file
-        .flush()
-        .await
-        .with_context(|| format!("failed to flush {} after download", local_path.display()))?;
+    temporary_file.file.flush().await.with_context(|| {
+        format!(
+            "failed to flush temporary file for {} after download",
+            local_path.display()
+        )
+    })?;
+    temporary_file.file.sync_all().await.with_context(|| {
+        format!(
+            "failed to sync temporary file for {} after download",
+            local_path.display()
+        )
+    })?;
+
+    if matches!(
+        control.wait_until_active().await,
+        TransferControlState::Cancelled
+    ) {
+        let _ = temporary_file.file.shutdown().await;
+        return Ok(TransferOutcome::Cancelled);
+    }
+
+    let LocalTemporaryFile { file, path } = temporary_file;
+    drop(file);
+    persist_local_temporary_file(path, local_path)?;
     Ok(TransferOutcome::Done)
+}
+
+fn create_local_temporary_file(local_path: &Path) -> Result<LocalTemporaryFile> {
+    let parent = local_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let temporary = TempFileBuilder::new()
+        .prefix(TRANSFER_TEMP_PREFIX)
+        .suffix(TRANSFER_TEMP_SUFFIX)
+        .tempfile_in(parent)
+        .with_context(|| {
+            format!(
+                "failed to create temporary download file in {}",
+                parent.display()
+            )
+        })?;
+    let (file, path) = temporary.into_parts();
+    Ok(LocalTemporaryFile {
+        file: TokioFile::from_std(file),
+        path,
+    })
+}
+
+fn persist_local_temporary_file(temporary_path: TempPath, local_path: &Path) -> Result<()> {
+    temporary_path
+        .persist(local_path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("failed to atomically replace {}", local_path.display()))
 }
 
 fn finish_transfer_task(
@@ -804,15 +972,18 @@ mod tests {
 
             let id = TransferId(7);
             let control = Arc::new(TransferControl::new());
+            assert!(control.pause());
             let task_control = control.clone();
             let handle = tokio::spawn(async move {
-                let _ = task_control.wait_until_active().await;
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                assert!(matches!(
+                    task_control.wait_until_active().await,
+                    TransferControlState::Cancelled
+                ));
             });
             tasks.insert(id, handle);
             controls.insert(id, control.clone());
 
-            cancel_all_transfers(&mut tasks, &mut controls);
+            cancel_all_transfers(&mut tasks, &mut controls).await;
 
             assert!(tasks.is_empty());
             assert!(controls.is_empty());
@@ -820,6 +991,120 @@ mod tests {
                 control.cancelled.load(Ordering::Relaxed),
                 "underlying control was cancelled",
             );
+        });
+    }
+
+    #[test]
+    fn cancel_all_transfers_aborts_tasks_after_timeout() {
+        struct DropFlag(Arc<AtomicBool>);
+
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+
+        rt().block_on(async {
+            let mut tasks: HashMap<TransferId, JoinHandle<()>> = HashMap::new();
+            let mut controls: HashMap<TransferId, Arc<TransferControl>> = HashMap::new();
+
+            let id = TransferId(8);
+            let control = Arc::new(TransferControl::new());
+            let dropped = Arc::new(AtomicBool::new(false));
+            let task_dropped = dropped.clone();
+            let handle = tokio::spawn(async move {
+                let _drop_flag = DropFlag(task_dropped);
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            });
+            tasks.insert(id, handle);
+            controls.insert(id, control.clone());
+
+            tokio::task::yield_now().await;
+            cancel_all_transfers_with_timeout(&mut tasks, &mut controls, Duration::from_millis(20))
+                .await;
+
+            assert!(tasks.is_empty());
+            assert!(controls.is_empty());
+            assert!(control.cancelled.load(Ordering::Relaxed));
+            assert!(
+                dropped.load(Ordering::Relaxed),
+                "aborted task should be dropped before cancellation returns"
+            );
+        });
+    }
+
+    #[test]
+    fn remote_temporary_paths_stay_beside_the_destination_and_are_unique() {
+        let first = remote_temporary_path("/srv/data/file.txt", TransferId(11));
+        let second = remote_temporary_path("/srv/data/file.txt", TransferId(11));
+
+        assert!(first.starts_with("/srv/data/.miaominal-transfer-"));
+        assert!(first.ends_with(TRANSFER_TEMP_SUFFIX));
+        assert_ne!(first, second);
+
+        let relative = remote_temporary_path("file.txt", TransferId(12));
+        assert!(relative.starts_with(TRANSFER_TEMP_PREFIX));
+        assert!(!relative.contains('/'));
+    }
+
+    #[test]
+    fn local_temporary_download_replaces_destination_only_when_persisted() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let destination = directory.path().join("download.txt");
+            std::fs::write(&destination, b"original").expect("write original file");
+
+            let mut temporary_file =
+                create_local_temporary_file(&destination).expect("create temporary file");
+            temporary_file
+                .file
+                .write_all(b"replacement")
+                .await
+                .expect("write replacement");
+            temporary_file
+                .file
+                .sync_all()
+                .await
+                .expect("sync replacement");
+
+            assert_eq!(
+                std::fs::read(&destination).expect("read original before persist"),
+                b"original"
+            );
+
+            let LocalTemporaryFile { file, path } = temporary_file;
+            drop(file);
+            persist_local_temporary_file(path, &destination).expect("persist replacement");
+            assert_eq!(
+                std::fs::read(&destination).expect("read replacement"),
+                b"replacement"
+            );
+        });
+    }
+
+    #[test]
+    fn dropping_local_temporary_download_preserves_destination_and_cleans_up() {
+        rt().block_on(async {
+            let directory = tempfile::tempdir().expect("create test directory");
+            let destination = directory.path().join("download.txt");
+            std::fs::write(&destination, b"original").expect("write original file");
+
+            let mut temporary_file =
+                create_local_temporary_file(&destination).expect("create temporary file");
+            let temporary_path_buf = temporary_file.path.to_path_buf();
+            temporary_file
+                .file
+                .write_all(b"partial")
+                .await
+                .expect("write partial download");
+
+            drop(temporary_file);
+
+            assert_eq!(
+                std::fs::read(&destination).expect("read preserved original"),
+                b"original"
+            );
+            assert!(!temporary_path_buf.exists());
         });
     }
 }

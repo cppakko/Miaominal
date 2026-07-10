@@ -427,13 +427,13 @@ async fn run_session(
                 }
             }
             SftpCommand::Close => {
-                cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls);
+                cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
                 break;
             }
         }
     }
 
-    cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls);
+    cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
     if let Err(error) = sftp.close().await {
         log::debug!("failed to close SFTP session cleanly: {error:?}");
     }
