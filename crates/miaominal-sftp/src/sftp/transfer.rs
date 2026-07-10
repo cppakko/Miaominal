@@ -895,9 +895,19 @@ pub(super) fn emit_error(
     context: &str,
     message: String,
 ) -> Result<()> {
+    emit_error_with_path(event_sender, context, None, message)
+}
+
+pub(super) fn emit_error_with_path(
+    event_sender: &FuturesUnboundedSender<SftpEvent>,
+    context: &str,
+    path: Option<String>,
+    message: String,
+) -> Result<()> {
     if event_sender
         .unbounded_send(SftpEvent::Error {
             context: context.into(),
+            path,
             message,
         })
         .is_err()

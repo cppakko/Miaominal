@@ -260,6 +260,10 @@ impl SftpBrowserTableDelegate {
             .and_then(|path| self.row_index_by_path(path));
     }
 
+    pub(in crate::ui::shell) fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
     pub(in crate::ui::shell) fn receive_children(
         &mut self,
         path: String,
@@ -416,6 +420,12 @@ impl SftpBrowserTableDelegate {
 
     pub(in crate::ui::shell) fn cancel_expand(&mut self, path: &str) {
         self.loading_paths.remove(path);
+        self.apply_sort();
+    }
+
+    pub(in crate::ui::shell) fn cancel_all_loading(&mut self) {
+        self.loading = false;
+        self.loading_paths.clear();
         self.apply_sort();
     }
 

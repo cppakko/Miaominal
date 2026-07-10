@@ -458,6 +458,9 @@ impl AppView {
         let mut download_done_filename: Option<String> = None;
         let mut transfer_failed_notification: Option<String> = None;
         let mut open_global_progress_center = false;
+        let mut remote_table_loading_finished = false;
+        let mut clear_remote_table_loading = false;
+        let mut failed_remote_expand_path = None;
 
         match event {
             SftpEvent::Status(message) => {
@@ -656,9 +659,18 @@ impl AppView {
                 transfer_failed_notification = Some(message.clone());
                 self.status_message = message;
             }
-            SftpEvent::Error { context, message } => {
+            SftpEvent::Error {
+                context,
+                path,
+                message,
+            } => {
                 *status = i18n::string("session.status.error");
-                sftp.loading_remote = false;
+                if context == "list_directory" {
+                    sftp.loading_remote = false;
+                    remote_table_loading_finished = true;
+                } else if context == "list_subdirectory" {
+                    failed_remote_expand_path = path;
+                }
                 sftp.last_error = Some(format!("{context}: {message}"));
                 sftp.last_status =
                     i18n::string_args("sftp.messages.context_failed", &[("context", &context)]);
@@ -676,13 +688,55 @@ impl AppView {
                 sftp.commands = None;
                 sftp.loading_remote = false;
                 sftp.last_status = i18n::string("sftp.messages.session_closed");
+                clear_remote_table_loading = true;
             }
             SftpEvent::SubdirectoryListing {
                 parent_path,
                 entries,
             } => {
+                if sftp
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("list_subdirectory:"))
+                {
+                    *status = i18n::string_args(
+                        "sftp.ui.remote_path_label",
+                        &[("path", &sftp.remote_path)],
+                    );
+                    sftp.last_error = None;
+                    let item_count = entries.len().to_string();
+                    sftp.last_status = i18n::string_args(
+                        "sftp.messages.loaded_remote_items",
+                        &[("count", &item_count)],
+                    );
+                }
                 subdirectory_listing = Some((parent_path, entries));
             }
+        }
+
+        if is_visible_browser_tab
+            && (remote_table_loading_finished
+                || clear_remote_table_loading
+                || failed_remote_expand_path.is_some())
+        {
+            let remote_table = self.workspace_forms.sftp_browser.remote_table.clone();
+            remote_table.update(cx, |table, cx| {
+                if table.delegate().tab_id() != Some(tab_id) {
+                    return;
+                }
+
+                if clear_remote_table_loading {
+                    table.delegate_mut().cancel_all_loading();
+                } else {
+                    if remote_table_loading_finished {
+                        table.delegate_mut().set_loading(false);
+                    }
+                    if let Some(path) = failed_remote_expand_path.as_deref() {
+                        table.delegate_mut().cancel_expand(path);
+                    }
+                }
+                table.refresh(cx);
+            });
         }
 
         if should_sync_paths {
@@ -1543,7 +1597,16 @@ impl AppView {
                 validation_message = Some(message);
             }
         }
-        self.sync_sftp_tables_for_tab(tab_id, cx);
+        let remote_loading = sftp.loading_remote;
+        if self.should_sync_sftp_browser_for_tab(tab_id) {
+            let remote_table = self.workspace_forms.sftp_browser.remote_table.clone();
+            remote_table.update(cx, |table, cx| {
+                if table.delegate().tab_id() == Some(tab_id) {
+                    table.delegate_mut().set_loading(remote_loading);
+                    table.refresh(cx);
+                }
+            });
+        }
         if let Some(message) = validation_message {
             self.workspace_forms.sftp_browser.remote_path_submit_pending = false;
             self.notify_validation_failure(ValidationNotificationKind::InvalidInput, message, cx);

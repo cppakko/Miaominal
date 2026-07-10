@@ -4,8 +4,8 @@ use super::paths::{
 };
 use super::transfer::{
     TransferControl, cancel_all_transfers, cleanup_finished_transfers, emit_error,
-    emit_transfer_paused, emit_transfer_queued, emit_transfer_resumed, spawn_download_task,
-    spawn_upload_task,
+    emit_error_with_path, emit_transfer_paused, emit_transfer_queued, emit_transfer_resumed,
+    spawn_download_task, spawn_upload_task,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use futures::channel::mpsc::{
@@ -19,7 +19,10 @@ use miaominal_secrets::SecretStore;
 use miaominal_ssh as ssh;
 use miaominal_storage::KnownHostsStore;
 use russh::{Disconnect, client};
-use russh_sftp::client::SftpSession;
+use russh_sftp::{
+    client::{SftpSession, error::Error as SftpClientError},
+    protocol::StatusCode,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
@@ -112,6 +115,7 @@ pub enum SftpEvent {
     },
     Error {
         context: String,
+        path: Option<String>,
         message: String,
     },
     Closed,
@@ -226,20 +230,22 @@ pub fn start_session(
     std::thread::Builder::new()
         .name(format!("sftp-session-{}", profile.id))
         .spawn(move || {
-            if let Err(error) = runtime.block_on(run_session(
+            let result = runtime.block_on(run_session(
                 profile,
                 all_profiles,
                 secrets,
                 known_hosts,
                 command_receiver,
                 event_sender.clone(),
-            )) {
+            ));
+            if let Err(error) = result {
                 let _ = event_sender.unbounded_send(SftpEvent::Error {
                     context: "sftp".into(),
-                    message: error.to_string(),
+                    path: None,
+                    message: format!("{error:#}"),
                 });
-                let _ = event_sender.unbounded_send(SftpEvent::Closed);
             }
+            let _ = event_sender.unbounded_send(SftpEvent::Closed);
         })
         .expect("failed to spawn SFTP session thread");
 
@@ -270,177 +276,285 @@ async fn run_session(
     )
     .await?;
 
-    let channel = connected_session
-        .session
-        .channel_open_session()
-        .await
-        .context("failed to open SSH session channel for SFTP")?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .context("failed to start SFTP subsystem")?;
-
-    let sftp = Arc::new(
-        SftpSession::new(channel.into_stream())
+    let session_result: Result<()> = async {
+        let channel = connected_session
+            .session
+            .channel_open_session()
             .await
-            .context("failed to initialize SFTP session")?,
-    );
+            .context("failed to open SSH session channel for SFTP")?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .context("failed to start SFTP subsystem")?;
 
-    emit_status(&event_sender, format!("Connected SFTP session to {remote}"))?;
+        let sftp = Arc::new(
+            SftpSession::new(channel.into_stream())
+                .await
+                .context("failed to initialize SFTP session")?,
+        );
 
-    if let Ok(initial_path) = sftp.canonicalize(".").await
-        && let Ok(entries) = list_directory_entries(&sftp, &initial_path).await
-    {
-        let _ = emit_directory_listing(&event_sender, initial_path, entries);
-    }
+        let mut transfer_controls = HashMap::new();
+        let mut transfer_tasks = HashMap::new();
 
-    let mut transfer_controls = HashMap::new();
-    let mut transfer_tasks = HashMap::new();
+        let command_result: Result<()> = async {
+            emit_status(&event_sender, format!("Connected SFTP session to {remote}"))?;
 
-    while let Some(command) = command_receiver.recv().await {
-        cleanup_finished_transfers(&mut transfer_tasks, &mut transfer_controls);
-
-        match command {
-            SftpCommand::ListDirectory { path } => {
-                let canonical_path = canonical_remote_path(&sftp, &path)
+            let initial_result: Result<_> = async {
+                let initial_path = canonical_remote_path(&sftp, ".")
                     .await
-                    .with_context(|| format!("failed to resolve remote directory {path}"))?;
-                let entries = list_directory_entries(&sftp, &canonical_path).await?;
-                emit_directory_listing(&event_sender, canonical_path, entries)?;
+                    .context("failed to resolve initial remote directory")?;
+                let entries = list_directory_entries(&sftp, &initial_path).await?;
+                Ok((initial_path, entries))
             }
-            SftpCommand::ListSubdirectory { path } => {
-                let canonical_path = canonical_remote_path(&sftp, &path)
-                    .await
-                    .with_context(|| format!("failed to resolve remote directory {path}"))?;
-                let entries = list_directory_entries(&sftp, &canonical_path).await?;
-                emit_subdirectory_listing(&event_sender, canonical_path, entries)?;
+            .await;
+            if let Some((initial_path, entries)) = recover_operation_result(
+                &event_sender,
+                "list_directory",
+                Some("."),
+                initial_result,
+            )? {
+                emit_directory_listing(&event_sender, initial_path, entries)?;
             }
-            SftpCommand::CreateDirectory { path } => {
-                sftp.create_dir(path.clone())
-                    .await
-                    .with_context(|| format!("failed to create remote directory {path}"))?;
-                emit_status(&event_sender, format!("Created remote directory {path}"))?;
-            }
-            SftpCommand::RemoveFile { path } => {
-                sftp.remove_file(path.clone())
-                    .await
-                    .with_context(|| format!("failed to remove remote file {path}"))?;
-                emit_status(&event_sender, format!("Removed remote file {path}"))?;
-            }
-            SftpCommand::RemoveDirectory { path } => {
-                sftp.remove_dir(path.clone())
-                    .await
-                    .with_context(|| format!("failed to remove remote directory {path}"))?;
-                emit_status(&event_sender, format!("Removed remote directory {path}"))?;
-            }
-            SftpCommand::Rename { from, to } => {
-                sftp.rename(from.clone(), to.clone())
-                    .await
-                    .with_context(|| format!("failed to rename {from} to {to}"))?;
-                emit_status(&event_sender, format!("Renamed {from} to {to}"))?;
-            }
-            SftpCommand::Upload {
-                transfer_id,
-                local_path,
-                remote_path,
-            } => {
-                emit_transfer_queued(
-                    &event_sender,
-                    transfer_id,
-                    TransferDirection::Upload,
-                    local_path.clone(),
-                    remote_path.clone(),
-                )?;
 
-                let control = Arc::new(TransferControl::new());
-                let task = spawn_upload_task(
-                    sftp.clone(),
-                    event_sender.clone(),
-                    transfer_id,
-                    local_path,
-                    remote_path,
-                    control.clone(),
-                );
-                transfer_controls.insert(transfer_id, control);
-                transfer_tasks.insert(transfer_id, task);
-            }
-            SftpCommand::Download {
-                transfer_id,
-                remote_path,
-                local_path,
-            } => {
-                emit_transfer_queued(
-                    &event_sender,
-                    transfer_id,
-                    TransferDirection::Download,
-                    local_path.clone(),
-                    remote_path.clone(),
-                )?;
+            while let Some(command) = command_receiver.recv().await {
+                cleanup_finished_transfers(&mut transfer_tasks, &mut transfer_controls);
 
-                let control = Arc::new(TransferControl::new());
-                let task = spawn_download_task(
-                    sftp.clone(),
-                    event_sender.clone(),
-                    transfer_id,
-                    remote_path,
-                    local_path,
-                    control.clone(),
-                );
-                transfer_controls.insert(transfer_id, control);
-                transfer_tasks.insert(transfer_id, task);
-            }
-            SftpCommand::PauseTransfer { transfer_id } => {
-                if let Some(control) = transfer_controls.get(&transfer_id) {
-                    if control.pause() {
-                        emit_transfer_paused(&event_sender, transfer_id)?;
+                match command {
+                    SftpCommand::ListDirectory { path } => {
+                        let result: Result<_> = async {
+                            let canonical_path =
+                                canonical_remote_path(&sftp, &path).await.with_context(|| {
+                                    format!("failed to resolve remote directory {path}")
+                                })?;
+                            let entries = list_directory_entries(&sftp, &canonical_path).await?;
+                            Ok((canonical_path, entries))
+                        }
+                        .await;
+                        if let Some((canonical_path, entries)) = recover_operation_result(
+                            &event_sender,
+                            "list_directory",
+                            Some(&path),
+                            result,
+                        )? {
+                            emit_directory_listing(&event_sender, canonical_path, entries)?;
+                        }
                     }
-                } else {
-                    emit_error(
-                        &event_sender,
-                        "pause_transfer",
-                        format!("transfer {} is no longer active", transfer_id.0),
-                    )?;
-                }
-            }
-            SftpCommand::ResumeTransfer { transfer_id } => {
-                if let Some(control) = transfer_controls.get(&transfer_id) {
-                    if control.resume() {
-                        emit_transfer_resumed(&event_sender, transfer_id)?;
+                    SftpCommand::ListSubdirectory { path } => {
+                        let result: Result<_> = async {
+                            let canonical_path =
+                                canonical_remote_path(&sftp, &path).await.with_context(|| {
+                                    format!("failed to resolve remote directory {path}")
+                                })?;
+                            let entries = list_directory_entries(&sftp, &canonical_path).await?;
+                            Ok((canonical_path, entries))
+                        }
+                        .await;
+                        if let Some((canonical_path, entries)) = recover_operation_result(
+                            &event_sender,
+                            "list_subdirectory",
+                            Some(&path),
+                            result,
+                        )? {
+                            emit_subdirectory_listing(&event_sender, canonical_path, entries)?;
+                        }
                     }
-                } else {
-                    emit_error(
-                        &event_sender,
-                        "resume_transfer",
-                        format!("transfer {} is no longer active", transfer_id.0),
-                    )?;
+                    SftpCommand::CreateDirectory { path } => {
+                        let result = sftp
+                            .create_dir(path.clone())
+                            .await
+                            .with_context(|| format!("failed to create remote directory {path}"));
+                        if recover_operation_result(
+                            &event_sender,
+                            "create_directory",
+                            None,
+                            result,
+                        )?
+                        .is_some()
+                        {
+                            emit_status(&event_sender, format!("Created remote directory {path}"))?;
+                        }
+                    }
+                    SftpCommand::RemoveFile { path } => {
+                        let result = sftp
+                            .remove_file(path.clone())
+                            .await
+                            .with_context(|| format!("failed to remove remote file {path}"));
+                        if recover_operation_result(&event_sender, "remove_file", None, result)?
+                            .is_some()
+                        {
+                            emit_status(&event_sender, format!("Removed remote file {path}"))?;
+                        }
+                    }
+                    SftpCommand::RemoveDirectory { path } => {
+                        let result = sftp
+                            .remove_dir(path.clone())
+                            .await
+                            .with_context(|| format!("failed to remove remote directory {path}"));
+                        if recover_operation_result(
+                            &event_sender,
+                            "remove_directory",
+                            None,
+                            result,
+                        )?
+                        .is_some()
+                        {
+                            emit_status(&event_sender, format!("Removed remote directory {path}"))?;
+                        }
+                    }
+                    SftpCommand::Rename { from, to } => {
+                        let result = sftp
+                            .rename(from.clone(), to.clone())
+                            .await
+                            .with_context(|| format!("failed to rename {from} to {to}"));
+                        if recover_operation_result(&event_sender, "rename", None, result)?
+                            .is_some()
+                        {
+                            emit_status(&event_sender, format!("Renamed {from} to {to}"))?;
+                        }
+                    }
+                    SftpCommand::Upload {
+                        transfer_id,
+                        local_path,
+                        remote_path,
+                    } => {
+                        emit_transfer_queued(
+                            &event_sender,
+                            transfer_id,
+                            TransferDirection::Upload,
+                            local_path.clone(),
+                            remote_path.clone(),
+                        )?;
+
+                        let control = Arc::new(TransferControl::new());
+                        let task = spawn_upload_task(
+                            sftp.clone(),
+                            event_sender.clone(),
+                            transfer_id,
+                            local_path,
+                            remote_path,
+                            control.clone(),
+                        );
+                        transfer_controls.insert(transfer_id, control);
+                        transfer_tasks.insert(transfer_id, task);
+                    }
+                    SftpCommand::Download {
+                        transfer_id,
+                        remote_path,
+                        local_path,
+                    } => {
+                        emit_transfer_queued(
+                            &event_sender,
+                            transfer_id,
+                            TransferDirection::Download,
+                            local_path.clone(),
+                            remote_path.clone(),
+                        )?;
+
+                        let control = Arc::new(TransferControl::new());
+                        let task = spawn_download_task(
+                            sftp.clone(),
+                            event_sender.clone(),
+                            transfer_id,
+                            remote_path,
+                            local_path,
+                            control.clone(),
+                        );
+                        transfer_controls.insert(transfer_id, control);
+                        transfer_tasks.insert(transfer_id, task);
+                    }
+                    SftpCommand::PauseTransfer { transfer_id } => {
+                        if let Some(control) = transfer_controls.get(&transfer_id) {
+                            if control.pause() {
+                                emit_transfer_paused(&event_sender, transfer_id)?;
+                            }
+                        } else {
+                            emit_error(
+                                &event_sender,
+                                "pause_transfer",
+                                format!("transfer {} is no longer active", transfer_id.0),
+                            )?;
+                        }
+                    }
+                    SftpCommand::ResumeTransfer { transfer_id } => {
+                        if let Some(control) = transfer_controls.get(&transfer_id) {
+                            if control.resume() {
+                                emit_transfer_resumed(&event_sender, transfer_id)?;
+                            }
+                        } else {
+                            emit_error(
+                                &event_sender,
+                                "resume_transfer",
+                                format!("transfer {} is no longer active", transfer_id.0),
+                            )?;
+                        }
+                    }
+                    SftpCommand::CancelTransfer { transfer_id } => {
+                        if let Some(control) = transfer_controls.get(&transfer_id) {
+                            control.cancel();
+                        } else {
+                            emit_error(
+                                &event_sender,
+                                "cancel_transfer",
+                                format!("transfer {} is no longer active", transfer_id.0),
+                            )?;
+                        }
+                    }
+                    SftpCommand::Close => break,
                 }
             }
-            SftpCommand::CancelTransfer { transfer_id } => {
-                if let Some(control) = transfer_controls.get(&transfer_id) {
-                    control.cancel();
-                } else {
-                    emit_error(
-                        &event_sender,
-                        "cancel_transfer",
-                        format!("transfer {} is no longer active", transfer_id.0),
-                    )?;
-                }
-            }
-            SftpCommand::Close => {
-                cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
-                break;
-            }
+
+            Ok(())
         }
-    }
+        .await;
 
-    cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
-    if let Err(error) = sftp.close().await {
-        log::debug!("failed to close SFTP session cleanly: {error:?}");
+        cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
+        if let Err(error) = sftp.close().await {
+            log::debug!("failed to close SFTP session cleanly: {error:?}");
+        }
+
+        command_result
     }
+    .await;
+
     connected_session.disconnect().await;
 
-    let _ = event_sender.unbounded_send(SftpEvent::Closed);
-    Ok(())
+    session_result
+}
+
+fn recover_operation_result<T>(
+    event_sender: &FuturesUnboundedSender<SftpEvent>,
+    context: &str,
+    path: Option<&str>,
+    result: Result<T>,
+) -> Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_recoverable_operation_error(&error) => {
+            emit_error_with_path(
+                event_sender,
+                context,
+                path.map(str::to_owned),
+                format!("{error:#}"),
+            )?;
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_recoverable_operation_error(error: &anyhow::Error) -> bool {
+    match error.downcast_ref::<SftpClientError>() {
+        Some(SftpClientError::Limited(_)) => true,
+        Some(SftpClientError::Status(status)) => matches!(
+            status.status_code,
+            StatusCode::Eof
+                | StatusCode::NoSuchFile
+                | StatusCode::PermissionDenied
+                | StatusCode::Failure
+                | StatusCode::OpUnsupported
+        ),
+        _ => false,
+    }
 }
 
 struct SftpConnectedSession {
@@ -651,4 +765,174 @@ fn emit_status(event_sender: &FuturesUnboundedSender<SftpEvent>, message: String
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use russh_sftp::protocol::Status;
+
+    fn status_error(status_code: StatusCode, message: &str) -> anyhow::Error {
+        SftpClientError::Status(Status {
+            id: 1,
+            status_code,
+            error_message: message.into(),
+            language_tag: "en".into(),
+        })
+        .into()
+    }
+
+    #[test]
+    fn subdirectory_failure_emits_requested_path_and_is_recoverable() {
+        let (event_sender, mut event_receiver) = futures_unbounded();
+        let operation_result: Result<()> = Err(status_error(
+            StatusCode::PermissionDenied,
+            "permission denied",
+        ))
+        .context("failed to read remote directory /protected");
+
+        let recovered = recover_operation_result(
+            &event_sender,
+            "list_subdirectory",
+            Some("/protected"),
+            operation_result,
+        )
+        .expect("operation failure should be reported without becoming fatal");
+
+        assert!(recovered.is_none());
+        let event = futures::executor::block_on(event_receiver.next())
+            .expect("operation failure should emit an event");
+        match event {
+            SftpEvent::Error {
+                context,
+                path,
+                message,
+            } => {
+                assert_eq!(context, "list_subdirectory");
+                assert_eq!(path.as_deref(), Some("/protected"));
+                assert_eq!(
+                    message,
+                    "failed to read remote directory /protected: Permission denied: permission denied"
+                );
+            }
+            other => panic!("expected operation error event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn operation_failure_is_fatal_when_error_event_cannot_be_delivered() {
+        let (event_sender, event_receiver) = futures_unbounded();
+        drop(event_receiver);
+
+        let error = recover_operation_result::<()>(
+            &event_sender,
+            "list_directory",
+            Some("/missing"),
+            Err(status_error(StatusCode::NoSuchFile, "path does not exist")),
+        )
+        .expect_err("closed event receiver should stop the session loop");
+
+        assert_eq!(error.to_string(), "SFTP event receiver is closed");
+    }
+
+    #[test]
+    fn operation_limit_is_reported_without_closing_the_session() {
+        let (event_sender, mut event_receiver) = futures_unbounded();
+
+        let recovered = recover_operation_result::<()>(
+            &event_sender,
+            "list_directory",
+            Some("/remote"),
+            Err(SftpClientError::Limited("request limit exceeded".into()).into()),
+        )
+        .expect("operation limit should remain recoverable");
+
+        assert!(recovered.is_none());
+        let event = futures::executor::block_on(event_receiver.next())
+            .expect("operation limit should emit an error event");
+        assert!(matches!(
+            event,
+            SftpEvent::Error {
+                context,
+                path: Some(path),
+                ..
+            } if context == "list_directory" && path == "/remote"
+        ));
+    }
+
+    #[test]
+    fn operation_limits_and_file_status_errors_are_recoverable() {
+        assert!(is_recoverable_operation_error(
+            &SftpClientError::Limited("request limit exceeded".into()).into()
+        ));
+
+        for status_code in [
+            StatusCode::Eof,
+            StatusCode::NoSuchFile,
+            StatusCode::PermissionDenied,
+            StatusCode::Failure,
+            StatusCode::OpUnsupported,
+        ] {
+            assert!(is_recoverable_operation_error(&status_error(
+                status_code,
+                "file operation failed"
+            )));
+        }
+
+        for status_code in [
+            StatusCode::Ok,
+            StatusCode::BadMessage,
+            StatusCode::NoConnection,
+            StatusCode::ConnectionLost,
+        ] {
+            assert!(!is_recoverable_operation_error(&status_error(
+                status_code,
+                "session failure"
+            )));
+        }
+    }
+
+    #[test]
+    fn transport_and_connection_errors_remain_fatal() {
+        let fatal_errors = [
+            SftpClientError::IO("connection reset".into()),
+            SftpClientError::Timeout,
+            SftpClientError::UnexpectedPacket,
+            SftpClientError::UnexpectedBehavior("session closed".into()),
+            SftpClientError::Status(Status {
+                id: 2,
+                status_code: StatusCode::NoConnection,
+                error_message: "no connection".into(),
+                language_tag: "en".into(),
+            }),
+            SftpClientError::Status(Status {
+                id: 3,
+                status_code: StatusCode::ConnectionLost,
+                error_message: "connection lost".into(),
+                language_tag: "en".into(),
+            }),
+        ];
+
+        for fatal_error in fatal_errors {
+            let (event_sender, mut event_receiver) = futures_unbounded();
+            let error = recover_operation_result::<()>(
+                &event_sender,
+                "list_directory",
+                Some("/remote"),
+                Err(fatal_error.into()),
+            )
+            .expect_err("connection-level failure should terminate the session loop");
+
+            drop(event_sender);
+            assert!(
+                futures::executor::block_on(event_receiver.next()).is_none(),
+                "fatal operation errors must not be emitted as recoverable errors"
+            );
+            assert!(
+                error.downcast_ref::<SftpClientError>().is_some(),
+                "original SFTP error should propagate"
+            );
+        }
+    }
 }
