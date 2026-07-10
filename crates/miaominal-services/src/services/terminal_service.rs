@@ -90,6 +90,13 @@ mod tests {
         assert_eq!(hydrated.password, "hunter2");
         assert_eq!(hydrated.passphrase, "secret");
 
+        cleanup_test_vault(&path);
+    }
+
+    fn cleanup_test_vault(path: &std::path::Path) {
         let _ = fs::remove_file(path);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = fs::remove_file(std::path::PathBuf::from(lock_path));
     }
 }

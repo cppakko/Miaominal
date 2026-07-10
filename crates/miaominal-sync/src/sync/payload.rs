@@ -686,7 +686,7 @@ mod tests {
         assert_eq!(secrets.ai_provider_secrets.len(), 1);
         assert_eq!(secrets.ai_provider_secrets[0].id, "provider-1");
         assert_eq!(secrets.ai_provider_secrets[0].api_key, "sk-test");
-        let _ = std::fs::remove_file(vault_path);
+        cleanup_test_vault(&vault_path);
     }
 
     #[test]
@@ -857,5 +857,12 @@ mod tests {
                 web_search_secret: None,
             },
         }
+    }
+
+    fn cleanup_test_vault(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
     }
 }

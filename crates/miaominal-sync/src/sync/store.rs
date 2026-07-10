@@ -231,6 +231,13 @@ mod tests {
         ))
     }
 
+    fn cleanup_test_vault(path: &std::path::Path) {
+        let _ = fs::remove_file(path);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = fs::remove_file(PathBuf::from(lock_path));
+    }
+
     #[test]
     fn get_secrets_reads_all_sync_secrets_in_one_call_shape() {
         set_vault_test_parameters();
@@ -270,7 +277,7 @@ mod tests {
         assert_eq!(secrets.webdav_password.as_deref(), Some("webdav-password"));
         assert_eq!(secrets.passphrase.as_deref(), Some("sync-passphrase"));
 
-        let _ = fs::remove_file(vault_path);
+        cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);
     }
 

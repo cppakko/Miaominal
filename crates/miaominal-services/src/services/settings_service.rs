@@ -409,6 +409,13 @@ mod tests {
         ))
     }
 
+    fn cleanup_test_vault(path: &Path) {
+        let _ = fs::remove_file(path);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = fs::remove_file(PathBuf::from(lock_path));
+    }
+
     fn test_vault_sync_engine(
         label: &str,
         vault_passphrase: &str,
@@ -532,7 +539,7 @@ mod tests {
         let persisted: SyncConfig = toml::from_str(&persisted).expect("sync config should parse");
         assert!(!persisted.has_passphrase);
 
-        let _ = fs::remove_file(vault_path);
+        cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);
     }
 
@@ -558,7 +565,7 @@ mod tests {
         let persisted: SyncConfig = toml::from_str(&persisted).expect("sync config should parse");
         assert!(persisted.has_github_token);
 
-        let _ = fs::remove_file(vault_path);
+        cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);
     }
 
@@ -584,7 +591,7 @@ mod tests {
         let persisted: SyncConfig = toml::from_str(&persisted).expect("sync config should parse");
         assert!(persisted.has_webdav_password);
 
-        let _ = fs::remove_file(vault_path);
+        cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);
     }
 
@@ -697,7 +704,7 @@ mod tests {
             None
         );
 
-        let _ = fs::remove_file(secrets_path);
+        cleanup_test_vault(&secrets_path);
         let _ = fs::remove_file(sync_config_path);
     }
 }
