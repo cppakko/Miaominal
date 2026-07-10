@@ -175,23 +175,29 @@ mod tests {
                 &self.target_config_file,
             ] {
                 let _ = std::fs::remove_file(path);
+                let mut lock_path = path.as_os_str().to_os_string();
+                lock_path.push(".lock");
+                let _ = std::fs::remove_file(PathBuf::from(lock_path));
             }
         }
     }
 
     #[test]
-    fn copies_session_password_passphrase_managed_key_and_web_search_key() {
+    fn copies_all_secrets_without_lost_updates_in_shared_target_vault() {
         let fixture = Fixture::new("copy-basic");
         let source_secrets = vault_secret_store("source", fixture.source_secrets_path.clone());
-        let target_secrets = vault_secret_store("target", fixture.target_secrets_path.clone());
         let source_sync = vault_sync_config(
             "source-sync",
             fixture.source_sync_path.clone(),
             fixture.source_config_file.clone(),
         );
+
+        // Production creates separate credential backends for SecretStore and
+        // SyncConfigStore, but both backends point at the same local vault.
+        let target_secrets = vault_secret_store("target", fixture.target_secrets_path.clone());
         let target_sync = vault_sync_config(
-            "target-sync",
-            fixture.target_sync_path.clone(),
+            "target",
+            fixture.target_secrets_path.clone(),
             fixture.target_config_file.clone(),
         );
 
@@ -228,64 +234,75 @@ mod tests {
         )
         .expect("migration succeeds");
 
+        // Reopen the shared vault through fresh, independent backends so the
+        // assertions reflect what was persisted rather than either old cache.
+        drop(target_secrets);
+        drop(target_sync);
+        let persisted_secrets = vault_secret_store("target", fixture.target_secrets_path.clone());
+        let persisted_sync = vault_sync_config(
+            "target",
+            fixture.target_secrets_path.clone(),
+            fixture.target_config_file.clone(),
+        );
+
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("session-1", SecretKind::Password)
                 .unwrap()
                 .as_deref(),
             Some("pw1"),
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("session-1", SecretKind::Passphrase)
                 .unwrap()
                 .as_deref(),
             Some("pp1"),
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("session-2", SecretKind::Password)
                 .unwrap()
                 .as_deref(),
             Some("pw2"),
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("session-2", SecretKind::Passphrase)
                 .unwrap(),
             None,
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("key-1", SecretKind::ManagedPrivateKey)
                 .unwrap()
                 .as_deref(),
             Some("private-key-bytes"),
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("provider-1", SecretKind::AiProviderApiKey)
                 .unwrap()
                 .as_deref(),
             Some("sk-test"),
         );
         assert_eq!(
-            target_secrets
+            persisted_secrets
                 .get("web_search", SecretKind::WebSearchApiKey)
                 .unwrap()
                 .as_deref(),
             Some("web-search-key"),
         );
         assert_eq!(
-            target_sync.get_github_token().unwrap().as_deref(),
+            persisted_sync.get_github_token().unwrap().as_deref(),
             Some("gh-token"),
         );
         assert_eq!(
-            target_sync.get_webdav_password().unwrap().as_deref(),
+            persisted_sync.get_webdav_password().unwrap().as_deref(),
             Some("dav-pass"),
         );
         assert_eq!(
-            target_sync.get_passphrase().unwrap().as_deref(),
+            persisted_sync.get_passphrase().unwrap().as_deref(),
             Some("sync-pp"),
         );
 

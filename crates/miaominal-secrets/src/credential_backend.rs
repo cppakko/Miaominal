@@ -7,8 +7,8 @@ use keyring::Entry;
 use miaominal_paths::{self as paths, atomic_write};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -311,7 +311,55 @@ impl CredentialBackend for LockedCredentialBackend {
 pub struct VaultCredentialBackend {
     file_path: PathBuf,
     passphrase: String,
-    state: Mutex<Option<VaultDocument>>,
+    state: Mutex<Option<CachedVaultDocument>>,
+}
+
+#[derive(Debug)]
+struct CachedVaultDocument {
+    serialized: Option<Vec<u8>>,
+    document: VaultDocument,
+}
+
+// Serializing within the process avoids platform-specific behavior when the
+// same process tries to lock the sidecar through multiple file handles. The
+// sidecar lock then extends the same critical section across processes.
+fn vault_io_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn vault_lock_file_path(file_path: &Path) -> PathBuf {
+    let mut lock_path = file_path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
+}
+
+fn open_vault_lock_file(file_path: &Path) -> Result<File> {
+    let lock_path = vault_lock_file_path(file_path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("failed to open vault lock file {}", lock_path.display()))
+}
+
+fn with_vault_file_lock<T>(file_path: &Path, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _process_lock = vault_io_lock()
+        .lock()
+        .map_err(|_| anyhow!("vault I/O lock poisoned"))?;
+
+    let lock_path = vault_lock_file_path(file_path);
+    let lock_file = open_vault_lock_file(file_path)?;
+    lock_file
+        .lock()
+        .with_context(|| format!("failed to lock vault file {}", lock_path.display()))?;
+
+    operation()
 }
 
 impl VaultCredentialBackend {
@@ -333,13 +381,7 @@ impl VaultCredentialBackend {
     }
 
     pub fn erase_default_store_file() -> Result<()> {
-        let file_path = Self::default_file_path()?;
-        if !file_path.exists() {
-            return Ok(());
-        }
-
-        fs::remove_file(&file_path)
-            .with_context(|| format!("failed to remove {}", file_path.display()))
+        Self::erase_store_file(Self::default_file_path()?)
     }
 
     pub fn rotate_default_store_passphrase(
@@ -358,57 +400,86 @@ impl VaultCredentialBackend {
         old_passphrase: &str,
         new_passphrase: &str,
     ) -> Result<()> {
-        let current = Self::new_with_path(file_path.clone(), old_passphrase.to_string());
-        let document = current.load_document()?;
-        let next = Self::new_with_path(file_path, new_passphrase.to_string());
-        next.save_document(&document)
+        with_vault_file_lock(&file_path, || {
+            let current = Self::new_with_path(file_path.clone(), old_passphrase.to_string());
+            let serialized = current.read_serialized_document()?;
+            let document = current.decrypt_serialized_document(serialized.as_deref())?;
+            let next = Self::new_with_path(file_path.clone(), new_passphrase.to_string());
+            next.save_document_locked(&document)?;
+            Ok(())
+        })
     }
 
-    fn load_document(&self) -> Result<VaultDocument> {
-        if !self.file_path.exists() {
+    fn erase_store_file(file_path: PathBuf) -> Result<()> {
+        with_vault_file_lock(&file_path, || match fs::remove_file(&file_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to remove {}", file_path.display()))
+            }
+        })
+    }
+
+    fn with_store_lock<T>(&self, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        with_vault_file_lock(&self.file_path, operation)
+    }
+
+    fn read_serialized_document(&self) -> Result<Option<Vec<u8>>> {
+        match fs::read(&self.file_path) {
+            Ok(serialized) => Ok(Some(serialized)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to read {}", self.file_path.display()))
+            }
+        }
+    }
+
+    fn decrypt_serialized_document(&self, serialized: Option<&[u8]>) -> Result<VaultDocument> {
+        let Some(serialized) = serialized else {
+            return Ok(VaultDocument::default());
+        };
+        if serialized.iter().all(|byte| byte.is_ascii_whitespace()) {
             return Ok(VaultDocument::default());
         }
 
-        let serialized = fs::read_to_string(&self.file_path)
-            .with_context(|| format!("failed to read {}", self.file_path.display()))?;
-        if serialized.trim().is_empty() {
-            return Ok(VaultDocument::default());
-        }
-
-        let stored: StoredVaultDocument = serde_json::from_str(&serialized)
+        let stored: StoredVaultDocument = serde_json::from_slice(serialized)
             .with_context(|| format!("failed to parse {}", self.file_path.display()))?;
         self.decrypt_document(stored)
     }
 
     fn initialize_store(&self) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("vault lock poisoned"))?;
+        self.with_store_lock(|| {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("vault lock poisoned"))?;
+            let serialized = self.read_serialized_document()?;
 
-        let document = if !self.file_path.exists() {
-            let doc = VaultDocument::default();
-            self.save_document(&doc)?;
-            doc
-        } else {
-            let serialized = fs::read_to_string(&self.file_path)
-                .with_context(|| format!("failed to read {}", self.file_path.display()))?;
-            if serialized.trim().is_empty() {
-                let doc = VaultDocument::default();
-                self.save_document(&doc)?;
-                doc
-            } else {
-                let stored: StoredVaultDocument = serde_json::from_str(&serialized)
-                    .with_context(|| format!("failed to parse {}", self.file_path.display()))?;
-                self.decrypt_document(stored)?
+            if serialized
+                .as_deref()
+                .is_none_or(|contents| contents.iter().all(|byte| byte.is_ascii_whitespace()))
+            {
+                *state = Some(self.save_document_locked(&VaultDocument::default())?);
+                return Ok(());
             }
-        };
 
-        *state = Some(document);
-        Ok(())
+            if state
+                .as_ref()
+                .is_some_and(|cached| cached.serialized == serialized)
+            {
+                return Ok(());
+            }
+
+            let document = self.decrypt_serialized_document(serialized.as_deref())?;
+            *state = Some(CachedVaultDocument {
+                serialized,
+                document,
+            });
+            Ok(())
+        })
     }
 
-    fn save_document(&self, document: &VaultDocument) -> Result<()> {
+    fn save_document_locked(&self, document: &VaultDocument) -> Result<CachedVaultDocument> {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -421,8 +492,12 @@ impl VaultCredentialBackend {
 
         let stored = self.encrypt_document(&document)?;
         let serialized =
-            serde_json::to_string_pretty(&stored).context("failed to serialize vault document")?;
-        atomic_write(&self.file_path, serialized)
+            serde_json::to_vec_pretty(&stored).context("failed to serialize vault document")?;
+        atomic_write(&self.file_path, &serialized)?;
+        Ok(CachedVaultDocument {
+            serialized: Some(serialized),
+            document,
+        })
     }
 
     fn encrypt_document(&self, document: &VaultDocument) -> Result<StoredVaultDocument> {
@@ -487,19 +562,40 @@ impl VaultCredentialBackend {
         serde_json::from_slice(&plaintext).context("failed to parse decrypted vault")
     }
 
+    fn refresh_document_locked<'a>(
+        &self,
+        state: &'a mut Option<CachedVaultDocument>,
+    ) -> Result<&'a VaultDocument> {
+        let serialized = self.read_serialized_document()?;
+        if !state
+            .as_ref()
+            .is_some_and(|cached| cached.serialized == serialized)
+        {
+            let document = self.decrypt_serialized_document(serialized.as_deref())?;
+            *state = Some(CachedVaultDocument {
+                serialized,
+                document,
+            });
+        }
+
+        Ok(&state
+            .as_ref()
+            .expect("vault state is populated after refresh")
+            .document)
+    }
+
     fn with_document<T>(&self, f: impl FnOnce(&mut VaultDocument) -> Result<T>) -> Result<T> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let mut document = match state.take() {
-            Some(doc) => doc,
-            None => self.load_document()?,
-        };
-        let output = f(&mut document)?;
-        self.save_document(&document)?;
-        *state = Some(document);
-        Ok(output)
+        self.with_store_lock(|| {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("vault lock poisoned"))?;
+            let mut document = self.refresh_document_locked(&mut state)?.clone();
+            let output = f(&mut document)?;
+            let cached = self.save_document_locked(&document)?;
+            *state = Some(cached);
+            Ok(output)
+        })
     }
 
     fn account_map_mut<'a>(
@@ -520,41 +616,33 @@ impl CredentialBackend for VaultCredentialBackend {
     }
 
     fn get(&self, service: &str, account: &str) -> Result<Option<String>> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let document = match state.as_ref() {
-            Some(doc) => doc,
-            None => {
-                let doc = self.load_document()?;
-                state.insert(doc)
-            }
-        };
-        Ok(document
-            .services
-            .get(service)
-            .and_then(|accounts| accounts.get(account).cloned()))
+        self.with_store_lock(|| {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("vault lock poisoned"))?;
+            let document = self.refresh_document_locked(&mut state)?;
+            Ok(document
+                .services
+                .get(service)
+                .and_then(|accounts| accounts.get(account).cloned()))
+        })
     }
 
     fn get_many(&self, service: &str, accounts: &[&str]) -> Result<Vec<Option<String>>> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("vault lock poisoned"))?;
-        let document = match state.as_ref() {
-            Some(doc) => doc,
-            None => {
-                let doc = self.load_document()?;
-                state.insert(doc)
-            }
-        };
-        let stored_accounts = document.services.get(service);
+        self.with_store_lock(|| {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("vault lock poisoned"))?;
+            let document = self.refresh_document_locked(&mut state)?;
+            let stored_accounts = document.services.get(service);
 
-        Ok(accounts
-            .iter()
-            .map(|account| stored_accounts.and_then(|values| values.get(*account).cloned()))
-            .collect())
+            Ok(accounts
+                .iter()
+                .map(|account| stored_accounts.and_then(|values| values.get(*account).cloned()))
+                .collect())
+        })
     }
 
     fn set(&self, service: &str, account: &str, value: &str) -> Result<()> {
@@ -656,6 +744,17 @@ fn locked_vault_error(service: &str, account: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::TryLockError;
+    use std::process::{Child, Command, Output, Stdio};
+    use std::sync::Barrier;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const VAULT_LOCK_PROBE_TEST: &str = "credential_backend::tests::vault_sidecar_lock_child_probe";
+    const VAULT_LOCK_PROBE_PATH_ENV: &str = "MIAOMINAL_TEST_VAULT_LOCK_PROBE_PATH";
+    const VAULT_LOCK_PROBE_EXPECT_ENV: &str = "MIAOMINAL_TEST_VAULT_LOCK_PROBE_EXPECT";
+    const VAULT_LOCK_PROBE_MARKER_ENV: &str = "MIAOMINAL_TEST_VAULT_LOCK_PROBE_MARKER";
+    const VAULT_LOCK_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn test_backend(path: PathBuf) -> VaultCredentialBackend {
         set_vault_test_parameters();
@@ -677,7 +776,7 @@ mod tests {
 
         assert_eq!(value.as_deref(), Some("secret-token"));
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -694,7 +793,7 @@ mod tests {
 
         assert!(error.to_string().contains("vault decryption failed"));
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -718,7 +817,7 @@ mod tests {
             .expect_err("old passphrase should no longer decrypt vault");
         assert!(error.to_string().contains("vault decryption failed"));
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -740,7 +839,7 @@ mod tests {
         let after = fs::read_to_string(&path).expect("vault file should still exist");
         assert_eq!(before, after);
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -757,7 +856,7 @@ mod tests {
 
         assert!(error.to_string().contains("vault decryption failed"));
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -793,7 +892,328 @@ mod tests {
             ]
         );
 
-        let _ = fs::remove_file(path);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_backend_preserves_interleaved_writes_from_independent_caches() {
+        set_vault_test_parameters();
+        let path = test_vault_path("interleaved-independent-caches");
+        let password_backend = test_backend(path.clone());
+        let token_backend = test_backend(path.clone());
+
+        password_backend
+            .initialize(APP_CREDENTIAL_SERVICE)
+            .expect("password backend should initialize");
+        token_backend
+            .initialize(APP_CREDENTIAL_SERVICE)
+            .expect("token backend should initialize from the same snapshot");
+
+        password_backend
+            .set(APP_CREDENTIAL_SERVICE, "session-1:password", "hunter2")
+            .expect("password should save");
+        token_backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("token should merge with the latest vault");
+
+        let reader = test_backend(path.clone());
+        assert_eq!(
+            reader
+                .get_many(
+                    APP_CREDENTIAL_SERVICE,
+                    &["session-1:password", "sync:github-token"],
+                )
+                .expect("reader should decrypt the merged vault"),
+            vec![
+                Some("hunter2".to_string()),
+                Some("secret-token".to_string())
+            ]
+        );
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_backend_refreshes_reads_and_does_not_resurrect_deleted_secrets() {
+        set_vault_test_parameters();
+        let path = test_vault_path("refresh-and-delete");
+        let first = test_backend(path.clone());
+        let second = test_backend(path.clone());
+
+        first
+            .initialize(APP_CREDENTIAL_SERVICE)
+            .expect("first backend should initialize");
+        second
+            .initialize(APP_CREDENTIAL_SERVICE)
+            .expect("second backend should initialize");
+        first
+            .set(APP_CREDENTIAL_SERVICE, "session-1:password", "hunter2")
+            .expect("password should save");
+        assert_eq!(
+            second
+                .get(APP_CREDENTIAL_SERVICE, "session-1:password")
+                .expect("second backend should refresh its cached document")
+                .as_deref(),
+            Some("hunter2")
+        );
+
+        second
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("token should save");
+        first
+            .delete(APP_CREDENTIAL_SERVICE, "session-1:password")
+            .expect("delete should preserve the token from the latest document");
+        second
+            .set(APP_CREDENTIAL_SERVICE, "session-1:passphrase", "key-secret")
+            .expect("later write should not resurrect the deleted password");
+
+        let reader = test_backend(path.clone());
+        assert_eq!(
+            reader
+                .get_many(
+                    APP_CREDENTIAL_SERVICE,
+                    &[
+                        "session-1:password",
+                        "sync:github-token",
+                        "session-1:passphrase",
+                    ],
+                )
+                .expect("reader should see the final document"),
+            vec![
+                None,
+                Some("secret-token".to_string()),
+                Some("key-secret".to_string()),
+            ]
+        );
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_backend_serializes_concurrent_writes_from_independent_instances() {
+        set_vault_test_parameters();
+        let path = test_vault_path("concurrent-independent-instances");
+        const WORKER_COUNT: usize = 6;
+        let barrier = Arc::new(Barrier::new(WORKER_COUNT));
+        let mut workers = Vec::with_capacity(WORKER_COUNT);
+
+        for index in 0..WORKER_COUNT {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                let backend = test_backend(path);
+                backend
+                    .initialize(APP_CREDENTIAL_SERVICE)
+                    .expect("worker backend should initialize");
+                barrier.wait();
+                backend
+                    .set(
+                        APP_CREDENTIAL_SERVICE,
+                        &format!("concurrent:{index}"),
+                        &format!("secret-{index}"),
+                    )
+                    .expect("concurrent write should succeed");
+            }));
+        }
+
+        for worker in workers {
+            worker.join().expect("vault worker should not panic");
+        }
+
+        let reader = test_backend(path.clone());
+        for index in 0..WORKER_COUNT {
+            assert_eq!(
+                reader
+                    .get(APP_CREDENTIAL_SERVICE, &format!("concurrent:{index}"))
+                    .expect("reader should decrypt concurrent result"),
+                Some(format!("secret-{index}"))
+            );
+        }
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_backend_with_old_cached_passphrase_cannot_overwrite_rotated_store() {
+        set_vault_test_parameters();
+        let path = test_vault_path("cached-old-passphrase-after-rotation");
+        let old_backend = test_backend(path.clone());
+        old_backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("initial secret should save");
+        old_backend
+            .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+            .expect("old backend should cache the pre-rotation snapshot");
+
+        VaultCredentialBackend::rotate_store_passphrase(path.clone(), "correct horse", "new horse")
+            .expect("rotation should succeed");
+
+        let error = old_backend
+            .set(
+                APP_CREDENTIAL_SERVICE,
+                "sync:webdav-password",
+                "must-not-save",
+            )
+            .expect_err("old cached backend must refresh and reject the new ciphertext");
+        assert!(error.to_string().contains("vault decryption failed"));
+
+        let new_backend = VaultCredentialBackend::new_with_path(path.clone(), "new horse");
+        assert_eq!(
+            new_backend
+                .get_many(
+                    APP_CREDENTIAL_SERVICE,
+                    &["sync:github-token", "sync:webdav-password"],
+                )
+                .expect("new passphrase should read the intact vault"),
+            vec![Some("secret-token".to_string()), None]
+        );
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_backend_erase_keeps_stable_sidecar_and_invalidates_cached_document() {
+        set_vault_test_parameters();
+        let path = test_vault_path("erase-sidecar");
+        let backend = test_backend(path.clone());
+        backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("secret should save");
+
+        VaultCredentialBackend::erase_store_file(path.clone()).expect("vault erase should succeed");
+
+        assert!(!path.exists());
+        assert!(vault_lock_file_path(&path).exists());
+        assert_eq!(
+            backend
+                .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+                .expect("cached backend should refresh after erasure"),
+            None
+        );
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_sidecar_lock_is_visible_across_processes() {
+        let path = test_vault_path("cross-process-sidecar-lock");
+        let lock_file = open_vault_lock_file(&path).expect("parent should open vault sidecar");
+        lock_file
+            .lock()
+            .expect("parent should acquire vault sidecar lock");
+
+        run_vault_lock_probe(&path, "blocked");
+
+        lock_file
+            .unlock()
+            .expect("parent should release vault sidecar lock");
+        run_vault_lock_probe(&path, "available");
+
+        drop(lock_file);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    #[ignore = "subprocess helper for the cross-process vault lock test"]
+    fn vault_sidecar_lock_child_probe() {
+        let Some(path) = std::env::var_os(VAULT_LOCK_PROBE_PATH_ENV) else {
+            return;
+        };
+        let expected = std::env::var(VAULT_LOCK_PROBE_EXPECT_ENV)
+            .expect("parent should provide the expected lock state");
+        let marker = PathBuf::from(
+            std::env::var_os(VAULT_LOCK_PROBE_MARKER_ENV)
+                .expect("parent should provide the probe marker path"),
+        );
+        let lock_file = open_vault_lock_file(Path::new(&path))
+            .expect("child should open the same vault sidecar");
+
+        match expected.as_str() {
+            "blocked" => match lock_file.try_lock() {
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(error)) => {
+                    panic!("child failed to probe the held sidecar lock: {error}")
+                }
+                Ok(()) => {
+                    let _ = lock_file.unlock();
+                    panic!("child unexpectedly acquired the held sidecar lock");
+                }
+            },
+            "available" => match lock_file.try_lock() {
+                Ok(()) => lock_file
+                    .unlock()
+                    .expect("child should release the available sidecar lock"),
+                Err(TryLockError::WouldBlock) => {
+                    panic!("child still observed the released sidecar lock as held")
+                }
+                Err(TryLockError::Error(error)) => {
+                    panic!("child failed to probe the released sidecar lock: {error}")
+                }
+            },
+            other => panic!("unsupported vault lock probe expectation: {other}"),
+        }
+
+        fs::write(&marker, &expected).expect("child should acknowledge that the probe ran");
+    }
+
+    fn run_vault_lock_probe(path: &Path, expected: &str) {
+        let marker = test_vault_path(&format!("cross-process-lock-marker-{expected}"));
+        let child = Command::new(std::env::current_exe().expect("test executable should exist"))
+            .arg(VAULT_LOCK_PROBE_TEST)
+            .arg("--exact")
+            .arg("--ignored")
+            .arg("--test-threads")
+            .arg("1")
+            .env(VAULT_LOCK_PROBE_PATH_ENV, path)
+            .env(VAULT_LOCK_PROBE_EXPECT_ENV, expected)
+            .env(VAULT_LOCK_PROBE_MARKER_ENV, &marker)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("vault lock probe process should start");
+        let output = wait_for_vault_lock_probe(child);
+        let marker_contents = fs::read_to_string(&marker);
+        let _ = fs::remove_file(&marker);
+
+        assert!(
+            output.status.success(),
+            "vault lock probe for {expected} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            marker_contents.expect("probe marker proves that the exact child test ran"),
+            expected
+        );
+    }
+
+    fn wait_for_vault_lock_probe(mut child: Child) -> Output {
+        let deadline = Instant::now() + VAULT_LOCK_PROBE_TIMEOUT;
+        loop {
+            match child
+                .try_wait()
+                .expect("vault lock probe status should be readable")
+            {
+                Some(_) => {
+                    return child
+                        .wait_with_output()
+                        .expect("vault lock probe output should be readable");
+                }
+                None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                None => {
+                    let _ = child.kill();
+                    let output = child
+                        .wait_with_output()
+                        .expect("timed-out vault lock probe should terminate");
+                    panic!(
+                        "vault lock probe exceeded {:?}\nstdout:\n{}\nstderr:\n{}",
+                        VAULT_LOCK_PROBE_TIMEOUT,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
+        }
     }
 
     fn test_vault_path(suffix: &str) -> PathBuf {
@@ -801,5 +1221,10 @@ mod tests {
             "miaominal-secret-vault-{suffix}-{}.json",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    fn cleanup_test_vault(path: &Path) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(vault_lock_file_path(path));
     }
 }
