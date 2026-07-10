@@ -111,11 +111,7 @@ impl Tool for JsonAgentTool {
     ) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend {
         let channel = self.channel.clone();
         let name = self.name.clone();
-        let approved = match self.mode {
-            AgentMode::FullAuto => true,
-            AgentMode::Ask | AgentMode::NonBlocking => false,
-            AgentMode::Execute => auto_approve_rig_tool(&name),
-        };
+        let approved = initial_tool_approval(self.mode, &name);
         let skip_policy = matches!(self.mode, AgentMode::NonBlocking | AgentMode::FullAuto);
         let mode = self.mode;
         async move {
@@ -199,7 +195,15 @@ fn tool_definition(name: &str) -> ToolDefinition {
 }
 
 fn auto_approve_rig_tool(name: &str) -> bool {
-    matches!(name, "web_search" | "web_fetch")
+    matches!(name, "web_search")
+}
+
+fn initial_tool_approval(mode: AgentMode, name: &str) -> bool {
+    match mode {
+        AgentMode::FullAuto => true,
+        AgentMode::Ask | AgentMode::NonBlocking => false,
+        AgentMode::Execute => auto_approve_rig_tool(name),
+    }
 }
 
 fn normalize_tool_arguments(arguments: Value) -> Value {
@@ -498,6 +502,15 @@ mod tests {
                 .get("approved")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn execute_mode_does_not_preapprove_conditional_web_fetch_access() {
+        assert!(auto_approve_rig_tool("web_search"));
+        assert!(!auto_approve_rig_tool("web_fetch"));
+        assert!(!initial_tool_approval(AgentMode::Execute, "web_fetch"));
+        assert!(initial_tool_approval(AgentMode::FullAuto, "web_fetch"));
+        assert!(initial_tool_approval(AgentMode::FullAuto, "run_shell"));
     }
 
     #[test]

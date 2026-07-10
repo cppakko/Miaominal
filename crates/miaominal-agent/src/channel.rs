@@ -363,7 +363,9 @@ impl AgentExecChannel {
             "poll_job" => tools::poll_job(channel, parse_args(request.arguments)?).await?,
             "stop_job" => tools::stop_job(channel, parse_args(request.arguments)?).await?,
             "web_search" => tools::web_search(channel, parse_args(request.arguments)?).await?,
-            "web_fetch" => tools::web_fetch(channel, parse_args(request.arguments)?).await?,
+            "web_fetch" => {
+                tools::web_fetch(channel, parse_args(request.arguments)?, request.approved).await?
+            }
             "ask_user" => tools::ask_user(parse_args(request.arguments)?)?,
             "approval" => tools::approval(parse_args(request.arguments)?)?,
             other => return Err(AgentError::UnknownTool(other.to_string())),
