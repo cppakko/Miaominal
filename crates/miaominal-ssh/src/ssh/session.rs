@@ -495,6 +495,22 @@ pub(super) struct ClientHandler {
     pub(super) event_sender: FuturesUnboundedSender<SessionEvent>,
     pub(super) decision_inbox: Arc<Mutex<Option<oneshot::Receiver<HostKeyDecision>>>>,
     pub(super) remote_forward_targets: RemoteForwardTargets,
+    pub(super) agent_forwarding_allowed: bool,
+}
+
+async fn connect_agent_if_authorized<C, F, T, E>(
+    authorized: bool,
+    connector: C,
+) -> std::result::Result<Option<T>, E>
+where
+    C: FnOnce() -> F,
+    F: Future<Output = std::result::Result<T, E>>,
+{
+    if !authorized {
+        return Ok(None);
+    }
+
+    connector().await.map(Some)
 }
 
 impl client::Handler for ClientHandler {
@@ -587,13 +603,26 @@ impl client::Handler for ClientHandler {
         _session: &mut client::Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let event_sender = self.event_sender.clone();
+        let agent_forwarding_allowed = self.agent_forwarding_allowed;
         async move {
-            match connect_local_agent_stream().await {
-                Ok(mut agent_stream) => {
+            match connect_agent_if_authorized(agent_forwarding_allowed, connect_local_agent_stream)
+                .await
+            {
+                Ok(Some(mut agent_stream)) => {
                     let mut forwarded = channel.into_stream();
                     if let Err(error) = copy_bidirectional(&mut forwarded, &mut agent_stream).await
                     {
                         log::warn!("agent forwarding relay ended with error: {error:?}");
+                    }
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "server attempted to open an unauthorized SSH agent forwarding channel"
+                    );
+                    if let Err(error) = channel.close().await {
+                        log::debug!(
+                            "failed to close unauthorized agent forwarding channel: {error:?}"
+                        );
                     }
                 }
                 Err(error) => {
@@ -959,6 +988,7 @@ fn build_client_handler(
             event_sender: event_sender.clone(),
             decision_inbox,
             remote_forward_targets: remote_forward_targets.clone(),
+            agent_forwarding_allowed: profile.agent_forwarding,
         },
         pending_decision,
     )
@@ -1304,4 +1334,61 @@ fn shell_quote_cmd(value: &str) -> String {
     // Inside SET "NAME=value" the value must not contain double-quotes.
     // Percent signs are special in CMD; escape them by doubling.
     value.replace('"', "").replace('%', "%%")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn disabled_agent_forwarding_does_not_call_local_agent_connector() {
+        let connector_called = AtomicBool::new(false);
+
+        let result = connect_agent_if_authorized(false, || {
+            connector_called.store(true, Ordering::SeqCst);
+            async { Ok::<(), ()>(()) }
+        })
+        .await;
+
+        assert_eq!(result, Ok(None));
+        assert!(!connector_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn enabled_agent_forwarding_calls_local_agent_connector() {
+        let connector_called = AtomicBool::new(false);
+
+        let result = connect_agent_if_authorized(true, || {
+            connector_called.store(true, Ordering::SeqCst);
+            async { Ok::<_, ()>("connected") }
+        })
+        .await;
+
+        assert_eq!(result, Ok(Some("connected")));
+        assert!(connector_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn client_handler_copies_agent_forwarding_authorization_from_profile() {
+        let (event_sender, _event_receiver) = futures_unbounded();
+        let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
+
+        for agent_forwarding_allowed in [false, true] {
+            let mut profile = SessionProfile::blank("test-profile", 1);
+            profile.agent_forwarding = agent_forwarding_allowed;
+            let known_hosts = KnownHostsStore::with_path(
+                std::env::temp_dir().join("miaominal-agent-forwarding-known-hosts"),
+            );
+
+            let (handler, _pending_decision) = build_client_handler(
+                &profile,
+                known_hosts,
+                &event_sender,
+                &remote_forward_targets,
+            );
+
+            assert_eq!(handler.agent_forwarding_allowed, agent_forwarding_allowed);
+        }
+    }
 }
