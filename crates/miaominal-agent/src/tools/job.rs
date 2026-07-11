@@ -29,6 +29,46 @@ const WINDOWS_CMD_MAX_COMMAND_BYTES: usize = 8_191;
 const POSIX_READY_ATTEMPTS: usize = 100;
 const POSIX_LAUNCH_CLEANUP_ATTEMPTS: usize = 70;
 
+const POSIX_PROCESS_HELPERS: &str = include_str!("job_scripts/posix_process_helpers.sh");
+const POSIX_START_CHILD: &str = include_str!("job_scripts/posix_start_child.sh");
+const POSIX_START_RUNNER: &str = include_str!("job_scripts/posix_start_runner.sh");
+const POSIX_START_LAUNCHER: &str = include_str!("job_scripts/posix_start_launcher.sh");
+const WINDOWS_START_MONITOR: &str = include_str!("job_scripts/windows_start_monitor.ps1");
+const WINDOWS_START_LAUNCHER: &str = include_str!("job_scripts/windows_start_launcher.ps1");
+const WINDOWS_DETACHED_LAUNCHER: &str = include_str!("job_scripts/windows_detached_launcher.cs");
+const WINDOWS_CHILD_WRAPPER: &str = include_str!("job_scripts/windows_child_wrapper.ps1");
+const POSIX_POLL: &str = include_str!("job_scripts/posix_poll.sh");
+const WINDOWS_POLL: &str = include_str!("job_scripts/windows_poll.ps1");
+const POSIX_STOP: &str = include_str!("job_scripts/posix_stop.sh");
+const WINDOWS_STOP: &str = include_str!("job_scripts/windows_stop.ps1");
+const POSIX_CLEANUP: &str = include_str!("job_scripts/posix_cleanup.sh");
+const WINDOWS_CLEANUP: &str = include_str!("job_scripts/windows_cleanup.ps1");
+const POSIX_SCAVENGE: &str = include_str!("job_scripts/posix_scavenge.sh");
+const WINDOWS_SCAVENGE: &str = include_str!("job_scripts/windows_scavenge.ps1");
+
+fn render_job_script(template: &str, values: &[(&str, &str)]) -> String {
+    let mut rendered = String::with_capacity(template.len());
+    let mut remaining = template;
+
+    while let Some(start) = remaining.find("@@") {
+        rendered.push_str(&remaining[..start]);
+        let placeholder = &remaining[start + 2..];
+        let Some(end) = placeholder.find("@@") else {
+            panic!("unterminated job script placeholder");
+        };
+        let name = &placeholder[..end];
+        let value = values
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == name).then_some(*value))
+            .unwrap_or_else(|| panic!("unknown job script placeholder: {name}"));
+        rendered.push_str(value);
+        remaining = &placeholder[end + 2..];
+    }
+
+    rendered.push_str(remaining);
+    rendered
+}
+
 #[derive(Debug, Clone)]
 struct PosixJobPaths {
     root: String,
@@ -71,81 +111,7 @@ fn wrap_posix_script(script: &str, shell_type: ShellType) -> String {
 }
 
 fn posix_process_helpers() -> &'static str {
-    r#"process_identity() {
-    identity_pid=$1
-    case "$identity_pid" in ''|*[!0-9]*) return 1 ;; esac
-    if [ -r "/proc/$identity_pid/stat" ]; then
-        identity_start=$(sed 's/^[0-9][0-9]* (.*) //' "/proc/$identity_pid/stat" 2>/dev/null | awk '{print $20}') || return 1
-        [ -n "$identity_start" ] || return 1
-        printf 'proc:%s\n' "$identity_start"
-    else
-        identity_start=$(ps -p "$identity_pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        [ -n "$identity_start" ] || return 1
-        printf 'ps:%s\n' "$identity_start"
-    fi
-}
-process_pgid() {
-    process_pgid_value=$(ps -p "$1" -o pgid= 2>/dev/null | tr -d '[:space:]')
-    case "$process_pgid_value" in ''|*[!0-9]*) return 1 ;; esac
-    printf '%s\n' "$process_pgid_value"
-}
-process_uid() {
-    process_uid_value=$(ps -p "$1" -o uid= 2>/dev/null | tr -d '[:space:]')
-    case "$process_uid_value" in ''|*[!0-9]*) return 1 ;; esac
-    printf '%s\n' "$process_uid_value"
-}
-process_alive() {
-    process_alive_pid=$1
-    case "$process_alive_pid" in ''|*[!0-9]*) return 1 ;; esac
-    kill -0 "$process_alive_pid" 2>/dev/null && return 0
-    [ -d "/proc/$process_alive_pid" ] && return 0
-    process_alive_value=$(ps -p "$process_alive_pid" -o pid= 2>/dev/null | tr -d '[:space:]')
-    [ "$process_alive_value" = "$process_alive_pid" ]
-}
-group_alive() {
-    group_alive_pgid=$1
-    case "$group_alive_pgid" in ''|*[!0-9]*) return 1 ;; esac
-    kill -0 -- "-$group_alive_pgid" 2>/dev/null && return 0
-    ps -e -o pgid= 2>/dev/null | grep -q "^[[:space:]]*$group_alive_pgid[[:space:]]*$"
-}
-terminate_process() {
-    terminate_pid=$1
-    process_alive "$terminate_pid" || return 0
-    kill -TERM "$terminate_pid" 2>/dev/null || true
-    terminate_i=0
-    while process_alive "$terminate_pid" && [ "$terminate_i" -lt 20 ]; do
-        sleep 0.1
-        terminate_i=$((terminate_i + 1))
-    done
-    if process_alive "$terminate_pid"; then
-        kill -KILL "$terminate_pid" 2>/dev/null || true
-        terminate_i=0
-        while process_alive "$terminate_pid" && [ "$terminate_i" -lt 50 ]; do
-            sleep 0.1
-            terminate_i=$((terminate_i + 1))
-        done
-    fi
-    ! process_alive "$terminate_pid"
-}
-terminate_group() {
-    terminate_pgid=$1
-    group_alive "$terminate_pgid" || return 0
-    kill -TERM -- "-$terminate_pgid" 2>/dev/null || true
-    terminate_i=0
-    while group_alive "$terminate_pgid" && [ "$terminate_i" -lt 20 ]; do
-        sleep 0.1
-        terminate_i=$((terminate_i + 1))
-    done
-    if group_alive "$terminate_pgid"; then
-        kill -KILL -- "-$terminate_pgid" 2>/dev/null || true
-        terminate_i=0
-        while group_alive "$terminate_pgid" && [ "$terminate_i" -lt 50 ]; do
-            sleep 0.1
-            terminate_i=$((terminate_i + 1))
-        done
-    fi
-    ! group_alive "$terminate_pgid"
-}"#
+    POSIX_PROCESS_HELPERS.trim_end()
 }
 
 /// Build the background job command for the given shell type.
@@ -204,237 +170,73 @@ fn make_posix_start_scripts(cwd: &str, user_command: &str, marker: &str) -> Posi
         .root
         .strip_prefix("/tmp/miaominal-agent-")
         .unwrap_or(&paths.root);
-
-    let child_source = format!(
-        r#"#!/bin/sh
-{helpers}
-child_meta={child}
-saved_umask=$(umask)
-child_pid=$$
-child_uid=$(id -u 2>/dev/null) || exit 125
-child_pgid=$(process_pgid "$child_pid") || exit 125
-child_identity=$(process_identity "$child_pid") || exit 125
-umask 077
-child_tmp="$child_meta.tmp.$child_pid"
-{{
-    printf 'pid=%s\n' "$child_pid"
-    printf 'uid=%s\n' "$child_uid"
-    printf 'pgid=%s\n' "$child_pgid"
-    printf 'identity=%s\n' "$child_identity"
-}} >"$child_tmp" && mv -f "$child_tmp" "$child_meta"
-umask "$saved_umask"
-cd "$HOME" && cd {cwd} || exit 126
-exec sh -lc {command}
-"#,
-        helpers = posix_process_helpers(),
-        child = quote(&paths.child),
-        cwd = quote(cwd),
-        command = quote(user_command),
+    let child = quote(&paths.child);
+    let cwd = quote(cwd);
+    let command = quote(user_command);
+    let child_source = render_job_script(
+        POSIX_START_CHILD,
+        &[
+            ("HELPERS", posix_process_helpers()),
+            ("CHILD", &child),
+            ("CWD", &cwd),
+            ("COMMAND", &command),
+        ],
     );
 
-    let runner_source = format!(
-        r#"#!/bin/sh
-{helpers}
-root={root}
-status={status}
-out={stdout}
-err={stderr}
-pid_file={pid}
-ready={ready}
-runner={runner}
-command_file={command_file}
-child_meta={child}
-stop_file={stop}
-error_file={error}
-token={token}
-saved_umask=$(umask)
-child_pid=
-child_pgid=
-fail_launch() {{
-    umask 077
-    error_tmp="$error_file.tmp.$$"
-    printf '%s\n' "$1" >"$error_tmp" && mv -f "$error_tmp" "$error_file"
-    exit 1
-}}
-cleanup_signal() {{
-    if [ -n "$child_pgid" ]; then terminate_group "$child_pgid" || true
-    elif [ -n "$child_pid" ]; then terminate_process "$child_pid" || true
-    fi
-    exit 143
-}}
-trap cleanup_signal TERM INT
-monitor_pid=$$
-monitor_uid=$(id -u 2>/dev/null) || fail_launch 'failed to determine monitor uid'
-monitor_identity=$(process_identity "$monitor_pid") || fail_launch 'failed to capture monitor identity'
-rm -f "$child_meta" "$ready" "$error_file"
-umask "$saved_umask"
-mode=
-if command -v setsid >/dev/null 2>&1; then
-    mode=setsid
-    setsid sh "$command_file" >"$out" 2>"$err" &
-    launch_pid=$!
-else
-    if ! set -m 2>/dev/null; then
-        fail_launch 'setsid is unavailable and the shell cannot enable job control'
-    fi
-    mode=job_control
-    sh "$command_file" >"$out" 2>"$err" &
-    launch_pid=$!
-fi
-child_wait=0
-while [ ! -f "$child_meta" ] && process_alive "$launch_pid" && [ "$child_wait" -lt {ready_attempts} ]; do
-    sleep 0.1
-    child_wait=$((child_wait + 1))
-done
-if [ ! -f "$child_meta" ]; then
-    terminate_process "$launch_pid" || true
-    fail_launch 'job child failed to publish process metadata'
-fi
-metadata_value() {{ sed -n "s/^$1=//p" "$child_meta" 2>/dev/null | head -n 1; }}
-child_pid=$(metadata_value pid)
-child_uid=$(metadata_value uid)
-child_pgid=$(metadata_value pgid)
-child_identity=$(metadata_value identity)
-for metadata_number in "$child_pid" "$child_uid" "$child_pgid"; do
-    case "$metadata_number" in ''|*[!0-9]*)
-        terminate_process "$launch_pid" || true
-        fail_launch 'job child metadata was invalid'
-        ;;
-    esac
-done
-if [ "$child_pid" != "$launch_pid" ] || [ "$child_uid" != "$monitor_uid" ] || [ "$child_pgid" != "$child_pid" ]; then
-    terminate_process "$launch_pid" || true
-    fail_launch 'job child did not enter a verified private process group'
-fi
-actual_identity=$(process_identity "$child_pid") || {{ terminate_group "$child_pgid" || true; fail_launch 'job child disappeared before ready'; }}
-actual_pgid=$(process_pgid "$child_pid") || {{ terminate_group "$child_pgid" || true; fail_launch 'failed to verify job process group'; }}
-if [ "$actual_identity" != "$child_identity" ] || [ "$actual_pgid" != "$child_pgid" ]; then
-    terminate_group "$child_pgid" || true
-    fail_launch 'job child identity changed before ready'
-fi
-umask 077
-pid_tmp="$pid_file.tmp.$$"
-{{
-    printf 'version=1\n'
-    printf 'token=%s\n' "$token"
-    printf 'uid=%s\n' "$monitor_uid"
-    printf 'mode=%s\n' "$mode"
-    printf 'monitor_pid=%s\n' "$monitor_pid"
-    printf 'monitor_identity=%s\n' "$monitor_identity"
-    printf 'child_pid=%s\n' "$child_pid"
-    printf 'child_identity=%s\n' "$child_identity"
-    printf 'child_pgid=%s\n' "$child_pgid"
-}} >"$pid_tmp" && mv -f "$pid_tmp" "$pid_file"
-ready_tmp="$ready.tmp.$$"
-printf 'ready\n' >"$ready_tmp" && mv -f "$ready_tmp" "$ready"
-umask "$saved_umask"
-set +e
-wait "$launch_pid"
-exit_code=$?
-set -e
-if [ -f "$stop_file" ]; then exit 0; fi
-if group_alive "$child_pgid" && ! terminate_group "$child_pgid"; then
-    printf '%s\n' 'job process group survived natural command exit' >>"$err"
-    exit 1
-fi
-umask 077
-status_tmp="$status.tmp.$$"
-printf '%s' "$exit_code" >"$status_tmp"
-if ln "$status_tmp" "$status" 2>/dev/null; then :; fi
-rm -f "$status_tmp" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
-exit "$exit_code"
-"#,
-        helpers = posix_process_helpers(),
-        root = quote(&paths.root),
-        status = quote(&paths.status),
-        stdout = quote(&paths.stdout),
-        stderr = quote(&paths.stderr),
-        pid = quote(&paths.pid),
-        ready = quote(&paths.ready),
-        runner = quote(&paths.runner),
-        command_file = quote(&paths.command),
-        child = quote(&paths.child),
-        stop = quote(&paths.stop),
-        error = quote(&paths.error),
-        token = quote(token),
-        ready_attempts = POSIX_READY_ATTEMPTS,
+    let root = quote(&paths.root);
+    let status = quote(&paths.status);
+    let stdout = quote(&paths.stdout);
+    let stderr = quote(&paths.stderr);
+    let pid = quote(&paths.pid);
+    let ready = quote(&paths.ready);
+    let runner = quote(&paths.runner);
+    let command_file = quote(&paths.command);
+    let stop = quote(&paths.stop);
+    let error = quote(&paths.error);
+    let token = quote(token);
+    let ready_attempts = POSIX_READY_ATTEMPTS.to_string();
+    let runner_source = render_job_script(
+        POSIX_START_RUNNER,
+        &[
+            ("HELPERS", posix_process_helpers()),
+            ("ROOT", &root),
+            ("STATUS", &status),
+            ("STDOUT", &stdout),
+            ("STDERR", &stderr),
+            ("PID", &pid),
+            ("READY", &ready),
+            ("RUNNER", &runner),
+            ("COMMAND_FILE", &command_file),
+            ("CHILD", &child),
+            ("STOP", &stop),
+            ("ERROR", &error),
+            ("TOKEN", &token),
+            ("READY_ATTEMPTS", &ready_attempts),
+        ],
     );
 
-    let launcher = format!(
-        r#"root={root}
-status={status}
-out={stdout}
-err={stderr}
-pid_file={pid}
-ready={ready}
-runner={runner}
-command_file={command_file}
-child_meta={child}
-stop_file={stop}
-error_file={error}
-saved_umask=$(umask)
-cleanup_launch() {{
-    rm -f "$status" "$out" "$err" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
-    rm -f "$root"/status.tmp.* "$root"/pid.tmp.* "$root"/ready.tmp.* "$root"/error.tmp.* "$root"/child.tmp.* 2>/dev/null || true
-    rmdir "$root" 2>/dev/null || true
-}}
-umask 077
-if ! mkdir "$root" 2>/dev/null; then
-    printf '%s\n' 'job directory already exists or cannot be created' >&2
-    exit 1
-fi
-chmod 700 "$root" || {{ cleanup_launch; exit 1; }}
-: >"$out" && : >"$err" || {{ cleanup_launch; exit 1; }}
-printf '%s' {runner_source} >"$runner" || {{ cleanup_launch; exit 1; }}
-printf '%s' {child_source} >"$command_file" || {{ cleanup_launch; exit 1; }}
-chmod 600 "$out" "$err" "$runner" "$command_file" || {{ cleanup_launch; exit 1; }}
-umask "$saved_umask"
-nohup sh "$runner" </dev/null >/dev/null 2>&1 &
-monitor_launch_pid=$!
-launch_wait=0
-while [ ! -f "$ready" ] && [ ! -f "$status" ] && [ ! -f "$error_file" ] && [ "$launch_wait" -lt {ready_attempts} ]; do
-    if ! kill -0 "$monitor_launch_pid" 2>/dev/null; then break; fi
-    sleep 0.1
-    launch_wait=$((launch_wait + 1))
-done
-if [ -f "$error_file" ]; then
-    launch_error=$(head -c 4096 "$error_file" 2>/dev/null)
-    kill -TERM "$monitor_launch_pid" 2>/dev/null || true
-    sleep 0.1
-    kill -KILL "$monitor_launch_pid" 2>/dev/null || true
-    cleanup_launch
-    printf '%s\n' "$launch_error" >&2
-    exit 1
-fi
-if [ ! -f "$ready" ] && [ ! -f "$status" ]; then
-    kill -TERM "$monitor_launch_pid" 2>/dev/null || true
-    cleanup_wait=0
-    while kill -0 "$monitor_launch_pid" 2>/dev/null && [ "$cleanup_wait" -lt {grace_attempts} ]; do
-        sleep 0.1
-        cleanup_wait=$((cleanup_wait + 1))
-    done
-    kill -KILL "$monitor_launch_pid" 2>/dev/null || true
-    cleanup_launch
-    printf '%s\n' 'job monitor failed to become ready' >&2
-    exit 1
-fi
-printf '%s\n' "$status"
-"#,
-        root = quote(&paths.root),
-        status = quote(&paths.status),
-        stdout = quote(&paths.stdout),
-        stderr = quote(&paths.stderr),
-        pid = quote(&paths.pid),
-        ready = quote(&paths.ready),
-        runner = quote(&paths.runner),
-        command_file = quote(&paths.command),
-        child = quote(&paths.child),
-        stop = quote(&paths.stop),
-        error = quote(&paths.error),
-        runner_source = quote(&runner_source),
-        child_source = quote(&child_source),
-        ready_attempts = POSIX_READY_ATTEMPTS,
-        grace_attempts = POSIX_LAUNCH_CLEANUP_ATTEMPTS,
+    let runner_source_q = quote(&runner_source);
+    let child_source_q = quote(&child_source);
+    let grace_attempts = POSIX_LAUNCH_CLEANUP_ATTEMPTS.to_string();
+    let launcher = render_job_script(
+        POSIX_START_LAUNCHER,
+        &[
+            ("ROOT", &root),
+            ("STATUS", &status),
+            ("STDOUT", &stdout),
+            ("STDERR", &stderr),
+            ("PID", &pid),
+            ("READY", &ready),
+            ("RUNNER", &runner),
+            ("COMMAND_FILE", &command_file),
+            ("CHILD", &child),
+            ("STOP", &stop),
+            ("ERROR", &error),
+            ("RUNNER_SOURCE", &runner_source_q),
+            ("CHILD_SOURCE", &child_source_q),
+            ("READY_ATTEMPTS", &ready_attempts),
+            ("GRACE_ATTEMPTS", &grace_attempts),
+        ],
     );
 
     PosixStartScripts {
@@ -456,173 +258,35 @@ fn make_windows_start_script(
     let program_q = shell_quote(program, ShellType::PowerShell);
     let child_arguments_q = shell_quote(&child_arguments, ShellType::PowerShell);
 
-    let monitor_script = format!(
-        concat!(
-            "$ErrorActionPreference='Stop'; ",
-            "$marker=[Environment]::ExpandEnvironmentVariables({marker}); ",
-            "$out=$marker+'.out'; $err=$marker+'.err'; $pidFile=$marker+'.pid'; ",
-            "$workingDirectory=[Environment]::GetEnvironmentVariable('MIAOMINAL_AGENT_JOB_CWD','Process'); ",
-            "Remove-Item Env:MIAOMINAL_AGENT_JOB_CWD -ErrorAction SilentlyContinue; ",
-            "if ([string]::IsNullOrWhiteSpace($workingDirectory)) {{ throw 'job working directory was not provided' }}; ",
-            "$self=[Diagnostics.Process]::GetCurrentProcess(); ",
-            "$statusTmp=$marker+'.tmp-'+[Guid]::NewGuid().ToString('N'); ",
-            "function Publish-MiaominalPidMetadata([hashtable]$metadata) {{ ",
-            "$pidJson=$metadata | ConvertTo-Json -Compress; $pidTmp=$pidFile+'.tmp-'+[Guid]::NewGuid().ToString('N'); ",
-            "[IO.File]::WriteAllText($pidTmp,$pidJson,(New-Object Text.UTF8Encoding($false))); ",
-            "Move-Item -LiteralPath $pidTmp -Destination $pidFile -Force ",
-            "}}; ",
-            "$monitorMetadata=@{{pid=$self.Id;start_ticks=([string]$self.StartTime.ToUniversalTime().Ticks)}}; ",
-            "Publish-MiaominalPidMetadata $monitorMetadata; ",
-            "$exitCode=1; $process=$null; $childStartTicks=$null; $outStream=$null; $errStream=$null; $caughtError=$null; ",
-            "try {{ ",
-            "$psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName={program}; $psi.Arguments={arguments}; ",
-            "$psi.WorkingDirectory=$workingDirectory; $psi.UseShellExecute=$false; ",
-            "$psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; ",
-            "$process=[Diagnostics.Process]::new(); $process.StartInfo=$psi; $share=[IO.FileShare]::ReadWrite; ",
-            "$outStream=[IO.File]::Open($out,[IO.FileMode]::Create,[IO.FileAccess]::Write,$share); ",
-            "$errStream=[IO.File]::Open($err,[IO.FileMode]::Create,[IO.FileAccess]::Write,$share); ",
-            "[void]$process.Start(); ",
-            "for ($identityAttempt=0; $identityAttempt -lt 50 -and $null -eq $childStartTicks; $identityAttempt++) {{ ",
-            "try {{ $childStartTicks=[int64]$process.StartTime.ToUniversalTime().Ticks }} catch {{ Start-Sleep -Milliseconds 10 }} ",
-            "}}; ",
-            "if ($null -eq $childStartTicks) {{ throw 'failed to capture child process identity' }}; ",
-            "$monitorMetadata['child_pid']=$process.Id; $monitorMetadata['child_start_ticks']=[string]$childStartTicks; ",
-            "Publish-MiaominalPidMetadata $monitorMetadata; ",
-            "$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($outStream); ",
-            "$stderrTask=$process.StandardError.BaseStream.CopyToAsync($errStream); ",
-            "$process.WaitForExit(); $stdoutTask.Wait(); $stderrTask.Wait(); $exitCode=[int]$process.ExitCode ",
-            "}} catch {{ ",
-            "$caughtError=$_ | Out-String; ",
-            "if ($null -ne $process -and $null -ne $childStartTicks) {{ ",
-            "try {{ $child=Get-Process -Id $process.Id -ErrorAction Stop; ",
-            "if ($child.StartTime.ToUniversalTime().Ticks -eq $childStartTicks) {{ ",
-            "$savedErrorActionPreference=$ErrorActionPreference; ",
-            "try {{ $ErrorActionPreference='Continue'; & taskkill.exe /T /F /PID $child.Id *> $null }} finally {{ $ErrorActionPreference=$savedErrorActionPreference }}; ",
-            "try {{ $child.WaitForExit(5000) *> $null }} catch {{}}; ",
-            "if (-not $child.HasExited) {{ try {{ $child.Kill(); $child.WaitForExit(5000) *> $null }} catch {{}} }} ",
-            "}} }} catch {{}} ",
-            "}} elseif ($null -ne $process) {{ ",
-            "try {{ if (-not $process.HasExited) {{ $process.Kill(); $process.WaitForExit(5000) *> $null }} }} catch {{}} ",
-            "}} ",
-            "}} finally {{ ",
-            "if ($null -ne $outStream) {{ $outStream.Dispose() }}; if ($null -ne $errStream) {{ $errStream.Dispose() }} ",
-            "}}; ",
-            "if ($caughtError) {{ [IO.File]::AppendAllText($err,$caughtError,(New-Object Text.UTF8Encoding($false))) }}; ",
-            "[IO.File]::WriteAllText($statusTmp,[string]$exitCode,(New-Object Text.UTF8Encoding($false))); ",
-            "Move-Item -LiteralPath $statusTmp -Destination $marker -Force; ",
-            "exit $exitCode"
-        ),
-        marker = marker_q,
-        program = program_q,
-        arguments = child_arguments_q,
+    let monitor_script = render_job_script(
+        WINDOWS_START_MONITOR,
+        &[
+            ("MARKER", &marker_q),
+            ("PROGRAM", &program_q),
+            ("ARGUMENTS", &child_arguments_q),
+        ],
     );
     let monitor_script_q = shell_quote(&monitor_script, ShellType::PowerShell);
     let detached_launcher_q =
-        shell_quote(windows_detached_launcher_source(), ShellType::PowerShell);
+        shell_quote(WINDOWS_DETACHED_LAUNCHER.trim_end(), ShellType::PowerShell);
 
-    format!(
-        concat!(
-            "$ErrorActionPreference='Stop'; ",
-            "$marker=[Environment]::ExpandEnvironmentVariables({marker}); ",
-            "$pidFile=$marker+'.pid'; $runner=$marker+'.runner.ps1'; ",
-            "$cwdEnvName='MIAOMINAL_AGENT_JOB_CWD'; ",
-            "$previousCwdEnv=[Environment]::GetEnvironmentVariable($cwdEnvName,'Process'); ",
-            "$monitorPid=$null; $monitorStartTicks=$null; ",
-            "function Remove-MiaominalLaunchArtifacts {{ ",
-            "Remove-Item -LiteralPath @($marker,($marker+'.out'),($marker+'.err'),$pidFile,($marker+'.ctl.out'),($marker+'.ctl.err'),$runner) ",
-            "-Force -ErrorAction SilentlyContinue; ",
-            "$root=Split-Path -Parent $marker; $leaf=Split-Path -Leaf $marker; ",
-            "Get-ChildItem -LiteralPath $root -Filter ($leaf+'.tmp-*') -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue; ",
-            "Get-ChildItem -LiteralPath $root -Filter ($leaf+'.pid.tmp-*') -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue ",
-            "}}; ",
-            "function Stop-MiaominalLaunchedMonitor([int]$processId,[object]$expectedTicks) {{ ",
-            "if ($null -eq $expectedTicks -and (Test-Path -LiteralPath $pidFile -PathType Leaf)) {{ ",
-            "try {{ $metadata=Get-Content -LiteralPath $pidFile -Raw -ErrorAction Stop | ConvertFrom-Json; ",
-            "if ([int]$metadata.pid -eq $processId) {{ $expectedTicks=[int64]$metadata.start_ticks }} }} catch {{}} ",
-            "}}; ",
-            "if ($null -eq $expectedTicks) {{ throw 'cannot validate monitor process identity before cleanup' }}; ",
-            "$process=$null; try {{ $process=Get-Process -Id $processId -ErrorAction Stop }} catch {{ return }}; ",
-            "$actualTicks=[int64]$process.StartTime.ToUniversalTime().Ticks; ",
-            "if ($actualTicks -ne ([int64]$expectedTicks)) {{ throw ('monitor process identity mismatch: expected '+$expectedTicks+', actual '+$actualTicks) }}; ",
-            "try {{ ",
-            "$savedErrorActionPreference=$ErrorActionPreference; ",
-            "try {{ $ErrorActionPreference='Continue'; & taskkill.exe /T /F /PID $processId *> $null }} finally {{ $ErrorActionPreference=$savedErrorActionPreference }}; ",
-            "try {{ $process.WaitForExit(5000) *> $null }} catch {{}}; ",
-            "if (-not $process.HasExited) {{ $process.Kill(); $process.WaitForExit(5000) *> $null }}; ",
-            "if (-not $process.HasExited) {{ throw 'monitor process survived cleanup' }} ",
-            "}} catch {{ throw }} ",
-            "}}; ",
-            "try {{ ",
-            "$requestedCwd=[Environment]::ExpandEnvironmentVariables({cwd}); ",
-            "if ([IO.Path]::IsPathRooted($requestedCwd)) {{ $cwdPath=$requestedCwd }} else {{ $cwdPath=Join-Path $env:USERPROFILE $requestedCwd }}; ",
-            "$cwdItem=Get-Item -LiteralPath $cwdPath -Force -ErrorAction Stop; ",
-            "if (-not $cwdItem.PSIsContainer) {{ throw 'job working directory is not a directory' }}; ",
-            "$resolvedCwd=$cwdItem.FullName; ",
-            "Remove-MiaominalLaunchArtifacts; ",
-            "$powershell=Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; ",
-            "Add-Type -TypeDefinition {detached_launcher} -Language CSharp; ",
-            "[IO.File]::WriteAllText($runner,{monitor_script},(New-Object Text.UTF8Encoding($true))); ",
-            "$monitorArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"'+$runner+'\"'; ",
-            "[Environment]::SetEnvironmentVariable($cwdEnvName,$resolvedCwd,'Process'); ",
-            "$monitorPid=[MiaominalDetachedProcess]::Start($powershell,$monitorArgs,(Split-Path -Parent $runner)); ",
-            "$monitorStartTicks=[int64][MiaominalDetachedProcess]::LastStartTicks; ",
-            "if ($monitorStartTicks -le 0) {{ throw 'detached launcher did not return monitor identity' }}; ",
-            "for ($i=0; $i -lt 1000 -and -not (Test-Path -LiteralPath $pidFile) -and -not (Test-Path -LiteralPath $marker); $i++) {{ ",
-            "Start-Sleep -Milliseconds 10 ",
-            "}}; ",
-            "if (-not (Test-Path -LiteralPath $pidFile) -and -not (Test-Path -LiteralPath $marker)) {{ ",
-            "throw 'job monitor failed to publish metadata' ",
-            "}}; ",
-            "Write-Output $marker ",
-            "}} catch {{ ",
-            "$launchError=$_; $cleanupFailure=$null; ",
-            "if ($null -ne $monitorPid) {{ try {{ Stop-MiaominalLaunchedMonitor ([int]$monitorPid) $monitorStartTicks }} catch {{ $cleanupFailure=$_ }} }}; ",
-            "if ($null -ne $cleanupFailure) {{ throw ('job launch failed and monitor cleanup failed; artifacts were preserved for scavenging: '+($cleanupFailure | Out-String)+'; launch error: '+($launchError | Out-String)) }}; ",
-            "Remove-MiaominalLaunchArtifacts; Start-Sleep -Milliseconds 100; Remove-MiaominalLaunchArtifacts; ",
-            "throw $launchError ",
-            "}} finally {{ ",
-            "[Environment]::SetEnvironmentVariable($cwdEnvName,$previousCwdEnv,'Process') ",
-            "}}"
-        ),
-        marker = marker_q,
-        cwd = requested_cwd_q,
-        monitor_script = monitor_script_q,
-        detached_launcher = detached_launcher_q,
+    render_job_script(
+        WINDOWS_START_LAUNCHER,
+        &[
+            ("MARKER", &marker_q),
+            ("CWD", &requested_cwd_q),
+            ("MONITOR_SCRIPT", &monitor_script_q),
+            ("DETACHED_LAUNCHER", &detached_launcher_q),
+        ],
     )
-}
-
-fn windows_detached_launcher_source() -> &'static str {
-    r#"using System;using System.Runtime.InteropServices;using System.Text;
-public static class MiaominalDetachedProcess{
-[StructLayout(LayoutKind.Sequential)]struct S{public int cb;public IntPtr r,d,t;public int x,y,xs,ys,xc,yc,fa,fl;public short sw,cr;public IntPtr rr,i,o,e;}
-[StructLayout(LayoutKind.Sequential)]struct P{public IntPtr p,t;public int id,tid;}
-[DllImport("kernel32",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool CreateProcessW(string a,StringBuilder c,IntPtr pa,IntPtr ta,bool h,uint f,IntPtr e,string d,ref S s,out P p);
-[DllImport("kernel32",SetLastError=true)]static extern bool GetProcessTimes(IntPtr h,out long c,out long x,out long k,out long u);
-[DllImport("kernel32")]static extern bool TerminateProcess(IntPtr h,uint c);
-[DllImport("kernel32",SetLastError=true)]static extern uint ResumeThread(IntPtr h);
-[DllImport("kernel32")]static extern uint WaitForSingleObject(IntPtr h,uint m);
-[DllImport("kernel32")]static extern bool CloseHandle(IntPtr h);
-public static long LastStartTicks;
-public static int Start(string a,string g,string d){S s=new S();s.cb=Marshal.SizeOf(typeof(S));P p;uint f=0x08000204;StringBuilder c=new StringBuilder("\""+a+"\" "+g);bool ok=CreateProcessW(a,c,IntPtr.Zero,IntPtr.Zero,false,f|0x01000000,IntPtr.Zero,d,ref s,out p);if(!ok){c=new StringBuilder("\""+a+"\" "+g);ok=CreateProcessW(a,c,IntPtr.Zero,IntPtr.Zero,false,f,IntPtr.Zero,d,ref s,out p);}if(!ok)throw new Exception("CreateProcess failed: "+Marshal.GetLastWin32Error());try{long created,exited,kernel,user;if(!GetProcessTimes(p.p,out created,out exited,out kernel,out user))throw new Exception("GetProcessTimes failed: "+Marshal.GetLastWin32Error());LastStartTicks=DateTime.FromFileTimeUtc(created).Ticks;if(ResumeThread(p.t)==0xffffffff)throw new Exception("ResumeThread failed: "+Marshal.GetLastWin32Error());}catch{TerminateProcess(p.p,1);WaitForSingleObject(p.p,5000);CloseHandle(p.t);CloseHandle(p.p);throw;}CloseHandle(p.t);CloseHandle(p.p);return p.id;}}
-"#
 }
 
 fn windows_child_command(shell_type: ShellType, user_command: &str) -> (&'static str, String) {
     match shell_type {
         ShellType::PowerShell => {
             let command_q = shell_quote(user_command, ShellType::PowerShell);
-            let script = format!(
-                concat!(
-                    "$ErrorActionPreference='Stop'; ",
-                    "$global:LASTEXITCODE=$null; ",
-                    "try {{ ",
-                    "& ([ScriptBlock]::Create({command})); ",
-                    "if ($null -ne $LASTEXITCODE) {{ exit ([int]$LASTEXITCODE) }} ",
-                    "elseif ($?) {{ exit 0 }} else {{ exit 1 }} ",
-                    "}} catch {{ [Console]::Error.WriteLine(($_ | Out-String)); exit 1 }}"
-                ),
-                command = command_q,
-            );
+            let script =
+                render_job_script(WINDOWS_CHILD_WRAPPER, &[("COMMAND", command_q.as_str())]);
             let payload = super::windows::powershell_encoded_payload(&script);
             (
                 "powershell.exe",
@@ -722,177 +386,35 @@ fn make_posix_poll_command(marker: &str, shell_type: ShellType) -> String {
         .root
         .strip_prefix("/tmp/miaominal-agent-")
         .unwrap_or(&paths.root);
-    let script = format!(
-        r#"{helpers}
-root={root}
-status={status}
-out={stdout}
-err={stderr}
-pid_file={pid}
-runner={runner}
-expected_token={token}
-diagnostic=
-emit_streams() {{
-    stdout_bytes=0
-    stderr_bytes=0
-    truncated=0
-    if [ -f "$out" ]; then stdout_bytes=$(wc -c <"$out" 2>/dev/null || printf 0); fi
-    if [ -f "$err" ]; then stderr_bytes=$(wc -c <"$err" 2>/dev/null || printf 0); fi
-    if [ "$stdout_bytes" -gt {max} ] 2>/dev/null || [ "$stderr_bytes" -gt {max} ] 2>/dev/null; then truncated=1; fi
-    printf 'truncated=%s\nstdout_b64=' "$truncated"
-    if [ -f "$out" ]; then tail -c {max} "$out" 2>/dev/null | base64 | tr -d '\r\n'; fi
-    printf '\nstderr_b64='
-    if [ -f "$err" ]; then tail -c {max} "$err" 2>/dev/null | base64 | tr -d '\r\n'; fi
-    printf '\n'
-    if [ -n "$diagnostic" ]; then
-        printf 'diagnostic_b64='
-        printf '%s' "$diagnostic" | base64 | tr -d '\r\n'
-        printf '\n'
-    fi
-}}
-metadata_value() {{ sed -n "s/^$1=//p" "$pid_file" 2>/dev/null | head -n 1; }}
-if [ -f "$status" ]; then
-    exit_status=$(head -c 32 "$status" 2>/dev/null)
-    if [ "$exit_status" = stopped ]; then printf 'status=stopped\n'
-    elif case "$exit_status" in ''|*[!0-9-]*) false ;; *) true ;; esac; then
-        printf 'status=exited\nexit=%s\n' "$exit_status"
-    else
-        printf 'status=exited\n'
-        diagnostic='job status file was invalid'
-    fi
-    emit_streams
-elif [ -f "$pid_file" ]; then
-    version=$(metadata_value version)
-    token=$(metadata_value token)
-    uid=$(metadata_value uid)
-    monitor_pid=$(metadata_value monitor_pid)
-    monitor_identity=$(metadata_value monitor_identity)
-    child_pid=$(metadata_value child_pid)
-    child_identity=$(metadata_value child_identity)
-    child_pgid=$(metadata_value child_pgid)
-    metadata_valid=1
-    [ "$version" = 1 ] || metadata_valid=0
-    [ "$token" = "$expected_token" ] || metadata_valid=0
-    [ "$uid" = "$(id -u 2>/dev/null)" ] || metadata_valid=0
-    for value in "$monitor_pid" "$child_pid" "$child_pgid"; do case "$value" in ''|*[!0-9]*) metadata_valid=0 ;; esac; done
-    if [ "$metadata_valid" -ne 1 ]; then
-        printf 'status=running\n'
-        diagnostic='job process metadata is invalid; refusing to assume the job exited'
-        emit_streams
-        exit 0
-    fi
-    monitor_alive=0
-    group_is_alive=0
-    identity_mismatch=0
-    if process_alive "$monitor_pid"; then
-        actual_monitor_identity=$(process_identity "$monitor_pid" 2>/dev/null || true)
-        monitor_command=$(ps -ww -p "$monitor_pid" -o command= 2>/dev/null || true)
-        case "$monitor_command" in *"$runner"*) : ;; *) identity_mismatch=1 ;; esac
-        if [ "$actual_monitor_identity" = "$monitor_identity" ]; then monitor_alive=1; else identity_mismatch=1; fi
-    fi
-    if group_alive "$child_pgid"; then group_is_alive=1; fi
-    if process_alive "$child_pid"; then
-        actual_child_identity=$(process_identity "$child_pid" 2>/dev/null || true)
-        actual_child_pgid=$(process_pgid "$child_pid" 2>/dev/null || true)
-        if [ "$actual_child_identity" != "$child_identity" ] || [ "$actual_child_pgid" != "$child_pgid" ]; then identity_mismatch=1; fi
-    fi
-    if [ "$identity_mismatch" -eq 1 ]; then
-        printf 'status=running\n'
-        diagnostic='job process identity could not be verified; refusing to assume the job exited'
-    elif [ "$monitor_alive" -eq 1 ] || [ "$group_is_alive" -eq 1 ]; then
-        printf 'status=running\n'
-    else
-        printf 'status=exited\n'
-        diagnostic='job processes disappeared before writing an exit status'
-    fi
-    emit_streams
-elif [ -f "$out" ] || [ -f "$err" ]; then
-    printf 'status=exited\n'
-    diagnostic='job process metadata was missing'
-    emit_streams
-else
-    printf 'status=not_found\n'
-fi
-"#,
-        helpers = posix_process_helpers(),
-        root = quote(&paths.root),
-        status = quote(&paths.status),
-        stdout = quote(&paths.stdout),
-        stderr = quote(&paths.stderr),
-        pid = quote(&paths.pid),
-        runner = quote(&paths.runner),
-        token = quote(token),
-        max = DEFAULT_MAX_OUTPUT_BYTES,
+    let root = quote(&paths.root);
+    let status = quote(&paths.status);
+    let stdout = quote(&paths.stdout);
+    let stderr = quote(&paths.stderr);
+    let pid = quote(&paths.pid);
+    let runner = quote(&paths.runner);
+    let token = quote(token);
+    let max = DEFAULT_MAX_OUTPUT_BYTES.to_string();
+    let script = render_job_script(
+        POSIX_POLL,
+        &[
+            ("HELPERS", posix_process_helpers()),
+            ("ROOT", &root),
+            ("STATUS", &status),
+            ("STDOUT", &stdout),
+            ("STDERR", &stderr),
+            ("PID", &pid),
+            ("RUNNER", &runner),
+            ("TOKEN", &token),
+            ("MAX", &max),
+        ],
     );
     wrap_posix_script(&script, shell_type)
 }
 
 fn make_windows_poll_script(marker: &str) -> String {
-    let marker_q = shell_quote(marker, ShellType::PowerShell);
-    format!(
-        concat!(
-            "$marker=[Environment]::ExpandEnvironmentVariables({marker}); ",
-            "$out=$marker+'.out'; $err=$marker+'.err'; $pidFile=$marker+'.pid'; ",
-            "$ctlOut=$marker+'.ctl.out'; $ctlErr=$marker+'.ctl.err'; $runner=$marker+'.runner.ps1'; ",
-            "function Read-MiaominalTail([string]$path,[int]$limit) {{ ",
-            "if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {{ ",
-            "return [pscustomobject]@{{Bytes=[byte[]]::new(0);Count=0;Text='';Truncated=$false}} ",
-            "}}; ",
-            "$stream=$null; ",
-            "try {{ ",
-            "$share=[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete; ",
-            "$stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,$share); ",
-            "$length=$stream.Length; $count=[int][Math]::Min([int64]$limit,$length); ",
-            "$bytes=[byte[]]::new($count); $total=0; ",
-            "if ($count -gt 0) {{ $stream.Seek($length-$count,[IO.SeekOrigin]::Begin) *> $null }}; ",
-            "while ($total -lt $count) {{ ",
-            "$read=$stream.Read($bytes,$total,$count-$total); if ($read -le 0) {{ break }}; $total+=$read ",
-            "}}; ",
-            "$text=(New-Object Text.UTF8Encoding($false,$false)).GetString($bytes,0,$total); ",
-            "return [pscustomobject]@{{Bytes=$bytes;Count=$total;Text=$text;Truncated=($length -gt $limit)}} ",
-            "}} catch {{ return [pscustomobject]@{{Bytes=[byte[]]::new(0);Count=0;Text='';Truncated=$false}} }} ",
-            "finally {{ if ($null -ne $stream) {{ $stream.Dispose() }} }} ",
-            "}}; ",
-            "function Get-MiaominalProcessState {{ ",
-            "if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) {{ return [pscustomobject]@{{Alive=$false;Diagnostic='job pid metadata was missing'}} }}; ",
-            "try {{ ",
-            "$metadata=(Read-MiaominalTail $pidFile 4096).Text | ConvertFrom-Json; ",
-            "$process=Get-Process -Id ([int]$metadata.pid) -ErrorAction Stop; ",
-            "$actualTicks=$process.StartTime.ToUniversalTime().Ticks; $expectedTicks=[int64]$metadata.start_ticks; ",
-            "if ($actualTicks -eq $expectedTicks) {{ return [pscustomobject]@{{Alive=$true;Diagnostic=''}} }}; ",
-            "return [pscustomobject]@{{Alive=$false;Diagnostic='job pid identity mismatch'}} ",
-            "}} catch {{ return [pscustomobject]@{{Alive=$false;Diagnostic=('job process lookup failed: '+($_.Exception.Message))}} }} ",
-            "}}; ",
-            "$diagnostic=''; $hasOutput=$false; $processState=Get-MiaominalProcessState; ",
-            "if (Test-Path -LiteralPath $marker -PathType Leaf) {{ ",
-            "$statusResult=Read-MiaominalTail $marker 64; ",
-            "for ($i=0; $i -lt 20 -and -not $statusResult.Text; $i++) {{ Start-Sleep -Milliseconds 10; $statusResult=Read-MiaominalTail $marker 64 }}; ",
-            "$status=$statusResult.Text.Trim(); ",
-            "if ($status -eq 'stopped') {{ Write-Output 'status=stopped' }} ",
-            "elseif ($status -match '^-?[0-9]+$') {{ Write-Output 'status=exited'; Write-Output ('exit='+$status) }} ",
-            "else {{ Write-Output 'status=exited'; $statusBytes=(New-Object Text.UTF8Encoding($false)).GetBytes($status); $diagnostic=('job status file was invalid: '+[Convert]::ToBase64String($statusBytes)) }}; ",
-            "$hasOutput=$true ",
-            "}} elseif ($processState.Alive) {{ Write-Output 'status=running'; $hasOutput=$true ",
-            "}} elseif ((Test-Path -LiteralPath $out) -or (Test-Path -LiteralPath $err) -or (Test-Path -LiteralPath $pidFile)) {{ ",
-            "Write-Output 'status=exited'; $diagnostic='job process disappeared before writing an exit status'; ",
-            "if ($processState.Diagnostic) {{ $diagnostic+=': '+$processState.Diagnostic }}; ",
-            "$hasOutput=$true ",
-            "}} else {{ Write-Output 'status=not_found' }}; ",
-            "if ($hasOutput) {{ ",
-            "$stdout=Read-MiaominalTail $out {max}; $stderr=Read-MiaominalTail $err {max}; ",
-            "$truncated=$stdout.Truncated -or $stderr.Truncated; ",
-            "Write-Output ('truncated='+[int]$truncated); ",
-            "Write-Output ('stdout_b64='+[Convert]::ToBase64String($stdout.Bytes,0,$stdout.Count)); ",
-            "Write-Output ('stderr_b64='+[Convert]::ToBase64String($stderr.Bytes,0,$stderr.Count)); ",
-            "if ($diagnostic) {{ ",
-            "$diagnosticBytes=(New-Object Text.UTF8Encoding($false)).GetBytes($diagnostic); ",
-            "Write-Output ('diagnostic_b64='+[Convert]::ToBase64String($diagnosticBytes)) ",
-            "}} ",
-            "}}"
-        ),
-        marker = marker_q,
-        max = DEFAULT_MAX_OUTPUT_BYTES,
-    )
+    let marker = shell_quote(marker, ShellType::PowerShell);
+    let max = DEFAULT_MAX_OUTPUT_BYTES.to_string();
+    render_job_script(WINDOWS_POLL, &[("MARKER", &marker), ("MAX", &max)])
 }
 
 fn make_cleanup_command(marker: &str, shell_type: ShellType) -> String {
@@ -900,24 +422,32 @@ fn make_cleanup_command(marker: &str, shell_type: ShellType) -> String {
         ShellType::Posix | ShellType::Fish => {
             if let Some(paths) = PosixJobPaths::from_marker(marker) {
                 let quote = |value: &str| shell_quote(value, ShellType::Posix);
-                let script = format!(
-                    r#"root={root}
-if [ -L "$root" ] || [ ! -d "$root" ]; then exit 1; fi
-rm -f {status} {stdout} {stderr} {pid} {ready} {runner} {command} {child} {stop} {error}
-rm -f "$root"/status.tmp.* "$root"/pid.tmp.* "$root"/ready.tmp.* "$root"/error.tmp.* "$root"/child.tmp.* 2>/dev/null || true
-rmdir "$root"
-"#,
-                    root = quote(&paths.root),
-                    status = quote(&paths.status),
-                    stdout = quote(&paths.stdout),
-                    stderr = quote(&paths.stderr),
-                    pid = quote(&paths.pid),
-                    ready = quote(&paths.ready),
-                    runner = quote(&paths.runner),
-                    command = quote(&paths.command),
-                    child = quote(&paths.child),
-                    stop = quote(&paths.stop),
-                    error = quote(&paths.error),
+                let root = quote(&paths.root);
+                let status = quote(&paths.status);
+                let stdout = quote(&paths.stdout);
+                let stderr = quote(&paths.stderr);
+                let pid = quote(&paths.pid);
+                let ready = quote(&paths.ready);
+                let runner = quote(&paths.runner);
+                let command = quote(&paths.command);
+                let child = quote(&paths.child);
+                let stop = quote(&paths.stop);
+                let error = quote(&paths.error);
+                let script = render_job_script(
+                    POSIX_CLEANUP,
+                    &[
+                        ("ROOT", &root),
+                        ("STATUS", &status),
+                        ("STDOUT", &stdout),
+                        ("STDERR", &stderr),
+                        ("PID", &pid),
+                        ("READY", &ready),
+                        ("RUNNER", &runner),
+                        ("COMMAND", &command),
+                        ("CHILD", &child),
+                        ("STOP", &stop),
+                        ("ERROR", &error),
+                    ],
                 );
                 wrap_posix_script(&script, shell_type)
             } else {
@@ -935,18 +465,8 @@ rmdir "$root"
             }
         }
         ShellType::PowerShell | ShellType::Cmd => {
-            let marker_q = shell_quote(marker, ShellType::PowerShell);
-            let script = format!(
-                concat!(
-                    "$marker=[Environment]::ExpandEnvironmentVariables({marker}); ",
-                    "Remove-Item -LiteralPath @($marker,($marker+'.out'),($marker+'.err'),($marker+'.pid'),($marker+'.ctl.out'),($marker+'.ctl.err'),($marker+'.runner.ps1')) ",
-                    "-Force -ErrorAction SilentlyContinue; ",
-                    "$root=Split-Path -Parent $marker; $leaf=Split-Path -Leaf $marker; ",
-                    "Get-ChildItem -LiteralPath $root -Filter ($leaf+'.tmp-*') -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue; ",
-                    "Get-ChildItem -LiteralPath $root -Filter ($leaf+'.pid.tmp-*') -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"
-                ),
-                marker = marker_q,
-            );
+            let marker = shell_quote(marker, ShellType::PowerShell);
+            let script = render_job_script(WINDOWS_CLEANUP, &[("MARKER", &marker)]);
             super::windows::powershell_compressed_command(&script)
         }
     }
@@ -955,123 +475,16 @@ rmdir "$root"
 fn make_scavenge_command(shell_type: ShellType) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => {
-            let script = format!(
-                r#"{helpers}
-current_uid=$(id -u 2>/dev/null) || exit 0
-metadata_value() {{ sed -n "s/^$1=//p" "$2" 2>/dev/null | head -n 1; }}
-cleanup_root() {{
-    cleanup_root_path=$1
-    rm -f "$cleanup_root_path/status" "$cleanup_root_path/stdout" "$cleanup_root_path/stderr" \
-        "$cleanup_root_path/pid" "$cleanup_root_path/ready" "$cleanup_root_path/runner" \
-        "$cleanup_root_path/command" "$cleanup_root_path/child" "$cleanup_root_path/stop" "$cleanup_root_path/error"
-    rm -f "$cleanup_root_path"/status.tmp.* "$cleanup_root_path"/pid.tmp.* \
-        "$cleanup_root_path"/ready.tmp.* "$cleanup_root_path"/error.tmp.* "$cleanup_root_path"/child.tmp.* 2>/dev/null || true
-    rmdir "$cleanup_root_path" 2>/dev/null
-}}
-for root in /tmp/miaominal-agent-*; do
-    [ -d "$root" ] || continue
-    [ ! -L "$root" ] || continue
-    name=${{root##*/}}
-    id=${{name#miaominal-agent-}}
-    case "$id" in ????????-????-????-????-????????????) ;; *) continue ;; esac
-    case "$id" in *[!0-9a-fA-F-]*) continue ;; esac
-    owner=$(ls -dn "$root" 2>/dev/null | awk '{{print $3}}')
-    [ "$owner" = "$current_uid" ] || continue
-    old=$(find "$root" -prune -mmin +{minutes} -print 2>/dev/null)
-    [ -n "$old" ] || continue
-    pid_file="$root/pid"
-    if [ ! -f "$root/status" ] && [ -f "$pid_file" ]; then
-        monitor_pid=$(metadata_value monitor_pid "$pid_file")
-        monitor_identity=$(metadata_value monitor_identity "$pid_file")
-        child_pgid=$(metadata_value child_pgid "$pid_file")
-        live=0
-        case "$monitor_pid" in ''|*[!0-9]*) : ;; *)
-            if process_alive "$monitor_pid" && [ "$(process_identity "$monitor_pid" 2>/dev/null || true)" = "$monitor_identity" ]; then live=1; fi
-            ;;
-        esac
-        case "$child_pgid" in ''|*[!0-9]*) : ;; *) if group_alive "$child_pgid"; then live=1; fi ;; esac
-        [ "$live" -eq 0 ] || continue
-    fi
-    if cleanup_root "$root"; then printf 'cleaned=%s\n' "$id"; fi
-done
-for marker in /tmp/miaominal-agent-*.status; do
-    [ -f "$marker" ] || continue
-    [ ! -L "$marker" ] || continue
-    name=${{marker##*/}}
-    id=${{name#miaominal-agent-}}
-    id=${{id%.status}}
-    case "$id" in ????????-????-????-????-????????????) ;; *) continue ;; esac
-    case "$id" in *[!0-9a-fA-F-]*) continue ;; esac
-    owner=$(ls -ln "$marker" 2>/dev/null | awk '{{print $3}}')
-    [ "$owner" = "$current_uid" ] || continue
-    old=$(find "$marker" -prune -mmin +{minutes} -print 2>/dev/null)
-    [ -n "$old" ] || continue
-    rm -f "$marker" "$marker.out" "$marker.err" "$marker.pid" "$marker.ctl.out" "$marker.ctl.err" "$marker.runner.ps1" "$marker".tmp-*
-    printf 'cleaned=%s\n' "$id"
-done
-"#,
-                helpers = posix_process_helpers(),
-                minutes = STALE_JOB_HOURS * 60,
+            let minutes = (STALE_JOB_HOURS * 60).to_string();
+            let script = render_job_script(
+                POSIX_SCAVENGE,
+                &[("HELPERS", posix_process_helpers()), ("MINUTES", &minutes)],
             );
             wrap_posix_script(&script, shell_type)
         }
         ShellType::PowerShell | ShellType::Cmd => {
-            let script = format!(
-                concat!(
-                    "$root=[IO.Path]::GetTempPath(); $cutoff=[DateTime]::UtcNow.AddHours(-{hours}); ",
-                    "$pattern='^miaominal-agent-([0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}})\\.status$'; ",
-                    "function Remove-MiaominalArtifacts([string]$marker,[string]$id) {{ ",
-                    "Remove-Item -LiteralPath @($marker,($marker+'.out'),($marker+'.err'),($marker+'.pid'),($marker+'.ctl.out'),($marker+'.ctl.err'),($marker+'.runner.ps1')) ",
-                    "-Force -ErrorAction SilentlyContinue; ",
-                    "Get-ChildItem -LiteralPath $root -Filter ((Split-Path -Leaf $marker)+'.tmp-*') -File -ErrorAction SilentlyContinue ",
-                    "| Remove-Item -Force -ErrorAction SilentlyContinue; ",
-                    "Get-ChildItem -LiteralPath $root -Filter ((Split-Path -Leaf $marker)+'.pid.tmp-*') -File -ErrorAction SilentlyContinue ",
-                    "| Remove-Item -Force -ErrorAction SilentlyContinue; ",
-                    "Write-Output ('cleaned='+$id.ToLowerInvariant()) ",
-                    "}}; ",
-                    "function Test-MiaominalProcess([string]$pidFile) {{ ",
-                    "$stream=$null; ",
-                    "try {{ ",
-                    "$stream=[IO.File]::Open($pidFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite); ",
-                    "$count=[int][Math]::Min(4096,$stream.Length); $bytes=[byte[]]::new($count); ",
-                    "$read=$stream.Read($bytes,0,$count); ",
-                    "$metadata=(New-Object Text.UTF8Encoding($false,$false)).GetString($bytes,0,$read) | ConvertFrom-Json; ",
-                    "$process=Get-Process -Id ([int]$metadata.pid) -ErrorAction Stop; ",
-                    "return $process.StartTime.ToUniversalTime().Ticks -eq ([int64]$metadata.start_ticks) ",
-                    "}} catch {{ return $false }} finally {{ if ($null -ne $stream) {{ $stream.Dispose() }} }} ",
-                    "}}; ",
-                    "Get-ChildItem -LiteralPath $root -Filter 'miaominal-agent-*.status' -File -ErrorAction SilentlyContinue ",
-                    "| Where-Object {{ $_.LastWriteTimeUtc -lt $cutoff -and $_.Name -match $pattern }} ",
-                    "| ForEach-Object {{ Remove-MiaominalArtifacts $_.FullName $Matches[1] }}; ",
-                    "Get-ChildItem -LiteralPath $root -Filter 'miaominal-agent-*.status.pid' -File -ErrorAction SilentlyContinue ",
-                    "| Where-Object {{ $_.LastWriteTimeUtc -lt $cutoff }} | ForEach-Object {{ ",
-                    "$statusName=$_.Name.Substring(0,$_.Name.Length-4); ",
-                    "if ($statusName -match $pattern -and -not (Test-MiaominalProcess $_.FullName)) {{ ",
-                    "$marker=Join-Path $root $statusName; Remove-MiaominalArtifacts $marker $Matches[1] ",
-                    "}} ",
-                    "}}; ",
-                    "Get-ChildItem -LiteralPath $root -Filter 'miaominal-agent-*.status.out' -File -ErrorAction SilentlyContinue ",
-                    "| Where-Object {{ $_.LastWriteTimeUtc -lt $cutoff }} | ForEach-Object {{ ",
-                    "$statusName=$_.Name.Substring(0,$_.Name.Length-4); $marker=Join-Path $root $statusName; ",
-                    "if ($statusName -match $pattern -and -not (Test-Path -LiteralPath $marker) -and -not (Test-Path -LiteralPath ($marker+'.pid'))) {{ ",
-                    "Remove-MiaominalArtifacts $marker $Matches[1] ",
-                    "}} ",
-                    "}}; ",
-                    "$runnerSuffix='.runner.ps1'; ",
-                    "Get-ChildItem -LiteralPath $root -Filter 'miaominal-agent-*.status.runner.ps1' -File -ErrorAction SilentlyContinue ",
-                    "| Where-Object {{ $_.LastWriteTimeUtc -lt $cutoff }} | ForEach-Object {{ ",
-                    "$statusName=$_.Name.Substring(0,$_.Name.Length-$runnerSuffix.Length); $marker=Join-Path $root $statusName; ",
-                    "if ($statusName -match $pattern -and -not (Test-MiaominalProcess ($marker+'.pid'))) {{ ",
-                    "Remove-MiaominalArtifacts $marker $Matches[1] ",
-                    "}} ",
-                    "}}; ",
-                    "$pidTmpPattern='^miaominal-agent-[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}\\.status\\.pid\\.tmp-[0-9a-fA-F]+$'; ",
-                    "Get-ChildItem -LiteralPath $root -Filter 'miaominal-agent-*.status.pid.tmp-*' -File -ErrorAction SilentlyContinue ",
-                    "| Where-Object {{ $_.LastWriteTimeUtc -lt $cutoff -and $_.Name -match $pidTmpPattern }} ",
-                    "| Remove-Item -Force -ErrorAction SilentlyContinue"
-                ),
-                hours = STALE_JOB_HOURS,
-            );
+            let hours = STALE_JOB_HOURS.to_string();
+            let script = render_job_script(WINDOWS_SCAVENGE, &[("HOURS", &hours)]);
             super::windows::powershell_compressed_command(&script)
         }
     }
@@ -1133,164 +546,42 @@ fn make_posix_stop_command(marker: &str, shell_type: ShellType) -> String {
         .root
         .strip_prefix("/tmp/miaominal-agent-")
         .unwrap_or(&paths.root);
-    let script = format!(
-        r#"{helpers}
-root={root}
-status={status}
-out={stdout}
-err={stderr}
-pid_file={pid}
-ready={ready}
-runner={runner}
-command_file={command}
-child_meta={child}
-stop_file={stop}
-error_file={error}
-expected_token={token}
-if [ -f "$status" ]; then printf 'already_finished\n'; exit 0; fi
-if [ ! -d "$root" ] || [ -L "$root" ]; then printf 'not_found\n'; exit 0; fi
-if [ ! -f "$pid_file" ]; then
-    printf '%s\n' 'job process metadata is missing; refusing to report the job stopped' >&2
-    exit 1
-fi
-metadata_value() {{ sed -n "s/^$1=//p" "$pid_file" 2>/dev/null | head -n 1; }}
-version=$(metadata_value version)
-token=$(metadata_value token)
-uid=$(metadata_value uid)
-monitor_pid=$(metadata_value monitor_pid)
-monitor_identity=$(metadata_value monitor_identity)
-child_pid=$(metadata_value child_pid)
-child_identity=$(metadata_value child_identity)
-child_pgid=$(metadata_value child_pgid)
-if [ "$version" != 1 ] || [ "$token" != "$expected_token" ] || [ "$uid" != "$(id -u 2>/dev/null)" ]; then
-    printf '%s\n' 'job process metadata identity is invalid' >&2
-    exit 1
-fi
-for value in "$monitor_pid" "$child_pid" "$child_pgid"; do
-    case "$value" in ''|*[!0-9]*) printf '%s\n' 'job process metadata contains an invalid pid' >&2; exit 1 ;; esac
-done
-monitor_alive=0
-verified_identity=0
-if process_alive "$monitor_pid"; then
-    actual_monitor_identity=$(process_identity "$monitor_pid" 2>/dev/null || true)
-    monitor_command=$(ps -ww -p "$monitor_pid" -o command= 2>/dev/null || true)
-    case "$monitor_command" in *"$runner"*) : ;; *) printf '%s\n' 'job monitor command identity mismatch' >&2; exit 1 ;; esac
-    if [ "$actual_monitor_identity" != "$monitor_identity" ]; then
-        printf '%s\n' 'job monitor start identity mismatch' >&2
-        exit 1
-    fi
-    monitor_alive=1
-    verified_identity=1
-fi
-if process_alive "$child_pid"; then
-    actual_child_identity=$(process_identity "$child_pid" 2>/dev/null || true)
-    actual_child_pgid=$(process_pgid "$child_pid" 2>/dev/null || true)
-    if [ "$actual_child_identity" != "$child_identity" ] || [ "$actual_child_pgid" != "$child_pgid" ]; then
-        printf '%s\n' 'job child process identity mismatch' >&2
-        exit 1
-    fi
-    verified_identity=1
-fi
-if [ "$verified_identity" -ne 1 ]; then
-    printf '%s\n' 'job monitor and child identities are no longer verifiable; refusing to signal the historical process group' >&2
-    exit 1
-fi
-saved_umask=$(umask)
-umask 077
-stop_tmp="$stop_file.tmp.$$"
-printf 'stop\n' >"$stop_tmp" && mv -f "$stop_tmp" "$stop_file"
-umask "$saved_umask"
-if group_alive "$child_pgid" && ! terminate_group "$child_pgid"; then
-    printf '%s\n' 'failed to stop job process group' >&2
-    exit 1
-fi
-if [ "$monitor_alive" -eq 1 ] && ! terminate_process "$monitor_pid"; then
-    printf '%s\n' 'failed to stop job monitor process' >&2
-    exit 1
-fi
-if group_alive "$child_pgid" || process_alive "$monitor_pid"; then
-    printf '%s\n' 'job processes survived stop verification' >&2
-    exit 1
-fi
-umask 077
-status_tmp="$status.tmp.$$"
-printf 'stopped' >"$status_tmp"
-if ln "$status_tmp" "$status" 2>/dev/null; then
-    rm -f "$status_tmp" "$out" "$err" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
-    printf 'stopped\n'
-else
-    rm -f "$status_tmp" "$stop_file"
-    printf 'already_finished\n'
-fi
-"#,
-        helpers = posix_process_helpers(),
-        root = quote(&paths.root),
-        status = quote(&paths.status),
-        stdout = quote(&paths.stdout),
-        stderr = quote(&paths.stderr),
-        pid = quote(&paths.pid),
-        ready = quote(&paths.ready),
-        runner = quote(&paths.runner),
-        command = quote(&paths.command),
-        child = quote(&paths.child),
-        stop = quote(&paths.stop),
-        error = quote(&paths.error),
-        token = quote(token),
+    let root = quote(&paths.root);
+    let status = quote(&paths.status);
+    let stdout = quote(&paths.stdout);
+    let stderr = quote(&paths.stderr);
+    let pid = quote(&paths.pid);
+    let ready = quote(&paths.ready);
+    let runner = quote(&paths.runner);
+    let command = quote(&paths.command);
+    let child = quote(&paths.child);
+    let stop = quote(&paths.stop);
+    let error = quote(&paths.error);
+    let token = quote(token);
+    let script = render_job_script(
+        POSIX_STOP,
+        &[
+            ("HELPERS", posix_process_helpers()),
+            ("ROOT", &root),
+            ("STATUS", &status),
+            ("STDOUT", &stdout),
+            ("STDERR", &stderr),
+            ("PID", &pid),
+            ("READY", &ready),
+            ("RUNNER", &runner),
+            ("COMMAND", &command),
+            ("CHILD", &child),
+            ("STOP", &stop),
+            ("ERROR", &error),
+            ("TOKEN", &token),
+        ],
     );
     wrap_posix_script(&script, shell_type)
 }
 
 fn make_windows_stop_script(marker: &str) -> String {
-    let marker_q = shell_quote(marker, ShellType::PowerShell);
-    format!(
-        concat!(
-            "$marker=[Environment]::ExpandEnvironmentVariables({marker}); ",
-            "$out=$marker+'.out'; $err=$marker+'.err'; $pidFile=$marker+'.pid'; ",
-            "$ctlOut=$marker+'.ctl.out'; $ctlErr=$marker+'.ctl.err'; $runner=$marker+'.runner.ps1'; ",
-            "$artifacts=@($marker,$out,$err,$pidFile,$ctlOut,$ctlErr,$runner); ",
-            "if (-not ($artifacts | Where-Object {{ Test-Path -LiteralPath $_ }})) {{ Write-Output 'not_found'; exit 0 }}; ",
-            "if (Test-Path -LiteralPath $marker -PathType Leaf) {{ ",
-            "Remove-Item -LiteralPath @($out,$err,$pidFile,$ctlOut,$ctlErr,$runner) -Force -ErrorAction SilentlyContinue; ",
-            "Write-Output 'already_finished'; exit 0 ",
-            "}}; ",
-            "$valid=$false; $metadata=$null; ",
-            "if (Test-Path -LiteralPath $pidFile -PathType Leaf) {{ ",
-            "try {{ ",
-            "$stream=[IO.File]::Open($pidFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite); ",
-            "$count=[int][Math]::Min(4096,$stream.Length); $bytes=[byte[]]::new($count); ",
-            "$read=$stream.Read($bytes,0,$count); $stream.Dispose(); ",
-            "$metadata=(New-Object Text.UTF8Encoding($false,$false)).GetString($bytes,0,$read) | ConvertFrom-Json; ",
-            "$process=Get-Process -Id ([int]$metadata.pid) -ErrorAction Stop; ",
-            "$valid=$process.StartTime.ToUniversalTime().Ticks -eq ([int64]$metadata.start_ticks) ",
-            "}} catch {{ $valid=$false }} ",
-            "}}; ",
-            "$childValid=$false; $childProcess=$null; ",
-            "if ($valid -and $null -ne $metadata.child_pid -and $null -ne $metadata.child_start_ticks) {{ ",
-            "try {{ $childProcess=Get-Process -Id ([int]$metadata.child_pid) -ErrorAction Stop; ",
-            "$childValid=$childProcess.StartTime.ToUniversalTime().Ticks -eq ([int64]$metadata.child_start_ticks) ",
-            "}} catch {{ $childValid=$false }} ",
-            "}}; ",
-            "if ($valid) {{ ",
-            "$targetProcessId=[int]$metadata.pid; $taskkillOutput=(& taskkill.exe /T /F /PID $targetProcessId 2>&1 | Out-String); ",
-            "$killExitCode=$LASTEXITCODE; $stopped=$process.WaitForExit(1000); ",
-            "if (-not $stopped) {{ ",
-            "if ($childValid -and -not $childProcess.HasExited) {{ ",
-            "try {{ $childProcess.Kill(); $childProcess.WaitForExit(5000) *> $null }} catch {{}} ",
-            "}}; ",
-            "try {{ if (-not $process.HasExited) {{ $process.Kill() }}; $stopped=$process.WaitForExit(5000) }} catch {{ $stopped=$false }} ",
-            "}}; ",
-            "if (-not $stopped -or ($childValid -and -not $childProcess.HasExited)) {{ ",
-            "throw ('failed to stop job process tree; taskkill exit code '+$killExitCode+': '+$taskkillOutput) ",
-            "}} ",
-            "}}; ",
-            "Remove-Item -LiteralPath @($out,$err,$pidFile,$ctlOut,$ctlErr,$runner) -Force -ErrorAction SilentlyContinue; ",
-            "$statusTmp=$marker+'.tmp-'+[Guid]::NewGuid().ToString('N'); ",
-            "[IO.File]::WriteAllText($statusTmp,'stopped',(New-Object Text.UTF8Encoding($false))); ",
-            "Move-Item -LiteralPath $statusTmp -Destination $marker -Force; ",
-            "Write-Output 'stopped'"
-        ),
-        marker = marker_q,
-    )
+    let marker = shell_quote(marker, ShellType::PowerShell);
+    render_job_script(WINDOWS_STOP, &[("MARKER", &marker)])
 }
 
 pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentResult<ToolOutput> {
