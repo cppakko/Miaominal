@@ -60,14 +60,20 @@ impl TransferControl {
 
         let was_paused = self.paused.swap(false, Ordering::Relaxed);
         if was_paused {
-            self.notify.notify_waiters();
+            self.notify_state_change();
         }
         was_paused
     }
 
     pub(super) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
-        self.notify.notify_waiters();
+        self.notify_state_change();
+    }
+
+    fn notify_state_change(&self) {
+        // Each control has a single transfer task waiting on it. `notify_one`
+        // retains a permit when that task has not registered its wait yet.
+        self.notify.notify_one();
     }
 
     async fn wait_until_active(&self) -> TransferControlState {
@@ -991,6 +997,40 @@ mod tests {
         control.cancel();
         assert!(!control.pause(), "pause must fail after cancel");
         assert!(!control.resume(), "resume must fail after cancel");
+    }
+
+    #[test]
+    fn resume_retains_wakeup_until_waiter_registers() {
+        rt().block_on(async {
+            let control = TransferControl::new();
+            assert!(control.pause());
+            assert!(
+                control.paused.load(Ordering::Relaxed),
+                "simulate the worker observing the paused state"
+            );
+
+            assert!(control.resume());
+            timeout(Duration::from_millis(50), control.notify.notified())
+                .await
+                .expect("resume wakeup must be retained for a late waiter");
+        });
+    }
+
+    #[test]
+    fn cancel_retains_wakeup_until_waiter_registers() {
+        rt().block_on(async {
+            let control = TransferControl::new();
+            assert!(control.pause());
+            assert!(
+                control.paused.load(Ordering::Relaxed),
+                "simulate the worker observing the paused state"
+            );
+
+            control.cancel();
+            timeout(Duration::from_millis(50), control.notify.notified())
+                .await
+                .expect("cancel wakeup must be retained for a late waiter");
+        });
     }
 
     #[test]
