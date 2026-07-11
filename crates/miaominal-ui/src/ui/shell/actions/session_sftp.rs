@@ -740,8 +740,8 @@ impl AppView {
         }
 
         if should_sync_paths {
-            self.sync_sftp_path_inputs_for_tab(tab_id, cx);
-            self.sync_sftp_tables_for_tab(tab_id, cx);
+            self.sync_sftp_path_input_for_side(tab_id, SftpBrowserSide::Remote, cx);
+            self.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Remote, cx);
             if is_visible_browser_tab {
                 self.workspace_forms.sftp_browser.remote_path_editing = false;
                 self.workspace_forms.sftp_browser.remote_path_submit_pending = false;
@@ -957,8 +957,8 @@ impl AppView {
         }
 
         if should_sync_paths {
-            self.sync_sftp_path_inputs_for_tab(tab_id, cx);
-            self.sync_sftp_tables_for_tab(tab_id, cx);
+            self.sync_sftp_path_input_for_side(tab_id, SftpBrowserSide::Local, cx);
+            self.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Local, cx);
         }
 
         cx.notify();

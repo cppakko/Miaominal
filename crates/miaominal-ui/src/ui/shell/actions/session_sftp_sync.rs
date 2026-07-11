@@ -78,6 +78,44 @@ impl AppView {
         );
     }
 
+    pub(in crate::ui::shell) fn sync_sftp_path_input_for_side(
+        &mut self,
+        tab_id: usize,
+        side: SftpBrowserSide,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.should_sync_sftp_browser_for_tab(tab_id) {
+            return;
+        }
+
+        let Some(sftp) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp)
+        else {
+            return;
+        };
+
+        let (input, value) = match side {
+            SftpBrowserSide::Local => (
+                self.workspace_forms.sftp_browser.local_path_input.clone(),
+                Self::display_sftp_local_path(&sftp.local_path),
+            ),
+            SftpBrowserSide::Remote => (
+                self.workspace_forms.sftp_browser.remote_path_input.clone(),
+                SharedString::from(sftp.remote_path.clone()),
+            ),
+        };
+
+        self.with_active_window(cx, move |window, cx| {
+            input.update(cx, |input, cx| {
+                input.set_value(value, window, cx);
+            });
+        });
+    }
+
     pub(in crate::ui::shell) fn sync_active_sftp_path_inputs(&mut self, cx: &mut Context<Self>) {
         let Some(active_index) = self.workspace_state.active_topbar_tab else {
             return;
@@ -98,6 +136,16 @@ impl AppView {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
+        self.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Local, cx);
+        self.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Remote, cx);
+    }
+
+    pub(in crate::ui::shell) fn sync_sftp_table_for_side(
+        &mut self,
+        tab_id: usize,
+        side: SftpBrowserSide,
+        cx: &mut Context<Self>,
+    ) {
         if !self.should_sync_sftp_browser_for_tab(tab_id) {
             return;
         }
@@ -115,55 +163,58 @@ impl AppView {
             return;
         };
 
-        let local_rows: Vec<_> = sftp
-            .local_entries
-            .iter()
-            .map(SftpBrowserTableRow::from_local)
-            .collect();
-        let remote_rows: Vec<_> = sftp
-            .remote_entries
-            .iter()
-            .map(SftpBrowserTableRow::from_remote)
-            .collect();
-        let selected_local_paths: Vec<_> = sftp
-            .selected_local_paths
-            .iter()
-            .map(|selected| selected.display().to_string())
-            .collect();
-        let selected_local_path = sftp
-            .selected_local_path
-            .as_ref()
-            .map(|selected| selected.display().to_string());
-        let selected_remote_paths = sftp.selected_remote_paths.clone();
-        let selected_remote_path = sftp.selected_remote_path.clone();
-        let remote_loading = sftp.loading_remote;
+        match side {
+            SftpBrowserSide::Local => {
+                let rows: Vec<_> = sftp
+                    .local_entries
+                    .iter()
+                    .map(SftpBrowserTableRow::from_local)
+                    .collect();
+                let selected_paths: Vec<_> = sftp
+                    .selected_local_paths
+                    .iter()
+                    .map(|selected| selected.display().to_string())
+                    .collect();
+                let selected_path = sftp
+                    .selected_local_path
+                    .as_ref()
+                    .map(|selected| selected.display().to_string());
 
-        self.workspace_forms
-            .sftp_browser
-            .local_table
-            .update(cx, |table, cx| {
-                table.delegate_mut().set_rows(local_rows, false, tab_id);
-                table
-                    .delegate_mut()
-                    .set_selected_paths(selected_local_paths.clone(), selected_local_path.clone());
-                table.set_right_clicked_row(None, cx);
-                table.refresh(cx);
-            });
+                self.workspace_forms
+                    .sftp_browser
+                    .local_table
+                    .update(cx, |table, cx| {
+                        table.delegate_mut().set_rows(rows, false, tab_id);
+                        table
+                            .delegate_mut()
+                            .set_selected_paths(selected_paths, selected_path);
+                        table.set_right_clicked_row(None, cx);
+                        table.refresh(cx);
+                    });
+            }
+            SftpBrowserSide::Remote => {
+                let rows: Vec<_> = sftp
+                    .remote_entries
+                    .iter()
+                    .map(SftpBrowserTableRow::from_remote)
+                    .collect();
+                let selected_paths = sftp.selected_remote_paths.clone();
+                let selected_path = sftp.selected_remote_path.clone();
+                let loading = sftp.loading_remote;
 
-        self.workspace_forms
-            .sftp_browser
-            .remote_table
-            .update(cx, |table, cx| {
-                table
-                    .delegate_mut()
-                    .set_rows(remote_rows, remote_loading, tab_id);
-                table.delegate_mut().set_selected_paths(
-                    selected_remote_paths.clone(),
-                    selected_remote_path.clone(),
-                );
-                table.set_right_clicked_row(None, cx);
-                table.refresh(cx);
-            });
+                self.workspace_forms
+                    .sftp_browser
+                    .remote_table
+                    .update(cx, |table, cx| {
+                        table.delegate_mut().set_rows(rows, loading, tab_id);
+                        table
+                            .delegate_mut()
+                            .set_selected_paths(selected_paths, selected_path);
+                        table.set_right_clicked_row(None, cx);
+                        table.refresh(cx);
+                    });
+            }
+        }
     }
 
     pub(in crate::ui::shell) fn sync_sftp_selection_for_tab(
