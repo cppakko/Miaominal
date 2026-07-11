@@ -8,9 +8,9 @@ use super::transfer::{
     spawn_download_task, spawn_upload_task,
 };
 use anyhow::{Context, Result, anyhow, bail};
+use futures::SinkExt as _;
 use futures::channel::mpsc::{
-    UnboundedReceiver as FuturesUnboundedReceiver, UnboundedSender as FuturesUnboundedSender,
-    unbounded as futures_unbounded,
+    Receiver as FuturesReceiver, Sender as FuturesSender, channel as futures_channel,
 };
 use miaominal_core::known_host::HostKeyCheck;
 use miaominal_core::profile::SessionProfile;
@@ -30,7 +30,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use tokio::runtime::Handle as TokioHandle;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+
+const SFTP_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Debug)]
 enum SftpCommand {
@@ -75,6 +78,31 @@ enum SftpCommand {
     Close,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TransferChildId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SftpTransferChild {
+    pub child_id: TransferChildId,
+    pub relative_path: String,
+    pub bytes_total: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SftpTransferChildState {
+    Running,
+    Done,
+    Cancelled,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SftpTransferChildUpdate {
+    pub child_id: TransferChildId,
+    pub bytes_complete: u64,
+    pub state: SftpTransferChildState,
+}
+
 #[derive(Debug, Clone)]
 pub enum SftpEvent {
     Status(String),
@@ -92,10 +120,15 @@ pub enum SftpEvent {
         source: PathBuf,
         destination: String,
     },
+    TransferChildStarted {
+        transfer_id: TransferId,
+        child: SftpTransferChild,
+    },
     TransferProgress {
         transfer_id: TransferId,
         bytes_complete: u64,
         bytes_total: Option<u64>,
+        child: Option<SftpTransferChildUpdate>,
     },
     TransferPaused {
         transfer_id: TransferId,
@@ -119,6 +152,23 @@ pub enum SftpEvent {
         message: String,
     },
     Closed,
+}
+
+#[derive(Clone)]
+pub(crate) struct SftpEventSender(Arc<Mutex<FuturesSender<SftpEvent>>>);
+pub type SftpEventReceiver = FuturesReceiver<SftpEvent>;
+
+pub(crate) fn sftp_event_channel() -> (SftpEventSender, SftpEventReceiver) {
+    let (sender, receiver) = futures_channel(SFTP_EVENT_CHANNEL_CAPACITY);
+    (SftpEventSender(Arc::new(Mutex::new(sender))), receiver)
+}
+
+pub(crate) async fn send_event(event_sender: &SftpEventSender, event: SftpEvent) -> Result<()> {
+    let mut sender = event_sender.0.lock().await;
+    sender
+        .send(event)
+        .await
+        .map_err(|_| anyhow!("SFTP event receiver is closed"))
 }
 
 #[derive(Clone, Debug)]
@@ -212,7 +262,7 @@ impl SftpCommandSender {
 
 pub struct SftpConnection {
     pub commands: SftpCommandSender,
-    pub events: FuturesUnboundedReceiver<SftpEvent>,
+    pub events: SftpEventReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,7 +280,7 @@ pub async fn resolve_profile_paths(
     known_hosts: KnownHostsStore,
     paths: Vec<String>,
 ) -> Result<Vec<ResolvedRemotePath>> {
-    let (event_sender, _event_receiver) = futures_unbounded();
+    let (event_sender, _event_receiver) = sftp_event_channel();
     let connected_session =
         connect_authenticated_session(profile, all_profiles, secrets, known_hosts, &event_sender)
             .await?;
@@ -276,7 +326,7 @@ pub fn start_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SftpConnection {
-    let (event_sender, event_receiver) = futures_unbounded();
+    let (event_sender, event_receiver) = sftp_event_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
     let next_transfer_id = Arc::new(AtomicU64::new(1));
@@ -292,14 +342,20 @@ pub fn start_session(
                 command_receiver,
                 event_sender.clone(),
             ));
-            if let Err(error) = result {
-                let _ = event_sender.unbounded_send(SftpEvent::Error {
-                    context: "sftp".into(),
-                    path: None,
-                    message: format!("{error:#}"),
-                });
-            }
-            let _ = event_sender.unbounded_send(SftpEvent::Closed);
+            runtime.block_on(async {
+                if let Err(error) = result {
+                    let _ = send_event(
+                        &event_sender,
+                        SftpEvent::Error {
+                            context: "sftp".into(),
+                            path: None,
+                            message: format!("{error:#}"),
+                        },
+                    )
+                    .await;
+                }
+                let _ = send_event(&event_sender, SftpEvent::Closed).await;
+            });
         })
         .expect("failed to spawn SFTP session thread");
 
@@ -318,7 +374,7 @@ async fn run_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SftpCommand>,
-    event_sender: FuturesUnboundedSender<SftpEvent>,
+    event_sender: SftpEventSender,
 ) -> Result<()> {
     let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
     let connected_session = connect_authenticated_session(
@@ -337,7 +393,7 @@ async fn run_session(
         let mut transfer_tasks = HashMap::new();
 
         let command_result: Result<()> = async {
-            emit_status(&event_sender, format!("Connected SFTP session to {remote}"))?;
+            emit_status(&event_sender, format!("Connected SFTP session to {remote}")).await?;
 
             let initial_result: Result<_> = async {
                 let initial_path = canonical_remote_path(&sftp, ".")
@@ -347,13 +403,11 @@ async fn run_session(
                 Ok((initial_path, entries))
             }
             .await;
-            if let Some((initial_path, entries)) = recover_operation_result(
-                &event_sender,
-                "list_directory",
-                Some("."),
-                initial_result,
-            )? {
-                emit_directory_listing(&event_sender, initial_path, entries)?;
+            if let Some((initial_path, entries)) =
+                recover_operation_result(&event_sender, "list_directory", Some("."), initial_result)
+                    .await?
+            {
+                emit_directory_listing(&event_sender, initial_path, entries).await?;
             }
 
             while let Some(command) = command_receiver.recv().await {
@@ -375,8 +429,10 @@ async fn run_session(
                             "list_directory",
                             Some(&path),
                             result,
-                        )? {
-                            emit_directory_listing(&event_sender, canonical_path, entries)?;
+                        )
+                        .await?
+                        {
+                            emit_directory_listing(&event_sender, canonical_path, entries).await?;
                         }
                     }
                     SftpCommand::ListSubdirectory { path } => {
@@ -394,8 +450,11 @@ async fn run_session(
                             "list_subdirectory",
                             Some(&path),
                             result,
-                        )? {
-                            emit_subdirectory_listing(&event_sender, canonical_path, entries)?;
+                        )
+                        .await?
+                        {
+                            emit_subdirectory_listing(&event_sender, canonical_path, entries)
+                                .await?;
                         }
                     }
                     SftpCommand::CreateDirectory { path } => {
@@ -403,15 +462,12 @@ async fn run_session(
                             .create_dir(path.clone())
                             .await
                             .with_context(|| format!("failed to create remote directory {path}"));
-                        if recover_operation_result(
-                            &event_sender,
-                            "create_directory",
-                            None,
-                            result,
-                        )?
-                        .is_some()
+                        if recover_operation_result(&event_sender, "create_directory", None, result)
+                            .await?
+                            .is_some()
                         {
-                            emit_status(&event_sender, format!("Created remote directory {path}"))?;
+                            emit_status(&event_sender, format!("Created remote directory {path}"))
+                                .await?;
                         }
                     }
                     SftpCommand::RemoveFile { path } => {
@@ -419,10 +475,12 @@ async fn run_session(
                             .remove_file(path.clone())
                             .await
                             .with_context(|| format!("failed to remove remote file {path}"));
-                        if recover_operation_result(&event_sender, "remove_file", None, result)?
+                        if recover_operation_result(&event_sender, "remove_file", None, result)
+                            .await?
                             .is_some()
                         {
-                            emit_status(&event_sender, format!("Removed remote file {path}"))?;
+                            emit_status(&event_sender, format!("Removed remote file {path}"))
+                                .await?;
                         }
                     }
                     SftpCommand::RemoveDirectory { path } => {
@@ -430,15 +488,12 @@ async fn run_session(
                             .remove_dir(path.clone())
                             .await
                             .with_context(|| format!("failed to remove remote directory {path}"));
-                        if recover_operation_result(
-                            &event_sender,
-                            "remove_directory",
-                            None,
-                            result,
-                        )?
-                        .is_some()
+                        if recover_operation_result(&event_sender, "remove_directory", None, result)
+                            .await?
+                            .is_some()
                         {
-                            emit_status(&event_sender, format!("Removed remote directory {path}"))?;
+                            emit_status(&event_sender, format!("Removed remote directory {path}"))
+                                .await?;
                         }
                     }
                     SftpCommand::Rename { from, to } => {
@@ -446,10 +501,11 @@ async fn run_session(
                             .rename(from.clone(), to.clone())
                             .await
                             .with_context(|| format!("failed to rename {from} to {to}"));
-                        if recover_operation_result(&event_sender, "rename", None, result)?
+                        if recover_operation_result(&event_sender, "rename", None, result)
+                            .await?
                             .is_some()
                         {
-                            emit_status(&event_sender, format!("Renamed {from} to {to}"))?;
+                            emit_status(&event_sender, format!("Renamed {from} to {to}")).await?;
                         }
                     }
                     SftpCommand::Upload {
@@ -463,7 +519,8 @@ async fn run_session(
                             TransferDirection::Upload,
                             local_path.clone(),
                             remote_path.clone(),
-                        )?;
+                        )
+                        .await?;
 
                         let control = Arc::new(TransferControl::new());
                         let task = spawn_upload_task(
@@ -488,7 +545,8 @@ async fn run_session(
                             TransferDirection::Download,
                             local_path.clone(),
                             remote_path.clone(),
-                        )?;
+                        )
+                        .await?;
 
                         let control = Arc::new(TransferControl::new());
                         let task = spawn_download_task(
@@ -505,27 +563,29 @@ async fn run_session(
                     SftpCommand::PauseTransfer { transfer_id } => {
                         if let Some(control) = transfer_controls.get(&transfer_id) {
                             if control.pause() {
-                                emit_transfer_paused(&event_sender, transfer_id)?;
+                                emit_transfer_paused(&event_sender, transfer_id).await?;
                             }
                         } else {
                             emit_error(
                                 &event_sender,
                                 "pause_transfer",
                                 format!("transfer {} is no longer active", transfer_id.0),
-                            )?;
+                            )
+                            .await?;
                         }
                     }
                     SftpCommand::ResumeTransfer { transfer_id } => {
                         if let Some(control) = transfer_controls.get(&transfer_id) {
                             if control.resume() {
-                                emit_transfer_resumed(&event_sender, transfer_id)?;
+                                emit_transfer_resumed(&event_sender, transfer_id).await?;
                             }
                         } else {
                             emit_error(
                                 &event_sender,
                                 "resume_transfer",
                                 format!("transfer {} is no longer active", transfer_id.0),
-                            )?;
+                            )
+                            .await?;
                         }
                     }
                     SftpCommand::CancelTransfer { transfer_id } => {
@@ -536,7 +596,8 @@ async fn run_session(
                                 &event_sender,
                                 "cancel_transfer",
                                 format!("transfer {} is no longer active", transfer_id.0),
-                            )?;
+                            )
+                            .await?;
                         }
                     }
                     SftpCommand::Close => break,
@@ -561,8 +622,8 @@ async fn run_session(
     session_result
 }
 
-fn recover_operation_result<T>(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn recover_operation_result<T>(
+    event_sender: &SftpEventSender,
     context: &str,
     path: Option<&str>,
     result: Result<T>,
@@ -575,7 +636,8 @@ fn recover_operation_result<T>(
                 context,
                 path.map(str::to_owned),
                 format!("{error:#}"),
-            )?;
+            )
+            .await?;
             Ok(None)
         }
         Err(error) => Err(error),
@@ -684,7 +746,7 @@ async fn connect_authenticated_session(
     all_profiles: Vec<SessionProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+    event_sender: &SftpEventSender,
 ) -> Result<SftpConnectedSession> {
     let profile = ssh::hydrate_profile_from_secrets(profile, &secrets);
     let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
@@ -704,7 +766,8 @@ async fn connect_authenticated_session(
                 proxy_jump_profiles.len(),
                 first_hop.summary()
             ),
-        )?;
+        )
+        .await?;
 
         let mut current_session =
             connect_profile_session(first_hop, config.clone(), known_hosts.clone()).await?;
@@ -714,7 +777,8 @@ async fn connect_authenticated_session(
                 "Authenticating SFTP jump host 1/{}",
                 proxy_jump_profiles.len()
             ),
-        )?;
+        )
+        .await?;
         ssh::authenticate(&mut current_session, first_hop.clone(), &secrets).await?;
         let mut current_session = Arc::new(current_session);
 
@@ -736,7 +800,8 @@ async fn connect_authenticated_session(
                         next_profile.summary()
                     )
                 },
-            )?;
+            )
+            .await?;
 
             let transport = current_session
                 .channel_open_direct_tcpip(
@@ -768,7 +833,8 @@ async fn connect_authenticated_session(
                 } else {
                     format!("Authenticating SFTP jump host {}/{}", index + 2, total_hops)
                 },
-            )?;
+            )
+            .await?;
             ssh::authenticate(&mut next_session, next_profile, &secrets).await?;
 
             jump_sessions.push(current_session);
@@ -777,9 +843,9 @@ async fn connect_authenticated_session(
 
         current_session
     } else {
-        emit_status(event_sender, format!("Connecting SFTP to {remote}"))?;
+        emit_status(event_sender, format!("Connecting SFTP to {remote}")).await?;
         let mut session = connect_profile_session(&profile, config, known_hosts).await?;
-        emit_status(event_sender, format!("Authenticating SFTP to {remote}"))?;
+        emit_status(event_sender, format!("Authenticating SFTP to {remote}")).await?;
         ssh::authenticate(&mut session, profile, &secrets).await?;
         Arc::new(session)
     };
@@ -820,15 +886,8 @@ where
     ssh::connection::connect_profile_stream(profile, transport, config, handler).await
 }
 
-fn emit_status(event_sender: &FuturesUnboundedSender<SftpEvent>, message: String) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::Status(message))
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+async fn emit_status(event_sender: &SftpEventSender, message: String) -> Result<()> {
+    send_event(event_sender, SftpEvent::Status(message)).await
 }
 
 #[cfg(test)]
@@ -836,6 +895,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use russh_sftp::protocol::Status;
+    use std::time::Duration;
 
     fn status_error(status_code: StatusCode, message: &str) -> anyhow::Error {
         SftpClientError::Status(Status {
@@ -848,20 +908,47 @@ mod tests {
     }
 
     #[test]
+    fn event_channel_backpressures_when_the_receiver_is_slow() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build runtime")
+            .block_on(async {
+                let (event_sender, _event_receiver) = sftp_event_channel();
+                let producer_sender = event_sender.clone();
+                let mut producer = tokio::spawn(async move {
+                    for index in 0..(SFTP_EVENT_CHANNEL_CAPACITY * 4) {
+                        send_event(&producer_sender, SftpEvent::Status(index.to_string()))
+                            .await
+                            .expect("receiver remains open");
+                    }
+                });
+
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(25), &mut producer)
+                        .await
+                        .is_err(),
+                    "producer should block instead of growing the event queue without bound"
+                );
+                producer.abort();
+            });
+    }
+
+    #[test]
     fn subdirectory_failure_emits_requested_path_and_is_recoverable() {
-        let (event_sender, mut event_receiver) = futures_unbounded();
+        let (event_sender, mut event_receiver) = sftp_event_channel();
         let operation_result: Result<()> = Err(status_error(
             StatusCode::PermissionDenied,
             "permission denied",
         ))
         .context("failed to read remote directory /protected");
 
-        let recovered = recover_operation_result(
+        let recovered = futures::executor::block_on(recover_operation_result(
             &event_sender,
             "list_subdirectory",
             Some("/protected"),
             operation_result,
-        )
+        ))
         .expect("operation failure should be reported without becoming fatal");
 
         assert!(recovered.is_none());
@@ -886,15 +973,15 @@ mod tests {
 
     #[test]
     fn operation_failure_is_fatal_when_error_event_cannot_be_delivered() {
-        let (event_sender, event_receiver) = futures_unbounded();
+        let (event_sender, event_receiver) = sftp_event_channel();
         drop(event_receiver);
 
-        let error = recover_operation_result::<()>(
+        let error = futures::executor::block_on(recover_operation_result::<()>(
             &event_sender,
             "list_directory",
             Some("/missing"),
             Err(status_error(StatusCode::NoSuchFile, "path does not exist")),
-        )
+        ))
         .expect_err("closed event receiver should stop the session loop");
 
         assert_eq!(error.to_string(), "SFTP event receiver is closed");
@@ -902,14 +989,14 @@ mod tests {
 
     #[test]
     fn operation_limit_is_reported_without_closing_the_session() {
-        let (event_sender, mut event_receiver) = futures_unbounded();
+        let (event_sender, mut event_receiver) = sftp_event_channel();
 
-        let recovered = recover_operation_result::<()>(
+        let recovered = futures::executor::block_on(recover_operation_result::<()>(
             &event_sender,
             "list_directory",
             Some("/remote"),
             Err(SftpClientError::Limited("request limit exceeded".into()).into()),
-        )
+        ))
         .expect("operation limit should remain recoverable");
 
         assert!(recovered.is_none());
@@ -979,13 +1066,13 @@ mod tests {
         ];
 
         for fatal_error in fatal_errors {
-            let (event_sender, mut event_receiver) = futures_unbounded();
-            let error = recover_operation_result::<()>(
+            let (event_sender, mut event_receiver) = sftp_event_channel();
+            let error = futures::executor::block_on(recover_operation_result::<()>(
                 &event_sender,
                 "list_directory",
                 Some("/remote"),
                 Err(fatal_error.into()),
-            )
+            ))
             .expect_err("connection-level failure should terminate the session loop");
 
             drop(event_sender);

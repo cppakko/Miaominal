@@ -1,7 +1,6 @@
 use crate::ui::assets::AppIcon;
 use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use futures::StreamExt;
-use futures::channel::mpsc::UnboundedReceiver as FuturesUnboundedReceiver;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, Div, ElementId,
     Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
@@ -32,7 +31,9 @@ use miaominal_core::profile::{
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_settings::{self, KeyBinding};
 use miaominal_sftp::{
-    self, SftpCommandSender, SftpEntry, SftpEvent, TransferDirection, TransferId,
+    self, SftpCommandSender, SftpEntry, SftpEvent, SftpEventReceiver, SftpTransferChild,
+    SftpTransferChildState, SftpTransferChildUpdate, TransferChildId, TransferDirection,
+    TransferId,
 };
 use miaominal_ssh::{
     self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,
@@ -123,9 +124,9 @@ pub(in crate::ui::shell) use state::{
     SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
     SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionSidePanelView,
     SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState,
-    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferRow, SftpTransferStatus,
-    ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason, SyncUiState, TabKind,
-    TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
+    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow,
+    SftpTransferStatus, ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason,
+    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
     trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};

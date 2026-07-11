@@ -300,4 +300,32 @@ impl AppView {
             cx.notify();
         }
     }
+
+    pub(in crate::ui::shell) fn toggle_sftp_transfer_expanded(
+        &mut self,
+        tab_id: usize,
+        transfer_id: TransferId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(transfer) = self
+            .workspace_state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp_mut)
+            .and_then(|sftp| {
+                sftp.transfers
+                    .iter_mut()
+                    .find(|transfer| transfer.transfer_id == transfer_id)
+            })
+        else {
+            return;
+        };
+
+        if transfer.children.is_empty() {
+            return;
+        }
+        transfer.expanded = !transfer.expanded;
+        cx.notify();
+    }
 }

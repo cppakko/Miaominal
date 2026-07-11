@@ -1,6 +1,5 @@
-use super::session::SftpEvent;
-use anyhow::{Context, Result, anyhow};
-use futures::channel::mpsc::UnboundedSender as FuturesUnboundedSender;
+use super::session::{SftpEvent, SftpEventSender, send_event};
+use anyhow::{Context, Result};
 use miaominal_core::sftp::{SftpEntry, SftpEntryKind};
 use russh_sftp::{client::SftpSession, protocol::FileType};
 
@@ -76,35 +75,25 @@ pub(super) fn join_remote_path(base: &str, filename: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), filename)
 }
 
-pub(super) fn emit_directory_listing(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_directory_listing(
+    event_sender: &SftpEventSender,
     path: String,
     entries: Vec<SftpEntry>,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::DirectoryListing { path, entries })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+    send_event(event_sender, SftpEvent::DirectoryListing { path, entries }).await
 }
 
-pub(super) fn emit_subdirectory_listing(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_subdirectory_listing(
+    event_sender: &SftpEventSender,
     parent_path: String,
     entries: Vec<SftpEntry>,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::SubdirectoryListing {
+    send_event(
+        event_sender,
+        SftpEvent::SubdirectoryListing {
             parent_path,
             entries,
-        })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+        },
+    )
+    .await
 }

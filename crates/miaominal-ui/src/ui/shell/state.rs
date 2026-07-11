@@ -1,9 +1,11 @@
 use super::*;
 use crate::ui::i18n;
 use miaominal_agent::{AgentMode, TerminalOutputTap};
+use std::collections::VecDeque;
 use std::time::Instant;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
+pub(in crate::ui::shell) const SFTP_TRANSFER_CHILD_HISTORY_LIMIT: usize = 500;
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct MonitorChartPoint {
@@ -860,6 +862,24 @@ pub(in crate::ui::shell) enum SftpTransferStatus {
 }
 
 #[derive(Debug, Clone)]
+pub(in crate::ui::shell) enum SftpTransferChildStatus {
+    Running,
+    Paused,
+    Done,
+    Cancelled,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct SftpTransferChildRow {
+    pub(in crate::ui::shell) child_id: TransferChildId,
+    pub(in crate::ui::shell) relative_path: String,
+    pub(in crate::ui::shell) bytes_complete: u64,
+    pub(in crate::ui::shell) bytes_total: Option<u64>,
+    pub(in crate::ui::shell) status: SftpTransferChildStatus,
+}
+
+#[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct SftpTransferRow {
     pub(in crate::ui::shell) transfer_id: TransferId,
     pub(in crate::ui::shell) direction: TransferDirection,
@@ -871,6 +891,100 @@ pub(in crate::ui::shell) struct SftpTransferRow {
     pub(in crate::ui::shell) bytes_per_second: Option<u64>,
     pub(in crate::ui::shell) last_progress_at: Option<Instant>,
     pub(in crate::ui::shell) last_bytes_complete: u64,
+    pub(in crate::ui::shell) is_directory: bool,
+    pub(in crate::ui::shell) expanded: bool,
+    pub(in crate::ui::shell) children: VecDeque<SftpTransferChildRow>,
+    pub(in crate::ui::shell) child_count: u64,
+}
+
+impl SftpTransferRow {
+    pub(in crate::ui::shell) fn push_child(&mut self, child: SftpTransferChild) {
+        self.is_directory = true;
+        self.child_count = self.child_count.saturating_add(1);
+        if self.children.len() == SFTP_TRANSFER_CHILD_HISTORY_LIMIT {
+            self.children.pop_front();
+        }
+        self.children.push_back(SftpTransferChildRow {
+            child_id: child.child_id,
+            relative_path: child.relative_path,
+            bytes_complete: 0,
+            bytes_total: child.bytes_total,
+            status: SftpTransferChildStatus::Running,
+        });
+    }
+
+    pub(in crate::ui::shell) fn omitted_child_count(&self) -> u64 {
+        self.child_count.saturating_sub(self.children.len() as u64)
+    }
+
+    pub(in crate::ui::shell) fn apply_child_update(&mut self, update: SftpTransferChildUpdate) {
+        let Some(child) = self
+            .children
+            .iter_mut()
+            .find(|child| child.child_id == update.child_id)
+        else {
+            return;
+        };
+        child.bytes_complete = update.bytes_complete;
+        child.status = match update.state {
+            SftpTransferChildState::Running => SftpTransferChildStatus::Running,
+            SftpTransferChildState::Done => {
+                if let Some(total) = child.bytes_total {
+                    child.bytes_complete = total;
+                }
+                SftpTransferChildStatus::Done
+            }
+            SftpTransferChildState::Cancelled => SftpTransferChildStatus::Cancelled,
+            SftpTransferChildState::Failed(message) => SftpTransferChildStatus::Failed(message),
+        };
+    }
+
+    pub(in crate::ui::shell) fn pause_active_child(&mut self) {
+        if let Some(child) = self
+            .children
+            .iter_mut()
+            .find(|child| matches!(child.status, SftpTransferChildStatus::Running))
+        {
+            child.status = SftpTransferChildStatus::Paused;
+        }
+    }
+
+    pub(in crate::ui::shell) fn resume_active_child(&mut self) {
+        if let Some(child) = self
+            .children
+            .iter_mut()
+            .find(|child| matches!(child.status, SftpTransferChildStatus::Paused))
+        {
+            child.status = SftpTransferChildStatus::Running;
+        }
+    }
+
+    pub(in crate::ui::shell) fn cancel_unfinished_children(&mut self) {
+        for child in &mut self.children {
+            if matches!(
+                child.status,
+                SftpTransferChildStatus::Running | SftpTransferChildStatus::Paused
+            ) {
+                child.status = SftpTransferChildStatus::Cancelled;
+            }
+        }
+    }
+
+    pub(in crate::ui::shell) fn fail_unfinished_children(&mut self, message: &str) {
+        if !self
+            .children
+            .iter()
+            .any(|child| matches!(child.status, SftpTransferChildStatus::Failed(_)))
+            && let Some(child) = self.children.iter_mut().find(|child| {
+                matches!(
+                    child.status,
+                    SftpTransferChildStatus::Running | SftpTransferChildStatus::Paused
+                )
+            })
+        {
+            child.status = SftpTransferChildStatus::Failed(message.to_string());
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1750,6 +1864,40 @@ mod tests {
         }
     }
 
+    fn transfer_row() -> SftpTransferRow {
+        SftpTransferRow {
+            transfer_id: TransferId(1),
+            direction: TransferDirection::Upload,
+            source: PathBuf::from("root"),
+            destination: "/remote/root".to_string(),
+            bytes_complete: 0,
+            bytes_total: None,
+            status: SftpTransferStatus::Queued,
+            bytes_per_second: None,
+            last_progress_at: None,
+            last_bytes_complete: 0,
+            is_directory: false,
+            expanded: false,
+            children: VecDeque::new(),
+            child_count: 0,
+        }
+    }
+
+    fn transfer_children() -> Vec<SftpTransferChild> {
+        vec![
+            SftpTransferChild {
+                child_id: TransferChildId(0),
+                relative_path: "done.txt".to_string(),
+                bytes_total: Some(3),
+            },
+            SftpTransferChild {
+                child_id: TransferChildId(1),
+                relative_path: "active.txt".to_string(),
+                bytes_total: Some(5),
+            },
+        ]
+    }
+
     #[test]
     fn split_message_into_blocks_skips_blank_segments() {
         assert!(split_message_into_blocks("").is_empty());
@@ -1940,6 +2088,106 @@ mod tests {
             .map(|message| message.motion.enter_key)
             .collect::<Vec<_>>();
         assert_eq!(keys, vec![Some(1), Some(2), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn sftp_transfer_child_updates_and_failure_propagation_preserve_completed_files() {
+        let mut transfer = transfer_row();
+        let mut children = transfer_children().into_iter();
+        transfer.push_child(children.next().expect("completed child"));
+
+        assert!(transfer.is_directory);
+        assert!(!transfer.expanded);
+        assert_eq!(transfer.children.len(), 1);
+
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(0),
+            bytes_complete: 3,
+            state: SftpTransferChildState::Done,
+        });
+        transfer.push_child(children.next().expect("active child"));
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(1),
+            bytes_complete: 2,
+            state: SftpTransferChildState::Running,
+        });
+        transfer.pause_active_child();
+        assert!(matches!(
+            &transfer.children[1].status,
+            SftpTransferChildStatus::Paused
+        ));
+        transfer.resume_active_child();
+        assert!(matches!(
+            &transfer.children[1].status,
+            SftpTransferChildStatus::Running
+        ));
+
+        transfer.fail_unfinished_children("boom");
+
+        assert!(matches!(
+            &transfer.children[0].status,
+            SftpTransferChildStatus::Done
+        ));
+        assert!(matches!(
+            &transfer.children[1].status,
+            SftpTransferChildStatus::Failed(message) if message == "boom"
+        ));
+    }
+
+    #[test]
+    fn sftp_transfer_cancel_marks_only_unfinished_children() {
+        let mut transfer = transfer_row();
+        let mut children = transfer_children().into_iter();
+        transfer.push_child(children.next().expect("completed child"));
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(0),
+            bytes_complete: 3,
+            state: SftpTransferChildState::Done,
+        });
+        transfer.push_child(children.next().expect("active child"));
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(1),
+            bytes_complete: 2,
+            state: SftpTransferChildState::Running,
+        });
+
+        transfer.cancel_unfinished_children();
+
+        assert!(matches!(
+            &transfer.children[0].status,
+            SftpTransferChildStatus::Done
+        ));
+        assert!(matches!(
+            &transfer.children[1].status,
+            SftpTransferChildStatus::Cancelled
+        ));
+    }
+
+    #[test]
+    fn sftp_transfer_child_history_is_bounded() {
+        let mut transfer = transfer_row();
+        let total = SFTP_TRANSFER_CHILD_HISTORY_LIMIT + 7;
+        for index in 0..total {
+            let child_id = TransferChildId(index as u64);
+            transfer.push_child(SftpTransferChild {
+                child_id,
+                relative_path: format!("file-{index}.txt"),
+                bytes_total: Some(1),
+            });
+            transfer.apply_child_update(SftpTransferChildUpdate {
+                child_id,
+                bytes_complete: 1,
+                state: SftpTransferChildState::Done,
+            });
+        }
+
+        assert_eq!(transfer.children.len(), SFTP_TRANSFER_CHILD_HISTORY_LIMIT);
+        assert_eq!(transfer.child_count, total as u64);
+        assert_eq!(transfer.omitted_child_count(), 7);
+        assert_eq!(
+            transfer.children.front().map(|child| child.child_id),
+            Some(TransferChildId(7))
+        );
     }
 
     #[test]

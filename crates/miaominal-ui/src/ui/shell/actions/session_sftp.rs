@@ -409,7 +409,7 @@ impl AppView {
     pub(in crate::ui::shell) fn spawn_sftp_event_loop(
         &self,
         tab_id: usize,
-        mut events: FuturesUnboundedReceiver<SftpEvent>,
+        mut events: SftpEventReceiver,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -505,6 +505,10 @@ impl AppView {
                         bytes_per_second: None,
                         last_progress_at: None,
                         last_bytes_complete: 0,
+                        is_directory: false,
+                        expanded: false,
+                        children: std::collections::VecDeque::new(),
+                        child_count: 0,
                     },
                 );
                 open_global_progress_center = true;
@@ -512,16 +516,27 @@ impl AppView {
                 sftp.last_status =
                     i18n::string_args("sftp.messages.transfer_queued", &[("id", &transfer_id)]);
             }
+            SftpEvent::TransferChildStarted { transfer_id, child } => {
+                if let Some(transfer) = sftp
+                    .transfers
+                    .iter_mut()
+                    .find(|transfer| transfer.transfer_id == transfer_id)
+                {
+                    transfer.push_child(child);
+                }
+            }
             SftpEvent::TransferProgress {
                 transfer_id,
                 bytes_complete,
                 bytes_total,
+                child,
             } => {
                 if let Some(transfer) = sftp
                     .transfers
                     .iter_mut()
                     .find(|transfer| transfer.transfer_id == transfer_id)
                 {
+                    let is_paused = matches!(transfer.status, SftpTransferStatus::Paused);
                     let now = std::time::Instant::now();
                     // Only recompute speed when at least 500 ms have elapsed since the last
                     // sample point. Without this guard, events that queue up in the channel
@@ -541,8 +556,14 @@ impl AppView {
                     }
                     transfer.bytes_complete = bytes_complete;
                     transfer.bytes_total = bytes_total;
-                    if !matches!(transfer.status, SftpTransferStatus::Paused) {
+                    if !is_paused {
                         transfer.status = SftpTransferStatus::Running;
+                    }
+                    if let Some(child) = child {
+                        transfer.apply_child_update(child);
+                        if is_paused {
+                            transfer.pause_active_child();
+                        }
                     }
                 }
             }
@@ -555,6 +576,7 @@ impl AppView {
                     transfer.status = SftpTransferStatus::Paused;
                     transfer.bytes_per_second = None;
                     transfer.last_progress_at = None;
+                    transfer.pause_active_child();
                 }
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
@@ -567,6 +589,7 @@ impl AppView {
                     .find(|transfer| transfer.transfer_id == transfer_id)
                 {
                     transfer.status = SftpTransferStatus::Running;
+                    transfer.resume_active_child();
                 }
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
@@ -635,6 +658,7 @@ impl AppView {
                     transfer.status = SftpTransferStatus::Cancelled;
                     transfer.bytes_per_second = None;
                     transfer.last_progress_at = None;
+                    transfer.cancel_unfinished_children();
                 }
                 let transfer_id = transfer_id.0.to_string();
                 sftp.last_status =
@@ -650,6 +674,9 @@ impl AppView {
                     .find(|transfer| transfer.transfer_id == transfer_id)
                 {
                     transfer.status = SftpTransferStatus::Failed(message.clone());
+                    transfer.bytes_per_second = None;
+                    transfer.last_progress_at = None;
+                    transfer.fail_unfinished_children(&message);
                 }
                 *status = i18n::string("session.status.error");
                 sftp.last_error = Some(message.clone());

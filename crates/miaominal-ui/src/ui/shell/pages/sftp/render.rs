@@ -642,6 +642,8 @@ fn sftp_progress_center_card(
         .w_full()
         .min_w(px(0.0))
         .overflow_hidden()
+        .flex()
+        .flex_col()
         .flex_1()
         .min_h(px(0.0))
         .child(content);
@@ -1107,7 +1109,7 @@ impl AppView {
             .filter_map(TabState::as_sftp)
             .find_map(|sftp| sftp.last_error.clone());
 
-        let mut rows = v_flex().w_full().gap_1();
+        let mut rows = v_flex().w_full().gap_1().flex_shrink_0();
         let mut has_transfers = false;
         for (tab_id, sftp_tab, transfer) in transfers {
             has_transfers = true;
@@ -1274,6 +1276,180 @@ impl AppView {
                 }
             };
 
+            let has_children = !transfer.children.is_empty();
+            let expanded = transfer.expanded && has_children;
+            let expand_entity = entity.clone();
+            let expand_control = if has_children {
+                icon_button_with_tooltip(
+                    if expanded {
+                        AppIcon::ChevronDown
+                    } else {
+                        AppIcon::Next
+                    },
+                    i18n::string(if expanded {
+                        "sftp.tooltips.collapse_transfer_children"
+                    } else {
+                        "sftp.tooltips.expand_transfer_children"
+                    }),
+                    20.0,
+                    6.0,
+                    Some(roles.surface_container_low),
+                    Some(roles.on_surface_variant),
+                    None,
+                    move |_window, cx| {
+                        expand_entity.update(cx, |this, cx| {
+                            this.toggle_sftp_transfer_expanded(tab_id, transfer_id, cx);
+                        });
+                    },
+                )
+            } else {
+                div().size(px(20.0))
+            };
+
+            let mut child_rows = v_flex().w_full().gap_1().flex_shrink_0();
+            if expanded {
+                let omitted_child_count = transfer.omitted_child_count();
+                if omitted_child_count > 0 {
+                    let shown = transfer.children.len().to_string();
+                    let total = transfer.child_count.to_string();
+                    child_rows = child_rows.child(
+                        div()
+                            .w_full()
+                            .flex_shrink_0()
+                            .pl(px(40.0))
+                            .pr_2()
+                            .py_1()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(roles.on_surface_variant))
+                            .child(i18n::string_args(
+                                "sftp.ui.transfer_children_truncated",
+                                &[("shown", &shown), ("total", &total)],
+                            )),
+                    );
+                }
+                for child in &transfer.children {
+                    let child_progress = child.bytes_total.map_or_else(
+                        || format_byte_size(Some(child.bytes_complete)).to_string(),
+                        |total| {
+                            format!(
+                                "{} / {}",
+                                format_byte_size(Some(child.bytes_complete)),
+                                format_byte_size(Some(total))
+                            )
+                        },
+                    );
+                    let child_progress_value = match child.bytes_total {
+                        Some(total) if total > 0 => {
+                            ((child.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
+                        }
+                        Some(_) if matches!(&child.status, SftpTransferChildStatus::Done) => 100.0,
+                        Some(_) => 0.0,
+                        None if matches!(&child.status, SftpTransferChildStatus::Done) => 100.0,
+                        None => 0.0,
+                    };
+                    let child_progress_loading = child.bytes_total.is_none()
+                        && matches!(&child.status, SftpTransferChildStatus::Running);
+                    let (child_status_label, child_accent) = match &child.status {
+                        SftpTransferChildStatus::Running => (
+                            i18n::string("sftp.transfer_status.running"),
+                            extended.info.color,
+                        ),
+                        SftpTransferChildStatus::Paused => (
+                            i18n::string("sftp.transfer_status.paused"),
+                            extended.warning.color,
+                        ),
+                        SftpTransferChildStatus::Done => (
+                            i18n::string("sftp.transfer_status.done"),
+                            extended.success.color,
+                        ),
+                        SftpTransferChildStatus::Cancelled => (
+                            i18n::string("sftp.transfer_status.cancelled"),
+                            roles.on_surface_variant,
+                        ),
+                        SftpTransferChildStatus::Failed(message) => (
+                            i18n::string_args(
+                                "sftp.transfer_status.failed",
+                                &[("message", message)],
+                            ),
+                            extended.warning.color,
+                        ),
+                    };
+
+                    child_rows = child_rows.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "sftp-transfer-child-{tab_id}-{}-{}",
+                                transfer_id.0, child.child_id.0
+                            )))
+                            .w_full()
+                            .flex_shrink_0()
+                            .pl(px(40.0))
+                            .pr_2()
+                            .py_1()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .size(px(18.0))
+                                                    .flex_shrink_0()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_color(rgb(child_accent))
+                                                    .child(Icon::new(AppIcon::File).small()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w(px(0.0))
+                                                    .overflow_hidden()
+                                                    .text_size(
+                                                        miaominal_settings::FontSize::Body.scaled(),
+                                                    )
+                                                    .text_color(rgb(roles.on_surface))
+                                                    .child(child.relative_path.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(
+                                                        miaominal_settings::FontSize::Body.scaled(),
+                                                    )
+                                                    .text_color(rgb(roles.on_surface_variant))
+                                                    .child(child_progress),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(
+                                                        miaominal_settings::FontSize::Body.scaled(),
+                                                    )
+                                                    .text_color(rgb(child_accent))
+                                                    .child(child_status_label),
+                                            ),
+                                    )
+                                    .child(
+                                        Progress::new(format!(
+                                            "sftp-transfer-child-progress-{tab_id}-{}-{}",
+                                            transfer_id.0, child.child_id.0
+                                        ))
+                                        .with_size(gpui_component::Size::Small)
+                                        .value(child_progress_value)
+                                        .loading(child_progress_loading)
+                                        .color(rgb(child_accent)),
+                                    ),
+                            ),
+                    );
+                }
+            }
+
             rows = rows.child(
                 div()
                     .id(SharedString::from(format!(
@@ -1281,6 +1457,7 @@ impl AppView {
                         tab_id, transfer.transfer_id.0
                     )))
                     .w_full()
+                    .flex_shrink_0()
                     .px_2()
                     .py_2()
                     .rounded(px(8.0))
@@ -1300,6 +1477,7 @@ impl AppView {
                                     .w_full()
                                     .items_center()
                                     .gap_3()
+                                    .child(expand_control)
                                     .child(
                                         div()
                                             .w(px(20.0))
@@ -1366,7 +1544,8 @@ impl AppView {
                                     .when_some(transfer_actions, |this, actions| {
                                         this.child(actions)
                                     }),
-                            ),
+                            )
+                            .when(expanded, |this| this.child(child_rows)),
                     ),
             );
         }
@@ -1378,14 +1557,7 @@ impl AppView {
 
         sftp_progress_center_card(
             section_id,
-            div()
-                .flex_1()
-                .w_full()
-                .min_h(px(0.0))
-                .overflow_hidden()
-                .overflow_y_scrollbar()
-                .p_2()
-                .child(rows),
+            div().size_full().overflow_y_scrollbar().p_2().child(rows),
         )
         .into_any_element()
     }

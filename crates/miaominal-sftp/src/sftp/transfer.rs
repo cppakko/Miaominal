@@ -1,11 +1,15 @@
 use super::paths::join_remote_path;
-use super::session::SftpEvent;
+use super::session::{
+    SftpEvent, SftpEventSender, SftpTransferChild, SftpTransferChildState, SftpTransferChildUpdate,
+    TransferChildId, send_event,
+};
 use anyhow::{Context, Result, anyhow};
-use futures::channel::mpsc::UnboundedSender as FuturesUnboundedSender;
 use miaominal_core::sftp::{TransferDirection, TransferId};
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -163,7 +167,7 @@ async fn cancel_all_transfers_with_timeout(
 
 pub(super) fn spawn_upload_task(
     sftp: Arc<SftpSession>,
-    event_sender: FuturesUnboundedSender<SftpEvent>,
+    event_sender: SftpEventSender,
     transfer_id: TransferId,
     local_path: PathBuf,
     remote_path: String,
@@ -179,13 +183,13 @@ pub(super) fn spawn_upload_task(
             &event_sender,
         )
         .await;
-        finish_transfer_task(&event_sender, transfer_id, result);
+        finish_transfer_task(&event_sender, transfer_id, result).await;
     })
 }
 
 pub(super) fn spawn_download_task(
     sftp: Arc<SftpSession>,
-    event_sender: FuturesUnboundedSender<SftpEvent>,
+    event_sender: SftpEventSender,
     transfer_id: TransferId,
     remote_path: String,
     local_path: PathBuf,
@@ -201,7 +205,7 @@ pub(super) fn spawn_download_task(
             &event_sender,
         )
         .await;
-        finish_transfer_task(&event_sender, transfer_id, result);
+        finish_transfer_task(&event_sender, transfer_id, result).await;
     })
 }
 
@@ -210,26 +214,79 @@ enum TransferOutcome {
     Cancelled,
 }
 
+struct ActiveTransferChild {
+    child_id: TransferChildId,
+    bytes_complete: u64,
+}
+
 struct TransferProgress<'a> {
-    event_sender: &'a FuturesUnboundedSender<SftpEvent>,
+    event_sender: &'a SftpEventSender,
     transfer_id: TransferId,
     bytes_total: Option<u64>,
-    bytes_complete: &'a mut u64,
+    bytes_complete: u64,
+    active_child: Option<ActiveTransferChild>,
+    next_child_id: u64,
 }
 
 impl TransferProgress<'_> {
-    fn emit(&self) -> Result<()> {
+    async fn emit(&self, child: Option<SftpTransferChildUpdate>) -> Result<()> {
         emit_transfer_progress(
             self.event_sender,
             self.transfer_id,
-            *self.bytes_complete,
+            self.bytes_complete,
             self.bytes_total,
+            child,
         )
+        .await
     }
 
-    fn advance(&mut self, bytes: u64) -> Result<()> {
-        *self.bytes_complete += bytes;
-        self.emit()
+    async fn begin_child(
+        &mut self,
+        relative_path: String,
+        bytes_total: Option<u64>,
+    ) -> Result<TransferChildId> {
+        let child_id = TransferChildId(self.next_child_id);
+        self.next_child_id = self.next_child_id.saturating_add(1);
+        self.active_child = Some(ActiveTransferChild {
+            child_id,
+            bytes_complete: 0,
+        });
+        emit_transfer_child_started(
+            self.event_sender,
+            self.transfer_id,
+            SftpTransferChild {
+                child_id,
+                relative_path,
+                bytes_total,
+            },
+        )
+        .await?;
+        Ok(child_id)
+    }
+
+    async fn advance(&mut self, bytes: u64) -> Result<()> {
+        self.bytes_complete = self.bytes_complete.saturating_add(bytes);
+        let child = self.active_child.as_mut().map(|child| {
+            child.bytes_complete = child.bytes_complete.saturating_add(bytes);
+            SftpTransferChildUpdate {
+                child_id: child.child_id,
+                bytes_complete: child.bytes_complete,
+                state: SftpTransferChildState::Running,
+            }
+        });
+        self.emit(child).await
+    }
+
+    async fn finish_child(&mut self, state: SftpTransferChildState) -> Result<()> {
+        let Some(child) = self.active_child.take() else {
+            return Ok(());
+        };
+        self.emit(Some(SftpTransferChildUpdate {
+            child_id: child.child_id,
+            bytes_complete: child.bytes_complete,
+            state,
+        }))
+        .await
     }
 }
 
@@ -239,26 +296,40 @@ async fn upload_path(
     local_path: &Path,
     remote_path: &str,
     control: &TransferControl,
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+    event_sender: &SftpEventSender,
 ) -> Result<TransferOutcome> {
     let source = inspect_local_upload_source(local_path).await?;
-    let bytes_total = match source {
-        LocalUploadSource::Directory => Some(compute_local_directory_size(local_path).await?),
-        LocalUploadSource::File { len } => Some(len),
-    };
-    let mut bytes_complete = 0_u64;
-    let mut progress = TransferProgress {
-        event_sender,
-        transfer_id,
-        bytes_total,
-        bytes_complete: &mut bytes_complete,
-    };
-
     match source {
         LocalUploadSource::Directory => {
-            upload_directory(sftp, local_path, remote_path, control, &mut progress).await
+            let mut progress = TransferProgress {
+                event_sender,
+                transfer_id,
+                bytes_total: None,
+                bytes_complete: 0,
+                active_child: None,
+                next_child_id: 0,
+            };
+            progress.emit(None).await?;
+            upload_directory(
+                sftp,
+                local_path,
+                remote_path,
+                String::new(),
+                control,
+                &mut progress,
+            )
+            .await
         }
-        LocalUploadSource::File { .. } => {
+        LocalUploadSource::File { len } => {
+            let mut progress = TransferProgress {
+                event_sender,
+                transfer_id,
+                bytes_total: Some(len),
+                bytes_complete: 0,
+                active_child: None,
+                next_child_id: 0,
+            };
+            progress.emit(None).await?;
             upload_regular_file(sftp, local_path, remote_path, control, &mut progress).await
         }
     }
@@ -297,20 +368,11 @@ async fn inspect_local_upload_source(local_path: &Path) -> Result<LocalUploadSou
     ))
 }
 
+#[cfg(test)]
 async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
     let mut total = 0_u64;
     let mut stack = vec![local_root.to_path_buf()];
     while let Some(local_dir) = stack.pop() {
-        if !matches!(
-            inspect_local_upload_source(&local_dir).await?,
-            LocalUploadSource::Directory
-        ) {
-            return Err(anyhow!(
-                "expected local upload directory {}",
-                local_dir.display()
-            ));
-        }
-
         let mut entries = tokio::fs::read_dir(&local_dir)
             .await
             .with_context(|| format!("failed to read {}", local_dir.display()))?;
@@ -322,52 +384,33 @@ async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
             let local_child = entry.path();
             match inspect_local_upload_source(&local_child).await? {
                 LocalUploadSource::Directory => stack.push(local_child),
-                LocalUploadSource::File { len } => total += len,
+                LocalUploadSource::File { len } => total = total.saturating_add(len),
             }
         }
     }
     Ok(total)
 }
 
-async fn upload_directory(
-    sftp: &SftpSession,
-    local_root: &Path,
-    remote_root: &str,
-    control: &TransferControl,
-    progress: &mut TransferProgress<'_>,
-) -> Result<TransferOutcome> {
-    if matches!(
-        control.wait_until_active().await,
-        TransferControlState::Cancelled
-    ) {
-        return Ok(TransferOutcome::Cancelled);
-    }
-
-    if !matches!(
-        inspect_local_upload_source(local_root).await?,
-        LocalUploadSource::Directory
-    ) {
-        return Err(anyhow!(
-            "expected local upload directory {}",
-            local_root.display()
-        ));
-    }
-
-    let _ = sftp.create_dir(remote_root.to_string()).await;
-    progress.emit()?;
-
-    let mut stack = vec![(local_root.to_path_buf(), remote_root.to_string())];
-
-    while let Some((local_dir, remote_dir)) = stack.pop() {
+fn upload_directory<'a, 'event>(
+    sftp: &'a SftpSession,
+    local_dir: &'a Path,
+    remote_dir: &'a str,
+    relative_dir: String,
+    control: &'a TransferControl,
+    progress: &'a mut TransferProgress<'event>,
+) -> Pin<Box<dyn Future<Output = Result<TransferOutcome>> + Send + 'a>>
+where
+    'event: 'a,
+{
+    Box::pin(async move {
         if matches!(
             control.wait_until_active().await,
             TransferControlState::Cancelled
         ) {
             return Ok(TransferOutcome::Cancelled);
         }
-
         if !matches!(
-            inspect_local_upload_source(&local_dir).await?,
+            inspect_local_upload_source(local_dir).await?,
             LocalUploadSource::Directory
         ) {
             return Err(anyhow!(
@@ -375,10 +418,9 @@ async fn upload_directory(
                 local_dir.display()
             ));
         }
+        let _ = sftp.create_dir(remote_dir.to_string()).await;
 
-        let _ = sftp.create_dir(remote_dir.clone()).await;
-
-        let mut entries = tokio::fs::read_dir(&local_dir)
+        let mut entries = tokio::fs::read_dir(local_dir)
             .await
             .with_context(|| format!("failed to read {}", local_dir.display()))?;
         while let Some(entry) = entries
@@ -386,25 +428,61 @@ async fn upload_directory(
             .await
             .with_context(|| format!("failed to iterate {}", local_dir.display()))?
         {
+            if matches!(
+                control.wait_until_active().await,
+                TransferControlState::Cancelled
+            ) {
+                return Ok(TransferOutcome::Cancelled);
+            }
+
             let local_child = entry.path();
             let filename = entry.file_name().to_string_lossy().into_owned();
-            let remote_child = join_remote_path(&remote_dir, &filename);
+            let remote_child = join_remote_path(remote_dir, &filename);
+            let relative_child = join_remote_path(&relative_dir, &filename);
             match inspect_local_upload_source(&local_child).await? {
-                LocalUploadSource::Directory => stack.push((local_child, remote_child)),
-                LocalUploadSource::File { .. } => {
+                LocalUploadSource::Directory => {
                     if matches!(
-                        upload_regular_file(sftp, &local_child, &remote_child, control, progress,)
-                            .await?,
+                        upload_directory(
+                            sftp,
+                            &local_child,
+                            &remote_child,
+                            relative_child,
+                            control,
+                            progress,
+                        )
+                        .await?,
                         TransferOutcome::Cancelled
                     ) {
                         return Ok(TransferOutcome::Cancelled);
                     }
                 }
+                LocalUploadSource::File { len } => {
+                    progress.begin_child(relative_child, Some(len)).await?;
+                    match upload_regular_file(sftp, &local_child, &remote_child, control, progress)
+                        .await
+                    {
+                        Ok(TransferOutcome::Done) => {
+                            progress.finish_child(SftpTransferChildState::Done).await?;
+                        }
+                        Ok(TransferOutcome::Cancelled) => {
+                            progress
+                                .finish_child(SftpTransferChildState::Cancelled)
+                                .await?;
+                            return Ok(TransferOutcome::Cancelled);
+                        }
+                        Err(error) => {
+                            let _ = progress
+                                .finish_child(SftpTransferChildState::Failed(error.to_string()))
+                                .await;
+                            return Err(error);
+                        }
+                    }
+                }
             }
         }
-    }
 
-    Ok(TransferOutcome::Done)
+        Ok(TransferOutcome::Done)
+    })
 }
 
 async fn upload_regular_file(
@@ -462,7 +540,7 @@ async fn upload_regular_file(
                     format!("failed to write temporary remote file {temporary_path}")
                 })?;
 
-            progress.advance(read as u64)?;
+            progress.advance(read as u64).await?;
         }
 
         remote_file
@@ -545,112 +623,125 @@ async fn download_path(
     remote_path: &str,
     local_path: &Path,
     control: &TransferControl,
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+    event_sender: &SftpEventSender,
 ) -> Result<TransferOutcome> {
     let metadata = sftp
         .metadata(remote_path.to_string())
         .await
         .with_context(|| format!("failed to read remote metadata for {remote_path}"))?;
-    let bytes_total = if metadata.is_dir() {
-        Some(compute_remote_directory_size(sftp, remote_path).await?)
-    } else {
-        metadata.size
-    };
-    let mut bytes_complete = 0_u64;
-    let mut progress = TransferProgress {
-        event_sender,
-        transfer_id,
-        bytes_total,
-        bytes_complete: &mut bytes_complete,
-    };
-
     if metadata.is_dir() {
-        download_directory(sftp, remote_path, local_path, control, &mut progress).await
+        let mut progress = TransferProgress {
+            event_sender,
+            transfer_id,
+            bytes_total: None,
+            bytes_complete: 0,
+            active_child: None,
+            next_child_id: 0,
+        };
+        progress.emit(None).await?;
+        download_directory(
+            sftp,
+            remote_path,
+            local_path,
+            String::new(),
+            control,
+            &mut progress,
+        )
+        .await
     } else {
+        let mut progress = TransferProgress {
+            event_sender,
+            transfer_id,
+            bytes_total: metadata.size,
+            bytes_complete: 0,
+            active_child: None,
+            next_child_id: 0,
+        };
+        progress.emit(None).await?;
         download_regular_file(sftp, remote_path, local_path, control, &mut progress).await
     }
 }
 
-async fn compute_remote_directory_size(sftp: &SftpSession, remote_root: &str) -> Result<u64> {
-    let mut total = 0_u64;
-    let mut stack = vec![remote_root.to_string()];
-
-    while let Some(remote_dir) = stack.pop() {
-        for entry in sftp
-            .read_dir(&remote_dir)
-            .await
-            .with_context(|| format!("failed to read remote directory {remote_dir}"))?
-        {
-            let metadata = entry.metadata();
-            if metadata.is_dir() {
-                stack.push(join_remote_path(&remote_dir, &entry.file_name()));
-            } else {
-                total += metadata.size.unwrap_or(0);
-            }
-        }
-    }
-
-    Ok(total)
-}
-
-async fn download_directory(
-    sftp: &SftpSession,
-    remote_root: &str,
-    local_root: &Path,
-    control: &TransferControl,
-    progress: &mut TransferProgress<'_>,
-) -> Result<TransferOutcome> {
-    if matches!(
-        control.wait_until_active().await,
-        TransferControlState::Cancelled
-    ) {
-        return Ok(TransferOutcome::Cancelled);
-    }
-
-    tokio::fs::create_dir_all(local_root)
-        .await
-        .with_context(|| format!("failed to create {}", local_root.display()))?;
-    progress.emit()?;
-
-    let mut stack = vec![(remote_root.to_string(), local_root.to_path_buf())];
-
-    while let Some((remote_dir, local_dir)) = stack.pop() {
+fn download_directory<'a, 'event>(
+    sftp: &'a SftpSession,
+    remote_dir: &'a str,
+    local_dir: &'a Path,
+    relative_dir: String,
+    control: &'a TransferControl,
+    progress: &'a mut TransferProgress<'event>,
+) -> Pin<Box<dyn Future<Output = Result<TransferOutcome>> + Send + 'a>>
+where
+    'event: 'a,
+{
+    Box::pin(async move {
         if matches!(
             control.wait_until_active().await,
             TransferControlState::Cancelled
         ) {
             return Ok(TransferOutcome::Cancelled);
         }
-
-        tokio::fs::create_dir_all(&local_dir)
+        tokio::fs::create_dir_all(local_dir)
             .await
             .with_context(|| format!("failed to create {}", local_dir.display()))?;
 
         for entry in sftp
-            .read_dir(&remote_dir)
+            .read_dir(remote_dir)
             .await
             .with_context(|| format!("failed to read remote directory {remote_dir}"))?
         {
-            let filename = entry.file_name();
-            let remote_child = join_remote_path(&remote_dir, &filename);
-            let local_child = local_dir.join(&filename);
-
-            if entry.metadata().is_dir() {
-                stack.push((remote_child, local_child));
-                continue;
-            }
-
             if matches!(
-                download_regular_file(sftp, &remote_child, &local_child, control, progress,)
-                    .await?,
-                TransferOutcome::Cancelled
+                control.wait_until_active().await,
+                TransferControlState::Cancelled
             ) {
                 return Ok(TransferOutcome::Cancelled);
             }
-        }
-    }
 
-    Ok(TransferOutcome::Done)
+            let metadata = entry.metadata();
+            let filename = entry.file_name();
+            let remote_child = join_remote_path(remote_dir, &filename);
+            let local_child = local_dir.join(&filename);
+            let relative_child = join_remote_path(&relative_dir, &filename);
+            if metadata.is_dir() {
+                if matches!(
+                    download_directory(
+                        sftp,
+                        &remote_child,
+                        &local_child,
+                        relative_child,
+                        control,
+                        progress,
+                    )
+                    .await?,
+                    TransferOutcome::Cancelled
+                ) {
+                    return Ok(TransferOutcome::Cancelled);
+                }
+                continue;
+            }
+
+            progress.begin_child(relative_child, metadata.size).await?;
+            match download_regular_file(sftp, &remote_child, &local_child, control, progress).await
+            {
+                Ok(TransferOutcome::Done) => {
+                    progress.finish_child(SftpTransferChildState::Done).await?;
+                }
+                Ok(TransferOutcome::Cancelled) => {
+                    progress
+                        .finish_child(SftpTransferChildState::Cancelled)
+                        .await?;
+                    return Ok(TransferOutcome::Cancelled);
+                }
+                Err(error) => {
+                    let _ = progress
+                        .finish_child(SftpTransferChildState::Failed(error.to_string()))
+                        .await;
+                    return Err(error);
+                }
+            }
+        }
+
+        Ok(TransferOutcome::Done)
+    })
 }
 
 async fn download_regular_file(
@@ -703,7 +794,7 @@ async fn download_regular_file(
                 )
             })?;
 
-        progress.advance(read as u64)?;
+        progress.advance(read as u64).await?;
     }
 
     temporary_file.file.flush().await.with_context(|| {
@@ -762,171 +853,143 @@ fn persist_local_temporary_file(temporary_path: TempPath, local_path: &Path) -> 
         .with_context(|| format!("failed to atomically replace {}", local_path.display()))
 }
 
-fn finish_transfer_task(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn finish_transfer_task(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
     result: Result<TransferOutcome>,
 ) {
     match result {
         Ok(TransferOutcome::Done) => {
-            let _ = emit_transfer_done(event_sender, transfer_id);
+            let _ = emit_transfer_done(event_sender, transfer_id).await;
         }
         Ok(TransferOutcome::Cancelled) => {
-            let _ = emit_transfer_cancelled(event_sender, transfer_id);
+            let _ = emit_transfer_cancelled(event_sender, transfer_id).await;
         }
         Err(error) => {
-            let _ = emit_transfer_failed(event_sender, transfer_id, error.to_string());
+            let _ = emit_transfer_failed(event_sender, transfer_id, error.to_string()).await;
         }
     }
 }
 
-pub(super) fn emit_transfer_queued(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_transfer_queued(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
     direction: TransferDirection,
     source: PathBuf,
     destination: String,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferQueued {
+    send_event(
+        event_sender,
+        SftpEvent::TransferQueued {
             transfer_id,
             direction,
             source,
             destination,
-        })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+        },
+    )
+    .await
 }
 
-fn emit_transfer_progress(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn emit_transfer_child_started(
+    event_sender: &SftpEventSender,
+    transfer_id: TransferId,
+    child: SftpTransferChild,
+) -> Result<()> {
+    send_event(
+        event_sender,
+        SftpEvent::TransferChildStarted { transfer_id, child },
+    )
+    .await
+}
+
+async fn emit_transfer_progress(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
     bytes_complete: u64,
     bytes_total: Option<u64>,
+    child: Option<SftpTransferChildUpdate>,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferProgress {
+    send_event(
+        event_sender,
+        SftpEvent::TransferProgress {
             transfer_id,
             bytes_complete,
             bytes_total,
-        })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+            child,
+        },
+    )
+    .await
 }
 
-fn emit_transfer_done(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn emit_transfer_done(event_sender: &SftpEventSender, transfer_id: TransferId) -> Result<()> {
+    send_event(event_sender, SftpEvent::TransferDone { transfer_id }).await
+}
+
+pub(super) async fn emit_transfer_paused(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferDone { transfer_id })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+    send_event(event_sender, SftpEvent::TransferPaused { transfer_id }).await
 }
 
-pub(super) fn emit_transfer_paused(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_transfer_resumed(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferPaused { transfer_id })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+    send_event(event_sender, SftpEvent::TransferResumed { transfer_id }).await
 }
 
-pub(super) fn emit_transfer_resumed(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn emit_transfer_cancelled(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferResumed { transfer_id })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+    send_event(event_sender, SftpEvent::TransferCancelled { transfer_id }).await
 }
 
-fn emit_transfer_cancelled(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
-    transfer_id: TransferId,
-) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferCancelled { transfer_id })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
-}
-
-fn emit_transfer_failed(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+async fn emit_transfer_failed(
+    event_sender: &SftpEventSender,
     transfer_id: TransferId,
     message: String,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::TransferFailed {
+    send_event(
+        event_sender,
+        SftpEvent::TransferFailed {
             transfer_id,
             message,
-        })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+        },
+    )
+    .await
 }
 
-pub(super) fn emit_error(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_error(
+    event_sender: &SftpEventSender,
     context: &str,
     message: String,
 ) -> Result<()> {
-    emit_error_with_path(event_sender, context, None, message)
+    emit_error_with_path(event_sender, context, None, message).await
 }
 
-pub(super) fn emit_error_with_path(
-    event_sender: &FuturesUnboundedSender<SftpEvent>,
+pub(super) async fn emit_error_with_path(
+    event_sender: &SftpEventSender,
     context: &str,
     path: Option<String>,
     message: String,
 ) -> Result<()> {
-    if event_sender
-        .unbounded_send(SftpEvent::Error {
+    send_event(
+        event_sender,
+        SftpEvent::Error {
             context: context.into(),
             path,
             message,
-        })
-        .is_err()
-    {
-        return Err(anyhow!("SFTP event receiver is closed"));
-    }
-
-    Ok(())
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt as _;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1197,6 +1260,84 @@ mod tests {
                 .await
                 .expect("compute directory size");
             assert_eq!(size, 8);
+        });
+    }
+
+    #[test]
+    fn transfer_progress_emits_parent_and_child_updates_in_one_event_stream() {
+        rt().block_on(async {
+            let (sender, receiver) = crate::session::sftp_event_channel();
+            {
+                let mut progress = TransferProgress {
+                    event_sender: &sender,
+                    transfer_id: TransferId(42),
+                    bytes_total: Some(3),
+                    bytes_complete: 0,
+                    active_child: None,
+                    next_child_id: 0,
+                };
+                progress
+                    .emit(None)
+                    .await
+                    .expect("emit initial parent progress");
+                progress
+                    .begin_child("data.txt".to_string(), Some(3))
+                    .await
+                    .expect("start first child");
+                progress.advance(3).await.expect("advance first child");
+                progress
+                    .finish_child(SftpTransferChildState::Done)
+                    .await
+                    .expect("finish first child");
+                progress
+                    .begin_child("empty.txt".to_string(), Some(0))
+                    .await
+                    .expect("start zero-byte child");
+                progress
+                    .finish_child(SftpTransferChildState::Done)
+                    .await
+                    .expect("finish zero-byte child");
+            }
+            drop(sender);
+            let events = receiver.collect::<Vec<_>>().await;
+
+            assert_eq!(events.len(), 6);
+            assert!(matches!(
+                &events[1],
+                SftpEvent::TransferChildStarted {
+                    transfer_id,
+                    child: SftpTransferChild {
+                        child_id: TransferChildId(0),
+                        relative_path,
+                        bytes_total: Some(3),
+                    },
+                } if *transfer_id == TransferId(42) && relative_path == "data.txt"
+            ));
+            assert!(matches!(
+                &events[2],
+                SftpEvent::TransferProgress {
+                    transfer_id,
+                    bytes_complete: 3,
+                    bytes_total: Some(3),
+                    child: Some(SftpTransferChildUpdate {
+                        child_id: TransferChildId(0),
+                        bytes_complete: 3,
+                        state: SftpTransferChildState::Running,
+                    }),
+                } if *transfer_id == TransferId(42)
+            ));
+            assert!(matches!(
+                &events[5],
+                SftpEvent::TransferProgress {
+                    bytes_complete: 3,
+                    child: Some(SftpTransferChildUpdate {
+                        child_id: TransferChildId(1),
+                        bytes_complete: 0,
+                        state: SftpTransferChildState::Done,
+                    }),
+                    ..
+                }
+            ));
         });
     }
 
