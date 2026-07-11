@@ -198,6 +198,26 @@ impl SftpBrowserTableDelegate {
         self.rows.len()
     }
 
+    pub(in crate::ui::shell) fn directory_paths_in_selection(
+        &self,
+        selected_paths: &[std::path::PathBuf],
+    ) -> Vec<std::path::PathBuf> {
+        let selected_by_display: HashMap<_, _> = selected_paths
+            .iter()
+            .map(|path| (path.display().to_string(), path))
+            .collect();
+
+        self.rows
+            .iter()
+            .filter(|row| row.is_directory)
+            .filter_map(|row| {
+                selected_by_display
+                    .get(&row.path)
+                    .map(|path| path.as_path().to_path_buf())
+            })
+            .collect()
+    }
+
     pub(in crate::ui::shell) fn tab_id(&self) -> Option<usize> {
         (self.tab_id != 0).then_some(self.tab_id)
     }

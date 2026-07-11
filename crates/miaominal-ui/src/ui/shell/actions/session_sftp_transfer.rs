@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
-use miaominal_services::{PlannedSftpDownload, SftpService};
+use miaominal_services::SftpService;
 
 impl AppView {
     pub(in crate::ui::shell) fn queue_sftp_upload_selected(
@@ -58,7 +58,21 @@ impl AppView {
             return;
         };
 
-        let uploads = SftpService::plan_uploads(local_paths, &remote_base);
+        let known_directory_paths = if local_paths.len() > 1 {
+            self.workspace_forms
+                .sftp_browser
+                .local_table
+                .read(cx)
+                .delegate()
+                .directory_paths_in_selection(&local_paths)
+        } else {
+            Vec::new()
+        };
+        let uploads = SftpService::plan_uploads_with_known_directories(
+            local_paths,
+            &known_directory_paths,
+            &remote_base,
+        );
         let conflict_count = SftpService::count_remote_conflicts(&uploads, &remote_entries);
 
         if conflict_count > 0 {
@@ -140,17 +154,11 @@ impl AppView {
             return;
         };
 
-        let pairs: Vec<PlannedSftpDownload> = remote_paths
+        let selected_entries = remote_paths
             .into_iter()
-            .filter_map(|remote| {
-                let entry = self.resolve_remote_sftp_entry(tab_id, &remote, cx)?;
-                let local = local_base.join(&entry.filename);
-                Some(PlannedSftpDownload {
-                    remote_path: remote,
-                    local_path: local,
-                })
-            })
+            .filter_map(|remote| self.resolve_remote_sftp_entry(tab_id, &remote, cx))
             .collect();
+        let pairs = SftpService::plan_downloads(selected_entries, &local_base);
 
         let conflict_count = pairs
             .iter()

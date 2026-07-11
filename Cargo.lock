@@ -5336,6 +5336,7 @@ dependencies = [
  "miaominal-storage",
  "miaominal-sync",
  "rand 0.10.1",
+ "tempfile",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
