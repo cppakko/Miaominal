@@ -1252,22 +1252,7 @@ impl AppView {
             .workspace_state
             .active_topbar_tab
             .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
-            .or_else(|| {
-                if !self.panels.session_side_panel_open
-                    || self.panels.session_side_panel_view != SessionSidePanelView::Sftp
-                {
-                    return None;
-                }
-
-                self.session_side_panel_sftp_tab_id().and_then(|tab_id| {
-                    self.workspace_state
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id)
-                        .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
-                })
-            });
+            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)));
 
         let active_tab = active_session.map(|(tab, _)| tab).or_else(|| {
             self.workspace_state
@@ -1336,7 +1321,9 @@ impl AppView {
         let progress_toggle_entity = entity.clone();
         let progress_center_open = active_sftp
             .map(|(_, sftp)| sftp.layout.progress_center_visible)
-            .unwrap_or(false);
+            .unwrap_or_else(|| {
+                panel_session.is_some() && self.panels.session_sftp_progress_center_visible
+            });
         let progress_center_tooltip = if progress_center_open {
             i18n::string("sftp.tooltips.hide_progress_center")
         } else {
@@ -1468,11 +1455,11 @@ impl AppView {
                             ),
                         )
                     })
-                    .when(active_sftp.is_some(), |this| {
+                    .when(active_sftp.is_some() || panel_session.is_some(), |this| {
                         this.child(
                             div().id("sftp-progress-center-toggle").child(
                                 icon_button_with_tooltip(
-                                    AppIcon::PanelRight,
+                                    AppIcon::ArrowUpDown,
                                     progress_center_tooltip,
                                     24.0,
                                     8.0,

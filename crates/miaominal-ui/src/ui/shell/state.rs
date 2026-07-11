@@ -1779,10 +1779,13 @@ pub(in crate::ui::shell) struct PanelState {
     pub(in crate::ui::shell) session_side_panel_open: bool,
     pub(in crate::ui::shell) session_side_panel_view: SessionSidePanelView,
     pub(in crate::ui::shell) session_agent_panel_open: bool,
+    pub(in crate::ui::shell) session_sftp_progress_center_visible: bool,
     pub(in crate::ui::shell) visible_session_side_panel: bool,
     pub(in crate::ui::shell) visible_session_agent_panel: bool,
     pub(in crate::ui::shell) session_side_panel_transition: Option<WorkspaceSidePanelTransition>,
     pub(in crate::ui::shell) session_agent_panel_transition: Option<WorkspaceSidePanelTransition>,
+    pub(in crate::ui::shell) session_sftp_progress_center_transition:
+        Option<SftpProgressCenterTransition>,
     pub(in crate::ui::shell) selected_known_host: Option<(String, u16, String)>,
 }
 

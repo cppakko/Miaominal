@@ -178,15 +178,8 @@ impl AppView {
         entity: Entity<Self>,
         window: &mut Window,
     ) -> Option<(gpui::AnyElement, f32)> {
-        if !self.panels.session_side_panel_open
-            || self.panels.session_side_panel_view != SessionSidePanelView::Sftp
-        {
-            return None;
-        }
-
-        let tab_id = self.session_side_panel_sftp_tab_id()?;
         let visibility = self
-            .sftp_progress_center_render_visibility(tab_id, window)
+            .session_sftp_progress_center_render_visibility(window)
             .unwrap_or(0.0);
         if visibility <= 0.0 {
             return None;

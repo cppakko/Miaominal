@@ -73,6 +73,27 @@ mod tests {
             "abcdefghijklmnopqrstu..."
         );
     }
+
+    #[test]
+    fn progress_center_state_can_open_without_an_sftp_tab() {
+        let mut visible = false;
+        let mut transition = None;
+
+        assert!(update_sftp_progress_center_state(
+            &mut visible,
+            &mut transition,
+            true,
+            Instant::now(),
+        ));
+        assert!(visible);
+        assert!(matches!(
+            transition,
+            Some(SftpProgressCenterTransition {
+                phase: SftpProgressCenterTransitionPhase::Entering,
+                ..
+            })
+        ));
+    }
 }
 
 fn sftp_usable_container_size(size: Pixels) -> f32 {
@@ -944,6 +965,66 @@ fn build_remote_sftp_context_menu(
     )
 }
 
+fn update_sftp_progress_center_state(
+    current_visible: &mut bool,
+    transition: &mut Option<SftpProgressCenterTransition>,
+    visible: bool,
+    started_at: Instant,
+) -> bool {
+    let phase = if visible {
+        SftpProgressCenterTransitionPhase::Entering
+    } else {
+        SftpProgressCenterTransitionPhase::Exiting
+    };
+    if *current_visible == visible
+        && transition
+            .as_ref()
+            .is_none_or(|transition| transition.phase == phase)
+    {
+        return false;
+    }
+
+    *current_visible = visible;
+    *transition = Some(SftpProgressCenterTransition {
+        phase,
+        started_at,
+        duration: CONTAINER_TRANSITION_DURATION,
+    });
+    true
+}
+
+fn sftp_progress_center_render_visibility(
+    visible: bool,
+    transition: &mut Option<SftpProgressCenterTransition>,
+    window: &mut Window,
+) -> Option<f32> {
+    let Some(current_transition) = *transition else {
+        return visible.then_some(1.0);
+    };
+
+    let duration_seconds = current_transition.duration.as_secs_f32();
+    if duration_seconds <= f32::EPSILON {
+        *transition = None;
+        return visible.then_some(1.0);
+    }
+
+    let elapsed = Instant::now().saturating_duration_since(current_transition.started_at);
+    let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+    let eased = progress * progress * (3.0 - 2.0 * progress);
+
+    if progress >= 1.0 {
+        *transition = None;
+        return visible.then_some(1.0);
+    }
+
+    window.request_animation_frame();
+
+    Some(match current_transition.phase {
+        SftpProgressCenterTransitionPhase::Entering => eased,
+        SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
+    })
+}
+
 impl AppView {
     fn sftp_tab_mut(&mut self, tab_id: usize) -> Option<&mut SftpTabState> {
         self.workspace_state
@@ -957,33 +1038,39 @@ impl AppView {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        let active_sftp = self
+        let active_sftp_visible = self
             .workspace_state
             .active_topbar_tab
             .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| {
-                tab.as_sftp()
-                    .map(|sftp| sftp.layout.progress_center_visible)
-            });
-        let side_panel_sftp = (self.panels.session_side_panel_open
-            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp)
-            .then(|| self.session_side_panel_sftp_tab_id())
-            .flatten()
-            .and_then(|tab_id| {
-                self.workspace_state
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.id == tab_id)
-                    .and_then(|tab| {
-                        tab.as_sftp()
-                            .map(|sftp| sftp.layout.progress_center_visible)
-                    })
-            });
-        let Some(visible) = active_sftp.or(side_panel_sftp) else {
+            .and_then(TabState::as_sftp)
+            .map(|sftp| sftp.layout.progress_center_visible);
+        if let Some(visible) = active_sftp_visible {
+            self.set_sftp_progress_center_visible(!visible, cx);
             return;
-        };
+        }
 
-        self.set_sftp_progress_center_visible(!visible, cx);
+        if self.active_terminal_session_index().is_some() {
+            self.set_session_sftp_progress_center_visible(
+                !self.panels.session_sftp_progress_center_visible,
+                cx,
+            );
+        }
+    }
+
+    pub(in crate::ui::shell) fn set_session_sftp_progress_center_visible(
+        &mut self,
+        visible: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let started_at = Instant::now();
+        if update_sftp_progress_center_state(
+            &mut self.panels.session_sftp_progress_center_visible,
+            &mut self.panels.session_sftp_progress_center_transition,
+            visible,
+            started_at,
+        ) {
+            cx.notify();
+        }
     }
 
     pub(in crate::ui::shell) fn set_sftp_progress_center_visible(
@@ -1000,35 +1087,27 @@ impl AppView {
         &mut self,
         visible: bool,
     ) -> bool {
-        let phase = if visible {
-            SftpProgressCenterTransitionPhase::Entering
-        } else {
-            SftpProgressCenterTransitionPhase::Exiting
-        };
         let started_at = Instant::now();
-        let mut changed = false;
+        let mut changed = update_sftp_progress_center_state(
+            &mut self.panels.session_sftp_progress_center_visible,
+            &mut self.panels.session_sftp_progress_center_transition,
+            visible,
+            started_at,
+        );
 
         for tab in &mut self.workspace_state.tabs {
             let Some(sftp) = tab.as_sftp_mut() else {
                 continue;
             };
 
-            if sftp.layout.progress_center_visible == visible
-                && sftp
-                    .layout
-                    .progress_center_transition
-                    .as_ref()
-                    .is_none_or(|transition| transition.phase == phase)
-            {
+            if !update_sftp_progress_center_state(
+                &mut sftp.layout.progress_center_visible,
+                &mut sftp.layout.progress_center_transition,
+                visible,
+                started_at,
+            ) {
                 continue;
             }
-
-            sftp.layout.progress_center_visible = visible;
-            sftp.layout.progress_center_transition = Some(SftpProgressCenterTransition {
-                phase,
-                started_at,
-                duration: CONTAINER_TRANSITION_DURATION,
-            });
 
             if !visible
                 && matches!(
@@ -1050,32 +1129,22 @@ impl AppView {
         window: &mut Window,
     ) -> Option<f32> {
         let tab = self.sftp_tab_mut(tab_id)?;
+        sftp_progress_center_render_visibility(
+            tab.layout.progress_center_visible,
+            &mut tab.layout.progress_center_transition,
+            window,
+        )
+    }
 
-        let Some(transition) = tab.layout.progress_center_transition else {
-            return tab.layout.progress_center_visible.then_some(1.0);
-        };
-
-        let duration_seconds = transition.duration.as_secs_f32();
-        if duration_seconds <= f32::EPSILON {
-            tab.layout.progress_center_transition = None;
-            return tab.layout.progress_center_visible.then_some(1.0);
-        }
-
-        let elapsed = Instant::now().saturating_duration_since(transition.started_at);
-        let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-        let eased = progress * progress * (3.0 - 2.0 * progress);
-
-        if progress >= 1.0 {
-            tab.layout.progress_center_transition = None;
-            return tab.layout.progress_center_visible.then_some(1.0);
-        }
-
-        window.request_animation_frame();
-
-        Some(match transition.phase {
-            SftpProgressCenterTransitionPhase::Entering => eased,
-            SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
-        })
+    pub(in crate::ui::shell) fn session_sftp_progress_center_render_visibility(
+        &mut self,
+        window: &mut Window,
+    ) -> Option<f32> {
+        sftp_progress_center_render_visibility(
+            self.panels.session_sftp_progress_center_visible,
+            &mut self.panels.session_sftp_progress_center_transition,
+            window,
+        )
     }
 
     pub(in crate::ui::shell) fn render_sftp_progress_center(

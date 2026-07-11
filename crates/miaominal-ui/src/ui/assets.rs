@@ -13,6 +13,7 @@ pub struct AppAssets;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, IntoElement)]
 pub enum AppIcon {
+    ArrowUpDown,
     Computer,
     ChevronDown,
     ChevronUp,
@@ -62,6 +63,7 @@ impl IconNamed for AppIcon {
     #[allow(deprecated)]
     fn path(self) -> SharedString {
         match self {
+            Self::ArrowUpDown => "icons/arrow-up-down.svg",
             Self::Vault => "icons/vault.svg",
             Self::FolderOpen => "icons/folder-open.svg",
             Self::Computer => "icons/computer.svg",
