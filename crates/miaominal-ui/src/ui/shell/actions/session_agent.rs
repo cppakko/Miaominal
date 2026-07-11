@@ -6,7 +6,7 @@ use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
     AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentToolCallRequest,
     AgentToolCallResponse, AgentToolResultContinuationRequest, AgentToolSet, BackendRoute,
-    TerminalExecHandle, ToolOutput,
+    TerminalExecHandle, TerminalOutputTap, ToolOutput,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 
 const SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_FOLLOW_BOTTOM_TICKS: usize = 50;
@@ -23,7 +23,7 @@ const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::fro
 const SESSION_AGENT_CONTEXT_MAX_MESSAGES: usize = 40;
 const SESSION_AGENT_CONTEXT_MAX_CHARS: usize = 80_000;
 
-type SessionAgentPtyTap = (usize, mpsc::UnboundedSender<Vec<u8>>);
+type SessionAgentPtyTap = (usize, TerminalOutputTap);
 type SessionAgentTools = Option<(Option<AgentToolSet>, Option<SessionAgentPtyTap>)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1337,7 +1337,7 @@ impl AppView {
         let mut active_pty_tap = None;
         let mut channel = self.agent_exec_channel_for_profile(profile);
         if let Some((tab_id, command_sender)) = pty_commands {
-            let (sender, receiver) = mpsc::unbounded_channel();
+            let (sender, receiver) = TerminalOutputTap::channel();
             self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
             active_pty_tap = Some((tab_id, sender));
             channel = channel.with_terminal_exec(TerminalExecHandle {
@@ -1366,7 +1366,9 @@ impl AppView {
         self.session_agent.active_exec_context = None;
         for tab in &mut self.workspace_state.tabs {
             if let Some(session) = tab.as_session_mut() {
-                session.pty_output_tap = None;
+                if let Some(tap) = session.pty_output_tap.take() {
+                    tap.close();
+                }
             }
         }
         self.status_message = i18n::string("workspace.panel.agent.messages.stopped");
@@ -1414,7 +1416,7 @@ impl AppView {
         };
         let mut active_pty_tap = None;
         let pty_handle = if let Some((tab_id, command_sender)) = pty_commands {
-            let (sender, receiver) = mpsc::unbounded_channel();
+            let (sender, receiver) = TerminalOutputTap::channel();
             self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
             active_pty_tap = Some((tab_id, sender));
             Some(TerminalExecHandle {
@@ -2561,7 +2563,7 @@ impl AppView {
                     else {
                         continue;
                     };
-                    let (sender, receiver) = mpsc::unbounded_channel();
+                    let (sender, receiver) = TerminalOutputTap::channel();
                     let channel = self
                         .agent_exec_channel_for_profile(profile.clone())
                         .with_terminal_exec(TerminalExecHandle {
@@ -2657,7 +2659,7 @@ struct ResolvedSessionAgentMentions {
     aux_channels: HashMap<String, AgentExecChannel>,
     guidance: Option<String>,
     unresolved: Vec<String>,
-    pty_taps: Vec<(usize, mpsc::UnboundedSender<Vec<u8>>)>,
+    pty_taps: Vec<(usize, TerminalOutputTap)>,
 }
 
 fn parse_tool_arguments(arguments: &str) -> Value {

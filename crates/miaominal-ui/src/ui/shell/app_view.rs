@@ -768,7 +768,7 @@ impl AppView {
     pub(in crate::ui::shell) fn set_session_pty_tap_by_tab_id(
         &mut self,
         tab_id: usize,
-        tap: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+        tap: Option<miaominal_agent::TerminalOutputTap>,
     ) {
         let Some(session) = self
             .workspace_state
@@ -779,12 +779,15 @@ impl AppView {
         else {
             return;
         };
+        if let Some(current) = session.pty_output_tap.take() {
+            current.close();
+        }
         session.pty_output_tap = tap;
     }
 
     pub(in crate::ui::shell) fn clear_session_pty_taps_if_same(
         &mut self,
-        taps: &[(usize, tokio::sync::mpsc::UnboundedSender<Vec<u8>>)],
+        taps: &[(usize, miaominal_agent::TerminalOutputTap)],
     ) {
         for (tab_id, tap) in taps {
             let Some(session) = self
@@ -801,7 +804,9 @@ impl AppView {
                 .as_ref()
                 .is_some_and(|current| current.same_channel(tap))
             {
-                session.pty_output_tap = None;
+                if let Some(current) = session.pty_output_tap.take() {
+                    current.close();
+                }
             }
         }
     }

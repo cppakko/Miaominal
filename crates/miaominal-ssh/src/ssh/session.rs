@@ -5,11 +5,6 @@ use super::forwarding::{
 };
 use super::monitor::{run_exec_command, run_exec_pty_command, run_monitor_loop};
 use anyhow::{Context, Result, anyhow, bail};
-use futures::StreamExt;
-use futures::channel::mpsc::{
-    UnboundedReceiver as FuturesUnboundedReceiver, UnboundedSender as FuturesUnboundedSender,
-    unbounded as futures_unbounded,
-};
 use miaominal_core::forwarding::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot,
 };
@@ -24,14 +19,63 @@ use russh::keys::{HashAlg, PublicKey};
 use russh::{Channel, ChannelMsg, Disconnect, client};
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::copy_bidirectional;
 use tokio::net::TcpStream;
 use tokio::runtime::Handle as TokioHandle;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{
+    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+};
 use tokio::sync::oneshot;
 use tokio::sync::watch;
+
+pub const SESSION_EVENT_QUEUE_CAPACITY: usize = 64;
+const SSH_CHANNEL_BUFFER_SIZE: usize = 64;
+const SSH_MAXIMUM_PACKET_SIZE: u32 = 32 * 1024;
+
+pub(super) type SessionEventSender = Sender<SessionEvent>;
+
+pub struct SessionEventReceiver {
+    receiver: Receiver<SessionEvent>,
+}
+
+impl SessionEventReceiver {
+    fn new(receiver: Receiver<SessionEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<SessionEvent> {
+        self.receiver.recv().await
+    }
+
+    pub fn try_recv(
+        &mut self,
+    ) -> std::result::Result<SessionEvent, tokio::sync::mpsc::error::TryRecvError> {
+        self.receiver.try_recv()
+    }
+}
+
+impl From<Receiver<SessionEvent>> for SessionEventReceiver {
+    fn from(receiver: Receiver<SessionEvent>) -> Self {
+        Self::new(receiver)
+    }
+}
+
+impl futures::Stream for SessionEventReceiver {
+    type Item = SessionEvent;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().receiver.poll_recv(cx)
+    }
+}
+
+pub(super) fn session_event_channel() -> (SessionEventSender, SessionEventReceiver) {
+    let (sender, receiver) = channel(SESSION_EVENT_QUEUE_CAPACITY);
+    (sender, SessionEventReceiver::new(receiver))
+}
 
 fn fingerprint_of(key: &PublicKey) -> String {
     key.fingerprint(HashAlg::Sha256).to_string()
@@ -51,6 +95,8 @@ pub mod connection {
 
     pub fn default_client_config() -> Arc<client::Config> {
         Arc::new(client::Config {
+            maximum_packet_size: super::SSH_MAXIMUM_PACKET_SIZE,
+            channel_buffer_size: super::SSH_CHANNEL_BUFFER_SIZE,
             inactivity_timeout: None,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_max: 3,
@@ -200,14 +246,11 @@ impl SessionCommandSender {
 
 pub struct SessionConnection {
     pub commands: SessionCommandSender,
-    pub events: FuturesUnboundedReceiver<SessionEvent>,
+    pub events: SessionEventReceiver,
 }
 
 impl SessionConnection {
-    pub(super) fn new(
-        commands: SessionCommandSender,
-        events: FuturesUnboundedReceiver<SessionEvent>,
-    ) -> Self {
+    pub(super) fn new(commands: SessionCommandSender, events: SessionEventReceiver) -> Self {
         Self { commands, events }
     }
 }
@@ -235,7 +278,7 @@ pub fn start_session(
     lines: usize,
     monitoring_enabled: bool,
 ) -> SessionConnection {
-    let (event_sender, event_receiver) = futures_unbounded();
+    let (event_sender, event_receiver) = session_event_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
 
@@ -245,26 +288,31 @@ pub fn start_session(
     std::thread::Builder::new()
         .name(format!("ssh-session-{}", profile.id))
         .spawn(move || {
-            if let Err(error) = runtime.block_on(run_session(
-                profile,
-                all_profiles,
-                secrets,
-                known_hosts,
-                command_receiver,
-                event_sender.clone(),
-                columns,
-                lines,
-                monitoring_enabled,
-            )) {
-                if event_sender
-                    .unbounded_send(SessionEvent::Error(error.to_string()))
-                    .is_err()
+            runtime.block_on(async move {
+                if let Err(error) = run_session(
+                    profile,
+                    all_profiles,
+                    secrets,
+                    known_hosts,
+                    command_receiver,
+                    event_sender.clone(),
+                    columns,
+                    lines,
+                    monitoring_enabled,
+                )
+                .await
                 {
-                    return;
-                }
+                    if event_sender
+                        .send(SessionEvent::Error(error.to_string()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
 
-                let _ = event_sender.unbounded_send(SessionEvent::Closed);
-            }
+                    let _ = event_sender.send(SessionEvent::Closed).await;
+                }
+            });
         })
         .expect("failed to spawn SSH session thread");
 
@@ -285,14 +333,13 @@ pub async fn execute_profile_command(
         bail!("keyboard-interactive authentication is not supported for key deployment");
     }
 
-    let (event_sender, event_receiver) = futures_unbounded();
+    let (event_sender, mut event_receiver) = session_event_channel();
     let (command_sender, mut command_receiver) = unbounded_channel();
     let non_interactive_error = Arc::new(Mutex::new(None::<String>));
     let non_interactive_error_for_events = non_interactive_error.clone();
     let event_command_sender = command_sender.clone();
     let event_task = tokio::spawn(async move {
-        let mut event_receiver = event_receiver;
-        while let Some(event) = event_receiver.next().await {
+        while let Some(event) = event_receiver.recv().await {
             match event {
                 SessionEvent::HostKeyPrompt(prompt) => {
                     let message = if prompt.previous_fingerprint.is_some() {
@@ -399,14 +446,13 @@ pub async fn execute_profile_pty_command(
         bail!("keyboard-interactive authentication is not supported for PTY exec");
     }
 
-    let (event_sender, event_receiver) = futures_unbounded();
+    let (event_sender, mut event_receiver) = session_event_channel();
     let (command_sender, mut command_receiver) = unbounded_channel();
     let non_interactive_error = Arc::new(Mutex::new(None::<String>));
     let non_interactive_error_for_events = non_interactive_error.clone();
     let event_command_sender = command_sender.clone();
     let event_task = tokio::spawn(async move {
-        let mut event_receiver = event_receiver;
-        while let Some(event) = event_receiver.next().await {
+        while let Some(event) = event_receiver.recv().await {
             match event {
                 SessionEvent::HostKeyPrompt(prompt) => {
                     let message = if prompt.previous_fingerprint.is_some() {
@@ -497,7 +543,7 @@ pub(super) struct ClientHandler {
     pub(super) known_hosts: KnownHostsStore,
     pub(super) host: String,
     pub(super) port: u16,
-    pub(super) event_sender: FuturesUnboundedSender<SessionEvent>,
+    pub(super) event_sender: SessionEventSender,
     pub(super) decision_inbox: Arc<Mutex<Option<oneshot::Receiver<HostKeyDecision>>>>,
     pub(super) remote_forward_targets: RemoteForwardTargets,
     pub(super) agent_forwarding_allowed: bool,
@@ -570,7 +616,8 @@ impl client::Handler for ClientHandler {
 
         if self
             .event_sender
-            .unbounded_send(SessionEvent::HostKeyPrompt(prompt))
+            .send(SessionEvent::HostKeyPrompt(prompt))
+            .await
             .is_err()
         {
             return Ok(false);
@@ -600,9 +647,10 @@ impl client::Handler for ClientHandler {
                     log::warn!("failed to record host key: {error:?}");
                     let _ = self
                         .event_sender
-                        .unbounded_send(SessionEvent::Status(format!(
+                        .send(SessionEvent::Status(format!(
                             "Could not save host key: {error}"
-                        )));
+                        )))
+                        .await;
                 }
                 Ok(true)
             }
@@ -639,9 +687,11 @@ impl client::Handler for ClientHandler {
                     }
                 }
                 Err(error) => {
-                    let _ = event_sender.unbounded_send(SessionEvent::Status(format!(
-                        "Agent forwarding unavailable: {error}"
-                    )));
+                    let _ = event_sender
+                        .send(SessionEvent::Status(format!(
+                            "Agent forwarding unavailable: {error}"
+                        )))
+                        .await;
                     if let Err(close_error) = channel.close().await {
                         log::debug!("failed to close forwarded agent channel: {close_error:?}");
                     }
@@ -674,7 +724,8 @@ impl client::Handler for ClientHandler {
                             "Remote forwarding used an unsupported port value for {}",
                             connected_address
                         ),
-                    );
+                    )
+                    .await;
                     if let Err(error) = channel.close().await {
                         log::debug!("failed to close forwarded tcpip channel: {error:?}");
                     }
@@ -682,18 +733,24 @@ impl client::Handler for ClientHandler {
                 }
             };
 
-            let target = match remote_forward_targets.lock() {
-                Ok(targets) => targets
-                    .get(&(connected_address.clone(), connected_port))
-                    .cloned(),
-                Err(_) => {
-                    emit_port_forward_notice(
-                        &event_sender,
-                        "Remote forwarding target registry is unavailable",
-                    );
-                    None
+            let (target, registry_unavailable) = {
+                match remote_forward_targets.lock() {
+                    Ok(targets) => (
+                        targets
+                            .get(&(connected_address.clone(), connected_port))
+                            .cloned(),
+                        false,
+                    ),
+                    Err(_) => (None, true),
                 }
             };
+            if registry_unavailable {
+                emit_port_forward_notice(
+                    &event_sender,
+                    "Remote forwarding target registry is unavailable",
+                )
+                .await;
+            }
 
             let Some(target) = target else {
                 emit_port_forward_notice(
@@ -702,7 +759,8 @@ impl client::Handler for ClientHandler {
                         "No local target is registered for remote forward {}:{}",
                         connected_address, connected_port
                     ),
-                );
+                )
+                .await;
                 if let Err(error) = channel.close().await {
                     log::debug!("failed to close forwarded tcpip channel: {error:?}");
                 }
@@ -720,7 +778,8 @@ impl client::Handler for ClientHandler {
                                 "Remote forward {} relay failed from {}:{}: {}",
                                 target.label, originator_address, originator_port, error
                             ),
-                        );
+                        )
+                        .await;
                     }
                 }
                 Err(error) => {
@@ -730,7 +789,8 @@ impl client::Handler for ClientHandler {
                             "Remote forward {} could not reach local target {}: {}",
                             target.label, local_target, error
                         ),
-                    );
+                    )
+                    .await;
                     if let Err(close_error) = channel.close().await {
                         log::debug!(
                             "failed to close forwarded tcpip channel after connect error: {close_error:?}"
@@ -749,7 +809,7 @@ async fn run_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
-    event_sender: FuturesUnboundedSender<SessionEvent>,
+    event_sender: SessionEventSender,
     columns: usize,
     lines: usize,
     monitoring_enabled: bool,
@@ -799,7 +859,8 @@ async fn run_session(
             .await
             .context("failed to enable SSH agent forwarding")?;
         let _ = event_sender
-            .unbounded_send(SessionEvent::Status("SSH agent forwarding enabled".into()));
+            .send(SessionEvent::Status("SSH agent forwarding enabled".into()))
+            .await;
     }
 
     channel
@@ -838,7 +899,8 @@ async fn run_session(
     }
 
     if event_sender
-        .unbounded_send(SessionEvent::Connected(remote_label))
+        .send(SessionEvent::Connected(remote_label))
+        .await
         .is_err()
     {
         return Ok(());
@@ -906,17 +968,17 @@ async fn run_session(
             message = channel.wait() => {
                 match message {
                     Some(ChannelMsg::Data { data }) => {
-                        if event_sender.unbounded_send(SessionEvent::Output(data.to_vec())).is_err() {
+                        if event_sender.send(SessionEvent::Output(data.to_vec())).await.is_err() {
                             break;
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        if event_sender.unbounded_send(SessionEvent::Output(data.to_vec())).is_err() {
+                        if event_sender.send(SessionEvent::Output(data.to_vec())).await.is_err() {
                             break;
                         }
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
-                        if event_sender.unbounded_send(SessionEvent::Status(format!("Remote exit status: {exit_status}"))).is_err() {
+                        if event_sender.send(SessionEvent::Status(format!("Remote exit status: {exit_status}"))).await.is_err() {
                             break;
                         }
                     }
@@ -955,7 +1017,7 @@ async fn run_session(
         }
     }
 
-    if event_sender.unbounded_send(SessionEvent::Closed).is_err() {
+    if event_sender.send(SessionEvent::Closed).await.is_err() {
         return Ok(());
     }
 
@@ -979,7 +1041,7 @@ async fn flush_pending_resize(
 fn build_client_handler(
     profile: &SessionProfile,
     known_hosts: KnownHostsStore,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
 ) -> (
     ClientHandler,
     Arc<Mutex<Option<oneshot::Sender<HostKeyDecision>>>>,
@@ -1056,7 +1118,7 @@ pub(super) async fn connect_authenticated_session_internal(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
 ) -> Result<ConnectedSession> {
     let profile = hydrate_profile_from_secrets(profile, &secrets);
     let remote_label = profile.connection_label();
@@ -1076,7 +1138,8 @@ pub(super) async fn connect_authenticated_session_internal(
                 proxy_jump_profiles.len(),
                 first_hop.connection_label()
             ),
-        )?;
+        )
+        .await?;
 
         let ConnectedClient {
             handle: mut current_session,
@@ -1093,7 +1156,8 @@ pub(super) async fn connect_authenticated_session_internal(
         emit_status(
             event_sender,
             format!("Authenticating jump host 1/{}", proxy_jump_profiles.len()),
-        )?;
+        )
+        .await?;
         authenticate_full(
             &mut current_session,
             first_hop.clone(),
@@ -1120,7 +1184,7 @@ pub(super) async fn connect_authenticated_session_internal(
                     next_profile.connection_label()
                 )
             };
-            emit_status(event_sender, status)?;
+            emit_status(event_sender, status).await?;
 
             let transport = current_session
                 .channel_open_direct_tcpip(
@@ -1158,7 +1222,8 @@ pub(super) async fn connect_authenticated_session_internal(
                 } else {
                     format!("Authenticating jump host {}/{}", index + 2, total_hops)
                 },
-            )?;
+            )
+            .await?;
             authenticate_full(
                 &mut next_session,
                 next_profile,
@@ -1175,7 +1240,7 @@ pub(super) async fn connect_authenticated_session_internal(
 
         (current_session, current_remote_forward_targets)
     } else {
-        emit_status(event_sender, format!("Connecting to {remote_label}"))?;
+        emit_status(event_sender, format!("Connecting to {remote_label}")).await?;
         let ConnectedClient {
             handle: mut session,
             remote_forward_targets,
@@ -1188,7 +1253,7 @@ pub(super) async fn connect_authenticated_session_internal(
             &mut configured_port_forward_rules,
         )
         .await?;
-        emit_status(event_sender, format!("Authenticating {remote_label}"))?;
+        emit_status(event_sender, format!("Authenticating {remote_label}")).await?;
         authenticate_full(
             &mut session,
             profile,
@@ -1213,7 +1278,7 @@ async fn connect_profile_session(
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
 ) -> Result<ConnectedClient> {
     let (handler, pending_decision, remote_forward_targets) =
@@ -1247,7 +1312,7 @@ async fn connect_profile_stream<R>(
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
 ) -> Result<ConnectedClient>
 where
@@ -1277,9 +1342,10 @@ where
     })
 }
 
-fn emit_status(event_sender: &FuturesUnboundedSender<SessionEvent>, message: String) -> Result<()> {
+async fn emit_status(event_sender: &SessionEventSender, message: String) -> Result<()> {
     if event_sender
-        .unbounded_send(SessionEvent::Status(message))
+        .send(SessionEvent::Status(message))
+        .await
         .is_err()
     {
         bail!("session event receiver is closed");
@@ -1423,9 +1489,84 @@ mod tests {
             .expect("forwarding relay should report that it finished");
     }
 
+    #[tokio::test]
+    async fn session_event_channel_backpressures_without_dropping_or_reordering() {
+        let (sender, mut receiver) = session_event_channel();
+        let clone = sender.clone();
+        for index in 0..SESSION_EVENT_QUEUE_CAPACITY {
+            sender
+                .try_send(SessionEvent::Output(vec![index as u8]))
+                .expect("event queue should accept its configured capacity");
+        }
+        assert!(matches!(
+            clone.try_send(SessionEvent::Status("full".into())),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+        ));
+
+        let blocked_send = sender.send(SessionEvent::Status("ready".into()));
+        tokio::pin!(blocked_send);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut blocked_send)
+                .await
+                .is_err(),
+            "a saturated event queue must backpressure the producer"
+        );
+
+        assert!(matches!(
+            receiver.recv().await,
+            Some(SessionEvent::Output(bytes)) if bytes == vec![0]
+        ));
+        tokio::time::timeout(Duration::from_secs(1), &mut blocked_send)
+            .await
+            .expect("send should resume after capacity is released")
+            .expect("receiver should remain open");
+
+        for expected in 1..SESSION_EVENT_QUEUE_CAPACITY {
+            assert!(matches!(
+                receiver.recv().await,
+                Some(SessionEvent::Output(bytes)) if bytes == vec![expected as u8]
+            ));
+        }
+        assert!(matches!(
+            receiver.recv().await,
+            Some(SessionEvent::Status(status)) if status == "ready"
+        ));
+    }
+
+    #[tokio::test]
+    async fn dropping_event_receiver_unblocks_waiting_sender() {
+        let (sender, mut receiver) = session_event_channel();
+        for _ in 0..SESSION_EVENT_QUEUE_CAPACITY {
+            sender
+                .try_send(SessionEvent::Output(vec![1]))
+                .expect("fill event queue");
+        }
+        let blocked_send = sender.send(SessionEvent::Closed);
+        tokio::pin!(blocked_send);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut blocked_send)
+                .await
+                .is_err()
+        );
+        receiver.receiver.close();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), &mut blocked_send)
+                .await
+                .expect("closed receiver should wake sender")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn client_config_uses_explicit_bounded_channel_settings() {
+        let config = connection::default_client_config();
+        assert_eq!(config.maximum_packet_size, SSH_MAXIMUM_PACKET_SIZE);
+        assert_eq!(config.channel_buffer_size, SSH_CHANNEL_BUFFER_SIZE);
+    }
+
     #[test]
     fn client_handler_copies_agent_forwarding_authorization_from_profile() {
-        let (event_sender, _event_receiver) = futures_unbounded();
+        let (event_sender, _event_receiver) = session_event_channel();
 
         for agent_forwarding_allowed in [false, true] {
             let mut profile = SessionProfile::blank("test-profile", 1);
@@ -1443,7 +1584,7 @@ mod tests {
 
     #[test]
     fn client_handlers_isolate_remote_forward_targets_by_connection() {
-        let (event_sender, _event_receiver) = futures_unbounded();
+        let (event_sender, _event_receiver) = session_event_channel();
         let known_hosts_path =
             std::env::temp_dir().join("miaominal-remote-forward-isolation-known-hosts");
         let jump_profile = SessionProfile::blank("jump-profile", 1);

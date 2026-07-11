@@ -14,7 +14,8 @@ pub use backend::{BackendRoute, BackendRouter, ExecMode, SshBackend, SshExecRequ
 pub use capabilities::{CapabilityProbe, CapabilityProbeResult, RemoteCapabilities};
 pub use channel::{
     AgentExecChannel, AgentShellRegistry, AgentToolCallRequest, AgentToolCallResponse,
-    ShellCommandResult, TerminalExecHandle, ToolOutput,
+    ShellCommandResult, TerminalExecHandle, TerminalOutputReceiver, TerminalOutputTap,
+    TerminalOutputTapError, ToolOutput,
 };
 pub use chat::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,

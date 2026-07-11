@@ -1,6 +1,5 @@
-use super::session::{SessionCommand, SessionEvent};
+use super::session::{SessionCommand, SessionEvent, SessionEventSender};
 use anyhow::{Context, Result, anyhow, bail};
-use futures::channel::mpsc::UnboundedSender as FuturesUnboundedSender;
 use miaominal_core::forwarding::{AgentIdentitySummary, KbiChallenge, KbiPrompt};
 use miaominal_core::profile::{AuthMethod, SessionProfile};
 use miaominal_secrets::{SecretKind, SecretStore};
@@ -183,7 +182,7 @@ pub(crate) async fn authenticate_full<H>(
     profile: SessionProfile,
     secrets: &SecretStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
 ) -> Result<()>
 where
     H: client::Handler<Error = anyhow::Error> + Send,
@@ -201,7 +200,7 @@ async fn authenticate_keyboard_interactive_flow<H>(
     session: &mut client::Handle<H>,
     username: &str,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
 ) -> Result<()>
 where
     H: client::Handler<Error = anyhow::Error> + Send,
@@ -236,7 +235,8 @@ where
                         .collect(),
                 };
                 if event_sender
-                    .unbounded_send(SessionEvent::KeyboardInteractivePrompt(challenge))
+                    .send(SessionEvent::KeyboardInteractivePrompt(challenge))
+                    .await
                     .is_err()
                 {
                     bail!("session event receiver is closed");

@@ -1,11 +1,9 @@
 use super::session::{
     ClientHandler, ConnectedSession, SessionCommand, SessionCommandSender, SessionConnection,
-    SessionEvent, connect_authenticated_session_internal,
+    SessionEvent, SessionEventSender, connect_authenticated_session_internal,
+    session_event_channel,
 };
 use anyhow::Result;
-use futures::channel::mpsc::{
-    UnboundedSender as FuturesUnboundedSender, unbounded as futures_unbounded,
-};
 use miaominal_core::profile::{PortForwardKind, PortForwardRule, SessionProfile};
 use miaominal_secrets::SecretStore;
 use miaominal_storage::KnownHostsStore;
@@ -40,17 +38,19 @@ pub(super) struct ActiveLocalForward {
     pub task: JoinHandle<()>,
 }
 
-pub(super) fn emit_port_forward_notice(
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+pub(super) async fn emit_port_forward_notice(
+    event_sender: &SessionEventSender,
     message: impl Into<String>,
 ) {
-    let _ = event_sender.unbounded_send(SessionEvent::PortForwardNotice(message.into()));
+    let _ = event_sender
+        .send(SessionEvent::PortForwardNotice(message.into()))
+        .await;
 }
 
 pub(super) fn spawn_local_forward_task(
     session: Arc<client::Handle<ClientHandler>>,
     rule: PortForwardRule,
-    event_sender: FuturesUnboundedSender<SessionEvent>,
+    event_sender: SessionEventSender,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let bind_address = format!("{}:{}", rule.listen_host, rule.listen_port);
@@ -63,7 +63,8 @@ pub(super) fn spawn_local_forward_task(
                         "Forward {} failed to bind on {}: {}",
                         rule.label, bind_address, error
                     ),
-                );
+                )
+                .await;
                 return;
             }
         };
@@ -71,7 +72,8 @@ pub(super) fn spawn_local_forward_task(
         emit_port_forward_notice(
             &event_sender,
             format!("Forward {} is listening on {}", rule.label, bind_address),
-        );
+        )
+        .await;
 
         loop {
             let (mut stream, originator) = match listener.accept().await {
@@ -83,7 +85,8 @@ pub(super) fn spawn_local_forward_task(
                             "Forward {} stopped accepting connections: {}",
                             rule.label, error
                         ),
-                    );
+                    )
+                    .await;
                     break;
                 }
             };
@@ -109,13 +112,17 @@ pub(super) fn spawn_local_forward_task(
                             emit_port_forward_notice(
                                 &event_sender,
                                 format!("Forward {} relay failed: {}", label, error),
-                            );
+                            )
+                            .await;
                         }
                     }
-                    Err(error) => emit_port_forward_notice(
-                        &event_sender,
-                        format!("Forward {} could not open SSH channel: {}", label, error),
-                    ),
+                    Err(error) => {
+                        emit_port_forward_notice(
+                            &event_sender,
+                            format!("Forward {} could not open SSH channel: {}", label, error),
+                        )
+                        .await
+                    }
                 }
             });
         }
@@ -128,7 +135,7 @@ pub(super) async fn sync_port_forward_rules(
     active_local_forwards: &mut HashMap<String, ActiveLocalForward>,
     active_remote_forwards: &mut HashMap<String, ActiveRemoteForward>,
     remote_forward_targets: &RemoteForwardTargets,
-    event_sender: &FuturesUnboundedSender<SessionEvent>,
+    event_sender: &SessionEventSender,
 ) {
     let desired_local: HashMap<_, _> = desired_rules
         .iter()
@@ -151,7 +158,8 @@ pub(super) async fn sync_port_forward_rules(
     for rule_id in local_to_stop {
         if let Some(active) = active_local_forwards.remove(&rule_id) {
             active.task.abort();
-            emit_port_forward_notice(event_sender, format!("Stopped local forward {}", rule_id));
+            emit_port_forward_notice(event_sender, format!("Stopped local forward {}", rule_id))
+                .await;
         }
     }
 
@@ -172,13 +180,15 @@ pub(super) async fn sync_port_forward_rules(
                     emit_port_forward_notice(
                         event_sender,
                         format!("Stopped remote forward {}", active.label),
-                    );
+                    )
+                    .await;
                 }
                 Err(error) => {
                     emit_port_forward_notice(
                         event_sender,
                         format!("Failed to stop remote forward {}: {}", active.label, error),
-                    );
+                    )
+                    .await;
                 }
             }
             if let Ok(mut targets) = remote_forward_targets.lock() {
@@ -220,7 +230,8 @@ pub(super) async fn sync_port_forward_rules(
                             "Remote forward {} returned unsupported port {}",
                             rule.label, bound_port
                         ),
-                    );
+                    )
+                    .await;
                     continue;
                 };
 
@@ -249,12 +260,16 @@ pub(super) async fn sync_port_forward_rules(
                         "Remote forward {} is listening on {}:{}",
                         rule.label, rule.listen_host, bound_port
                     ),
-                );
+                )
+                .await;
             }
-            Err(error) => emit_port_forward_notice(
-                event_sender,
-                format!("Failed to start remote forward {}: {}", rule.label, error),
-            ),
+            Err(error) => {
+                emit_port_forward_notice(
+                    event_sender,
+                    format!("Failed to start remote forward {}: {}", rule.label, error),
+                )
+                .await
+            }
         }
     }
 }
@@ -266,30 +281,35 @@ pub fn start_port_forward_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SessionConnection {
-    let (event_sender, event_receiver) = futures_unbounded();
+    let (event_sender, event_receiver) = session_event_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
 
     std::thread::Builder::new()
         .name(format!("ssh-forward-{}", profile.id))
         .spawn(move || {
-            if let Err(error) = runtime.block_on(run_port_forward_session(
-                profile,
-                all_profiles,
-                secrets,
-                known_hosts,
-                command_receiver,
-                event_sender.clone(),
-            )) {
-                if event_sender
-                    .unbounded_send(SessionEvent::Error(error.to_string()))
-                    .is_err()
+            runtime.block_on(async move {
+                if let Err(error) = run_port_forward_session(
+                    profile,
+                    all_profiles,
+                    secrets,
+                    known_hosts,
+                    command_receiver,
+                    event_sender.clone(),
+                )
+                .await
                 {
-                    return;
-                }
+                    if event_sender
+                        .send(SessionEvent::Error(error.to_string()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
 
-                let _ = event_sender.unbounded_send(SessionEvent::Closed);
-            }
+                    let _ = event_sender.send(SessionEvent::Closed).await;
+                }
+            });
         })
         .expect("failed to spawn SSH port forwarding thread");
 
@@ -302,7 +322,7 @@ async fn run_port_forward_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
-    event_sender: FuturesUnboundedSender<SessionEvent>,
+    event_sender: SessionEventSender,
 ) -> Result<()> {
     let remote_label = profile.connection_label();
     let ConnectedSession {
@@ -333,7 +353,8 @@ async fn run_port_forward_session(
     .await;
 
     if event_sender
-        .unbounded_send(SessionEvent::Connected(remote_label))
+        .send(SessionEvent::Connected(remote_label))
+        .await
         .is_err()
     {
         return Ok(());
@@ -387,7 +408,7 @@ async fn run_port_forward_session(
         }
     }
 
-    let _ = event_sender.unbounded_send(SessionEvent::Closed);
+    let _ = event_sender.send(SessionEvent::Closed).await;
 
     Ok(())
 }

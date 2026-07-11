@@ -1,6 +1,5 @@
-use super::session::{ClientHandler, SessionEvent};
+use super::session::{ClientHandler, SessionEvent, SessionEventSender};
 use anyhow::{Context, Result, bail};
-use futures::channel::mpsc::UnboundedSender as FuturesUnboundedSender;
 use miaominal_core::forwarding::{SessionMonitorPlatform, SessionMonitorSnapshot};
 use russh::ChannelMsg;
 use russh::client;
@@ -305,7 +304,7 @@ impl RemoteMonitorCollector {
 
 pub(super) async fn run_monitor_loop(
     session: Arc<client::Handle<ClientHandler>>,
-    event_sender: FuturesUnboundedSender<SessionEvent>,
+    event_sender: SessionEventSender,
     mut enabled_receiver: watch::Receiver<bool>,
 ) {
     let mut collector = RemoteMonitorCollector::default();
@@ -322,7 +321,8 @@ pub(super) async fn run_monitor_loop(
         match collector.poll(&session).await {
             Ok(snapshot) => {
                 if event_sender
-                    .unbounded_send(SessionEvent::MonitorUpdated(snapshot))
+                    .send(SessionEvent::MonitorUpdated(snapshot))
+                    .await
                     .is_err()
                 {
                     break;
@@ -330,7 +330,8 @@ pub(super) async fn run_monitor_loop(
             }
             Err(error) => {
                 if event_sender
-                    .unbounded_send(SessionEvent::MonitorFailed(error.to_string()))
+                    .send(SessionEvent::MonitorFailed(error.to_string()))
+                    .await
                     .is_err()
                 {
                     break;

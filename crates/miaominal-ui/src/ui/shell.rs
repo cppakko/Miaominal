@@ -36,7 +36,7 @@ use miaominal_sftp::{
 };
 use miaominal_ssh::{
     self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,
-    SessionMonitorSnapshot,
+    SessionEventReceiver, SessionMonitorSnapshot,
 };
 use miaominal_storage::SettingsStore;
 use miaominal_sync::engine::SyncEngine;

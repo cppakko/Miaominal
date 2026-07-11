@@ -26,14 +26,133 @@ pub struct StopJobArgs {
 const DEFAULT_POLL_AFTER_MS: u64 = 1_000;
 const STALE_JOB_HOURS: u64 = 24;
 const WINDOWS_CMD_MAX_COMMAND_BYTES: usize = 8_191;
+const POSIX_READY_ATTEMPTS: usize = 100;
+const POSIX_LAUNCH_CLEANUP_ATTEMPTS: usize = 70;
+
+#[derive(Debug, Clone)]
+struct PosixJobPaths {
+    root: String,
+    status: String,
+    stdout: String,
+    stderr: String,
+    pid: String,
+    ready: String,
+    runner: String,
+    command: String,
+    child: String,
+    stop: String,
+    error: String,
+}
+
+impl PosixJobPaths {
+    fn from_marker(marker: &str) -> Option<Self> {
+        let root = marker.strip_suffix("/status")?;
+        if root.is_empty() {
+            return None;
+        }
+        Some(Self {
+            root: root.to_string(),
+            status: marker.to_string(),
+            stdout: format!("{root}/stdout"),
+            stderr: format!("{root}/stderr"),
+            pid: format!("{root}/pid"),
+            ready: format!("{root}/ready"),
+            runner: format!("{root}/runner"),
+            command: format!("{root}/command"),
+            child: format!("{root}/child"),
+            stop: format!("{root}/stop"),
+            error: format!("{root}/error"),
+        })
+    }
+}
+
+fn wrap_posix_script(script: &str, shell_type: ShellType) -> String {
+    format!("sh -lc {}", shell_quote(script, shell_type))
+}
+
+fn posix_process_helpers() -> &'static str {
+    r#"process_identity() {
+    identity_pid=$1
+    case "$identity_pid" in ''|*[!0-9]*) return 1 ;; esac
+    if [ -r "/proc/$identity_pid/stat" ]; then
+        identity_start=$(sed 's/^[0-9][0-9]* (.*) //' "/proc/$identity_pid/stat" 2>/dev/null | awk '{print $20}') || return 1
+        [ -n "$identity_start" ] || return 1
+        printf 'proc:%s\n' "$identity_start"
+    else
+        identity_start=$(ps -p "$identity_pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -n "$identity_start" ] || return 1
+        printf 'ps:%s\n' "$identity_start"
+    fi
+}
+process_pgid() {
+    process_pgid_value=$(ps -p "$1" -o pgid= 2>/dev/null | tr -d '[:space:]')
+    case "$process_pgid_value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$process_pgid_value"
+}
+process_uid() {
+    process_uid_value=$(ps -p "$1" -o uid= 2>/dev/null | tr -d '[:space:]')
+    case "$process_uid_value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$process_uid_value"
+}
+process_alive() {
+    process_alive_pid=$1
+    case "$process_alive_pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$process_alive_pid" 2>/dev/null && return 0
+    [ -d "/proc/$process_alive_pid" ] && return 0
+    process_alive_value=$(ps -p "$process_alive_pid" -o pid= 2>/dev/null | tr -d '[:space:]')
+    [ "$process_alive_value" = "$process_alive_pid" ]
+}
+group_alive() {
+    group_alive_pgid=$1
+    case "$group_alive_pgid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 -- "-$group_alive_pgid" 2>/dev/null && return 0
+    ps -e -o pgid= 2>/dev/null | grep -q "^[[:space:]]*$group_alive_pgid[[:space:]]*$"
+}
+terminate_process() {
+    terminate_pid=$1
+    process_alive "$terminate_pid" || return 0
+    kill -TERM "$terminate_pid" 2>/dev/null || true
+    terminate_i=0
+    while process_alive "$terminate_pid" && [ "$terminate_i" -lt 20 ]; do
+        sleep 0.1
+        terminate_i=$((terminate_i + 1))
+    done
+    if process_alive "$terminate_pid"; then
+        kill -KILL "$terminate_pid" 2>/dev/null || true
+        terminate_i=0
+        while process_alive "$terminate_pid" && [ "$terminate_i" -lt 50 ]; do
+            sleep 0.1
+            terminate_i=$((terminate_i + 1))
+        done
+    fi
+    ! process_alive "$terminate_pid"
+}
+terminate_group() {
+    terminate_pgid=$1
+    group_alive "$terminate_pgid" || return 0
+    kill -TERM -- "-$terminate_pgid" 2>/dev/null || true
+    terminate_i=0
+    while group_alive "$terminate_pgid" && [ "$terminate_i" -lt 20 ]; do
+        sleep 0.1
+        terminate_i=$((terminate_i + 1))
+    done
+    if group_alive "$terminate_pgid"; then
+        kill -KILL -- "-$terminate_pgid" 2>/dev/null || true
+        terminate_i=0
+        while group_alive "$terminate_pgid" && [ "$terminate_i" -lt 50 ]; do
+            sleep 0.1
+            terminate_i=$((terminate_i + 1))
+        done
+    fi
+    ! group_alive "$terminate_pgid"
+}"#
+}
 
 /// Build the background job command for the given shell type.
 ///
-/// POSIX/Fish use a detached `nohup` wrapper. Windows uses a short-lived
-/// PowerShell launcher which starts a separate monitor process. The monitor
-/// owns the user process, redirects its output to files, and atomically writes
-/// the final exit status. Unlike `Start-Job`, this state survives the launcher
-/// PowerShell session exiting.
+/// POSIX/Fish and Windows both use a short-lived launcher plus an independent
+/// monitor. The monitor owns the user process, redirects its output to private
+/// files, and atomically writes the final exit status.
 fn make_start_job_command(
     shell_type: ShellType,
     cwd: &str,
@@ -42,12 +161,7 @@ fn make_start_job_command(
 ) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => {
-            let cwd_q = shell_quote(cwd, shell_type);
-            let cmd_q = shell_quote(user_command, shell_type);
-            let marker_q = shell_quote(marker, shell_type);
-            format!(
-                "cd \"$HOME\" && cd {cwd_q} && nohup sh -lc {cmd_q} >{marker_q}.out 2>{marker_q}.err; printf $? >{marker_q}"
-            )
+            make_posix_start_command(shell_type, cwd, user_command, marker)
         }
         ShellType::PowerShell => super::windows::powershell_compressed_command(
             &make_windows_start_script(shell_type, cwd, user_command, marker),
@@ -58,13 +172,275 @@ fn make_start_job_command(
     }
 }
 
-fn make_start_job_launch(shell_type: ShellType, job_command: &str, marker: &str) -> String {
+fn make_start_job_launch(shell_type: ShellType, job_command: &str, _marker: &str) -> String {
     match shell_type {
-        ShellType::Posix | ShellType::Fish => {
-            let marker_q = shell_quote(marker, shell_type);
-            format!("({job_command}) >/dev/null 2>&1 & printf '%s' {marker_q}")
-        }
+        ShellType::Posix | ShellType::Fish => job_command.to_string(),
         ShellType::PowerShell | ShellType::Cmd => job_command.to_string(),
+    }
+}
+
+fn make_posix_start_command(
+    shell_type: ShellType,
+    cwd: &str,
+    user_command: &str,
+    marker: &str,
+) -> String {
+    let scripts = make_posix_start_scripts(cwd, user_command, marker);
+    wrap_posix_script(&scripts.launcher, shell_type)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+struct PosixStartScripts {
+    launcher: String,
+    runner: String,
+    child: String,
+}
+
+fn make_posix_start_scripts(cwd: &str, user_command: &str, marker: &str) -> PosixStartScripts {
+    let paths = PosixJobPaths::from_marker(marker)
+        .expect("generated POSIX job marker must end with /status");
+    let quote = |value: &str| shell_quote(value, ShellType::Posix);
+    let token = paths
+        .root
+        .strip_prefix("/tmp/miaominal-agent-")
+        .unwrap_or(&paths.root);
+
+    let child_source = format!(
+        r#"#!/bin/sh
+{helpers}
+child_meta={child}
+saved_umask=$(umask)
+child_pid=$$
+child_uid=$(id -u 2>/dev/null) || exit 125
+child_pgid=$(process_pgid "$child_pid") || exit 125
+child_identity=$(process_identity "$child_pid") || exit 125
+umask 077
+child_tmp="$child_meta.tmp.$child_pid"
+{{
+    printf 'pid=%s\n' "$child_pid"
+    printf 'uid=%s\n' "$child_uid"
+    printf 'pgid=%s\n' "$child_pgid"
+    printf 'identity=%s\n' "$child_identity"
+}} >"$child_tmp" && mv -f "$child_tmp" "$child_meta"
+umask "$saved_umask"
+cd "$HOME" && cd {cwd} || exit 126
+exec sh -lc {command}
+"#,
+        helpers = posix_process_helpers(),
+        child = quote(&paths.child),
+        cwd = quote(cwd),
+        command = quote(user_command),
+    );
+
+    let runner_source = format!(
+        r#"#!/bin/sh
+{helpers}
+root={root}
+status={status}
+out={stdout}
+err={stderr}
+pid_file={pid}
+ready={ready}
+runner={runner}
+command_file={command_file}
+child_meta={child}
+stop_file={stop}
+error_file={error}
+token={token}
+saved_umask=$(umask)
+child_pid=
+child_pgid=
+fail_launch() {{
+    umask 077
+    error_tmp="$error_file.tmp.$$"
+    printf '%s\n' "$1" >"$error_tmp" && mv -f "$error_tmp" "$error_file"
+    exit 1
+}}
+cleanup_signal() {{
+    if [ -n "$child_pgid" ]; then terminate_group "$child_pgid" || true
+    elif [ -n "$child_pid" ]; then terminate_process "$child_pid" || true
+    fi
+    exit 143
+}}
+trap cleanup_signal TERM INT
+monitor_pid=$$
+monitor_uid=$(id -u 2>/dev/null) || fail_launch 'failed to determine monitor uid'
+monitor_identity=$(process_identity "$monitor_pid") || fail_launch 'failed to capture monitor identity'
+rm -f "$child_meta" "$ready" "$error_file"
+umask "$saved_umask"
+mode=
+if command -v setsid >/dev/null 2>&1; then
+    mode=setsid
+    setsid sh "$command_file" >"$out" 2>"$err" &
+    launch_pid=$!
+else
+    if ! set -m 2>/dev/null; then
+        fail_launch 'setsid is unavailable and the shell cannot enable job control'
+    fi
+    mode=job_control
+    sh "$command_file" >"$out" 2>"$err" &
+    launch_pid=$!
+fi
+child_wait=0
+while [ ! -f "$child_meta" ] && process_alive "$launch_pid" && [ "$child_wait" -lt {ready_attempts} ]; do
+    sleep 0.1
+    child_wait=$((child_wait + 1))
+done
+if [ ! -f "$child_meta" ]; then
+    terminate_process "$launch_pid" || true
+    fail_launch 'job child failed to publish process metadata'
+fi
+metadata_value() {{ sed -n "s/^$1=//p" "$child_meta" 2>/dev/null | head -n 1; }}
+child_pid=$(metadata_value pid)
+child_uid=$(metadata_value uid)
+child_pgid=$(metadata_value pgid)
+child_identity=$(metadata_value identity)
+for metadata_number in "$child_pid" "$child_uid" "$child_pgid"; do
+    case "$metadata_number" in ''|*[!0-9]*)
+        terminate_process "$launch_pid" || true
+        fail_launch 'job child metadata was invalid'
+        ;;
+    esac
+done
+if [ "$child_pid" != "$launch_pid" ] || [ "$child_uid" != "$monitor_uid" ] || [ "$child_pgid" != "$child_pid" ]; then
+    terminate_process "$launch_pid" || true
+    fail_launch 'job child did not enter a verified private process group'
+fi
+actual_identity=$(process_identity "$child_pid") || {{ terminate_group "$child_pgid" || true; fail_launch 'job child disappeared before ready'; }}
+actual_pgid=$(process_pgid "$child_pid") || {{ terminate_group "$child_pgid" || true; fail_launch 'failed to verify job process group'; }}
+if [ "$actual_identity" != "$child_identity" ] || [ "$actual_pgid" != "$child_pgid" ]; then
+    terminate_group "$child_pgid" || true
+    fail_launch 'job child identity changed before ready'
+fi
+umask 077
+pid_tmp="$pid_file.tmp.$$"
+{{
+    printf 'version=1\n'
+    printf 'token=%s\n' "$token"
+    printf 'uid=%s\n' "$monitor_uid"
+    printf 'mode=%s\n' "$mode"
+    printf 'monitor_pid=%s\n' "$monitor_pid"
+    printf 'monitor_identity=%s\n' "$monitor_identity"
+    printf 'child_pid=%s\n' "$child_pid"
+    printf 'child_identity=%s\n' "$child_identity"
+    printf 'child_pgid=%s\n' "$child_pgid"
+}} >"$pid_tmp" && mv -f "$pid_tmp" "$pid_file"
+ready_tmp="$ready.tmp.$$"
+printf 'ready\n' >"$ready_tmp" && mv -f "$ready_tmp" "$ready"
+umask "$saved_umask"
+set +e
+wait "$launch_pid"
+exit_code=$?
+set -e
+if [ -f "$stop_file" ]; then exit 0; fi
+if group_alive "$child_pgid" && ! terminate_group "$child_pgid"; then
+    printf '%s\n' 'job process group survived natural command exit' >>"$err"
+    exit 1
+fi
+umask 077
+status_tmp="$status.tmp.$$"
+printf '%s' "$exit_code" >"$status_tmp"
+if ln "$status_tmp" "$status" 2>/dev/null; then :; fi
+rm -f "$status_tmp" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
+exit "$exit_code"
+"#,
+        helpers = posix_process_helpers(),
+        root = quote(&paths.root),
+        status = quote(&paths.status),
+        stdout = quote(&paths.stdout),
+        stderr = quote(&paths.stderr),
+        pid = quote(&paths.pid),
+        ready = quote(&paths.ready),
+        runner = quote(&paths.runner),
+        command_file = quote(&paths.command),
+        child = quote(&paths.child),
+        stop = quote(&paths.stop),
+        error = quote(&paths.error),
+        token = quote(token),
+        ready_attempts = POSIX_READY_ATTEMPTS,
+    );
+
+    let launcher = format!(
+        r#"root={root}
+status={status}
+out={stdout}
+err={stderr}
+pid_file={pid}
+ready={ready}
+runner={runner}
+command_file={command_file}
+child_meta={child}
+stop_file={stop}
+error_file={error}
+saved_umask=$(umask)
+cleanup_launch() {{
+    rm -f "$status" "$out" "$err" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
+    rm -f "$root"/status.tmp.* "$root"/pid.tmp.* "$root"/ready.tmp.* "$root"/error.tmp.* "$root"/child.tmp.* 2>/dev/null || true
+    rmdir "$root" 2>/dev/null || true
+}}
+umask 077
+if ! mkdir "$root" 2>/dev/null; then
+    printf '%s\n' 'job directory already exists or cannot be created' >&2
+    exit 1
+fi
+chmod 700 "$root" || {{ cleanup_launch; exit 1; }}
+: >"$out" && : >"$err" || {{ cleanup_launch; exit 1; }}
+printf '%s' {runner_source} >"$runner" || {{ cleanup_launch; exit 1; }}
+printf '%s' {child_source} >"$command_file" || {{ cleanup_launch; exit 1; }}
+chmod 600 "$out" "$err" "$runner" "$command_file" || {{ cleanup_launch; exit 1; }}
+umask "$saved_umask"
+nohup sh "$runner" </dev/null >/dev/null 2>&1 &
+monitor_launch_pid=$!
+launch_wait=0
+while [ ! -f "$ready" ] && [ ! -f "$status" ] && [ ! -f "$error_file" ] && [ "$launch_wait" -lt {ready_attempts} ]; do
+    if ! kill -0 "$monitor_launch_pid" 2>/dev/null; then break; fi
+    sleep 0.1
+    launch_wait=$((launch_wait + 1))
+done
+if [ -f "$error_file" ]; then
+    launch_error=$(head -c 4096 "$error_file" 2>/dev/null)
+    kill -TERM "$monitor_launch_pid" 2>/dev/null || true
+    sleep 0.1
+    kill -KILL "$monitor_launch_pid" 2>/dev/null || true
+    cleanup_launch
+    printf '%s\n' "$launch_error" >&2
+    exit 1
+fi
+if [ ! -f "$ready" ] && [ ! -f "$status" ]; then
+    kill -TERM "$monitor_launch_pid" 2>/dev/null || true
+    cleanup_wait=0
+    while kill -0 "$monitor_launch_pid" 2>/dev/null && [ "$cleanup_wait" -lt {grace_attempts} ]; do
+        sleep 0.1
+        cleanup_wait=$((cleanup_wait + 1))
+    done
+    kill -KILL "$monitor_launch_pid" 2>/dev/null || true
+    cleanup_launch
+    printf '%s\n' 'job monitor failed to become ready' >&2
+    exit 1
+fi
+printf '%s\n' "$status"
+"#,
+        root = quote(&paths.root),
+        status = quote(&paths.status),
+        stdout = quote(&paths.stdout),
+        stderr = quote(&paths.stderr),
+        pid = quote(&paths.pid),
+        ready = quote(&paths.ready),
+        runner = quote(&paths.runner),
+        command_file = quote(&paths.command),
+        child = quote(&paths.child),
+        stop = quote(&paths.stop),
+        error = quote(&paths.error),
+        runner_source = quote(&runner_source),
+        child_source = quote(&child_source),
+        ready_attempts = POSIX_READY_ATTEMPTS,
+        grace_attempts = POSIX_LAUNCH_CLEANUP_ATTEMPTS,
+    );
+
+    PosixStartScripts {
+        launcher,
+        runner: runner_source,
+        child: child_source,
     }
 }
 
@@ -331,35 +707,124 @@ fn make_poll_command(marker: &str, shell_type: ShellType) -> String {
 }
 
 fn make_posix_poll_command(marker: &str, shell_type: ShellType) -> String {
-    let status = shell_quote(marker, shell_type);
-    let out = shell_quote(&format!("{marker}.out"), shell_type);
-    let err = shell_quote(&format!("{marker}.err"), shell_type);
-    format!(
-        concat!(
-            "emit_streams() {{ ",
-            "stdout_bytes=0; stderr_bytes=0; truncated=0; ",
-            "if [ -f {out} ]; then stdout_bytes=$(wc -c <{out} 2>/dev/null || printf 0); fi; ",
-            "if [ -f {err} ]; then stderr_bytes=$(wc -c <{err} 2>/dev/null || printf 0); fi; ",
-            "if [ \"$stdout_bytes\" -gt {max} ] 2>/dev/null || [ \"$stderr_bytes\" -gt {max} ] 2>/dev/null; then truncated=1; fi; ",
-            "printf 'truncated=%s\\nstdout_b64=' \"$truncated\"; ",
-            "if [ -f {out} ]; then tail -c {max} {out} 2>/dev/null | base64 | tr -d '\\r\\n'; fi; ",
-            "printf '\\nstderr_b64='; ",
-            "if [ -f {err} ]; then tail -c {max} {err} 2>/dev/null | base64 | tr -d '\\r\\n'; fi; ",
-            "printf '\\n'; ",
-            "}}; ",
-            "if [ -f {status} ]; then ",
-            "exit_status=$(head -c 32 {status} 2>/dev/null); ",
-            "if [ \"$exit_status\" = stopped ]; then printf 'status=stopped\\n'; ",
-            "else printf 'status=exited\\nexit=%s\\n' \"$exit_status\"; fi; ",
-            "emit_streams; ",
-            "elif [ -f {out} ] || [ -f {err} ]; then printf 'status=running\\n'; emit_streams; ",
-            "else printf 'status=not_found\\n'; fi"
-        ),
-        status = status,
-        out = out,
-        err = err,
+    let Some(paths) = PosixJobPaths::from_marker(marker) else {
+        let status = shell_quote(marker, ShellType::Posix);
+        let out = shell_quote(&format!("{marker}.out"), ShellType::Posix);
+        let err = shell_quote(&format!("{marker}.err"), ShellType::Posix);
+        let legacy = format!(
+            "if [ -f {status} ]; then printf 'status=exited\\nexit='; head -c 32 {status}; printf '\\ntruncated=0\\nstdout_b64='; [ ! -f {out} ] || tail -c {max} {out} | base64 | tr -d '\\r\\n'; printf '\\nstderr_b64='; [ ! -f {err} ] || tail -c {max} {err} | base64 | tr -d '\\r\\n'; printf '\\n'; else printf 'status=not_found\\n'; fi",
+            max = DEFAULT_MAX_OUTPUT_BYTES,
+        );
+        return wrap_posix_script(&legacy, shell_type);
+    };
+    let quote = |value: &str| shell_quote(value, ShellType::Posix);
+    let token = paths
+        .root
+        .strip_prefix("/tmp/miaominal-agent-")
+        .unwrap_or(&paths.root);
+    let script = format!(
+        r#"{helpers}
+root={root}
+status={status}
+out={stdout}
+err={stderr}
+pid_file={pid}
+runner={runner}
+expected_token={token}
+diagnostic=
+emit_streams() {{
+    stdout_bytes=0
+    stderr_bytes=0
+    truncated=0
+    if [ -f "$out" ]; then stdout_bytes=$(wc -c <"$out" 2>/dev/null || printf 0); fi
+    if [ -f "$err" ]; then stderr_bytes=$(wc -c <"$err" 2>/dev/null || printf 0); fi
+    if [ "$stdout_bytes" -gt {max} ] 2>/dev/null || [ "$stderr_bytes" -gt {max} ] 2>/dev/null; then truncated=1; fi
+    printf 'truncated=%s\nstdout_b64=' "$truncated"
+    if [ -f "$out" ]; then tail -c {max} "$out" 2>/dev/null | base64 | tr -d '\r\n'; fi
+    printf '\nstderr_b64='
+    if [ -f "$err" ]; then tail -c {max} "$err" 2>/dev/null | base64 | tr -d '\r\n'; fi
+    printf '\n'
+    if [ -n "$diagnostic" ]; then
+        printf 'diagnostic_b64='
+        printf '%s' "$diagnostic" | base64 | tr -d '\r\n'
+        printf '\n'
+    fi
+}}
+metadata_value() {{ sed -n "s/^$1=//p" "$pid_file" 2>/dev/null | head -n 1; }}
+if [ -f "$status" ]; then
+    exit_status=$(head -c 32 "$status" 2>/dev/null)
+    if [ "$exit_status" = stopped ]; then printf 'status=stopped\n'
+    elif case "$exit_status" in ''|*[!0-9-]*) false ;; *) true ;; esac; then
+        printf 'status=exited\nexit=%s\n' "$exit_status"
+    else
+        printf 'status=exited\n'
+        diagnostic='job status file was invalid'
+    fi
+    emit_streams
+elif [ -f "$pid_file" ]; then
+    version=$(metadata_value version)
+    token=$(metadata_value token)
+    uid=$(metadata_value uid)
+    monitor_pid=$(metadata_value monitor_pid)
+    monitor_identity=$(metadata_value monitor_identity)
+    child_pid=$(metadata_value child_pid)
+    child_identity=$(metadata_value child_identity)
+    child_pgid=$(metadata_value child_pgid)
+    metadata_valid=1
+    [ "$version" = 1 ] || metadata_valid=0
+    [ "$token" = "$expected_token" ] || metadata_valid=0
+    [ "$uid" = "$(id -u 2>/dev/null)" ] || metadata_valid=0
+    for value in "$monitor_pid" "$child_pid" "$child_pgid"; do case "$value" in ''|*[!0-9]*) metadata_valid=0 ;; esac; done
+    if [ "$metadata_valid" -ne 1 ]; then
+        printf 'status=running\n'
+        diagnostic='job process metadata is invalid; refusing to assume the job exited'
+        emit_streams
+        exit 0
+    fi
+    monitor_alive=0
+    group_is_alive=0
+    identity_mismatch=0
+    if process_alive "$monitor_pid"; then
+        actual_monitor_identity=$(process_identity "$monitor_pid" 2>/dev/null || true)
+        monitor_command=$(ps -ww -p "$monitor_pid" -o command= 2>/dev/null || true)
+        case "$monitor_command" in *"$runner"*) : ;; *) identity_mismatch=1 ;; esac
+        if [ "$actual_monitor_identity" = "$monitor_identity" ]; then monitor_alive=1; else identity_mismatch=1; fi
+    fi
+    if group_alive "$child_pgid"; then group_is_alive=1; fi
+    if process_alive "$child_pid"; then
+        actual_child_identity=$(process_identity "$child_pid" 2>/dev/null || true)
+        actual_child_pgid=$(process_pgid "$child_pid" 2>/dev/null || true)
+        if [ "$actual_child_identity" != "$child_identity" ] || [ "$actual_child_pgid" != "$child_pgid" ]; then identity_mismatch=1; fi
+    fi
+    if [ "$identity_mismatch" -eq 1 ]; then
+        printf 'status=running\n'
+        diagnostic='job process identity could not be verified; refusing to assume the job exited'
+    elif [ "$monitor_alive" -eq 1 ] || [ "$group_is_alive" -eq 1 ]; then
+        printf 'status=running\n'
+    else
+        printf 'status=exited\n'
+        diagnostic='job processes disappeared before writing an exit status'
+    fi
+    emit_streams
+elif [ -f "$out" ] || [ -f "$err" ]; then
+    printf 'status=exited\n'
+    diagnostic='job process metadata was missing'
+    emit_streams
+else
+    printf 'status=not_found\n'
+fi
+"#,
+        helpers = posix_process_helpers(),
+        root = quote(&paths.root),
+        status = quote(&paths.status),
+        stdout = quote(&paths.stdout),
+        stderr = quote(&paths.stderr),
+        pid = quote(&paths.pid),
+        runner = quote(&paths.runner),
+        token = quote(token),
         max = DEFAULT_MAX_OUTPUT_BYTES,
-    )
+    );
+    wrap_posix_script(&script, shell_type)
 }
 
 fn make_windows_poll_script(marker: &str) -> String {
@@ -433,20 +898,41 @@ fn make_windows_poll_script(marker: &str) -> String {
 fn make_cleanup_command(marker: &str, shell_type: ShellType) -> String {
     match shell_type {
         ShellType::Posix | ShellType::Fish => {
-            let paths = [
-                marker.to_string(),
-                format!("{marker}.out"),
-                format!("{marker}.err"),
-                format!("{marker}.pid"),
-                format!("{marker}.ctl.out"),
-                format!("{marker}.ctl.err"),
-                format!("{marker}.runner.ps1"),
-            ]
-            .into_iter()
-            .map(|path| shell_quote(&path, shell_type))
-            .collect::<Vec<_>>()
-            .join(" ");
-            format!("rm -f {paths}")
+            if let Some(paths) = PosixJobPaths::from_marker(marker) {
+                let quote = |value: &str| shell_quote(value, ShellType::Posix);
+                let script = format!(
+                    r#"root={root}
+if [ -L "$root" ] || [ ! -d "$root" ]; then exit 1; fi
+rm -f {status} {stdout} {stderr} {pid} {ready} {runner} {command} {child} {stop} {error}
+rm -f "$root"/status.tmp.* "$root"/pid.tmp.* "$root"/ready.tmp.* "$root"/error.tmp.* "$root"/child.tmp.* 2>/dev/null || true
+rmdir "$root"
+"#,
+                    root = quote(&paths.root),
+                    status = quote(&paths.status),
+                    stdout = quote(&paths.stdout),
+                    stderr = quote(&paths.stderr),
+                    pid = quote(&paths.pid),
+                    ready = quote(&paths.ready),
+                    runner = quote(&paths.runner),
+                    command = quote(&paths.command),
+                    child = quote(&paths.child),
+                    stop = quote(&paths.stop),
+                    error = quote(&paths.error),
+                );
+                wrap_posix_script(&script, shell_type)
+            } else {
+                let paths = [
+                    marker.to_string(),
+                    format!("{marker}.out"),
+                    format!("{marker}.err"),
+                    format!("{marker}.pid"),
+                ]
+                .into_iter()
+                .map(|path| shell_quote(&path, ShellType::Posix))
+                .collect::<Vec<_>>()
+                .join(" ");
+                wrap_posix_script(&format!("rm -f {paths}"), shell_type)
+            }
         }
         ShellType::PowerShell | ShellType::Cmd => {
             let marker_q = shell_quote(marker, ShellType::PowerShell);
@@ -468,19 +954,67 @@ fn make_cleanup_command(marker: &str, shell_type: ShellType) -> String {
 
 fn make_scavenge_command(shell_type: ShellType) -> String {
     match shell_type {
-        ShellType::Posix | ShellType::Fish => format!(
-            concat!(
-                "find /tmp -maxdepth 1 -type f -name 'miaominal-agent-*.status' -mmin +{minutes} -print 2>/dev/null | ",
-                "while IFS= read -r marker; do ",
-                "name=${{marker##*/}}; id=${{name#miaominal-agent-}}; id=${{id%.status}}; ",
-                "case \"$id\" in ????????-????-????-????-????????????) ;; *) continue ;; esac; ",
-                "case \"$id\" in *[!0-9a-fA-F-]*) continue ;; esac; ",
-                "rm -f \"$marker\" \"$marker.out\" \"$marker.err\" \"$marker.pid\" ",
-                "\"$marker.ctl.out\" \"$marker.ctl.err\" \"$marker.runner.ps1\" \"$marker\".tmp-*; ",
-                "printf 'cleaned=%s\\n' \"$id\"; done"
-            ),
-            minutes = STALE_JOB_HOURS * 60,
-        ),
+        ShellType::Posix | ShellType::Fish => {
+            let script = format!(
+                r#"{helpers}
+current_uid=$(id -u 2>/dev/null) || exit 0
+metadata_value() {{ sed -n "s/^$1=//p" "$2" 2>/dev/null | head -n 1; }}
+cleanup_root() {{
+    cleanup_root_path=$1
+    rm -f "$cleanup_root_path/status" "$cleanup_root_path/stdout" "$cleanup_root_path/stderr" \
+        "$cleanup_root_path/pid" "$cleanup_root_path/ready" "$cleanup_root_path/runner" \
+        "$cleanup_root_path/command" "$cleanup_root_path/child" "$cleanup_root_path/stop" "$cleanup_root_path/error"
+    rm -f "$cleanup_root_path"/status.tmp.* "$cleanup_root_path"/pid.tmp.* \
+        "$cleanup_root_path"/ready.tmp.* "$cleanup_root_path"/error.tmp.* "$cleanup_root_path"/child.tmp.* 2>/dev/null || true
+    rmdir "$cleanup_root_path" 2>/dev/null
+}}
+for root in /tmp/miaominal-agent-*; do
+    [ -d "$root" ] || continue
+    [ ! -L "$root" ] || continue
+    name=${{root##*/}}
+    id=${{name#miaominal-agent-}}
+    case "$id" in ????????-????-????-????-????????????) ;; *) continue ;; esac
+    case "$id" in *[!0-9a-fA-F-]*) continue ;; esac
+    owner=$(ls -dn "$root" 2>/dev/null | awk '{{print $3}}')
+    [ "$owner" = "$current_uid" ] || continue
+    old=$(find "$root" -prune -mmin +{minutes} -print 2>/dev/null)
+    [ -n "$old" ] || continue
+    pid_file="$root/pid"
+    if [ ! -f "$root/status" ] && [ -f "$pid_file" ]; then
+        monitor_pid=$(metadata_value monitor_pid "$pid_file")
+        monitor_identity=$(metadata_value monitor_identity "$pid_file")
+        child_pgid=$(metadata_value child_pgid "$pid_file")
+        live=0
+        case "$monitor_pid" in ''|*[!0-9]*) : ;; *)
+            if process_alive "$monitor_pid" && [ "$(process_identity "$monitor_pid" 2>/dev/null || true)" = "$monitor_identity" ]; then live=1; fi
+            ;;
+        esac
+        case "$child_pgid" in ''|*[!0-9]*) : ;; *) if group_alive "$child_pgid"; then live=1; fi ;; esac
+        [ "$live" -eq 0 ] || continue
+    fi
+    if cleanup_root "$root"; then printf 'cleaned=%s\n' "$id"; fi
+done
+for marker in /tmp/miaominal-agent-*.status; do
+    [ -f "$marker" ] || continue
+    [ ! -L "$marker" ] || continue
+    name=${{marker##*/}}
+    id=${{name#miaominal-agent-}}
+    id=${{id%.status}}
+    case "$id" in ????????-????-????-????-????????????) ;; *) continue ;; esac
+    case "$id" in *[!0-9a-fA-F-]*) continue ;; esac
+    owner=$(ls -ln "$marker" 2>/dev/null | awk '{{print $3}}')
+    [ "$owner" = "$current_uid" ] || continue
+    old=$(find "$marker" -prune -mmin +{minutes} -print 2>/dev/null)
+    [ -n "$old" ] || continue
+    rm -f "$marker" "$marker.out" "$marker.err" "$marker.pid" "$marker.ctl.out" "$marker.ctl.err" "$marker.runner.ps1" "$marker".tmp-*
+    printf 'cleaned=%s\n' "$id"
+done
+"#,
+                helpers = posix_process_helpers(),
+                minutes = STALE_JOB_HOURS * 60,
+            );
+            wrap_posix_script(&script, shell_type)
+        }
         ShellType::PowerShell | ShellType::Cmd => {
             let script = format!(
                 concat!(
@@ -588,21 +1122,122 @@ fn make_stop_command(marker: &str, shell_type: ShellType) -> String {
 }
 
 fn make_posix_stop_command(marker: &str, shell_type: ShellType) -> String {
-    let status = shell_quote(marker, shell_type);
-    let out = shell_quote(&format!("{marker}.out"), shell_type);
-    let err = shell_quote(&format!("{marker}.err"), shell_type);
-    let tmp = shell_quote(&format!("{marker}.tmp"), shell_type);
-    format!(
-        concat!(
-            "if [ -f {status} ]; then rm -f {out} {err}; printf 'already_finished\\n'; ",
-            "else pkill -f {status} 2>/dev/null || true; rm -f {out} {err}; ",
-            "printf 'stopped' >{tmp} && mv -f {tmp} {status}; printf 'stopped\\n'; fi"
-        ),
-        status = status,
-        out = out,
-        err = err,
-        tmp = tmp,
-    )
+    let Some(paths) = PosixJobPaths::from_marker(marker) else {
+        return wrap_posix_script(
+            "printf '%s\\n' 'legacy POSIX jobs cannot be stopped safely' >&2; exit 1",
+            shell_type,
+        );
+    };
+    let quote = |value: &str| shell_quote(value, ShellType::Posix);
+    let token = paths
+        .root
+        .strip_prefix("/tmp/miaominal-agent-")
+        .unwrap_or(&paths.root);
+    let script = format!(
+        r#"{helpers}
+root={root}
+status={status}
+out={stdout}
+err={stderr}
+pid_file={pid}
+ready={ready}
+runner={runner}
+command_file={command}
+child_meta={child}
+stop_file={stop}
+error_file={error}
+expected_token={token}
+if [ -f "$status" ]; then printf 'already_finished\n'; exit 0; fi
+if [ ! -d "$root" ] || [ -L "$root" ]; then printf 'not_found\n'; exit 0; fi
+if [ ! -f "$pid_file" ]; then
+    printf '%s\n' 'job process metadata is missing; refusing to report the job stopped' >&2
+    exit 1
+fi
+metadata_value() {{ sed -n "s/^$1=//p" "$pid_file" 2>/dev/null | head -n 1; }}
+version=$(metadata_value version)
+token=$(metadata_value token)
+uid=$(metadata_value uid)
+monitor_pid=$(metadata_value monitor_pid)
+monitor_identity=$(metadata_value monitor_identity)
+child_pid=$(metadata_value child_pid)
+child_identity=$(metadata_value child_identity)
+child_pgid=$(metadata_value child_pgid)
+if [ "$version" != 1 ] || [ "$token" != "$expected_token" ] || [ "$uid" != "$(id -u 2>/dev/null)" ]; then
+    printf '%s\n' 'job process metadata identity is invalid' >&2
+    exit 1
+fi
+for value in "$monitor_pid" "$child_pid" "$child_pgid"; do
+    case "$value" in ''|*[!0-9]*) printf '%s\n' 'job process metadata contains an invalid pid' >&2; exit 1 ;; esac
+done
+monitor_alive=0
+verified_identity=0
+if process_alive "$monitor_pid"; then
+    actual_monitor_identity=$(process_identity "$monitor_pid" 2>/dev/null || true)
+    monitor_command=$(ps -ww -p "$monitor_pid" -o command= 2>/dev/null || true)
+    case "$monitor_command" in *"$runner"*) : ;; *) printf '%s\n' 'job monitor command identity mismatch' >&2; exit 1 ;; esac
+    if [ "$actual_monitor_identity" != "$monitor_identity" ]; then
+        printf '%s\n' 'job monitor start identity mismatch' >&2
+        exit 1
+    fi
+    monitor_alive=1
+    verified_identity=1
+fi
+if process_alive "$child_pid"; then
+    actual_child_identity=$(process_identity "$child_pid" 2>/dev/null || true)
+    actual_child_pgid=$(process_pgid "$child_pid" 2>/dev/null || true)
+    if [ "$actual_child_identity" != "$child_identity" ] || [ "$actual_child_pgid" != "$child_pgid" ]; then
+        printf '%s\n' 'job child process identity mismatch' >&2
+        exit 1
+    fi
+    verified_identity=1
+fi
+if [ "$verified_identity" -ne 1 ]; then
+    printf '%s\n' 'job monitor and child identities are no longer verifiable; refusing to signal the historical process group' >&2
+    exit 1
+fi
+saved_umask=$(umask)
+umask 077
+stop_tmp="$stop_file.tmp.$$"
+printf 'stop\n' >"$stop_tmp" && mv -f "$stop_tmp" "$stop_file"
+umask "$saved_umask"
+if group_alive "$child_pgid" && ! terminate_group "$child_pgid"; then
+    printf '%s\n' 'failed to stop job process group' >&2
+    exit 1
+fi
+if [ "$monitor_alive" -eq 1 ] && ! terminate_process "$monitor_pid"; then
+    printf '%s\n' 'failed to stop job monitor process' >&2
+    exit 1
+fi
+if group_alive "$child_pgid" || process_alive "$monitor_pid"; then
+    printf '%s\n' 'job processes survived stop verification' >&2
+    exit 1
+fi
+umask 077
+status_tmp="$status.tmp.$$"
+printf 'stopped' >"$status_tmp"
+if ln "$status_tmp" "$status" 2>/dev/null; then
+    rm -f "$status_tmp" "$out" "$err" "$pid_file" "$ready" "$runner" "$command_file" "$child_meta" "$stop_file" "$error_file"
+    printf 'stopped\n'
+else
+    rm -f "$status_tmp" "$stop_file"
+    printf 'already_finished\n'
+fi
+"#,
+        helpers = posix_process_helpers(),
+        root = quote(&paths.root),
+        status = quote(&paths.status),
+        stdout = quote(&paths.stdout),
+        stderr = quote(&paths.stderr),
+        pid = quote(&paths.pid),
+        ready = quote(&paths.ready),
+        runner = quote(&paths.runner),
+        command = quote(&paths.command),
+        child = quote(&paths.child),
+        stop = quote(&paths.stop),
+        error = quote(&paths.error),
+        token = quote(token),
+    );
+    wrap_posix_script(&script, shell_type)
 }
 
 fn make_windows_stop_script(marker: &str) -> String {
@@ -690,12 +1325,19 @@ pub async fn start_job(channel: &AgentExecChannel, args: StartJobArgs) -> AgentR
         .unwrap_or_default()
         .trim_matches('\'')
         .to_string();
-    let expected_name = format!("miaominal-agent-{}.status", job_id.0);
-    if marker.is_empty()
-        || !marker
-            .to_ascii_lowercase()
-            .ends_with(&expected_name.to_ascii_lowercase())
-    {
+    let marker_valid = match shell_type {
+        ShellType::Posix | ShellType::Fish => {
+            marker == job_id.remote_marker_for_shell(shell_type)?
+        }
+        ShellType::PowerShell | ShellType::Cmd => {
+            let expected_name = format!("miaominal-agent-{}.status", job_id.0);
+            !marker.is_empty()
+                && marker
+                    .to_ascii_lowercase()
+                    .ends_with(&expected_name.to_ascii_lowercase())
+        }
+    };
+    if !marker_valid {
         return Err(AgentError::Backend(anyhow::anyhow!(
             "job launcher did not return the expected marker path"
         )));
@@ -737,10 +1379,14 @@ pub async fn poll_job(channel: &AgentExecChannel, args: PollJobArgs) -> AgentRes
     let result = parse_poll_output(args.job_id.clone(), &output)?;
     if matches!(result.status, JobStatus::Exited | JobStatus::Stopped) {
         let cleanup_command = make_cleanup_command(&marker, shell_type);
-        if ensure_windows_command_fits(&cleanup_command, shell_type).is_ok() {
-            let _ = channel.exec(cleanup_command).await;
+        let cleaned = if ensure_windows_command_fits(&cleanup_command, shell_type).is_ok() {
+            channel.exec(cleanup_command).await.is_ok()
+        } else {
+            false
+        };
+        if cleaned {
+            let _ = channel.jobs().remove(&args.job_id);
         }
-        let _ = channel.jobs().remove(&args.job_id);
     } else if result.status == JobStatus::NotFound {
         let _ = channel.jobs().remove(&args.job_id);
     }
@@ -844,6 +1490,18 @@ mod tests {
     #[cfg(windows)]
     static WINDOWS_SCAVENGE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    fn posix_test_shell() -> Option<std::path::PathBuf> {
+        #[cfg(windows)]
+        {
+            let shell = std::path::PathBuf::from(r"C:\Program Files\Git\bin\sh.exe");
+            return shell.exists().then_some(shell);
+        }
+        #[cfg(not(windows))]
+        {
+            Some(std::path::PathBuf::from("sh"))
+        }
+    }
+
     #[tokio::test]
     async fn start_job_uses_detected_powershell_over_configured_cmd() {
         let mut profile = miaominal_core::profile::SessionProfile::blank("session-1", 1);
@@ -876,38 +1534,138 @@ mod tests {
     }
 
     #[test]
-    fn posix_start_job_command_uses_nohup_sh() {
+    fn posix_start_job_command_uses_private_monitor_and_process_group() {
         let cmd = make_start_job_command(
             ShellType::Posix,
             "/home/user/project",
             "echo hello",
-            "/tmp/miaominal-agent-test.status",
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status",
         );
-        assert!(cmd.contains("nohup sh -lc"), "expected nohup: {cmd}");
-        assert!(
-            cmd.contains(".status'.out"),
-            "expected .out redirect: {cmd}"
+        assert!(cmd.starts_with("sh -lc "));
+        assert!(cmd.contains("umask 077"));
+        assert!(cmd.contains("mkdir"));
+        assert!(cmd.contains("nohup sh"));
+        assert!(cmd.contains("setsid sh"));
+        assert!(cmd.contains("child_pgid"));
+        assert!(cmd.contains("/stdout"));
+        assert!(cmd.contains("/stderr"));
+        assert!(!cmd.contains("pkill -f"));
+    }
+
+    #[test]
+    fn posix_start_scripts_are_syntactically_valid() {
+        use std::io::Write as _;
+
+        let Some(shell) = posix_test_shell() else {
+            return;
+        };
+
+        let scripts = make_posix_start_scripts(
+            "/home/user/project",
+            "printf '%s\\n' \"hello world\"; sleep 1",
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status",
         );
+        for (name, source) in [
+            ("launcher", scripts.launcher),
+            ("runner", scripts.runner),
+            ("child", scripts.child),
+        ] {
+            let mut child = std::process::Command::new(&shell)
+                .arg("-n")
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start shell syntax check");
+            child
+                .stdin
+                .as_mut()
+                .expect("shell syntax stdin")
+                .write_all(source.as_bytes())
+                .expect("write shell source");
+            let output = child.wait_with_output().expect("finish shell syntax check");
+            assert!(
+                output.status.success(),
+                "{name} script syntax failed: {}\n{source}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+    }
+
+    #[test]
+    fn posix_liveness_checks_fall_back_when_signal_probes_are_denied() {
+        let Some(shell) = posix_test_shell() else {
+            return;
+        };
+        let script = format!(
+            r#"{helpers}
+kill() {{ return 1; }}
+ps() {{
+    if [ "$1" = -p ]; then printf '%s\n' "$2"; return 0; fi
+    if [ "$1" = -e ]; then printf '%s\n' 4242; return 0; fi
+    return 1
+}}
+process_alive 4242 && group_alive 4242
+"#,
+            helpers = posix_process_helpers(),
+        );
+        let output = std::process::Command::new(shell)
+            .args(["-c", &script])
+            .output()
+            .expect("run POSIX liveness fallback check");
         assert!(
-            cmd.contains(".status'.err"),
-            "expected .err redirect: {cmd}"
+            output.status.success(),
+            "liveness fallback failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
     #[test]
-    fn posix_start_job_launch_backgrounds_and_prints_marker() {
+    fn posix_poll_stop_and_cleanup_scripts_parse_and_execute() {
+        let Some(shell) = posix_test_shell() else {
+            return;
+        };
+        let marker = AgentJobId::new()
+            .remote_marker_for_shell(ShellType::Posix)
+            .expect("marker should be generated");
+
+        let poll = std::process::Command::new(&shell)
+            .args(["-lc", &make_poll_command(&marker, ShellType::Posix)])
+            .output()
+            .expect("execute generated poll command");
+        assert!(poll.status.success());
+        assert!(String::from_utf8_lossy(&poll.stdout).contains("status=not_found"));
+
+        let stop = std::process::Command::new(&shell)
+            .args(["-lc", &make_stop_command(&marker, ShellType::Posix)])
+            .output()
+            .expect("execute generated stop command");
+        assert!(stop.status.success());
+        assert_eq!(String::from_utf8_lossy(&stop.stdout).trim(), "not_found");
+
+        let cleanup = std::process::Command::new(shell)
+            .args(["-lc", &make_cleanup_command(&marker, ShellType::Posix)])
+            .output()
+            .expect("execute generated cleanup command");
+        assert_eq!(cleanup.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&cleanup.stderr).trim().is_empty());
+    }
+
+    #[test]
+    fn posix_start_job_launch_is_already_self_contained() {
         let launch = make_start_job_launch(
             ShellType::Posix,
             "nohup sh -lc 'echo hi'",
             "/tmp/marker.status",
         );
-        assert!(launch.contains('&'), "expected background &: {launch}");
-        assert!(launch.contains("printf '%s'"), "expected printf: {launch}");
+        assert_eq!(launch, "nohup sh -lc 'echo hi'");
     }
 
     #[test]
     fn posix_poll_is_bounded_and_uses_base64_framing() {
-        let command = make_poll_command("/tmp/miaominal-agent-job.status", ShellType::Posix);
+        let command = make_poll_command(
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status",
+            ShellType::Posix,
+        );
         assert!(command.contains("status=running"));
         assert!(command.contains("status=not_found"));
         assert!(command.contains(&format!("tail -c {DEFAULT_MAX_OUTPUT_BYTES}")));
@@ -918,11 +1676,47 @@ mod tests {
     }
 
     #[test]
+    fn posix_stop_validates_identity_and_never_uses_marker_matching() {
+        let command = make_stop_command(
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status",
+            ShellType::Posix,
+        );
+        assert!(command.contains("monitor_identity"));
+        assert!(command.contains("child_pgid"));
+        assert!(command.contains("terminate_group"));
+        assert!(command.contains("job processes survived stop verification"));
+        let identity_guard = command
+            .find("job monitor and child identities are no longer verifiable")
+            .expect("missing fail-closed identity guard");
+        let stop_marker = command
+            .find("stop_tmp=")
+            .expect("missing stop marker write");
+        let group_signal = command
+            .find("if group_alive \"$child_pgid\" && ! terminate_group")
+            .expect("missing process-group termination");
+        assert!(identity_guard < stop_marker);
+        assert!(identity_guard < group_signal);
+        assert!(command.contains("ln"));
+        assert!(!command.contains("pkill -f"));
+    }
+
+    #[test]
+    fn legacy_posix_stop_fails_closed() {
+        let command = make_stop_command(
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000.status",
+            ShellType::Posix,
+        );
+        assert!(command.contains("legacy POSIX jobs cannot be stopped safely"));
+        assert!(command.contains("exit 1"));
+    }
+
+    #[test]
     fn cleanup_and_scavenge_only_target_miaominal_artifacts() {
-        let marker = "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000.status";
+        let marker = "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status";
         let cleanup = make_cleanup_command(marker, ShellType::Posix);
-        assert!(cleanup.contains("runner.ps1"));
+        assert!(cleanup.contains("rmdir"));
         assert!(cleanup.contains(marker));
+        assert!(!cleanup.contains("rm -rf"));
 
         let posix_scavenge = make_scavenge_command(ShellType::Posix);
         assert!(posix_scavenge.contains("-mmin +1440"));
@@ -1174,14 +1968,112 @@ mod tests {
     }
 
     #[test]
-    fn fish_start_job_uses_nohup_like_posix() {
+    fn fish_start_job_wraps_posix_management_in_sh() {
         let cmd = make_start_job_command(
             ShellType::Fish,
             "/home/user/project",
             "echo fish",
-            "/tmp/fish.status",
+            "/tmp/miaominal-agent-00000000-0000-0000-0000-000000000000/status",
         );
-        assert!(cmd.contains("nohup sh -lc"), "Fish also uses nohup: {cmd}");
+        assert!(cmd.starts_with("sh -lc "));
+        assert!(cmd.contains("nohup sh"));
+        assert!(cmd.contains("setsid sh"));
+    }
+
+    #[cfg(unix)]
+    fn execute_posix_command(command: &str) -> std::process::Output {
+        std::process::Command::new("sh")
+            .args(["-lc", command])
+            .output()
+            .expect("execute generated POSIX command")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_job_uses_private_permissions_and_stops_the_process_group() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::Path;
+        use std::time::{Duration, Instant};
+
+        if !execute_posix_command("command -v setsid >/dev/null 2>&1")
+            .status
+            .success()
+        {
+            return;
+        }
+
+        let job_id = AgentJobId::new();
+        let marker = job_id.remote_marker_for_shell(ShellType::Posix).unwrap();
+        let start = make_start_job_command(
+            ShellType::Posix,
+            ".",
+            "umask; sh -c 'sleep 30 & wait'",
+            &marker,
+        );
+        let start_output = execute_posix_command(&format!("umask 022; {start}"));
+        assert!(
+            start_output.status.success(),
+            "job start failed: {}",
+            String::from_utf8_lossy(&start_output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&start_output.stdout).trim(), marker);
+
+        let paths = PosixJobPaths::from_marker(&marker).unwrap();
+        assert_eq!(
+            std::fs::metadata(&paths.root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        for path in [&paths.stdout, &paths.stderr, &paths.pid, &paths.ready] {
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "unexpected permissions for {path}"
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let stdout = std::fs::read_to_string(&paths.stdout).unwrap_or_default();
+            if stdout.contains("0022") || stdout.lines().any(|line| line.trim() == "022") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "user command did not preserve umask 022"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let metadata = std::fs::read_to_string(&paths.pid).unwrap();
+        let child_pgid = metadata
+            .lines()
+            .find_map(|line| line.strip_prefix("child_pgid="))
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        assert!(Path::new(&paths.runner).exists());
+
+        let stop_output = execute_posix_command(&make_stop_command(&marker, ShellType::Posix));
+        assert!(
+            stop_output.status.success(),
+            "job stop failed: {}",
+            String::from_utf8_lossy(&stop_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&stop_output.stdout).trim(),
+            "stopped"
+        );
+        assert_eq!(std::fs::read_to_string(&paths.status).unwrap(), "stopped");
+        assert!(
+            !execute_posix_command(&format!("kill -0 -- -{child_pgid} 2>/dev/null"))
+                .status
+                .success(),
+            "job process group survived stop"
+        );
+
+        let cleanup = execute_posix_command(&make_cleanup_command(&marker, ShellType::Posix));
+        assert!(cleanup.status.success());
+        assert!(!Path::new(&paths.root).exists());
     }
 
     #[cfg(windows)]

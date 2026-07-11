@@ -9,7 +9,7 @@ const TERMINAL_OUTPUT_BATCH_MAX_BYTES: usize = 256 * 1024;
 
 fn coalesce_session_output(
     mut chunk: Vec<u8>,
-    events: &mut FuturesUnboundedReceiver<SessionEvent>,
+    events: &mut SessionEventReceiver,
 ) -> (Vec<u8>, Option<SessionEvent>) {
     let mut chunks = 1usize;
 
@@ -1323,7 +1323,7 @@ impl AppView {
     pub(in crate::ui::shell) fn spawn_session_event_loop(
         &self,
         tab_id: usize,
-        mut events: FuturesUnboundedReceiver<SessionEvent>,
+        mut events: SessionEventReceiver,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -1445,8 +1445,12 @@ impl AppView {
                 SessionEvent::Output(chunk) => {
                     session.bytes_in = session.bytes_in.saturating_add(chunk.len() as u64);
                     session.terminal.push_bytes(&chunk);
-                    if let Some(tap) = &session.pty_output_tap {
-                        let _ = tap.send(chunk.clone());
+                    let tap_failed = session
+                        .pty_output_tap
+                        .as_ref()
+                        .is_some_and(|tap| tap.try_send(chunk.clone()).is_err());
+                    if tap_failed {
+                        session.pty_output_tap = None;
                     }
                     if inactive_tab {
                         session.has_activity = true;
@@ -1579,6 +1583,9 @@ impl AppView {
                     }
                 }
                 SessionEvent::Closed => {
+                    if let Some(tap) = session.pty_output_tap.take() {
+                        tap.close();
+                    }
                     let already_disconnected = matches!(
                         session.connection_state,
                         SessionConnectionState::Disconnected
@@ -2066,16 +2073,17 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::channel::mpsc;
+    use tokio::sync::mpsc;
 
     #[test]
     fn coalesce_session_output_merges_consecutive_output() {
-        let (sender, mut receiver) = mpsc::unbounded();
+        let (sender, receiver) = mpsc::channel(4);
+        let mut receiver = SessionEventReceiver::from(receiver);
         sender
-            .unbounded_send(SessionEvent::Output(b"b".to_vec()))
+            .try_send(SessionEvent::Output(b"b".to_vec()))
             .expect("output event should send");
         sender
-            .unbounded_send(SessionEvent::Output(b"c".to_vec()))
+            .try_send(SessionEvent::Output(b"c".to_vec()))
             .expect("output event should send");
 
         let (chunk, pending) = coalesce_session_output(b"a".to_vec(), &mut receiver);
@@ -2086,12 +2094,13 @@ mod tests {
 
     #[test]
     fn coalesce_session_output_preserves_next_non_output_event() {
-        let (sender, mut receiver) = mpsc::unbounded();
+        let (sender, receiver) = mpsc::channel(4);
+        let mut receiver = SessionEventReceiver::from(receiver);
         sender
-            .unbounded_send(SessionEvent::Output(b"b".to_vec()))
+            .try_send(SessionEvent::Output(b"b".to_vec()))
             .expect("output event should send");
         sender
-            .unbounded_send(SessionEvent::Status("ready".into()))
+            .try_send(SessionEvent::Status("ready".into()))
             .expect("status event should send");
 
         let (chunk, pending) = coalesce_session_output(b"a".to_vec(), &mut receiver);

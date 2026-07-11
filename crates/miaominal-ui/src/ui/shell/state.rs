@@ -1,8 +1,7 @@
 use super::*;
 use crate::ui::i18n;
-use miaominal_agent::AgentMode;
+use miaominal_agent::{AgentMode, TerminalOutputTap};
 use std::time::Instant;
-use tokio::sync::mpsc;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
 
@@ -760,7 +759,7 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) preserved_history_popup_hidden: bool,
     pub(in crate::ui::shell) pending_profile: Option<SessionProfile>,
     pub(in crate::ui::shell) commands: Option<SessionCommandSender>,
-    pub(in crate::ui::shell) pty_output_tap: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    pub(in crate::ui::shell) pty_output_tap: Option<TerminalOutputTap>,
     pub(in crate::ui::shell) bytes_in: u64,
     pub(in crate::ui::shell) bytes_out: u64,
     pub(in crate::ui::shell) pending_host_key: Option<HostKeyPrompt>,

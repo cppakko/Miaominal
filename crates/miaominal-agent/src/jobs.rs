@@ -17,14 +17,14 @@ impl AgentJobId {
     pub fn remote_marker(&self) -> AgentResult<String> {
         Uuid::from_str(&self.0)
             .map_err(|_| AgentError::JobNotFound(self.0.clone()))
-            .map(|uuid| format!("/tmp/miaominal-agent-{uuid}.status"))
+            .map(|uuid| format!("/tmp/miaominal-agent-{uuid}/status"))
     }
 
     pub fn remote_marker_for_shell(&self, shell_type: ShellType) -> AgentResult<String> {
         let uuid = Uuid::from_str(&self.0).map_err(|_| AgentError::JobNotFound(self.0.clone()))?;
         Ok(match shell_type {
             ShellType::Posix | ShellType::Fish => {
-                format!("/tmp/miaominal-agent-{uuid}.status")
+                format!("/tmp/miaominal-agent-{uuid}/status")
             }
             ShellType::PowerShell | ShellType::Cmd => {
                 format!(r"%TEMP%\miaominal-agent-{uuid}.status")
@@ -178,12 +178,12 @@ mod tests {
         assert!(registry.contains(&job_id));
         assert_eq!(
             registry.remote_marker(&job_id).unwrap(),
-            format!("/tmp/miaominal-agent-{}.status", job_id.0)
+            format!("/tmp/miaominal-agent-{}/status", job_id.0)
         );
         registry.remove(&job_id).unwrap();
         assert_eq!(
             registry.remote_marker(&job_id).unwrap(),
-            format!("/tmp/miaominal-agent-{}.status", job_id.0)
+            format!("/tmp/miaominal-agent-{}/status", job_id.0)
         );
     }
 
@@ -194,7 +194,7 @@ mod tests {
 
         assert_eq!(
             registry.remote_marker(&job_id).unwrap(),
-            format!("/tmp/miaominal-agent-{}.status", job_id.0)
+            format!("/tmp/miaominal-agent-{}/status", job_id.0)
         );
     }
 

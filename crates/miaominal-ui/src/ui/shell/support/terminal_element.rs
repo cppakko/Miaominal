@@ -11,13 +11,14 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     ops::Range,
+    sync::Arc,
 };
 
 const TERMINAL_SCROLLBAR_TRACK_WIDTH: f32 = 6.0;
 const TERMINAL_SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 20.0;
 
 struct TerminalCanvasPrepaint {
-    snapshot: TerminalSnapshot,
+    snapshot: Arc<TerminalSnapshot>,
     focus: FocusHandle,
 }
 
@@ -368,10 +369,10 @@ fn prepare_terminal_canvas_prepaint(
 
     let focused =
         pane_id == this.workspace_state.workspace.active_pane_id && focus.is_focused(window);
-    let snapshot = tab_index
+    let snapshot: Arc<TerminalSnapshot> = tab_index
         .and_then(|index| this.workspace_state.tabs.get(index))
         .and_then(|tab| tab.as_session())
-        .map(|session| session.terminal.snapshot(focused))?;
+        .map(|session| session.terminal.snapshot(focused).into())?;
 
     Some(TerminalCanvasPrepaint { snapshot, focus })
 }

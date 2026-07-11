@@ -17,18 +17,95 @@ use miaominal_storage::known_hosts_store::KnownHostsStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+pub const TERMINAL_OUTPUT_TAP_CAPACITY: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalOutputTapError {
+    Closed,
+    Overflow,
+}
+
+#[derive(Clone)]
+pub struct TerminalOutputTap {
+    sender: Arc<StdMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    overflowed: Arc<AtomicBool>,
+}
+
+pub struct TerminalOutputReceiver {
+    receiver: mpsc::Receiver<Vec<u8>>,
+    overflowed: Arc<AtomicBool>,
+}
+
+impl TerminalOutputTap {
+    pub fn channel() -> (Self, TerminalOutputReceiver) {
+        let (sender, receiver) = mpsc::channel(TERMINAL_OUTPUT_TAP_CAPACITY);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                sender: Arc::new(StdMutex::new(Some(sender))),
+                overflowed: overflowed.clone(),
+            },
+            TerminalOutputReceiver {
+                receiver,
+                overflowed,
+            },
+        )
+    }
+
+    pub fn try_send(&self, bytes: Vec<u8>) -> Result<(), TerminalOutputTapError> {
+        let mut sender = self
+            .sender
+            .lock()
+            .map_err(|_| TerminalOutputTapError::Closed)?;
+        let Some(active) = sender.as_ref() else {
+            return Err(TerminalOutputTapError::Closed);
+        };
+        match active.try_send(bytes) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.overflowed.store(true, Ordering::Release);
+                sender.take();
+                Err(TerminalOutputTapError::Overflow)
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                sender.take();
+                Err(TerminalOutputTapError::Closed)
+            }
+        }
+    }
+
+    pub fn close(&self) {
+        if let Ok(mut sender) = self.sender.lock() {
+            sender.take();
+        }
+    }
+
+    pub fn same_channel(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.sender, &other.sender)
+    }
+}
+
+impl TerminalOutputReceiver {
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        self.receiver.recv().await
+    }
+
+    pub fn overflowed(&self) -> bool {
+        self.overflowed.load(Ordering::Acquire)
+    }
+}
 
 /// Handle for executing commands inside a user-visible terminal tab's PTY.
 #[derive(Clone)]
 pub struct TerminalExecHandle {
     pub command_sender: miaominal_ssh::SessionCommandSender,
-    pub output_tap: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>>,
+    pub output_tap: Arc<Mutex<Option<TerminalOutputReceiver>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,14 +716,22 @@ impl AgentExecChannel {
 
         let mut collected = String::new();
         let sentinel_owned = sentinel.to_string();
-        let done = {
+        let wait_result = {
             let mut guard = handle.output_tap.lock().await;
             let receiver = guard
                 .as_mut()
                 .ok_or_else(|| AgentError::Backend(anyhow!("terminal output tap is closed")))?;
 
             tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
-                while let Some(chunk) = receiver.recv().await {
+                loop {
+                    let Some(chunk) = receiver.recv().await else {
+                        let message = if receiver.overflowed() {
+                            "terminal output tap overflowed before command completion"
+                        } else {
+                            "terminal output tap closed before command completion"
+                        };
+                        return Err(AgentError::Backend(anyhow!(message)));
+                    };
                     collected.push_str(&String::from_utf8_lossy(&chunk));
                     // The sentinel string appears twice:
                     //   (a) Literal in echoed wrapper → followed by '%' (not a digit)
@@ -655,7 +740,7 @@ impl AgentExecChannel {
                     if let Some(pos) = collected.rfind(&sentinel_owned) {
                         let after = &collected[pos + sentinel_owned.len()..];
                         if after.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                            return;
+                            return Ok(());
                         }
                     }
                     if collected.len() > DEFAULT_MAX_OUTPUT_BYTES * 4 {
@@ -666,13 +751,16 @@ impl AgentExecChannel {
                 }
             })
             .await
-            .is_ok()
         };
 
-        if !done {
-            return Err(AgentError::Backend(anyhow!(
-                "timed out waiting for terminal command completion"
-            )));
+        match wait_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(AgentError::Backend(anyhow!(
+                    "timed out waiting for terminal command completion"
+                )));
+            }
         }
 
         Ok(collected)
@@ -732,6 +820,36 @@ mod tests {
         profile.username = "akko".into();
         profile.shell_type = shell_type;
         profile
+    }
+
+    #[tokio::test]
+    async fn terminal_output_tap_is_bounded_and_closes_on_overflow() {
+        let (tap, mut receiver) = TerminalOutputTap::channel();
+        for index in 0..TERMINAL_OUTPUT_TAP_CAPACITY {
+            tap.try_send(vec![index as u8])
+                .expect("tap should accept configured capacity");
+        }
+        assert_eq!(
+            tap.try_send(vec![255]),
+            Err(TerminalOutputTapError::Overflow)
+        );
+        assert!(receiver.overflowed());
+
+        for expected in 0..TERMINAL_OUTPUT_TAP_CAPACITY {
+            assert_eq!(receiver.recv().await, Some(vec![expected as u8]));
+        }
+        assert_eq!(receiver.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn terminal_output_tap_clones_share_close_state() {
+        let (tap, mut receiver) = TerminalOutputTap::channel();
+        let clone = tap.clone();
+        assert!(tap.same_channel(&clone));
+        clone.close();
+        assert_eq!(tap.try_send(vec![1]), Err(TerminalOutputTapError::Closed));
+        assert_eq!(receiver.recv().await, None);
+        assert!(!receiver.overflowed());
     }
 
     #[test]
