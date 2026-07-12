@@ -1,10 +1,10 @@
 [settings.pages.appearance]
 title = "Appearance"
-description = "Font, layout, and theme preferences for the terminal surface and shared UI chrome."
+description = "Configure fonts, layout, and themes for the terminal and application interface."
 
 [settings.pages.connections]
 title = "Connections"
-description = "Behavior settings for the Hosts page and connection history."
+description = "Configure the Hosts page, connection history, monitoring, and tab behavior."
 
 [settings.pages.key_bindings]
 title = "Key Bindings"
@@ -12,19 +12,19 @@ description = "Customize shortcuts for workspace navigation and terminal actions
 
 [settings.pages.ai_providers]
 title = "AI Providers"
-description = "Configure Rig-backed model providers for the agent tool layer. API keys are stored in the OS keychain by default, or in the local vault when enabled."
+description = "Configure model providers for the AI assistant. API keys are stored in the system credential store by default, or in the local secrets vault when enabled."
 
 [settings.pages.sync]
 title = "Sync"
-description = "Sync your sessions, snippets, managed keys, and non-appearance settings such as shortcuts and connection preferences across devices via GitHub Gist or WebDAV. Passwords and private keys are encrypted with your passphrase before upload."
+description = "Sync host profiles, snippets, managed keys, shortcuts, and connection preferences across devices via GitHub Gist or WebDAV. Passwords and private keys are encrypted with your passphrase before upload."
 
 [settings.pages.vault]
-title = "Local Vault"
-description = "Manage the device-only vault for locally stored secrets such as saved passwords, sync credentials, and managed private keys. Regular sync settings such as URLs and usernames are not stored there."
+title = "Local Secrets Vault"
+description = "Manage the device-only vault for saved passwords, sync credentials, and managed private keys. Regular settings such as URLs and usernames are not stored there."
 
 [settings.pages.about]
 title = "About"
-description = "Project context and external references for this settings surface."
+description = "View project information and external links."
 
 [settings.appearance.language_group]
 title = "Language"
@@ -32,11 +32,11 @@ description = "Choose the interface language used across the application."
 
 [settings.appearance.language]
 label = "App language"
-description = "Changes settings navigation, page titles, notifications, and status text as more screens are migrated."
+description = "Changes the language used for navigation, page titles, notifications, and status text."
 
 [settings.appearance.typography_group]
 title = "Typography"
-description = "These values drive both gpui-component controls and terminal metrics."
+description = "Controls text rendering in the application and terminal."
 
 [settings.appearance.font_family]
 label = "Font family"
@@ -64,7 +64,7 @@ description = "Switches the application between light and dark Material 3 palett
 
 [settings.appearance.seed_color]
 label = "Seed color"
-description = "Uses the gpui-component color picker to drive app chrome, terminal background, and ANSI colors."
+description = "Sets the application colors, terminal background, and ANSI palette."
 
 [settings.appearance.swatches]
 seed = "Seed"
@@ -135,7 +135,7 @@ finalshell_filter = "FinalShell export"
 [settings.about.overview]
 title = "Overview"
 version = "Version {version}"
-description = "A GPUI desktop shell for SSH, SFTP, and terminal sessions with a Material 3-driven component theme."
+description = "A desktop client for SSH, SFTP, terminal sessions, port forwarding, and AI-assisted workflows."
 
 [settings.about.onboarding]
 title = "Onboarding"
@@ -147,11 +147,11 @@ description = "Reopen the first-run welcome screen to import profiles or adjust 
 title = "Clear local data"
 label = "Reset this device"
 action = "Clear local data"
-description = "Delete local settings, saved hosts, snippets, known hosts, sync configuration, keyring-backed secrets, and any local vault file from this device."
+description = "Delete local settings, saved hosts, snippets, known-host records, sync configuration, system-stored secrets, and any local secrets vault file from this device."
 
 [settings.about.reset_local.confirm]
 title = "Clear all local data from this device?"
-message = "This removes local settings, saved connections, known hosts, snippets, sync configuration, keyring-backed secrets, and any local vault file. Remote GitHub Gist or WebDAV data is not deleted."
+message = "This removes local settings, saved connections, known-host records, snippets, sync configuration, system-stored secrets, and any local secrets vault file. Remote GitHub Gist or WebDAV data is not deleted."
 confirm = "Continue"
 
 [settings.about.reset_local.popup]
@@ -201,7 +201,7 @@ finish = "Finish"
 
 [settings.key_bindings.workspace_group]
 title = "Workspace"
-description = "These shortcuts work across the shell, including the terminal, sidebar, and settings pages."
+description = "These shortcuts work across the application, including the terminal, sidebar, and settings pages."
 
 [settings.key_bindings.terminal_group]
 title = "Terminal"
@@ -212,11 +212,11 @@ title = "Mouse"
 description = "Choose what terminal right click does when local terminal mouse handling is active."
 
 [settings.key_bindings.right_click]
-label = "Right click"
-description = "Context menu keeps pane actions. Copy/Paste copies the current selection, or pastes the clipboard when nothing is selected."
+label = "Right-click"
+description = "Context Menu keeps pane actions available. Copy/Paste copies the current selection, or pastes the clipboard when nothing is selected."
 
 [settings.key_bindings.shift_right_click]
-label = "Shift + Right click menu"
+label = "Shift + right-click menu"
 description = "When enabled, Shift + right click forces the terminal pane context menu even if normal right click is set to Copy/Paste."
 
 [settings.key_bindings]
@@ -274,15 +274,15 @@ description = "Close the active terminal pane."
 
 [settings.ai_providers.providers_group]
 title = "Configured providers"
-description = "Rig provider entries available to future agent orchestration."
+description = "Model providers available to the AI assistant."
 
 [settings.ai_providers.saved]
 label = "Providers"
 description = "Select a provider to edit it. Delete removes its saved API key as well."
 
 [settings.ai_providers.editor_group]
-title = "Provider editor"
-description = "Add or update the provider metadata used by the agent runtime."
+title = "Provider settings"
+description = "Add or update a model provider for the AI assistant."
 
 [settings.ai_providers.kind]
 label = "Provider"
@@ -366,19 +366,15 @@ description = "Choose the search service used for web results."
 
 [settings.web_search.api_key]
 label = "API key"
-description = "Stored in the local secret store. Optional for SearXNG."
 
 [settings.web_search.endpoint]
 label = "Endpoint"
-description = "Override the provider endpoint. Required for SearXNG."
 
 [settings.web_search.max_results]
 label = "Max results"
-description = "Return between {min} and {max} search results."
 
 [settings.web_search.actions]
 save = "Save web search"
-description = "Persist the web search provider settings."
 
 [settings.web_search.kinds]
 tavily = "Tavily"
@@ -421,8 +417,8 @@ webdav_url = "https://example.com/dav/miaominal_sync.json"
 webdav_username = "Username"
 webdav_password = "Password"
 passphrase = "Encryption passphrase"
-vault_passphrase = "Local vault passphrase"
-vault_passphrase_confirmation = "Confirm local vault passphrase"
+vault_passphrase = "Local secrets vault passphrase"
+vault_passphrase_confirmation = "Confirm local secrets vault passphrase"
 
 [placeholders.saved]
 keep_existing = "(saved — leave blank to keep)"
@@ -464,9 +460,9 @@ filter = "Search forwarding rules by label..."
 
 [placeholders.snippets]
 description_example = "Example: check network load"
-new_package_name = "New package name"
+new_package_name = "New group name"
 script_body = "Write your script here..."
-filter = "Search descriptions, packages, or scripts..."
+filter = "Search descriptions, groups, or scripts..."
 
 [placeholders.hosts]
 filter = "Search connections, groups..."
@@ -628,7 +624,7 @@ axis_minutes_ago = "-{minutes}m"
 sidebar_title = "Chat"
 chat = "Conversations"
 empty = "Start a conversation from the composer below."
-placeholder = "Describe what you want to build"
+placeholder = "Describe what you want the assistant to do"
 send_pending = "Agent is thinking..."
 thinking = "Thinking..."
 thinking_title = "Thinking"
@@ -947,7 +943,7 @@ single_message = "1 file already exists at the destination."
 multi_message = "{count} files already exist at the destination."
 
 [sftp.prompts.confirm_delete]
-title = "Delete remote files?"
+title = "Delete remote items?"
 confirm = "Delete"
 single_message = "\"{name}\" will be permanently deleted."
 multi_message = "{count} items will be permanently deleted."
@@ -1145,7 +1141,7 @@ cmd = "CMD"
 [hosts.editor.fields]
 address = "Address"
 ssh_port = "SSH Port"
-label = "Label"
+label = "Name"
 group = "Group"
 tags = "Tags"
 backspace = "Backspace"
@@ -1248,9 +1244,9 @@ managed_key_noun_other = "managed keys"
 agent_identity_noun_one = "agent identity"
 agent_identity_noun_other = "agent identities"
 preparing_new_managed_key = "Preparing a new managed key"
-closed_sidebar = "Closed keychain sidebar"
+closed_sidebar = "Closed SSH keys sidebar"
 selected_import_file = "Selected import file {path}"
-load_failed = "Keychain load failed: {error}"
+load_failed = "SSH keys failed to load: {error}"
 loaded = "Loaded {managed_count} {managed_keys_label} and {agent_count} {agent_identities_label}."
 loaded_agent_scan_failed = "Loaded {managed_count} {managed_keys_label}, but agent scan failed: {error}"
 storage_unavailable = "Managed key storage is unavailable in this environment."
@@ -1284,13 +1280,13 @@ count_one = "{count} snippet"
 count_other = "{count} snippets"
 
 [snippets.page]
-packages = "Packages"
+packages = "Groups"
 snippets = "Snippets"
 
 [snippets.empty]
 no_snippets = "No snippets yet. Click the add button to create your first reusable script."
 no_search_matches = "No snippets match the current search."
-no_package_matches = "No snippets match the selected package."
+no_package_matches = "No snippets match the selected group."
 
 [snippets.editor]
 edit_title = "Edit Snippet"
@@ -1298,18 +1294,18 @@ create_title = "Create Snippet"
 cancel = "Cancel"
 save = "Save Snippet"
 general = "General"
-description = "Manage reusable shell commands grouped by package."
+description = "Manage reusable shell commands organized into groups."
 action_description = "Action description"
-package = "Package"
-no_existing_packages = "No existing packages"
-select_existing_package = "Select existing package"
+package = "Group"
+no_existing_packages = "No existing groups"
+select_existing_package = "Select existing group"
 script = "Script"
 
 [snippets.messages]
 preparing_new = "Preparing a new snippet"
 editing = "Editing snippet {description}"
 closed_sidebar = "Closed snippet sidebar"
-filtering_by_package = "Filtering snippets by {package}"
+filtering_by_package = "Filtering snippets by group {package}"
 viewing_all = "Viewing all snippets"
 saved = "Saved snippet {description}"
 saved_memory_only = "Saved {description} in memory only"
@@ -1332,15 +1328,15 @@ title = "Attachment failed"
 
 [navigation.section.hosts]
 title = "Hosts"
-subtitle = "Saved machines and live access windows."
+subtitle = "Saved connections."
 
 [navigation.section.keychain]
-title = "Keychain"
-subtitle = "Passwords, keys, and passphrase storage."
+title = "SSH Keys"
+subtitle = "Managed keys and SSH agent identities."
 
 [navigation.section.forwarding]
-title = "Forward"
-subtitle = "Reverse and local tunnel lanes."
+title = "Port Forwarding"
+subtitle = "Local and remote SSH port forwarding."
 
 [navigation.section.snippets]
 title = "Snippets"
@@ -1352,7 +1348,7 @@ subtitle = "Fingerprints and trust decisions."
 
 [navigation.section.settings]
 title = "Settings"
-subtitle = "Appearance, font, and theme preferences."
+subtitle = "Application, connection, sync, and AI settings."
 
 [navigation.messages]
 opened_new_hosts_tab = "Opened a new Hosts tab"
@@ -1528,14 +1524,6 @@ save_action = "Save"
 title = "Provider"
 description = "Choose where to store your configuration backup. Select None to disable sync."
 
-[settings.sync.gist.enabled]
-label = "GitHub Gist sync"
-description = "Enable synchronization via GitHub Gist. Requires an encryption passphrase."
-
-[settings.sync.webdav.enabled]
-label = "WebDAV sync"
-description = "Enable synchronization via WebDAV. Requires an encryption passphrase."
-
 [settings.sync.provider.backend]
 label = "Backend"
 description = "Select a sync backend."
@@ -1547,15 +1535,13 @@ webdav = "WebDAV"
 
 [settings.sync.gist_group]
 title = "GitHub Gist"
-description = "Bind an existing secret Gist by ID, or leave the ID empty to create one on the first push. The token requires the `gist` scope."
+description = "Bind an existing secret Gist by ID, or leave the ID empty to create one on the first push. The token requires the gist scope."
 
 [settings.sync.gist.token]
 label = "Personal Access Token"
-description = "Never stored in plain text. Saved to the OS keychain by default, or to the local vault when enabled."
 
 [settings.sync.gist.gist_id]
 label = "Gist ID"
-description = "Paste an existing Gist ID or full Gist URL to bind this device to an existing sync remote."
 
 [settings.sync.webdav_group]
 title = "WebDAV"
@@ -1563,96 +1549,93 @@ description = "Upload to any WebDAV server (Nextcloud, Owncloud, etc.). The URL 
 
 [settings.sync.webdav.url]
 label = "Server URL"
-description = "Example: https://cloud.example.com/remote.php/dav/files/user/miaominal_sync.json"
 
 [settings.sync.webdav.username]
 label = "Username"
-description = "WebDAV account username."
 
 [settings.sync.webdav.password]
 label = "Password"
-description = "Never stored in plain text. Saved to the OS keychain by default, or to the local vault when enabled."
 
 [settings.sync.encryption_group]
 title = "End-to-end Encryption"
-description = "Passwords and SSH private keys are encrypted with AES-256-GCM using a key derived from this passphrase (Argon2id). Leave blank to skip encrypting secrets."
+description = "Passwords and SSH private keys are encrypted with AES-256-GCM using a key derived from this passphrase with Argon2id. Set an encryption passphrase before enabling sync."
 
 [settings.sync.vault_group]
-title = "Local Vault"
+title = "Local Secrets Vault"
 description = "Protect locally stored passwords, sync credentials, and managed private keys with a separate device-only vault. Regular sync settings such as URLs, usernames, and toggles stay in the normal config files."
 
 [settings.sync.vault.status]
 label = "Vault status"
-description = "The local vault can stay locked until you explicitly unlock it for the current app session."
+description = "The local secrets vault can stay locked until you explicitly unlock it for the current app session."
 
 [settings.sync.vault.state]
-disabled = "Using OS keychain"
-locked = "Vault enabled, currently locked"
-unlocked = "Vault unlocked for this session"
+disabled = "Using system credential store"
+locked = "Secrets vault enabled, currently locked"
+unlocked = "Secrets vault unlocked for this session"
 
 [settings.sync.vault.passphrase]
-label = "Vault passphrase"
+label = "Secrets vault passphrase"
 description = "Use a device-only passphrase that is different from your sync encryption passphrase."
-unlocked_hint = "The local vault is unlocked for this session. Lock it again to require the passphrase."
+unlocked_hint = "The local secrets vault is unlocked for this session. Lock it again to require the passphrase."
 
 [settings.sync.vault.confirm_passphrase]
-label = "Confirm vault passphrase"
+label = "Confirm secrets vault passphrase"
 
 [settings.sync.vault.auto_lock_duration]
 label = "Auto-lock after"
-description = "How long to keep the local vault unlocked after a successful unlock."
+description = "How long to keep the local secrets vault unlocked after a successful unlock."
 
 [settings.sync.vault.disable]
-label = "Disable local vault"
-description = "Move saved secrets back to the OS keychain and stop requiring the local vault on startup."
+label = "Disable local secrets vault"
+description = "Move saved secrets back to the system credential store and stop requiring the local secrets vault on startup."
 
 [settings.sync.vault.actions]
-enable = "Enable vault"
-unlock = "Unlock vault"
+enable = "Enable secrets vault"
+unlock = "Unlock secrets vault"
 lock = "Lock now"
-disable = "Use OS keychain"
-change_passphrase = "Update vault passphrase"
+disable = "Use system credential store"
+change_passphrase = "Update secrets vault passphrase"
 
 [settings.sync.vault.passphrase_required_error]
-message = "Enter a local vault passphrase before enabling or unlocking the vault."
+message = "Enter a local secrets vault passphrase before enabling or unlocking the vault."
 
 [settings.sync.vault.passphrase_confirmation_required_error]
-message = "Confirm the local vault passphrase before enabling the vault."
+message = "Confirm the local secrets vault passphrase before enabling the vault."
 
 [settings.sync.vault.passphrase_mismatch_error]
-message = "The local vault passphrases do not match."
+message = "The local secrets vault passphrases do not match."
 
 [settings.sync.vault.disable_requires_unlock_error]
-message = "Unlock the local vault before moving saved secrets back to the OS keychain."
+message = "Unlock the local secrets vault before moving saved secrets back to the system credential store."
 
 [settings.sync.vault.change_requires_unlock_error]
-message = "Unlock the local vault before updating its passphrase."
+message = "Unlock the local secrets vault before updating its passphrase."
 
 [settings.sync.vault.notifications]
-enabled_title = "Local vault enabled"
-enabled_message = "Migrated saved secrets into the local vault and switched new writes away from the OS keychain."
-unlocked_title = "Local vault unlocked"
+enabled_title = "Local secrets vault enabled"
+enabled_message = "Migrated saved secrets into the local secrets vault and switched new writes away from the system credential store."
+unlocked_title = "Local secrets vault unlocked"
 unlocked_message = "Local secrets are available for this app session."
-locked_title = "Local vault locked"
-locked_message = "Local secrets are locked again until you enter the vault passphrase."
-disabled_title = "Local vault disabled"
-disabled_message = "Moved saved secrets back to the OS keychain and stopped using the local vault on startup."
-passphrase_changed_title = "Vault passphrase updated"
-passphrase_changed_message = "Re-encrypted the local vault with the new passphrase for this device."
-failed_title = "Local vault action failed"
+locked_title = "Local secrets vault locked"
+locked_message = "Local secrets are locked again until you enter the secrets vault passphrase."
+disabled_title = "Local secrets vault disabled"
+disabled_message = "Moved saved secrets back to the system credential store and stopped using the local secrets vault on startup."
+passphrase_changed_title = "Secrets vault passphrase updated"
+passphrase_changed_message = "Re-encrypted the local secrets vault with the new passphrase for this device."
+failed_title = "Local secrets vault action failed"
 failed_message = "{action} failed: {error}"
 
 [settings.sync.vault.dialogs.disable_confirm]
-title = "Use OS keychain instead?"
-message = "Saved passwords, sync credentials, and managed private keys will be moved back to the OS keychain on this device, and the local vault will no longer be required on startup."
+title = "Use the system credential store instead?"
+message = "Saved passwords, sync credentials, and managed private keys will be moved back to the system credential store on this device, and the local secrets vault will no longer be required on startup."
 confirm = "Move secrets and disable vault"
 
 [settings.sync.vault.access_required_error]
-message = "Unlock the local vault in Settings > Sync and try again."
+message = "Unlock the local secrets vault in Settings > Sync and try again."
 
 [settings.sync.encryption.passphrase]
 label = "Encryption passphrase"
-description = "Stored in the OS keychain by default, or in the local vault when enabled. All devices must use the same passphrase."
+description = "Stored in the system credential store by default, or in the local secrets vault when enabled. All devices must use the same passphrase."
 configured_hint = "Configured for this device. Update it when you need to rotate the shared sync secret."
 unconfigured_hint = "Required before enabling sync providers. All devices must use the same passphrase."
 
@@ -1684,18 +1667,11 @@ cleared_message = "Cleared the sync encryption passphrase for this device."
 clear_failed_title = "Failed to clear sync passphrase"
 clear_failed_message = "Failed to clear the sync encryption passphrase: {error}"
 
-[settings.sync.passphrase_required_error]
-message = "Please set an encryption passphrase before enabling sync."
-
 [settings.sync.save_feedback]
 saved_title = "Sync setting saved"
 saved_message = "Saved {field}."
 failed_title = "Failed to save sync setting"
 failed_message = "Failed to save {field}: {error}"
-
-[settings.sync.toggle_failed_error]
-title = "Failed to update sync setting"
-message = "Failed to update {provider} sync: {error}"
 
 [settings.sync.provider_required_error]
 title = "Sync provider required"
@@ -1787,20 +1763,20 @@ key_binding_updated = "Key binding updated: {name} -> {binding}"
 key_binding_reset = "Key binding reset: {name} -> {binding}"
 right_click_context_menu = "Terminal right click opens the context menu"
 right_click_copy_paste = "Terminal right click copies selection or pastes clipboard"
-shift_right_click_enabled = "Shift+Right click opens the terminal context menu"
-shift_right_click_disabled = "Shift+Right click no longer opens the terminal context menu"
+shift_right_click_enabled = "Shift + right-click opens the terminal context menu"
+shift_right_click_disabled = "Shift + right-click no longer opens the terminal context menu"
 auto_collect_session_monitoring_enabled = "Session monitoring will start collecting on connect"
 auto_collect_session_monitoring_disabled = "Session monitoring auto-collection disabled"
 last_tab_close_behavior_exit = "Closing the last tab will quit the application"
 last_tab_close_behavior_open_home = "Closing the last tab will open a new home tab"
 monitor_history_duration_changed = "Monitor history window updated"
-local_vault_auto_lock_duration_changed = "Local vault auto-lock timeout updated"
+local_vault_auto_lock_duration_changed = "Local secrets vault auto-lock timeout updated"
 session_monitoring_started = "Remote monitoring started for this session"
 session_monitoring_pending = "Remote monitoring will start when this session becomes ready"
 session_monitoring_start_failed = "Couldn't start remote monitoring: {error}"
 
 [agent.mode]
-ask = "ASK"
+ask = "Ask"
 execute = "Execute"
-non_blocking = "Non-block"
+non_blocking = "Non-blocking"
 full_auto = "Auto"
