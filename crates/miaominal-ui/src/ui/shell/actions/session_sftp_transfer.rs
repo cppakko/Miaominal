@@ -1,8 +1,10 @@
 use super::super::*;
 use crate::ui::i18n;
 use miaominal_services::{PlannedSftpDownload, SftpService};
-use rfd::FileDialog;
+use rfd::AsyncFileDialog;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
 struct PreparedSftpDownloads {
     downloads: Vec<PlannedSftpDownload>,
@@ -38,31 +40,34 @@ fn choose_terminal_sftp_download_destination(
     selected_entries: Vec<SftpEntry>,
     initial_directory: &Path,
     window: &Window,
-) -> Option<PreparedSftpDownloads> {
+) -> Pin<Box<dyn Future<Output = Option<PreparedSftpDownloads>> + 'static>> {
     if should_use_single_file_save_dialog(&selected_entries) {
-        let entry = &selected_entries[0];
-        let mut dialog = FileDialog::new()
+        let entry = selected_entries[0].clone();
+        let mut dialog = AsyncFileDialog::new()
             .set_parent(window)
             .set_title(i18n::string("sftp.dialogs.download_file_title"))
             .set_file_name(entry.filename.clone());
         if initial_directory.is_dir() {
             dialog = dialog.set_directory(initial_directory);
         }
-        let local_path = dialog.save_file()?;
-        return Some(prepare_single_sftp_file_download(entry, local_path));
+        return Box::pin(async move {
+            let local_path = dialog.save_file().await?.path().to_path_buf();
+            Some(prepare_single_sftp_file_download(&entry, local_path))
+        });
     }
 
-    let mut dialog = FileDialog::new()
+    let mut dialog = AsyncFileDialog::new()
         .set_parent(window)
         .set_title(i18n::string("sftp.dialogs.download_folder_title"));
     if initial_directory.is_dir() {
         dialog = dialog.set_directory(initial_directory);
     }
-    let local_base = dialog.pick_folder()?;
-
-    Some(PreparedSftpDownloads {
-        downloads: SftpService::plan_downloads(selected_entries, &local_base),
-        overwrite_confirmed: false,
+    Box::pin(async move {
+        let local_base = dialog.pick_folder().await?.path().to_path_buf();
+        Some(PreparedSftpDownloads {
+            downloads: SftpService::plan_downloads(selected_entries, &local_base),
+            overwrite_confirmed: false,
+        })
     })
 }
 
@@ -210,13 +215,13 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((commands, local_base)) = self
+        let Some(local_base) = self
             .workspace_state
             .tabs
             .iter()
             .find(|tab| tab.id == tab_id)
             .and_then(TabState::as_sftp)
-            .and_then(|sftp| Some((sftp.commands.clone()?, sftp.local_path.clone())))
+            .and_then(|sftp| sftp.commands.as_ref().map(|_| sftp.local_path.clone()))
         else {
             return;
         };
@@ -239,19 +244,49 @@ impl AppView {
             self.session_side_panel_sftp_tab_id(),
             tab_id,
         );
-        let prepared = if prompt_for_destination {
-            let Some(prepared) =
-                choose_terminal_sftp_download_destination(selected_entries, &local_base, window)
-            else {
-                return;
-            };
-            prepared
-        } else {
+        if prompt_for_destination {
+            let destination =
+                choose_terminal_sftp_download_destination(selected_entries, &local_base, window);
+            cx.spawn(async move |this, cx| {
+                let Some(prepared) = destination.await else {
+                    return;
+                };
+                this.update(cx, |this, cx| {
+                    this.queue_prepared_sftp_downloads(tab_id, prepared, cx);
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+
+        self.queue_prepared_sftp_downloads(
+            tab_id,
             PreparedSftpDownloads {
                 downloads: SftpService::plan_downloads(selected_entries, &local_base),
                 overwrite_confirmed: false,
-            }
+            },
+            cx,
+        );
+    }
+
+    fn queue_prepared_sftp_downloads(
+        &mut self,
+        tab_id: usize,
+        prepared: PreparedSftpDownloads,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commands) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp)
+            .and_then(|sftp| sftp.commands.clone())
+        else {
+            return;
         };
+
         let pairs = prepared.downloads;
 
         let conflict_count = if prepared.overwrite_confirmed {

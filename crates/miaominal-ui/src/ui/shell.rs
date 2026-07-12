@@ -122,11 +122,12 @@ pub(in crate::ui::shell) use state::{
     PendingWebSearchConfigPopupState, SecretVisibilityState, SessionAgentAutoScrollState,
     SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
     SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
-    SessionConnectionState, SessionMonitoringState, SessionPurpose, SessionSidePanelView,
-    SessionTabState, SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState,
-    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow,
-    SftpTransferStatus, ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason,
-    SyncUiState, TabKind, TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
+    SessionConnectionState, SessionMonitoringState, SessionPurpose,
+    SessionSftpProgressCenterDragState, SessionSidePanelView, SessionTabState,
+    SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
+    SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow, SftpTransferStatus,
+    ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason, SyncUiState, TabKind,
+    TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
     trailing_at_mention_query,
 };
 use std::collections::{HashMap, HashSet};
@@ -152,6 +153,7 @@ pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgb
 
 const APP_TITLE: &str = "Miaominal";
 pub(in crate::ui::shell) const SESSION_MONITOR_PANEL_WIDTH: f32 = 356.0;
+pub(in crate::ui::shell) const SESSION_SFTP_PROGRESS_DEFAULT_FLEX: f32 = 0.26;
 pub(in crate::ui::shell) const TERMINAL_SCROLLBAR_IDLE_HIDE_DELAY: Duration =
     Duration::from_millis(1200);
 pub(in crate::ui::shell) const KEYCHAIN_DEPLOY_DEFAULT_LOCATION: &str = ".ssh";

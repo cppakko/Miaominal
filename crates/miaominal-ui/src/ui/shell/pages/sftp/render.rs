@@ -1462,6 +1462,10 @@ impl AppView {
             .count();
         let header =
             self.render_sftp_progress_center_header(transfer_count, active_count, failed_count);
+        let scroll_handle = self
+            .workspace_state
+            .sftp_progress_center_scroll_handle
+            .clone();
 
         let content = if transfers.is_empty() {
             div()
@@ -1481,11 +1485,20 @@ impl AppView {
             }
 
             div()
+                .id("sftp-progress-center-scroll-shell")
+                .relative()
                 .size_full()
                 .min_h(px(0.0))
-                .overflow_y_scrollbar()
-                .p_2()
-                .child(rows)
+                .child(
+                    div()
+                        .id("sftp-progress-center-scroll")
+                        .size_full()
+                        .track_scroll(&scroll_handle)
+                        .overflow_y_scroll()
+                        .p_2()
+                        .child(rows),
+                )
+                .vertical_scrollbar(&scroll_handle)
                 .into_any_element()
         };
 

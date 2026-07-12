@@ -1796,6 +1796,7 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) active_topbar_tab: Option<usize>,
     pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_monitor_scroll_handle: ScrollHandle,
+    pub(in crate::ui::shell) sftp_progress_center_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_agent_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_agent_history_scroll_handle: VirtualListScrollHandle,
     pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
@@ -1812,6 +1813,9 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) visible_primary_view: Option<PrimaryViewKind>,
     pub(in crate::ui::shell) session_agent_panel_width: f32,
     pub(in crate::ui::shell) session_agent_panel_drag: Option<SessionAgentPanelDragState>,
+    pub(in crate::ui::shell) session_sftp_progress_center_flex: f32,
+    pub(in crate::ui::shell) session_sftp_progress_center_drag:
+        Option<SessionSftpProgressCenterDragState>,
     pub(in crate::ui::shell) terminal_originated_selection_drag: Option<PaneId>,
     pub(in crate::ui::shell) session_agent_auto_scroll: Option<SessionAgentAutoScrollState>,
     pub(in crate::ui::shell) session_agent_auto_scroll_generation: u64,
@@ -1823,6 +1827,13 @@ pub(in crate::ui::shell) struct WorkspaceState {
 pub(in crate::ui::shell) struct SessionAgentPanelDragState {
     pub(in crate::ui::shell) initial_pointer: f32,
     pub(in crate::ui::shell) initial_width: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct SessionSftpProgressCenterDragState {
+    pub(in crate::ui::shell) initial_pointer: f32,
+    pub(in crate::ui::shell) initial_flex: f32,
+    pub(in crate::ui::shell) container_height: Pixels,
 }
 
 #[derive(Debug, Clone)]
