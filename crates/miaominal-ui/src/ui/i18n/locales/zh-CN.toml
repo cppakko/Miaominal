@@ -819,17 +819,29 @@ remote_section = "远程"
 selection_count = "已选 {selected}/{count}"
 transfer_idle = "暂无活动传输"
 transfer_children_truncated = "仅显示最近 {shown} 个文件子任务，共 {total} 个"
+transfer_center_title = "传输任务"
+transfer_count = "共 {count} 项"
+transfer_active_count = "活动 {count}"
+transfer_failed_count = "失败 {count}"
+
+[sftp.dialogs]
+download_file_title = "选择下载文件的保存位置"
+download_folder_title = "选择下载内容的保存文件夹"
 
 [sftp.tooltips]
 collapse_transfer_children = "收起文件子任务"
+cancel_transfer = "取消传输"
 create_directory = "新建远程文件夹"
 download_selected = "下载选中的远程项"
 edit_path = "编辑路径"
 expand_transfer_children = "展开文件子任务"
 go_up = "返回上级"
 hide_progress_center = "隐藏传输进度"
+pause_transfer = "暂停传输"
 refresh_local = "刷新本地文件夹"
 refresh_remote = "刷新远程文件夹"
+remove_transfer = "移除传输记录"
+resume_transfer = "恢复传输"
 show_progress_center = "显示传输进度"
 upload_selected = "上传选中的本地项"
 
@@ -839,7 +851,7 @@ running = "进行中"
 paused = "已暂停"
 done = "已完成"
 cancelled = "已取消"
-failed = "失败 · {message}"
+failed_short = "失败"
 
 [sftp.messages]
 opened_tab_for = "已为 {profile} 打开 SFTP 标签页"

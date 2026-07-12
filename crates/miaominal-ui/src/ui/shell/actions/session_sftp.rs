@@ -249,7 +249,7 @@ impl AppView {
         &mut self,
         table_entity: &Entity<TableState<SftpBrowserTableDelegate>>,
         event: &TableEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(tab_id) = self.sftp_browser_event_tab_id(table_entity, cx) else {
@@ -308,7 +308,7 @@ impl AppView {
                 if is_directory {
                     self.navigate_sftp_remote_into_selected(tab_id, cx);
                 } else {
-                    self.queue_sftp_download_path(tab_id, remote_path, cx);
+                    self.queue_sftp_download_path(tab_id, remote_path, window, cx);
                 }
             }
             TableEvent::ClearSelection => {

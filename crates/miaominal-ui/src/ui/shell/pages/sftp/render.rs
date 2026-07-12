@@ -94,6 +94,127 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn transfer_order_stably_prioritizes_current_tab() {
+        let mut transfers = vec![
+            (2, "first"),
+            (1, "current-a"),
+            (2, "second"),
+            (1, "current-b"),
+        ];
+
+        prioritize_sftp_transfer_tab(&mut transfers, Some(1));
+
+        assert_eq!(
+            transfers,
+            vec![
+                (1, "current-a"),
+                (1, "current-b"),
+                (2, "first"),
+                (2, "second")
+            ]
+        );
+    }
+
+    #[test]
+    fn transfer_order_is_unchanged_without_a_current_tab() {
+        let mut transfers = vec![(2, "first"), (1, "second")];
+
+        prioritize_sftp_transfer_tab(&mut transfers, None);
+
+        assert_eq!(transfers, vec![(2, "first"), (1, "second")]);
+    }
+
+    #[test]
+    fn transfer_progress_metrics_cover_known_and_unknown_totals() {
+        assert_eq!(
+            sftp_progress_metrics(25, Some(100), false, true),
+            SftpProgressMetrics {
+                value: 25.0,
+                loading: false,
+                percent: Some(25),
+            }
+        );
+        assert_eq!(
+            sftp_progress_metrics(32, None, false, true),
+            SftpProgressMetrics {
+                value: 0.0,
+                loading: true,
+                percent: None,
+            }
+        );
+        assert_eq!(
+            sftp_progress_metrics(32, None, true, false),
+            SftpProgressMetrics {
+                value: 100.0,
+                loading: false,
+                percent: Some(100),
+            }
+        );
+        assert_eq!(
+            sftp_progress_metrics(0, Some(0), true, false),
+            SftpProgressMetrics {
+                value: 100.0,
+                loading: false,
+                percent: Some(100),
+            }
+        );
+    }
+
+    #[test]
+    fn transfer_status_tones_keep_failure_distinct_from_warning() {
+        assert_eq!(
+            sftp_transfer_status_tone(&SftpTransferStatus::Queued),
+            SftpTransferTone::Neutral
+        );
+        assert_eq!(
+            sftp_transfer_status_tone(&SftpTransferStatus::Paused),
+            SftpTransferTone::Warning
+        );
+        assert_eq!(
+            sftp_transfer_status_tone(&SftpTransferStatus::Failed("boom".into())),
+            SftpTransferTone::Error
+        );
+        assert_eq!(
+            sftp_transfer_child_status_tone(&SftpTransferChildStatus::Failed("boom".into())),
+            SftpTransferTone::Error
+        );
+    }
+
+    #[test]
+    fn transfer_action_ids_are_unique_by_tab_transfer_and_action() {
+        let pause = sftp_transfer_action_id(1, TransferId(7), "pause");
+        let resume = sftp_transfer_action_id(1, TransferId(7), "resume");
+        let other_tab = sftp_transfer_action_id(2, TransferId(7), "pause");
+        let other_transfer = sftp_transfer_action_id(1, TransferId(8), "pause");
+
+        assert_ne!(pause, resume);
+        assert_ne!(pause, other_tab);
+        assert_ne!(pause, other_transfer);
+    }
+
+    #[test]
+    fn transfer_display_name_prefers_source_basename() {
+        let transfer = SftpTransferRow {
+            transfer_id: TransferId(1),
+            direction: TransferDirection::Upload,
+            source: PathBuf::from(r"C:\work\archive.zip"),
+            destination: "/srv/archive.zip".into(),
+            bytes_complete: 0,
+            bytes_total: None,
+            status: SftpTransferStatus::Queued,
+            bytes_per_second: None,
+            last_progress_at: None,
+            last_bytes_complete: 0,
+            is_directory: false,
+            expanded: false,
+            children: std::collections::VecDeque::new(),
+            child_count: 0,
+        };
+
+        assert_eq!(sftp_transfer_display_name(&transfer), "archive.zip");
+    }
 }
 
 fn sftp_usable_container_size(size: Pixels) -> f32 {
@@ -655,8 +776,189 @@ where
         )
 }
 
+const SFTP_TRANSFER_ACTION_SIZE: f32 = 30.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SftpTransferTone {
+    Neutral,
+    Info,
+    Warning,
+    Success,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SftpProgressMetrics {
+    value: f32,
+    loading: bool,
+    percent: Option<u8>,
+}
+
+fn sftp_progress_metrics(
+    bytes_complete: u64,
+    bytes_total: Option<u64>,
+    done: bool,
+    loading: bool,
+) -> SftpProgressMetrics {
+    match bytes_total {
+        Some(total) if total > 0 => {
+            let value = ((bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0);
+            SftpProgressMetrics {
+                value,
+                loading: false,
+                percent: Some(value.round() as u8),
+            }
+        }
+        Some(_) => SftpProgressMetrics {
+            value: if done { 100.0 } else { 0.0 },
+            loading: false,
+            percent: Some(if done { 100 } else { 0 }),
+        },
+        None if done => SftpProgressMetrics {
+            value: 100.0,
+            loading: false,
+            percent: Some(100),
+        },
+        None => SftpProgressMetrics {
+            value: 0.0,
+            loading,
+            percent: None,
+        },
+    }
+}
+
+fn sftp_transfer_status_tone(status: &SftpTransferStatus) -> SftpTransferTone {
+    match status {
+        SftpTransferStatus::Queued | SftpTransferStatus::Cancelled => SftpTransferTone::Neutral,
+        SftpTransferStatus::Running => SftpTransferTone::Info,
+        SftpTransferStatus::Paused => SftpTransferTone::Warning,
+        SftpTransferStatus::Done => SftpTransferTone::Success,
+        SftpTransferStatus::Failed(_) => SftpTransferTone::Error,
+    }
+}
+
+fn sftp_transfer_child_status_tone(status: &SftpTransferChildStatus) -> SftpTransferTone {
+    match status {
+        SftpTransferChildStatus::Running => SftpTransferTone::Info,
+        SftpTransferChildStatus::Paused => SftpTransferTone::Warning,
+        SftpTransferChildStatus::Done => SftpTransferTone::Success,
+        SftpTransferChildStatus::Cancelled => SftpTransferTone::Neutral,
+        SftpTransferChildStatus::Failed(_) => SftpTransferTone::Error,
+    }
+}
+
+fn sftp_transfer_tone_colors(tone: SftpTransferTone) -> (u32, u32, u32) {
+    let material = miaominal_settings::current_theme().material;
+    let roles = material.roles;
+    let extended = material.extended;
+
+    match tone {
+        SftpTransferTone::Neutral => (
+            roles.on_surface_variant,
+            roles.surface_container_highest,
+            roles.on_surface_variant,
+        ),
+        SftpTransferTone::Info => (
+            extended.info.color,
+            extended.info.color_container,
+            extended.info.on_color_container,
+        ),
+        SftpTransferTone::Warning => (
+            extended.warning.color,
+            extended.warning.color_container,
+            extended.warning.on_color_container,
+        ),
+        SftpTransferTone::Success => (
+            extended.success.color,
+            extended.success.color_container,
+            extended.success.on_color_container,
+        ),
+        SftpTransferTone::Error => (roles.error, roles.error_container, roles.on_error_container),
+    }
+}
+
+fn sftp_transfer_status_label(status: &SftpTransferStatus) -> String {
+    i18n::string(match status {
+        SftpTransferStatus::Queued => "sftp.transfer_status.queued",
+        SftpTransferStatus::Running => "sftp.transfer_status.running",
+        SftpTransferStatus::Paused => "sftp.transfer_status.paused",
+        SftpTransferStatus::Done => "sftp.transfer_status.done",
+        SftpTransferStatus::Cancelled => "sftp.transfer_status.cancelled",
+        SftpTransferStatus::Failed(_) => "sftp.transfer_status.failed_short",
+    })
+}
+
+fn sftp_transfer_child_status_label(status: &SftpTransferChildStatus) -> String {
+    i18n::string(match status {
+        SftpTransferChildStatus::Running => "sftp.transfer_status.running",
+        SftpTransferChildStatus::Paused => "sftp.transfer_status.paused",
+        SftpTransferChildStatus::Done => "sftp.transfer_status.done",
+        SftpTransferChildStatus::Cancelled => "sftp.transfer_status.cancelled",
+        SftpTransferChildStatus::Failed(_) => "sftp.transfer_status.failed_short",
+    })
+}
+
+fn sftp_transfer_display_name(transfer: &SftpTransferRow) -> String {
+    transfer
+        .source
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string_lossy().into_owned())
+        .or_else(|| {
+            Path::new(&transfer.destination)
+                .file_name()
+                .filter(|name| !name.is_empty())
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| transfer.source.display().to_string())
+}
+
+fn prioritize_sftp_transfer_tab<T>(items: &mut [(usize, T)], preferred_tab_id: Option<usize>) {
+    if let Some(preferred_tab_id) = preferred_tab_id {
+        items.sort_by_key(|(tab_id, _)| *tab_id != preferred_tab_id);
+    }
+}
+
+fn sftp_transfer_action_id(tab_id: usize, transfer_id: TransferId, action: &str) -> SharedString {
+    SharedString::from(format!("sftp-transfer-{action}-{tab_id}-{}", transfer_id.0))
+}
+
+fn sftp_transfer_action_button(
+    id: impl Into<ElementId>,
+    icon: AppIcon,
+    tooltip: impl Into<SharedString>,
+    destructive: bool,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Div {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let background = if destructive {
+        roles.error_container
+    } else {
+        roles.surface_container_low
+    };
+    let foreground = if destructive {
+        roles.on_error_container
+    } else {
+        roles.on_surface_variant
+    };
+
+    let button = Button::new(id.into())
+        .text()
+        .tooltip(tooltip.into())
+        .size(px(SFTP_TRANSFER_ACTION_SIZE))
+        .p_0()
+        .rounded(px(9.0))
+        .bg(rgb(background))
+        .text_color(rgb(foreground))
+        .child(Icon::new(icon).small())
+        .on_click(move |_, window, cx| on_click(window, cx));
+
+    div().size(px(SFTP_TRANSFER_ACTION_SIZE)).child(button)
+}
+
 fn sftp_progress_center_card(
-    section_id: impl Into<ElementId>,
+    section_id: ElementId,
+    header: impl IntoElement,
     content: impl IntoElement,
 ) -> impl IntoElement {
     let content_shell = div()
@@ -673,43 +975,16 @@ fn sftp_progress_center_card(
         .id(section_id)
         .flex()
         .flex_col()
+        .child(div().w_full().flex_shrink_0().child(header))
         .child(content_shell)
 }
 
-fn sftp_empty_transfer_summary(error: Option<String>) -> impl IntoElement {
-    if let Some(error) = error {
-        let material = miaominal_settings::current_theme().material;
-        let extended = material.extended;
-        return h_flex()
-            .w_full()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .pb_2()
-            .text_size(miaominal_settings::FontSize::Body.scaled())
-            .child(
-                div()
-                    .size(px(7.0))
-                    .rounded(px(999.0))
-                    .bg(rgb(extended.warning.color)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
-                    .text_color(rgb(extended.warning.color))
-                    .child(error),
-            )
-            .into_any_element();
-    }
-
+fn sftp_empty_transfer_summary() -> impl IntoElement {
     shell_compact_empty_state(
-        AppIcon::Forward,
+        AppIcon::ArrowUpDown,
         i18n::string("sftp.ui.transfer_idle"),
-        SFTP_PROGRESS_CENTER_MIN_HEIGHT,
+        0.0,
     )
-    .into_any_element()
 }
 
 fn context_menu_local_sftp_entry(
@@ -871,24 +1146,26 @@ fn build_remote_sftp_context_menu(
         let rename_entity = entity.clone();
         let delete_entity = entity.clone();
         menu = menu.item(
-            PopupMenuItem::new(i18n::string("sftp.menu.download")).on_click(move |_, _, cx| {
-                let entity = download_entity.clone();
-                let path = download_path.clone();
-                entity.update(cx, |this, cx| {
-                    let already_selected = this
-                        .workspace_state
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id)
-                        .and_then(TabState::as_sftp)
-                        .map(|sftp| sftp.selected_remote_paths.iter().any(|p| p == &path))
-                        .unwrap_or(false);
-                    if !already_selected {
-                        this.select_sftp_remote_path(tab_id, path.clone(), cx);
-                    }
-                    this.queue_sftp_download_selected(tab_id, cx);
-                });
-            }),
+            PopupMenuItem::new(i18n::string("sftp.menu.download")).on_click(
+                move |_, window, cx| {
+                    let entity = download_entity.clone();
+                    let path = download_path.clone();
+                    entity.update(cx, |this, cx| {
+                        let already_selected = this
+                            .workspace_state
+                            .tabs
+                            .iter()
+                            .find(|tab| tab.id == tab_id)
+                            .and_then(TabState::as_sftp)
+                            .map(|sftp| sftp.selected_remote_paths.iter().any(|p| p == &path))
+                            .unwrap_or(false);
+                        if !already_selected {
+                            this.select_sftp_remote_path(tab_id, path.clone(), cx);
+                        }
+                        this.queue_sftp_download_selected(tab_id, window, cx);
+                    });
+                },
+            ),
         );
         if is_single_selection && is_file {
             menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.edit")).on_click(
@@ -1152,15 +1429,9 @@ impl AppView {
         entity: Entity<Self>,
         section_id: impl Into<ElementId>,
     ) -> gpui::AnyElement {
-        let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
-        let extended = material.extended;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
-
-        let transfers = self
+        let section_id = section_id.into();
+        let preferred_tab_id = self.preferred_sftp_progress_tab_id();
+        let mut transfers: Vec<(usize, (&SftpTabState, &SftpTransferRow))> = self
             .workspace_state
             .tabs
             .iter()
@@ -1168,467 +1439,563 @@ impl AppView {
             .flat_map(|(tab_id, sftp)| {
                 sftp.transfers
                     .iter()
-                    .map(move |transfer| (tab_id, sftp, transfer))
-            });
+                    .map(move |transfer| (tab_id, (sftp, transfer)))
+            })
+            .collect();
+        prioritize_sftp_transfer_tab(&mut transfers, preferred_tab_id);
 
-        let first_error = self
-            .workspace_state
-            .tabs
+        let transfer_count = transfers.len();
+        let active_count = transfers
             .iter()
-            .filter_map(TabState::as_sftp)
-            .find_map(|sftp| sftp.last_error.clone());
+            .filter(|(_, (_, transfer))| {
+                matches!(
+                    transfer.status,
+                    SftpTransferStatus::Queued
+                        | SftpTransferStatus::Running
+                        | SftpTransferStatus::Paused
+                )
+            })
+            .count();
+        let failed_count = transfers
+            .iter()
+            .filter(|(_, (_, transfer))| matches!(transfer.status, SftpTransferStatus::Failed(_)))
+            .count();
+        let header =
+            self.render_sftp_progress_center_header(transfer_count, active_count, failed_count);
 
-        let mut rows = v_flex().w_full().gap_1().flex_shrink_0();
-        let mut has_transfers = false;
-        for (tab_id, sftp_tab, transfer) in transfers {
-            has_transfers = true;
-            let transfer_id = transfer.transfer_id;
-            let profile_label = self
-                .data
-                .sessions
-                .iter()
-                .find(|profile| profile.id == sftp_tab.profile_id)
-                .map(|profile| profile.name.as_str())
-                .unwrap_or(sftp_tab.profile_id.as_str());
-            let direction_icon = match transfer.direction {
-                TransferDirection::Upload => AppIcon::Upload,
-                TransferDirection::Download => AppIcon::Download,
-            };
-            let progress = transfer.bytes_total.map_or_else(
-                || format_byte_size(Some(transfer.bytes_complete)).to_string(),
+        let content = if transfers.is_empty() {
+            div()
+                .size_full()
+                .min_h(px(0.0))
+                .child(sftp_empty_transfer_summary())
+                .into_any_element()
+        } else {
+            let mut rows = v_flex().w_full().gap_2().flex_shrink_0();
+            for (tab_id, (sftp_tab, transfer)) in transfers {
+                rows = rows.child(self.render_sftp_transfer_card(
+                    entity.clone(),
+                    tab_id,
+                    sftp_tab,
+                    transfer,
+                ));
+            }
+
+            div()
+                .size_full()
+                .min_h(px(0.0))
+                .overflow_y_scrollbar()
+                .p_2()
+                .child(rows)
+                .into_any_element()
+        };
+
+        sftp_progress_center_card(section_id, header, content).into_any_element()
+    }
+
+    fn preferred_sftp_progress_tab_id(&self) -> Option<usize> {
+        self.workspace_state
+            .active_topbar_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| tab.as_sftp().map(|_| tab.id))
+            .or_else(|| self.session_side_panel_sftp_tab_id())
+    }
+
+    fn render_sftp_progress_center_header(
+        &self,
+        transfer_count: usize,
+        active_count: usize,
+        failed_count: usize,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let extended = material.extended;
+
+        h_flex()
+            .w_full()
+            .min_w(px(0.0))
+            .h(px(46.0))
+            .items_center()
+            .gap_2()
+            .px_3()
+            .child(
+                div()
+                    .size(px(30.0))
+                    .flex_shrink_0()
+                    .rounded(px(9.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.primary))
+                    .child(Icon::new(AppIcon::ArrowUpDown).small()),
+            )
+            .child(
+                div()
+                    .text_size(miaominal_settings::FontSize::Heading.scaled())
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(roles.on_surface))
+                    .child(i18n::string("sftp.ui.transfer_center_title")),
+            )
+            .child(badge(
+                i18n::string_args(
+                    "sftp.ui.transfer_count",
+                    &[("count", &transfer_count.to_string())],
+                ),
+                roles.surface_container_highest,
+                roles.on_surface_variant,
+            ))
+            .when(active_count > 0, |this| {
+                this.child(badge(
+                    i18n::string_args(
+                        "sftp.ui.transfer_active_count",
+                        &[("count", &active_count.to_string())],
+                    ),
+                    extended.info.color_container,
+                    extended.info.on_color_container,
+                ))
+            })
+            .when(failed_count > 0, |this| {
+                this.child(badge(
+                    i18n::string_args(
+                        "sftp.ui.transfer_failed_count",
+                        &[("count", &failed_count.to_string())],
+                    ),
+                    roles.error_container,
+                    roles.on_error_container,
+                ))
+            })
+            .into_any_element()
+    }
+
+    fn render_sftp_transfer_card(
+        &self,
+        entity: Entity<Self>,
+        tab_id: usize,
+        sftp_tab: &SftpTabState,
+        transfer: &SftpTransferRow,
+    ) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let transfer_id = transfer.transfer_id;
+        let profile_label = self
+            .data
+            .sessions
+            .iter()
+            .find(|profile| profile.id == sftp_tab.profile_id)
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| sftp_tab.profile_id.clone());
+        let profile_display = truncate_with_ellipsis(&profile_label, 20);
+        let display_name = sftp_transfer_display_name(transfer);
+        let route = format!("{} → {}", transfer.source.display(), transfer.destination);
+        let direction_icon = match transfer.direction {
+            TransferDirection::Upload => AppIcon::Upload,
+            TransferDirection::Download => AppIcon::Download,
+        };
+        let done = matches!(transfer.status, SftpTransferStatus::Done);
+        let loading = matches!(
+            transfer.status,
+            SftpTransferStatus::Queued | SftpTransferStatus::Running
+        );
+        let progress_metrics =
+            sftp_progress_metrics(transfer.bytes_complete, transfer.bytes_total, done, loading);
+        let progress_label = transfer.bytes_total.map_or_else(
+            || format_byte_size(Some(transfer.bytes_complete)).to_string(),
+            |total| {
+                format!(
+                    "{} / {}",
+                    format_byte_size(Some(transfer.bytes_complete)),
+                    format_byte_size(Some(total))
+                )
+            },
+        );
+        let mut progress_details = vec![progress_label];
+        if let Some(percent) = progress_metrics.percent {
+            progress_details.push(format!("{percent}%"));
+        }
+        if matches!(transfer.status, SftpTransferStatus::Running)
+            && let Some(bytes_per_second) = transfer.bytes_per_second
+        {
+            progress_details.push(format!("{}/s", format_byte_size(Some(bytes_per_second))));
+        }
+        let progress_details = progress_details.join(" · ");
+        let tone = sftp_transfer_status_tone(&transfer.status);
+        let (accent, badge_background, badge_foreground) = sftp_transfer_tone_colors(tone);
+        let status_label = sftp_transfer_status_label(&transfer.status);
+        let error_message = match &transfer.status {
+            SftpTransferStatus::Failed(message) => Some(message.clone()),
+            _ => None,
+        };
+        let is_active = matches!(
+            transfer.status,
+            SftpTransferStatus::Queued | SftpTransferStatus::Running | SftpTransferStatus::Paused
+        );
+        let has_children = !transfer.children.is_empty();
+        let expanded = transfer.expanded && has_children;
+
+        let expand_control = if has_children {
+            let expand_entity = entity.clone();
+            sftp_transfer_action_button(
+                sftp_transfer_action_id(tab_id, transfer_id, "expand"),
+                if expanded {
+                    AppIcon::ChevronDown
+                } else {
+                    AppIcon::Next
+                },
+                i18n::string(if expanded {
+                    "sftp.tooltips.collapse_transfer_children"
+                } else {
+                    "sftp.tooltips.expand_transfer_children"
+                }),
+                false,
+                move |_window, cx| {
+                    expand_entity.update(cx, |this, cx| {
+                        this.toggle_sftp_transfer_expanded(tab_id, transfer_id, cx);
+                    });
+                },
+            )
+            .into_any_element()
+        } else {
+            div().size(px(SFTP_TRANSFER_ACTION_SIZE)).into_any_element()
+        };
+
+        let transfer_actions = match &transfer.status {
+            SftpTransferStatus::Queued | SftpTransferStatus::Running => {
+                let pause_entity = entity.clone();
+                let cancel_entity = entity.clone();
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .child(sftp_transfer_action_button(
+                        sftp_transfer_action_id(tab_id, transfer_id, "pause"),
+                        AppIcon::Pause,
+                        i18n::string("sftp.tooltips.pause_transfer"),
+                        false,
+                        move |_window, cx| {
+                            pause_entity.update(cx, |this, cx| {
+                                this.pause_sftp_transfer(tab_id, transfer_id, cx);
+                            });
+                        },
+                    ))
+                    .child(sftp_transfer_action_button(
+                        sftp_transfer_action_id(tab_id, transfer_id, "cancel"),
+                        AppIcon::Close,
+                        i18n::string("sftp.tooltips.cancel_transfer"),
+                        true,
+                        move |_window, cx| {
+                            cancel_entity.update(cx, |this, cx| {
+                                this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                            });
+                        },
+                    ))
+                    .into_any_element()
+            }
+            SftpTransferStatus::Paused => {
+                let resume_entity = entity.clone();
+                let cancel_entity = entity.clone();
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .child(sftp_transfer_action_button(
+                        sftp_transfer_action_id(tab_id, transfer_id, "resume"),
+                        AppIcon::Play,
+                        i18n::string("sftp.tooltips.resume_transfer"),
+                        false,
+                        move |_window, cx| {
+                            resume_entity.update(cx, |this, cx| {
+                                this.resume_sftp_transfer(tab_id, transfer_id, cx);
+                            });
+                        },
+                    ))
+                    .child(sftp_transfer_action_button(
+                        sftp_transfer_action_id(tab_id, transfer_id, "cancel"),
+                        AppIcon::Close,
+                        i18n::string("sftp.tooltips.cancel_transfer"),
+                        true,
+                        move |_window, cx| {
+                            cancel_entity.update(cx, |this, cx| {
+                                this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                            });
+                        },
+                    ))
+                    .into_any_element()
+            }
+            SftpTransferStatus::Done
+            | SftpTransferStatus::Cancelled
+            | SftpTransferStatus::Failed(_) => {
+                let delete_entity = entity.clone();
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .child(sftp_transfer_action_button(
+                        sftp_transfer_action_id(tab_id, transfer_id, "remove"),
+                        AppIcon::Trash,
+                        i18n::string("sftp.tooltips.remove_transfer"),
+                        false,
+                        move |_window, cx| {
+                            delete_entity.update(cx, |this, cx| {
+                                this.remove_sftp_transfer_record(tab_id, transfer_id, cx);
+                            });
+                        },
+                    ))
+                    .into_any_element()
+            }
+        };
+
+        let child_rows = self.render_sftp_transfer_children(tab_id, transfer);
+
+        card_surface(
+            if is_active {
+                roles.surface_container_high
+            } else {
+                roles.surface_container
+            },
+            14.0,
+        )
+        .id(SharedString::from(format!(
+            "sftp-transfer-card-{tab_id}-{}",
+            transfer_id.0
+        )))
+        .w_full()
+        .flex_shrink_0()
+        .p_3()
+        .child(
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .items_center()
+                        .gap_2()
+                        .child(expand_control)
+                        .child(
+                            div()
+                                .size(px(34.0))
+                                .flex_shrink_0()
+                                .rounded(px(10.0))
+                                .bg(rgb(badge_background))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_color(rgb(accent))
+                                .child(Icon::new(direction_icon).small()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(roles.on_surface))
+                                .child(display_name),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "sftp-transfer-profile-{tab_id}-{}",
+                                    transfer_id.0
+                                )))
+                                .max_w(px(160.0))
+                                .flex_shrink_0()
+                                .overflow_hidden()
+                                .tooltip(sftp_path_tooltip(profile_label))
+                                .child(badge(
+                                    profile_display,
+                                    roles.surface_container_highest,
+                                    roles.on_surface_variant,
+                                )),
+                        )
+                        .child(badge(status_label, badge_background, badge_foreground))
+                        .child(transfer_actions),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "sftp-transfer-route-{tab_id}-{}",
+                            transfer_id.0
+                        )))
+                        .w_full()
+                        .min_w(px(0.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .text_color(rgb(roles.on_surface_variant))
+                        .tooltip(sftp_path_tooltip(route.clone()))
+                        .child(route),
+                )
+                .when_some(error_message, |this, message| {
+                    this.child(
+                        div()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .rounded(px(8.0))
+                            .bg(rgb(roles.error_container))
+                            .px_2()
+                            .py_1()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(roles.on_error_container))
+                            .child(message),
+                    )
+                })
+                .child(
+                    Progress::new(format!("sftp-transfer-progress-{tab_id}-{}", transfer_id.0))
+                        .with_size(gpui_component::Size::Small)
+                        .value(progress_metrics.value)
+                        .loading(progress_metrics.loading)
+                        .color(rgb(accent)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(progress_details),
+                )
+                .when(expanded, |this| this.child(child_rows)),
+        )
+        .into_any_element()
+    }
+
+    fn render_sftp_transfer_children(
+        &self,
+        tab_id: usize,
+        transfer: &SftpTransferRow,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let transfer_id = transfer.transfer_id;
+        let mut rows = v_flex().w_full().gap_1().pl(px(38.0));
+        let omitted_child_count = transfer.omitted_child_count();
+
+        if omitted_child_count > 0 {
+            let shown = transfer.children.len().to_string();
+            let total = transfer.child_count.to_string();
+            rows = rows.child(
+                div()
+                    .w_full()
+                    .py_1()
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(i18n::string_args(
+                        "sftp.ui.transfer_children_truncated",
+                        &[("shown", &shown), ("total", &total)],
+                    )),
+            );
+        }
+
+        for child in &transfer.children {
+            let done = matches!(child.status, SftpTransferChildStatus::Done);
+            let loading = matches!(child.status, SftpTransferChildStatus::Running);
+            let metrics =
+                sftp_progress_metrics(child.bytes_complete, child.bytes_total, done, loading);
+            let progress_label = child.bytes_total.map_or_else(
+                || format_byte_size(Some(child.bytes_complete)).to_string(),
                 |total| {
                     format!(
                         "{} / {}",
-                        format_byte_size(Some(transfer.bytes_complete)),
+                        format_byte_size(Some(child.bytes_complete)),
                         format_byte_size(Some(total))
                     )
                 },
             );
-            let progress_value = match transfer.bytes_total {
-                Some(total) if total > 0 => {
-                    ((transfer.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
-                }
-                Some(_) if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
-                Some(_) => 0.0,
-                None if matches!(&transfer.status, SftpTransferStatus::Done) => 100.0,
-                None => 0.0,
+            let progress_label = metrics
+                .percent
+                .map(|percent| format!("{progress_label} · {percent}%"))
+                .unwrap_or(progress_label);
+            let tone = sftp_transfer_child_status_tone(&child.status);
+            let (accent, badge_background, badge_foreground) = sftp_transfer_tone_colors(tone);
+            let status_label = sftp_transfer_child_status_label(&child.status);
+            let error_message = match &child.status {
+                SftpTransferChildStatus::Failed(message) => Some(message.clone()),
+                _ => None,
             };
-            let progress_loading = transfer.bytes_total.is_none()
-                && matches!(
-                    &transfer.status,
-                    SftpTransferStatus::Queued | SftpTransferStatus::Running
-                );
-            let status_label = match &transfer.status {
-                SftpTransferStatus::Queued => i18n::string("sftp.transfer_status.queued"),
-                SftpTransferStatus::Running => i18n::string("sftp.transfer_status.running"),
-                SftpTransferStatus::Paused => i18n::string("sftp.transfer_status.paused"),
-                SftpTransferStatus::Done => i18n::string("sftp.transfer_status.done"),
-                SftpTransferStatus::Cancelled => i18n::string("sftp.transfer_status.cancelled"),
-                SftpTransferStatus::Failed(message) => {
-                    i18n::string_args("sftp.transfer_status.failed", &[("message", message)])
-                }
-            };
-            let accent = match &transfer.status {
-                SftpTransferStatus::Queued => extended.warning.color,
-                SftpTransferStatus::Running => extended.info.color,
-                SftpTransferStatus::Paused => extended.warning.color,
-                SftpTransferStatus::Done => extended.success.color,
-                SftpTransferStatus::Cancelled => roles.on_surface_variant,
-                SftpTransferStatus::Failed(_) => extended.warning.color,
-            };
-            let speed_label = if matches!(&transfer.status, SftpTransferStatus::Running) {
-                transfer
-                    .bytes_per_second
-                    .map(|bps| format!("{}/s", format_byte_size(Some(bps))))
-            } else {
-                None
-            };
-            let transfer_actions = match &transfer.status {
-                SftpTransferStatus::Queued | SftpTransferStatus::Running => {
-                    let pause_entity = entity.clone();
-                    let cancel_entity = entity.clone();
-                    Some(
-                        h_flex()
-                            .items_center()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .child(icon_button(
-                                AppIcon::Pause,
-                                22.0,
-                                6.0,
-                                Some(roles.surface_container_low),
-                                Some(roles.on_surface_variant),
-                                None,
-                                move |_window, cx| {
-                                    pause_entity.update(cx, |this, cx| {
-                                        this.pause_sftp_transfer(tab_id, transfer_id, cx);
-                                    });
-                                },
-                            ))
-                            .child(icon_button(
-                                AppIcon::Close,
-                                22.0,
-                                6.0,
-                                Some(roles.surface_container_low),
-                                Some(roles.on_surface_variant),
-                                None,
-                                move |_window, cx| {
-                                    cancel_entity.update(cx, |this, cx| {
-                                        this.cancel_sftp_transfer(tab_id, transfer_id, cx);
-                                    });
-                                },
-                            ))
-                            .into_any_element(),
-                    )
-                }
-                SftpTransferStatus::Paused => {
-                    let resume_entity = entity.clone();
-                    let cancel_entity = entity.clone();
-                    Some(
-                        h_flex()
-                            .items_center()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .child(icon_button(
-                                AppIcon::Play,
-                                22.0,
-                                6.0,
-                                Some(roles.surface_container_low),
-                                Some(roles.on_surface_variant),
-                                None,
-                                move |_window, cx| {
-                                    resume_entity.update(cx, |this, cx| {
-                                        this.resume_sftp_transfer(tab_id, transfer_id, cx);
-                                    });
-                                },
-                            ))
-                            .child(icon_button(
-                                AppIcon::Close,
-                                22.0,
-                                6.0,
-                                Some(roles.surface_container_low),
-                                Some(roles.on_surface_variant),
-                                None,
-                                move |_window, cx| {
-                                    cancel_entity.update(cx, |this, cx| {
-                                        this.cancel_sftp_transfer(tab_id, transfer_id, cx);
-                                    });
-                                },
-                            ))
-                            .into_any_element(),
-                    )
-                }
-                SftpTransferStatus::Done
-                | SftpTransferStatus::Cancelled
-                | SftpTransferStatus::Failed(_) => {
-                    let delete_entity = entity.clone();
-                    Some(
-                        h_flex()
-                            .items_center()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .child(icon_button(
-                                AppIcon::Trash,
-                                22.0,
-                                6.0,
-                                Some(roles.surface_container_low),
-                                Some(roles.on_surface_variant),
-                                None,
-                                move |_window, cx| {
-                                    delete_entity.update(cx, |this, cx| {
-                                        this.remove_sftp_transfer_record(tab_id, transfer_id, cx);
-                                    });
-                                },
-                            ))
-                            .into_any_element(),
-                    )
-                }
-            };
-
-            let has_children = !transfer.children.is_empty();
-            let expanded = transfer.expanded && has_children;
-            let expand_entity = entity.clone();
-            let expand_control = if has_children {
-                icon_button_with_tooltip(
-                    if expanded {
-                        AppIcon::ChevronDown
-                    } else {
-                        AppIcon::Next
-                    },
-                    i18n::string(if expanded {
-                        "sftp.tooltips.collapse_transfer_children"
-                    } else {
-                        "sftp.tooltips.expand_transfer_children"
-                    }),
-                    20.0,
-                    6.0,
-                    Some(roles.surface_container_low),
-                    Some(roles.on_surface_variant),
-                    None,
-                    move |_window, cx| {
-                        expand_entity.update(cx, |this, cx| {
-                            this.toggle_sftp_transfer_expanded(tab_id, transfer_id, cx);
-                        });
-                    },
-                )
-            } else {
-                div().size(px(20.0))
-            };
-
-            let mut child_rows = v_flex().w_full().gap_1().flex_shrink_0();
-            if expanded {
-                let omitted_child_count = transfer.omitted_child_count();
-                if omitted_child_count > 0 {
-                    let shown = transfer.children.len().to_string();
-                    let total = transfer.child_count.to_string();
-                    child_rows = child_rows.child(
-                        div()
-                            .w_full()
-                            .flex_shrink_0()
-                            .pl(px(40.0))
-                            .pr_2()
-                            .py_1()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(roles.on_surface_variant))
-                            .child(i18n::string_args(
-                                "sftp.ui.transfer_children_truncated",
-                                &[("shown", &shown), ("total", &total)],
-                            )),
-                    );
-                }
-                for child in &transfer.children {
-                    let child_progress = child.bytes_total.map_or_else(
-                        || format_byte_size(Some(child.bytes_complete)).to_string(),
-                        |total| {
-                            format!(
-                                "{} / {}",
-                                format_byte_size(Some(child.bytes_complete)),
-                                format_byte_size(Some(total))
-                            )
-                        },
-                    );
-                    let child_progress_value = match child.bytes_total {
-                        Some(total) if total > 0 => {
-                            ((child.bytes_complete as f32 / total as f32) * 100.0).clamp(0.0, 100.0)
-                        }
-                        Some(_) if matches!(&child.status, SftpTransferChildStatus::Done) => 100.0,
-                        Some(_) => 0.0,
-                        None if matches!(&child.status, SftpTransferChildStatus::Done) => 100.0,
-                        None => 0.0,
-                    };
-                    let child_progress_loading = child.bytes_total.is_none()
-                        && matches!(&child.status, SftpTransferChildStatus::Running);
-                    let (child_status_label, child_accent) = match &child.status {
-                        SftpTransferChildStatus::Running => (
-                            i18n::string("sftp.transfer_status.running"),
-                            extended.info.color,
-                        ),
-                        SftpTransferChildStatus::Paused => (
-                            i18n::string("sftp.transfer_status.paused"),
-                            extended.warning.color,
-                        ),
-                        SftpTransferChildStatus::Done => (
-                            i18n::string("sftp.transfer_status.done"),
-                            extended.success.color,
-                        ),
-                        SftpTransferChildStatus::Cancelled => (
-                            i18n::string("sftp.transfer_status.cancelled"),
-                            roles.on_surface_variant,
-                        ),
-                        SftpTransferChildStatus::Failed(message) => (
-                            i18n::string_args(
-                                "sftp.transfer_status.failed",
-                                &[("message", message)],
-                            ),
-                            extended.warning.color,
-                        ),
-                    };
-
-                    child_rows = child_rows.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "sftp-transfer-child-{tab_id}-{}-{}",
-                                transfer_id.0, child.child_id.0
-                            )))
-                            .w_full()
-                            .flex_shrink_0()
-                            .pl(px(40.0))
-                            .pr_2()
-                            .py_1()
-                            .child(
-                                v_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .size(px(18.0))
-                                                    .flex_shrink_0()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .text_color(rgb(child_accent))
-                                                    .child(Icon::new(AppIcon::File).small()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w(px(0.0))
-                                                    .overflow_hidden()
-                                                    .text_size(
-                                                        miaominal_settings::FontSize::Body.scaled(),
-                                                    )
-                                                    .text_color(rgb(roles.on_surface))
-                                                    .child(child.relative_path.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .text_size(
-                                                        miaominal_settings::FontSize::Body.scaled(),
-                                                    )
-                                                    .text_color(rgb(roles.on_surface_variant))
-                                                    .child(child_progress),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .text_size(
-                                                        miaominal_settings::FontSize::Body.scaled(),
-                                                    )
-                                                    .text_color(rgb(child_accent))
-                                                    .child(child_status_label),
-                                            ),
-                                    )
-                                    .child(
-                                        Progress::new(format!(
-                                            "sftp-transfer-child-progress-{tab_id}-{}-{}",
-                                            transfer_id.0, child.child_id.0
-                                        ))
-                                        .with_size(gpui_component::Size::Small)
-                                        .value(child_progress_value)
-                                        .loading(child_progress_loading)
-                                        .color(rgb(child_accent)),
-                                    ),
-                            ),
-                    );
-                }
-            }
+            let child_path = child.relative_path.clone();
 
             rows = rows.child(
-                div()
+                card_surface(roles.surface_container_low, 10.0)
                     .id(SharedString::from(format!(
-                        "sftp-transfer-row-{}-{}",
-                        tab_id, transfer.transfer_id.0
+                        "sftp-transfer-child-{tab_id}-{}-{}",
+                        transfer_id.0, child.child_id.0
                     )))
                     .w_full()
-                    .flex_shrink_0()
-                    .px_2()
-                    .py_2()
-                    .rounded(px(8.0))
-                    .when(
-                        matches!(
-                            &transfer.status,
-                            SftpTransferStatus::Running | SftpTransferStatus::Paused
-                        ),
-                        |this| this.bg(rgb(roles.surface_container_high)),
-                    )
+                    .p_2()
                     .child(
                         v_flex()
                             .w_full()
-                            .gap_2()
+                            .gap_1()
                             .child(
                                 h_flex()
                                     .w_full()
+                                    .min_w(px(0.0))
                                     .items_center()
-                                    .gap_3()
-                                    .child(expand_control)
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .w(px(20.0))
+                                            .size(px(24.0))
                                             .flex_shrink_0()
+                                            .rounded(px(8.0))
+                                            .bg(rgb(badge_background))
                                             .flex()
                                             .items_center()
                                             .justify_center()
                                             .text_color(rgb(accent))
-                                            .child(Icon::new(direction_icon).small()),
+                                            .child(Icon::new(AppIcon::File).small()),
                                     )
                                     .child(
                                         div()
+                                            .id(SharedString::from(format!(
+                                                "sftp-transfer-child-path-{tab_id}-{}-{}",
+                                                transfer_id.0, child.child_id.0
+                                            )))
                                             .flex_1()
                                             .min_w(px(0.0))
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .tooltip(sftp_path_tooltip(child_path.clone()))
                                             .text_size(miaominal_settings::FontSize::Body.scaled())
                                             .text_color(rgb(roles.on_surface))
-                                            .child(format!(
-                                                "[{}] {} -> {}",
-                                                profile_label,
-                                                transfer.source.display(),
-                                                transfer.destination
-                                            )),
+                                            .child(child_path),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .text_color(rgb(roles.on_surface_variant))
-                                            .child(progress),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .text_color(rgb(accent))
-                                            .child(status_label),
-                                    )
-                                    .when_some(speed_label, |this, speed| {
-                                        this.child(
-                                            div()
-                                                .text_size(
-                                                    miaominal_settings::FontSize::Body.scaled(),
-                                                )
-                                                .text_color(rgb(text_muted))
-                                                .child(speed),
-                                        )
-                                    }),
+                                    .child(badge(status_label, badge_background, badge_foreground)),
+                            )
+                            .when_some(error_message, |this, message| {
+                                this.child(
+                                    div()
+                                        .w_full()
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                                        .text_color(rgb(roles.error))
+                                        .child(message),
+                                )
+                            })
+                            .child(
+                                Progress::new(format!(
+                                    "sftp-transfer-child-progress-{tab_id}-{}-{}",
+                                    transfer_id.0, child.child_id.0
+                                ))
+                                .with_size(gpui_component::Size::Small)
+                                .value(metrics.value)
+                                .loading(metrics.loading)
+                                .color(rgb(accent)),
                             )
                             .child(
-                                h_flex()
-                                    .w_full()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div().flex_1().child(
-                                            Progress::new(format!(
-                                                "sftp-transfer-progress-{tab_id}-{}",
-                                                transfer_id.0
-                                            ))
-                                            .with_size(gpui_component::Size::Small)
-                                            .value(progress_value)
-                                            .loading(progress_loading)
-                                            .color(rgb(accent)),
-                                        ),
-                                    )
-                                    .when_some(transfer_actions, |this, actions| {
-                                        this.child(actions)
-                                    }),
-                            )
-                            .when(expanded, |this| this.child(child_rows)),
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(progress_label),
+                            ),
                     ),
             );
         }
 
-        if !has_transfers {
-            return sftp_progress_center_card(section_id, sftp_empty_transfer_summary(first_error))
-                .into_any_element();
-        }
-
-        sftp_progress_center_card(
-            section_id,
-            div().size_full().overflow_y_scrollbar().p_2().child(rows),
-        )
-        .into_any_element()
+        rows.into_any_element()
     }
 
     fn cache_sftp_browser_container_width(
@@ -1868,9 +2235,9 @@ impl AppView {
                 i18n::string("sftp.tooltips.download_selected"),
                 {
                     let entity = entity.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         entity.update(cx, |this, cx| {
-                            this.queue_sftp_download_selected(tab_id, cx);
+                            this.queue_sftp_download_selected(tab_id, window, cx);
                         });
                     }
                 },
@@ -2276,9 +2643,9 @@ impl AppView {
                 i18n::string("sftp.tooltips.download_selected"),
                 {
                     let entity = entity.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         entity.update(cx, |this, cx| {
-                            this.queue_sftp_download_selected(tab_id, cx);
+                            this.queue_sftp_download_selected(tab_id, window, cx);
                         });
                     }
                 },

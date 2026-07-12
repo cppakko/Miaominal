@@ -1,6 +1,70 @@
 use super::super::*;
 use crate::ui::i18n;
-use miaominal_services::SftpService;
+use miaominal_services::{PlannedSftpDownload, SftpService};
+use rfd::FileDialog;
+use std::path::Path;
+
+struct PreparedSftpDownloads {
+    downloads: Vec<PlannedSftpDownload>,
+    overwrite_confirmed: bool,
+}
+
+fn should_prompt_terminal_sftp_download(
+    active_sftp_tab_id: Option<usize>,
+    session_sftp_tab_id: Option<usize>,
+    target_tab_id: usize,
+) -> bool {
+    active_sftp_tab_id != Some(target_tab_id) && session_sftp_tab_id == Some(target_tab_id)
+}
+
+fn prepare_single_sftp_file_download(
+    entry: &SftpEntry,
+    local_path: PathBuf,
+) -> PreparedSftpDownloads {
+    PreparedSftpDownloads {
+        downloads: vec![PlannedSftpDownload {
+            remote_path: entry.path.clone(),
+            local_path,
+        }],
+        overwrite_confirmed: true,
+    }
+}
+
+fn should_use_single_file_save_dialog(selected_entries: &[SftpEntry]) -> bool {
+    selected_entries.len() == 1 && selected_entries[0].kind == miaominal_sftp::SftpEntryKind::File
+}
+
+fn choose_terminal_sftp_download_destination(
+    selected_entries: Vec<SftpEntry>,
+    initial_directory: &Path,
+    window: &Window,
+) -> Option<PreparedSftpDownloads> {
+    if should_use_single_file_save_dialog(&selected_entries) {
+        let entry = &selected_entries[0];
+        let mut dialog = FileDialog::new()
+            .set_parent(window)
+            .set_title(i18n::string("sftp.dialogs.download_file_title"))
+            .set_file_name(entry.filename.clone());
+        if initial_directory.is_dir() {
+            dialog = dialog.set_directory(initial_directory);
+        }
+        let local_path = dialog.save_file()?;
+        return Some(prepare_single_sftp_file_download(entry, local_path));
+    }
+
+    let mut dialog = FileDialog::new()
+        .set_parent(window)
+        .set_title(i18n::string("sftp.dialogs.download_folder_title"));
+    if initial_directory.is_dir() {
+        dialog = dialog.set_directory(initial_directory);
+    }
+    let local_base = dialog.pick_folder()?;
+
+    Some(PreparedSftpDownloads {
+        downloads: SftpService::plan_downloads(selected_entries, &local_base),
+        overwrite_confirmed: false,
+    })
+}
 
 impl AppView {
     pub(in crate::ui::shell) fn queue_sftp_upload_selected(
@@ -108,6 +172,7 @@ impl AppView {
     pub(in crate::ui::shell) fn queue_sftp_download_selected(
         &mut self,
         tab_id: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(remote_paths) = self
@@ -125,22 +190,24 @@ impl AppView {
             return;
         }
 
-        self.queue_sftp_download_paths(tab_id, remote_paths, cx);
+        self.queue_sftp_download_paths(tab_id, remote_paths, window, cx);
     }
 
     pub(in crate::ui::shell) fn queue_sftp_download_path(
         &mut self,
         tab_id: usize,
         remote_path: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.queue_sftp_download_paths(tab_id, vec![remote_path], cx);
+        self.queue_sftp_download_paths(tab_id, vec![remote_path], window, cx);
     }
 
     fn queue_sftp_download_paths(
         &mut self,
         tab_id: usize,
         remote_paths: Vec<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some((commands, local_base)) = self
@@ -154,16 +221,47 @@ impl AppView {
             return;
         };
 
-        let selected_entries = remote_paths
+        let selected_entries: Vec<_> = remote_paths
             .into_iter()
             .filter_map(|remote| self.resolve_remote_sftp_entry(tab_id, &remote, cx))
             .collect();
-        let pairs = SftpService::plan_downloads(selected_entries, &local_base);
+        if selected_entries.is_empty() {
+            return;
+        }
 
-        let conflict_count = pairs
-            .iter()
-            .filter(|download| download.local_path.exists())
-            .count();
+        let active_sftp_tab_id = self
+            .workspace_state
+            .active_topbar_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| tab.as_sftp().map(|_| tab.id));
+        let prompt_for_destination = should_prompt_terminal_sftp_download(
+            active_sftp_tab_id,
+            self.session_side_panel_sftp_tab_id(),
+            tab_id,
+        );
+        let prepared = if prompt_for_destination {
+            let Some(prepared) =
+                choose_terminal_sftp_download_destination(selected_entries, &local_base, window)
+            else {
+                return;
+            };
+            prepared
+        } else {
+            PreparedSftpDownloads {
+                downloads: SftpService::plan_downloads(selected_entries, &local_base),
+                overwrite_confirmed: false,
+            }
+        };
+        let pairs = prepared.downloads;
+
+        let conflict_count = if prepared.overwrite_confirmed {
+            0
+        } else {
+            pairs
+                .iter()
+                .filter(|download| download.local_path.exists())
+                .count()
+        };
 
         if conflict_count > 0 {
             if let Some(sftp) = self
@@ -327,5 +425,69 @@ impl AppView {
         }
         transfer.expanded = !transfer.expanded;
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote_entry(path: &str, kind: miaominal_sftp::SftpEntryKind) -> SftpEntry {
+        SftpEntry {
+            filename: SftpService::remote_file_name(path),
+            path: path.to_string(),
+            kind,
+            size: None,
+            modified: None,
+            attributes: None,
+            owner: None,
+        }
+    }
+
+    fn remote_file(path: &str) -> SftpEntry {
+        remote_entry(path, miaominal_sftp::SftpEntryKind::File)
+    }
+
+    #[test]
+    fn terminal_download_prompts_only_when_target_is_the_session_sftp_tab() {
+        assert!(should_prompt_terminal_sftp_download(None, Some(7), 7));
+        assert!(!should_prompt_terminal_sftp_download(Some(7), Some(7), 7));
+        assert!(!should_prompt_terminal_sftp_download(None, Some(8), 7));
+    }
+
+    #[test]
+    fn single_file_save_uses_the_exact_native_dialog_path() {
+        let entry = remote_file("/srv/archive.zip");
+        let local_path = PathBuf::from(r"C:\Downloads\renamed.zip");
+
+        let prepared = prepare_single_sftp_file_download(&entry, local_path.clone());
+
+        assert!(prepared.overwrite_confirmed);
+        assert_eq!(prepared.downloads.len(), 1);
+        assert_eq!(prepared.downloads[0].remote_path, entry.path);
+        assert_eq!(prepared.downloads[0].local_path, local_path);
+    }
+
+    #[test]
+    fn single_file_dialog_is_reserved_for_confirmed_regular_files() {
+        assert!(should_use_single_file_save_dialog(&[remote_file(
+            "/srv/archive.zip"
+        )]));
+        assert!(!should_use_single_file_save_dialog(&[remote_entry(
+            "/srv/folder",
+            miaominal_sftp::SftpEntryKind::Directory,
+        )]));
+        assert!(!should_use_single_file_save_dialog(&[remote_entry(
+            "/srv/link",
+            miaominal_sftp::SftpEntryKind::Symlink,
+        )]));
+        assert!(!should_use_single_file_save_dialog(&[remote_entry(
+            "/srv/device",
+            miaominal_sftp::SftpEntryKind::Other,
+        )]));
+        assert!(!should_use_single_file_save_dialog(&[
+            remote_file("/srv/one.txt"),
+            remote_file("/srv/two.txt"),
+        ]));
     }
 }

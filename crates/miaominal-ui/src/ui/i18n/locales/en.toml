@@ -961,17 +961,29 @@ remote_section = "Remote"
 selection_count = "{selected} of {count} selected"
 transfer_idle = "No active transfers"
 transfer_children_truncated = "Showing the latest {shown} of {total} file tasks"
+transfer_center_title = "Transfers"
+transfer_count = "{count} total"
+transfer_active_count = "{count} active"
+transfer_failed_count = "{count} failed"
+
+[sftp.dialogs]
+download_file_title = "Choose where to save the downloaded file"
+download_folder_title = "Choose a folder for the downloaded items"
 
 [sftp.tooltips]
 collapse_transfer_children = "Collapse file tasks"
+cancel_transfer = "Cancel transfer"
 create_directory = "Create remote folder"
 download_selected = "Download selected remote items"
 edit_path = "Edit path"
 expand_transfer_children = "Expand file tasks"
 go_up = "Go up"
 hide_progress_center = "Hide transfer progress"
+pause_transfer = "Pause transfer"
 refresh_local = "Refresh local folder"
 refresh_remote = "Refresh remote folder"
+remove_transfer = "Remove transfer record"
+resume_transfer = "Resume transfer"
 show_progress_center = "Show transfer progress"
 upload_selected = "Upload selected local items"
 
@@ -981,7 +993,7 @@ running = "Running"
 paused = "Paused"
 done = "Done"
 cancelled = "Cancelled"
-failed = "Failed · {message}"
+failed_short = "Failed"
 
 [sftp.messages]
 opened_tab_for = "Opened SFTP tab for {profile}"
