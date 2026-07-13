@@ -319,21 +319,63 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
         let icon_bg = roles.surface_container;
+        let is_conversation = self.session_agent.panel_view != ChatPanelView::SessionList;
+        let is_search_open = if is_conversation {
+            self.workspace_forms.chat_search.conversation_search_open
+        } else {
+            self.workspace_forms.chat_search.session_filter_open
+        };
+        let search_tooltip = i18n::string(if is_conversation {
+            if is_search_open {
+                "workspace.panel.agent.tooltips.close_conversation_search"
+            } else {
+                "workspace.panel.agent.tooltips.search_conversation"
+            }
+        } else if is_search_open {
+            "workspace.panel.agent.tooltips.close_history_search"
+        } else {
+            "workspace.panel.agent.tooltips.search_history"
+        });
+        let back_entity = entity.clone();
+        let new_chat_entity = entity.clone();
+        let search_entity = entity.clone();
         let close_entity = entity.clone();
         let edit_entity = entity.clone();
-        let editing = self.workspace_forms.agent.editing_title;
+        let editing = is_conversation && self.workspace_forms.agent.editing_title;
         let title_input = self.workspace_forms.agent.title_input.clone();
-        let display_text = self
-            .session_agent
-            .title
-            .clone()
-            .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"));
+        let display_text = if is_conversation {
+            self.session_agent
+                .title
+                .clone()
+                .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"))
+        } else {
+            i18n::string("workspace.panel.agent.chat")
+        };
 
         h_flex()
             .w_full()
             .h(px(30.0))
             .items_center()
             .gap_1()
+            .when(is_conversation, |this| {
+                this.child(div().id("session-agent-back-to-history").child(
+                    icon_button_with_tooltip(
+                        AppIcon::CornerLeftUp,
+                        i18n::string("workspace.panel.agent.tooltips.back_to_history"),
+                        26.0,
+                        8.0,
+                        Some(icon_bg),
+                        Some(text_muted),
+                        None,
+                        move |_window, cx| {
+                            let entity = back_entity.clone();
+                            entity.update(cx, |this, cx| {
+                                this.show_session_agent_history(cx);
+                            });
+                        },
+                    ),
+                ))
+            })
             .child(
                 div()
                     .id("session-agent-new-chat")
@@ -346,7 +388,7 @@ impl AppView {
                         Some(text_muted),
                         None,
                         move |window, cx| {
-                            let entity = entity.clone();
+                            let entity = new_chat_entity.clone();
                             entity.update(cx, |this, cx| {
                                 this.start_session_agent_conversation(window, cx);
                             });
@@ -376,24 +418,62 @@ impl AppView {
                                 .id("session-agent-title")
                                 .overflow_x_hidden()
                                 .text_ellipsis()
-                                .cursor_text()
-                                .on_click(move |_click, window, cx| {
-                                    click_entity.update(cx, |this, cx| {
-                                        let current_title =
-                                            this.session_agent.title.clone().unwrap_or_default();
-                                        set_input_value(
-                                            &this.workspace_forms.agent.title_input,
-                                            current_title,
-                                            window,
-                                            cx,
-                                        );
-                                        this.workspace_forms.agent.editing_title = true;
-                                        cx.notify();
-                                    });
+                                .when(is_conversation, move |this| {
+                                    this.cursor_text().on_click(move |_click, window, cx| {
+                                        click_entity.update(cx, |this, cx| {
+                                            let current_title = this
+                                                .session_agent
+                                                .title
+                                                .clone()
+                                                .unwrap_or_default();
+                                            set_input_value(
+                                                &this.workspace_forms.agent.title_input,
+                                                current_title,
+                                                window,
+                                                cx,
+                                            );
+                                            this.workspace_forms.agent.editing_title = true;
+                                            cx.notify();
+                                        });
+                                    })
                                 })
                                 .child(text.clone()),
                         )
                     }),
+            )
+            .child(
+                div()
+                    .id("session-agent-search")
+                    .child(icon_button_with_tooltip(
+                        AppIcon::Search,
+                        search_tooltip,
+                        26.0,
+                        8.0,
+                        Some(icon_bg),
+                        Some(if is_search_open {
+                            roles.primary
+                        } else {
+                            text_muted
+                        }),
+                        None,
+                        move |window, cx| {
+                            let entity = search_entity.clone();
+                            entity.update(cx, |this, cx| {
+                                if this.session_agent.panel_view == ChatPanelView::SessionList {
+                                    if this.workspace_forms.chat_search.session_filter_open {
+                                        this.close_session_filter(cx);
+                                    } else {
+                                        this.open_session_filter(window, cx);
+                                    }
+                                } else if this.workspace_forms.chat_search.conversation_search_open
+                                {
+                                    this.close_conversation_search(cx);
+                                } else {
+                                    this.open_conversation_search(window, cx);
+                                }
+                            });
+                        },
+                    )),
             )
             .child(
                 div()
@@ -491,7 +571,6 @@ impl AppView {
         let conversation_list_state = conversation.read(cx).list_state();
 
         // Chat search state
-        let is_search_open = self.workspace_forms.chat_search.conversation_search_open;
         let search_input_entity = self
             .workspace_forms
             .chat_search
@@ -501,9 +580,7 @@ impl AppView {
         let search_current_match = self.workspace_forms.chat_search.current_match;
         let search_status = self.workspace_forms.chat_search.status.clone();
         let search_visibility = self.advance_conversation_search_bar(window);
-        let agent_title_input = self.workspace_forms.agent.title_input.clone();
 
-        let search_button_entity = entity.clone();
         let close_search_entity = entity.clone();
         let next_entity = entity.clone();
         let prev_entity = entity.clone();
@@ -525,127 +602,6 @@ impl AppView {
                             .px_3()
                             .pt_2()
                             .gap_3()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .h(px(28.0))
-                                    .items_center()
-                                    .gap_2()
-                                    .child(icon_button_with_tooltip(
-                                        AppIcon::CornerLeftUp,
-                                        i18n::string("workspace.panel.agent.tooltips.back_to_history"),
-                                        24.0,
-                                        8.0,
-                                        Some(roles.surface_container_high),
-                                        Some(text_muted),
-                                        None,
-                                        {
-                                            let entity = entity.clone();
-                                            move |_window, cx| {
-                                                let entity = entity.clone();
-                                                entity.update(cx, |this, cx| {
-                                                    this.show_session_agent_history(cx);
-                                                });
-                                            }
-                                        },
-                                    ))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.0))
-                                            .text_size(
-                                                miaominal_settings::FontSize::Subheading.scaled(),
-                                            )
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(roles.on_surface))
-                                            .when(
-                                                self.workspace_forms.agent.editing_title,
-                                                {
-                                                    let title_input = agent_title_input.clone();
-                                                move |this| {
-                                                    this.child(
-                                                        div().flex_1().child(
-                                                            HintedInput::new(&title_input)
-                                                            .appearance(false)
-                                                            .w_full(),
-                                                        ),
-                                                    )
-                                                }
-                                                },
-                                            )
-                                            .when(!self.workspace_forms.agent.editing_title, {
-                                                let click_entity = entity.clone();
-                                                let display_text = self
-                                                    .session_agent
-                                                    .title
-                                                    .clone()
-                                                    .unwrap_or_else(|| {
-                                                        i18n::string("workspace.panel.agent.chat")
-                                                    });
-                                                move |this: Div| {
-                                                    this.child(
-                                                        div()
-                                                            .id("session-agent-conversations-title")
-                                                            .overflow_x_hidden()
-                                                            .text_ellipsis()
-                                                            .cursor_text()
-                                                            .on_click(move |_click, window, cx| {
-                                                                click_entity.update(
-                                                                    cx,
-                                                                    |this, cx| {
-                                                                        let current_title = this
-                                                                            .session_agent
-                                                                            .title
-                                                                            .clone()
-                                                                            .unwrap_or_default();
-                                                                        set_input_value(
-                                                                            &this
-                                                                                .workspace_forms
-                                                                                .agent
-                                                                                .title_input,
-                                                                            current_title,
-                                                                            window,
-                                                                            cx,
-                                                                        );
-                                                                        this.workspace_forms
-                                                                            .agent
-                                                                            .editing_title = true;
-                                                                        cx.notify();
-                                                                    },
-                                                                );
-                                                            })
-                                                            .child(display_text),
-                                                    )
-                                                }
-                                            }),
-                                    )
-                                    // Search toggle button
-                                    .child(icon_button_with_tooltip(
-                                        AppIcon::Search,
-                                        i18n::string(if is_search_open {
-                                            "workspace.panel.agent.tooltips.close_conversation_search"
-                                        } else {
-                                            "workspace.panel.agent.tooltips.search_conversation"
-                                        }),
-                                        24.0,
-                                        8.0,
-                                        Some(roles.surface_container_high),
-                                        Some(if is_search_open { roles.primary } else { text_muted }),
-                                        None,
-                                        {
-                                            let entity = search_button_entity.clone();
-                                            move |window, cx| {
-                                                entity.update(cx, |this, cx| {
-                                                    if this.workspace_forms.chat_search.conversation_search_open {
-                                                        this.close_conversation_search(cx);
-                                                    } else {
-                                                        this.open_conversation_search(window, cx);
-                                                    }
-                                                });
-                                            }
-                                        },
-                                    )),
-                            )
                             // Search overlay bar
                             .when_some(search_visibility, {
                                 let search_input = search_input_entity.clone();

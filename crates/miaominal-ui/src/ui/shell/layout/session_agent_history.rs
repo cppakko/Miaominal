@@ -16,7 +16,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
     search_visibility: Option<f32>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(
         material.palettes.neutral_variant,
         if material.dark { 65 } else { 50 },
@@ -27,7 +26,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
         .workspace_state
         .session_agent_history_scroll_handle
         .clone();
-    let is_search_open = app.workspace_forms.chat_search.session_filter_open;
     let search_filter_input_entity = app.workspace_forms.chat_search.session_filter_input.clone();
 
     // Filter sessions by search query — store indices into all_sessions
@@ -44,7 +42,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
         (0..all_sessions.len()).collect()
     };
 
-    let search_button_entity = entity.clone();
     let has_sessions = !all_sessions.is_empty();
 
     v_flex()
@@ -58,42 +55,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                 .px_3()
                 .pt_2()
                 .gap_3()
-                .child(
-                    h_flex().w_full().h(px(30.0)).items_center().gap_2().child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(roles.on_surface))
-                            .child(i18n::string("workspace.panel.agent.chat")),
-                    )
-                    .child(icon_button_with_tooltip(
-                        AppIcon::Search,
-                        i18n::string(if is_search_open {
-                            "workspace.panel.agent.tooltips.close_history_search"
-                        } else {
-                            "workspace.panel.agent.tooltips.search_history"
-                        }),
-                        24.0,
-                        8.0,
-                        Some(roles.surface_container_high),
-                        Some(if is_search_open { roles.primary } else { text_muted }),
-                        None,
-                        {
-                            let entity = search_button_entity.clone();
-                            move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    if this.workspace_forms.chat_search.session_filter_open {
-                                        this.close_session_filter(cx);
-                                    } else {
-                                        this.open_session_filter(window, cx);
-                                    }
-                                });
-                            }
-                        },
-                    )),
-                )
                 // Search bar
                 .when_some(search_visibility, move |this, visibility| {
                     this.child(
