@@ -55,6 +55,23 @@ pub struct AppView {
     pub(in crate::ui::shell) _subscriptions: AppViewSubscriptions,
 }
 
+fn try_replace_session_pty_tap(
+    slot: &mut Option<miaominal_agent::TerminalOutputTap>,
+    tap: miaominal_agent::TerminalOutputTap,
+) -> bool {
+    if slot
+        .as_ref()
+        .is_some_and(|current| !current.can_release_lease())
+    {
+        return false;
+    }
+    if let Some(current) = slot.take() {
+        current.close();
+    }
+    *slot = Some(tap);
+    true
+}
+
 impl AppView {
     pub(in crate::ui::shell) fn set_active_pane(
         &mut self,
@@ -765,11 +782,11 @@ impl AppView {
             })
     }
 
-    pub(in crate::ui::shell) fn set_session_pty_tap_by_tab_id(
+    pub(in crate::ui::shell) fn try_set_session_pty_tap_by_tab_id(
         &mut self,
         tab_id: usize,
-        tap: Option<miaominal_agent::TerminalOutputTap>,
-    ) {
+        tap: miaominal_agent::TerminalOutputTap,
+    ) -> bool {
         let Some(session) = self
             .workspace_state
             .tabs
@@ -777,12 +794,9 @@ impl AppView {
             .find(|tab| tab.id == tab_id)
             .and_then(TabState::as_session_mut)
         else {
-            return;
+            return false;
         };
-        if let Some(current) = session.pty_output_tap.take() {
-            current.close();
-        }
-        session.pty_output_tap = tap;
+        try_replace_session_pty_tap(&mut session.pty_output_tap, tap)
     }
 
     pub(in crate::ui::shell) fn clear_session_pty_taps_if_same(
@@ -799,11 +813,14 @@ impl AppView {
             else {
                 continue;
             };
-            if session
-                .pty_output_tap
-                .as_ref()
-                .is_some_and(|current| current.same_channel(tap))
-            {
+            let can_release = session.pty_output_tap.as_ref().is_some_and(|current| {
+                if !current.same_channel(tap) {
+                    return false;
+                }
+                current.retire_lease();
+                current.can_release_lease()
+            });
+            if can_release {
                 if let Some(current) = session.pty_output_tap.take() {
                     current.close();
                 }
@@ -815,7 +832,10 @@ impl AppView {
         self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
     }
 
-    pub(in crate::ui::shell) fn toggle_session_agent_panel(&mut self) {
+    pub(in crate::ui::shell) fn toggle_session_agent_panel(&mut self, cx: &mut Context<Self>) {
+        if self.panels.session_agent_panel_open {
+            self.finish_session_agent_text_drag(cx);
+        }
         self.panels.session_agent_panel_open = !self.panels.session_agent_panel_open;
     }
 
@@ -1085,5 +1105,36 @@ impl AppView {
         self.active_profile()
             .map(|profile| format!("{} - {APP_TITLE}", profile.summary()))
             .unwrap_or_else(|| APP_TITLE.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_pty_tap_can_be_replaced_by_the_next_continuation() {
+        let (current, _current_receiver) = miaominal_agent::TerminalOutputTap::channel();
+        let current_clone = current.clone();
+        let (next, _next_receiver) = miaominal_agent::TerminalOutputTap::channel();
+        let next_clone = next.clone();
+        let mut slot = Some(current);
+
+        assert!(!try_replace_session_pty_tap(&mut slot, next.clone()));
+        assert!(
+            slot.as_ref()
+                .is_some_and(|tap| tap.same_channel(&current_clone))
+        );
+
+        current_clone.retire_lease();
+        assert!(try_replace_session_pty_tap(&mut slot, next));
+        assert!(
+            slot.as_ref()
+                .is_some_and(|tap| tap.same_channel(&next_clone))
+        );
+        assert_eq!(
+            current_clone.try_send(vec![1]),
+            Err(miaominal_agent::TerminalOutputTapError::Closed)
+        );
     }
 }

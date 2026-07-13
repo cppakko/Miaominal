@@ -5,6 +5,7 @@ pub type AgentResult<T> = Result<T, AgentError>;
 #[derive(Debug)]
 pub enum AgentError {
     ApprovalRequired { tool_name: String },
+    Cancelled,
     Denied { tool_name: String, reason: String },
     InvalidArguments(String),
     InvalidPath(String),
@@ -23,6 +24,7 @@ impl fmt::Display for AgentError {
             Self::ApprovalRequired { tool_name } => {
                 write!(f, "tool `{tool_name}` requires user approval")
             }
+            Self::Cancelled => write!(f, "agent tool execution cancelled"),
             Self::Denied { tool_name, reason } => {
                 write!(f, "tool `{tool_name}` was denied: {reason}")
             }

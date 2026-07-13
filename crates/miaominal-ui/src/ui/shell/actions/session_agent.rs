@@ -1,30 +1,438 @@
 use super::super::*;
 use crate::ui::i18n;
-use crate::ui::shell::state::SessionAgentExecutionContext;
+use crate::ui::shell::session_agent_stream_batch::{
+    SESSION_AGENT_STREAM_UI_FLUSH_INTERVAL, SessionAgentStreamBatch,
+    session_agent_event_is_finished, session_agent_event_requires_immediate_flush,
+};
+use crate::ui::shell::session_agent_view::SessionAgentConversationView;
+use crate::ui::shell::state::{SessionAgentConversationViewport, SessionAgentExecutionContext};
 use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentExecChannel, AgentMode, AgentToolCallRequest,
-    AgentToolCallResponse, AgentToolResultContinuationRequest, AgentToolSet, BackendRoute,
-    TerminalExecHandle, TerminalOutputTap, ToolOutput,
+    AgentChatRole, AgentChatToolEvent, AgentError, AgentExecChannel, AgentMode, AgentResult,
+    AgentToolCallRequest, AgentToolCallResponse, AgentToolCancellation,
+    AgentToolResultContinuationRequest, AgentToolSet, BackendRoute,
+    TERMINAL_INTERRUPT_SETTLE_TIMEOUT, TerminalExecHandle, TerminalExecLeaseState,
+    TerminalOutputTap, ToolOutput,
 };
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 use miaominal_storage::chat_store::{ChatMessageRecord, ChatMessageRole};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 
-const SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL: Duration = Duration::from_millis(16);
-const SESSION_AGENT_FOLLOW_BOTTOM_TICKS: usize = 50;
-const SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN: Duration = Duration::from_millis(1000);
 const SESSION_AGENT_CONTEXT_MAX_MESSAGES: usize = 40;
 const SESSION_AGENT_CONTEXT_MAX_CHARS: usize = 80_000;
+const SESSION_AGENT_PRODUCER_STOP_ACK_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(2);
 
 type SessionAgentPtyTap = (usize, TerminalOutputTap);
-type SessionAgentTools = Option<(Option<AgentToolSet>, Option<SessionAgentPtyTap>)>;
+
+#[derive(Clone)]
+struct SessionAgentPtyInterrupt {
+    handle: TerminalExecHandle,
+}
+
+impl SessionAgentPtyInterrupt {
+    fn cancel(&self) {
+        if let Err(error) = self.handle.cancel() {
+            log::debug!("failed to cancel stopped agent PTY command: {error:?}");
+        }
+    }
+
+    async fn cancel_and_wait(&self) -> TerminalExecLeaseState {
+        match self
+            .handle
+            .cancel_and_wait(TERMINAL_INTERRUPT_SETTLE_TIMEOUT)
+            .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                log::debug!("failed to settle stopped agent PTY command: {error:?}");
+                self.handle.lease_state()
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SessionAgentPtyContext {
+    tap: SessionAgentPtyTap,
+    interrupt: SessionAgentPtyInterrupt,
+}
+
+#[derive(Clone, Default)]
+struct SessionAgentPtyInterrupts {
+    active: Option<SessionAgentPtyInterrupt>,
+    targets: HashMap<String, SessionAgentPtyInterrupt>,
+}
+
+impl SessionAgentPtyInterrupts {
+    fn cancel_commands(&self) {
+        if let Some(interrupt) = self.active.as_ref() {
+            interrupt.cancel();
+        }
+        for interrupt in self.targets.values() {
+            interrupt.cancel();
+        }
+    }
+
+    async fn cancel_commands_and_wait(&self) -> bool {
+        let states = futures::future::join_all(
+            self.active
+                .iter()
+                .chain(self.targets.values())
+                .map(SessionAgentPtyInterrupt::cancel_and_wait),
+        )
+        .await;
+        states.into_iter().all(TerminalExecLeaseState::is_settled)
+    }
+}
+
+type SessionAgentTools = Option<(Option<AgentToolSet>, Option<SessionAgentPtyContext>)>;
+
+struct SessionAgentReceivedBatch {
+    events: Vec<AgentChatEvent>,
+    error: Option<AgentError>,
+    finished: bool,
+    stream_closed: bool,
+    stopped: bool,
+    producer_stop_ack_timed_out: bool,
+}
+
+enum SessionAgentApprovedToolOutcome {
+    Finished(anyhow::Result<String>),
+    Stopped,
+}
+
+fn approved_tool_was_stopped(outcome: &SessionAgentApprovedToolOutcome) -> bool {
+    matches!(outcome, SessionAgentApprovedToolOutcome::Stopped)
+}
+
+fn approved_tool_should_stop_after_finished(
+    outcome: &SessionAgentApprovedToolOutcome,
+    stop: &watch::Receiver<bool>,
+) -> bool {
+    *stop.borrow() && matches!(outcome, SessionAgentApprovedToolOutcome::Finished(_))
+}
+
+fn session_agent_event_releases_pty_lease(event: &AgentChatEvent) -> bool {
+    matches!(
+        event,
+        AgentChatEvent::ToolCallAutoExecuteRequired { .. }
+            | AgentChatEvent::ToolCallApprovalRequired { .. }
+            | AgentChatEvent::ToolCallUserInputRequired { .. }
+    )
+}
+
+async fn wait_for_session_agent_stop(stop: &mut watch::Receiver<bool>) {
+    loop {
+        if *stop.borrow_and_update() {
+            return;
+        }
+        if stop.changed().await.is_err() {
+            // Dropping the sender is part of every normal Finished/error/tool handoff cleanup.
+            // Only an explicit `true` value represents a user stop request.
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+async fn wait_for_session_agent_tool_or_stop<T>(
+    tool: impl std::future::Future<Output = T>,
+    stop: &mut watch::Receiver<bool>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        _ = wait_for_session_agent_stop(stop) => None,
+        result = tool => Some(result),
+    }
+}
+
+async fn abort_and_wait_for_session_agent_tool_worker<T>(handle: &mut tokio::task::JoinHandle<T>) {
+    // `abort` prevents a queued spawn_blocking job from starting, but cannot stop one that is
+    // already running. Await it as well so its stop-aware runtime has dropped the tool future and
+    // terminal guard before the UI releases this request's PTY lease to another session.
+    handle.abort();
+    let _ = handle.await;
+}
+
+async fn receive_session_agent_event_batch(
+    receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
+    stop: &mut watch::Receiver<bool>,
+    wait_for_producer_close: bool,
+    background_executor: &gpui::BackgroundExecutor,
+) -> SessionAgentReceivedBatch {
+    receive_session_agent_event_batch_with_deadlines(
+        receiver,
+        stop,
+        wait_for_producer_close,
+        || background_executor.timer(SESSION_AGENT_STREAM_UI_FLUSH_INTERVAL),
+        || background_executor.timer(SESSION_AGENT_PRODUCER_STOP_ACK_TIMEOUT),
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn receive_session_agent_event_batch_with_deadline<Deadline>(
+    receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
+    stop: &mut watch::Receiver<bool>,
+    deadline: impl FnOnce() -> Deadline,
+) -> SessionAgentReceivedBatch
+where
+    Deadline: std::future::Future<Output = ()>,
+{
+    receive_session_agent_event_batch_with_deadlines(
+        receiver,
+        stop,
+        false,
+        deadline,
+        std::future::pending::<()>,
+    )
+    .await
+}
+
+async fn receive_session_agent_event_batch_with_deadlines<Deadline, StopAckDeadline>(
+    receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
+    stop: &mut watch::Receiver<bool>,
+    wait_for_producer_close: bool,
+    deadline: impl FnOnce() -> Deadline,
+    stop_ack_deadline: impl FnOnce() -> StopAckDeadline,
+) -> SessionAgentReceivedBatch
+where
+    Deadline: std::future::Future<Output = ()>,
+    StopAckDeadline: std::future::Future<Output = ()>,
+{
+    let mut stop_ack_deadline = Some(stop_ack_deadline);
+    let mut batch = SessionAgentStreamBatch::new();
+    let mut error = None;
+    let mut finished = false;
+    let mut stream_closed = false;
+    let mut stopped = false;
+    let mut producer_stop_ack_timed_out = false;
+    let first = tokio::select! {
+        biased;
+        _ = wait_for_session_agent_stop(stop) => {
+            stopped = true;
+            if wait_for_producer_close {
+                let deadline = stop_ack_deadline
+                    .take()
+                    .expect("producer stop deadline should only be created once")();
+                tokio::pin!(deadline);
+                producer_stop_ack_timed_out = !drain_session_agent_events_until_producer_close(
+                    receiver,
+                    &mut batch,
+                    &mut error,
+                    &mut finished,
+                    &mut stream_closed,
+                    deadline.as_mut(),
+                ).await;
+            } else {
+                drain_ready_session_agent_events_before_stop(
+                    receiver,
+                    &mut batch,
+                    &mut error,
+                    &mut finished,
+                    &mut stream_closed,
+                );
+            }
+            if finished {
+                stopped = false;
+            }
+            return SessionAgentReceivedBatch {
+                events: batch.take(),
+                error,
+                finished,
+                stream_closed,
+                stopped,
+                producer_stop_ack_timed_out,
+            };
+        }
+        first = receiver.recv() => first,
+    };
+    let Some(first) = first else {
+        return SessionAgentReceivedBatch {
+            events: Vec::new(),
+            error: None,
+            finished: false,
+            stream_closed: true,
+            stopped: false,
+            producer_stop_ack_timed_out: false,
+        };
+    };
+    let immediate =
+        collect_session_agent_received_item(first, &mut batch, &mut error, &mut finished);
+
+    if error.is_none() && !immediate {
+        let deadline = deadline();
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                biased;
+                _ = wait_for_session_agent_stop(stop) => {
+                    stopped = true;
+                    if wait_for_producer_close {
+                        let deadline = stop_ack_deadline
+                            .take()
+                            .expect("producer stop deadline should only be created once")();
+                        tokio::pin!(deadline);
+                        producer_stop_ack_timed_out = !drain_session_agent_events_until_producer_close(
+                            receiver,
+                            &mut batch,
+                            &mut error,
+                            &mut finished,
+                            &mut stream_closed,
+                            deadline.as_mut(),
+                        ).await;
+                    } else {
+                        drain_ready_session_agent_events_before_stop(
+                            receiver,
+                            &mut batch,
+                            &mut error,
+                            &mut finished,
+                            &mut stream_closed,
+                        );
+                    }
+                    if finished {
+                        stopped = false;
+                    }
+                    break;
+                }
+                _ = &mut deadline => break,
+                next = receiver.recv() => {
+                    let Some(next) = next else {
+                        stream_closed = true;
+                        break;
+                    };
+                    if collect_session_agent_received_item(
+                        next,
+                        &mut batch,
+                        &mut error,
+                        &mut finished,
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    SessionAgentReceivedBatch {
+        events: batch.take(),
+        error,
+        finished,
+        stream_closed,
+        stopped,
+        producer_stop_ack_timed_out,
+    }
+}
+
+fn collect_session_agent_received_item(
+    item: AgentResult<AgentChatEvent>,
+    batch: &mut SessionAgentStreamBatch,
+    error: &mut Option<AgentError>,
+    finished: &mut bool,
+) -> bool {
+    match item {
+        Ok(event) => {
+            let immediate = session_agent_event_requires_immediate_flush(&event);
+            *finished |= session_agent_event_is_finished(&event);
+            batch.push(event);
+            immediate
+        }
+        Err(stream_error) => {
+            *error = Some(stream_error);
+            true
+        }
+    }
+}
+
+fn collect_session_agent_stopped_item(
+    item: AgentResult<AgentChatEvent>,
+    batch: &mut SessionAgentStreamBatch,
+    error: &mut Option<AgentError>,
+    finished: &mut bool,
+) {
+    match item {
+        Ok(
+            AgentChatEvent::ToolCallAutoExecuteRequired { .. }
+            | AgentChatEvent::ToolCallApprovalRequired { .. }
+            | AgentChatEvent::ToolCallUserInputRequired { .. },
+        ) => {
+            // Applying a handoff after Stop could start a new side effect.
+        }
+        Ok(event) => {
+            *finished |= session_agent_event_is_finished(&event);
+            batch.push(event);
+        }
+        Err(stream_error) => {
+            if error.is_none() {
+                *error = Some(stream_error);
+            }
+        }
+    }
+}
+
+fn drain_ready_session_agent_events_before_stop(
+    receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
+    batch: &mut SessionAgentStreamBatch,
+    error: &mut Option<AgentError>,
+    finished: &mut bool,
+    stream_closed: &mut bool,
+) {
+    let ready_count = receiver.len();
+    for _ in 0..ready_count {
+        let item = match receiver.try_recv() {
+            Ok(item) => item,
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                *stream_closed = true;
+                break;
+            }
+        };
+        collect_session_agent_stopped_item(item, batch, error, finished);
+    }
+    if receiver.is_closed() && receiver.is_empty() {
+        *stream_closed = true;
+    }
+}
+
+async fn drain_session_agent_events_until_producer_close<StopAckDeadline>(
+    receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
+    batch: &mut SessionAgentStreamBatch,
+    error: &mut Option<AgentError>,
+    finished: &mut bool,
+    stream_closed: &mut bool,
+    mut stop_ack_deadline: std::pin::Pin<&mut StopAckDeadline>,
+) -> bool
+where
+    StopAckDeadline: std::future::Future<Output = ()>,
+{
+    loop {
+        tokio::select! {
+            biased;
+            _ = stop_ack_deadline.as_mut() => {
+                // Preserve everything that was already published before the timeout fallback.
+                drain_ready_session_agent_events_before_stop(
+                    receiver,
+                    batch,
+                    error,
+                    finished,
+                    stream_closed,
+                );
+                return false;
+            }
+            next = receiver.recv() => {
+                let Some(item) = next else {
+                    *stream_closed = true;
+                    return true;
+                };
+                collect_session_agent_stopped_item(item, batch, error, finished);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PromptHistoryDirection {
@@ -37,6 +445,7 @@ enum SessionAgentBackgroundNotificationKind {
     ToolApprovalRequired { tool_name: String },
     UserInputRequired { tool_name: String },
     ReplyReady,
+    StreamFailed { error: String },
 }
 
 fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
@@ -398,142 +807,229 @@ impl AppView {
         }
     }
 
-    fn session_agent_is_scrolled_to_bottom(&self) -> bool {
-        if self.session_agent_is_physically_scrolled_to_bottom() {
-            return true;
-        }
-
-        if self
-            .workspace_state
-            .session_agent_follow_bottom_disabled_until
-            .is_some_and(|until| Instant::now() < until)
-        {
-            return false;
-        }
-
-        false
-    }
-
-    fn session_agent_is_physically_scrolled_to_bottom(&self) -> bool {
-        let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
-        let offset = scroll_handle.offset();
-        let max_offset = scroll_handle.max_offset();
-        if max_offset.y <= px(2.0) {
-            return true;
-        }
-        (offset.y + max_offset.y).abs() <= px(2.0)
-    }
-
-    fn clear_expired_session_agent_follow_bottom_cooldown(&mut self) {
-        if self.session_agent_is_physically_scrolled_to_bottom()
-            || self
-                .workspace_state
-                .session_agent_follow_bottom_disabled_until
-                .is_some_and(|until| Instant::now() >= until)
-        {
-            self.workspace_state
-                .session_agent_follow_bottom_disabled_until = None;
-        }
-    }
-
-    pub(in crate::ui::shell) fn stop_session_agent_follow_bottom(&mut self, user_initiated: bool) {
-        self.workspace_state.session_agent_follow_bottom_generation = self
-            .workspace_state
-            .session_agent_follow_bottom_generation
-            .wrapping_add(1);
-        if user_initiated {
-            self.workspace_state
-                .session_agent_follow_bottom_disabled_until =
-                Some(Instant::now() + SESSION_AGENT_FOLLOW_BOTTOM_USER_SCROLL_COOLDOWN);
-        }
-    }
-
-    pub(in crate::ui::shell) fn handle_session_agent_scroll_wheel(
+    pub(in crate::ui::shell) fn ensure_session_agent_conversation_view(
         &mut self,
-        _event: &ScrollWheelEvent,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.stop_session_agent_follow_bottom(true);
-        cx.on_next_frame(window, |this, _window, cx| {
-            if this.session_agent_is_physically_scrolled_to_bottom() {
-                this.keep_session_agent_following_bottom_for_layout(cx);
+    ) -> Entity<SessionAgentConversationView> {
+        let search_layout_active = self
+            .session_agent
+            .search_query
+            .as_ref()
+            .is_some_and(|query| !query.trim().is_empty());
+        let view = if let Some(view) = self.session_agent.conversation_view.as_ref() {
+            view.clone()
+        } else {
+            let messages = self.session_agent.messages.clone();
+            let generating = self.session_agent.has_pending_task();
+            let viewport = self.session_agent.conversation_viewport.take();
+            let view = cx.new(move |cx| {
+                SessionAgentConversationView::from_messages(messages, generating, cx)
+            });
+            if let Some(viewport) = viewport
+                && !viewport.following_tail
+            {
+                let offset = viewport.offset_for_search_layout(search_layout_active);
+                view.read(cx)
+                    .scroll_to(offset.item_ix, offset.offset_in_item);
             }
-        });
-    }
+            self.session_agent.conversation_view = Some(view.clone());
+            view
+        };
 
-    fn keep_session_agent_following_bottom_for_layout(&mut self, cx: &mut Context<Self>) {
-        self.workspace_state
-            .session_agent_follow_bottom_disabled_until = None;
-        self.workspace_state.session_agent_follow_bottom_generation = self
-            .workspace_state
-            .session_agent_follow_bottom_generation
-            .wrapping_add(1);
-        let generation = self.workspace_state.session_agent_follow_bottom_generation;
-        self.workspace_state
-            .session_agent_scroll_handle
-            .scroll_to_bottom();
-
-        cx.spawn(async move |this, cx| {
-            for _ in 0..SESSION_AGENT_FOLLOW_BOTTOM_TICKS {
-                cx.background_executor()
-                    .timer(SESSION_AGENT_FOLLOW_BOTTOM_INTERVAL)
-                    .await;
-
-                let keep_following = this
-                    .update(cx, |this, cx| {
-                        if this.workspace_state.session_agent_follow_bottom_generation != generation
-                            || !this.panels.session_agent_panel_open
-                            || this.session_agent.panel_view != ChatPanelView::Conversation
-                        {
-                            return false;
-                        }
-
-                        this.workspace_state
-                            .session_agent_scroll_handle
-                            .scroll_to_bottom();
+        if self.session_agent.conversation_view_observation.is_none() {
+            self.session_agent.conversation_view_observation =
+                Some(cx.observe(&view, |this, observed_view, cx| {
+                    if !this
+                        .workspace_state
+                        .session_agent_background_projection_active
+                        && this.session_agent.conversation_view.as_ref().is_some_and(
+                            |active_view| active_view.entity_id() == observed_view.entity_id(),
+                        )
+                    {
                         cx.notify();
-                        true
-                    })
-                    .unwrap_or(false);
-
-                if !keep_following {
-                    break;
-                }
-            }
-        })
-        .detach();
+                    }
+                }));
+        }
+        let generating_label = i18n::string("workspace.panel.agent.thinking");
+        view.update(cx, |view, cx| {
+            view.set_generating_label(generating_label, cx);
+        });
+        if self.panels.session_agent_panel_open
+            && self.active_terminal_session_index().is_some()
+            && self.session_agent.panel_view == ChatPanelView::Conversation
+            && self
+                .workspace_state
+                .session_agent_text_drag_conversation
+                .is_none()
+            && let Some((message_index, _)) = self.session_agent.search_scroll_target
+        {
+            // Replay search's first-phase virtual-list positioning after a hidden panel is
+            // reopened or a text drag ends. The block prepaint callback performs the precise
+            // second-phase offset and clears the pending target.
+            view.read(cx).scroll_to(message_index, px(0.0));
+        }
+        view
     }
 
-    fn reset_session_agent_scroll(&self) {
-        self.workspace_state
-            .session_agent_scroll_handle
-            .set_offset(Point::new(px(0.0), px(0.0)));
-    }
-
-    fn scroll_session_agent_to_bottom_if_following(
+    fn push_session_agent_message_view(
         &mut self,
-        previous_message_count: usize,
-        was_scrolled_to_bottom: bool,
-        content_may_have_grown: bool,
+        message: SessionAgentMessage,
         cx: &mut Context<Self>,
     ) {
-        let new_block_added = self.session_agent.messages.len() > previous_message_count;
-        if was_scrolled_to_bottom && (new_block_added || content_may_have_grown) {
-            self.keep_session_agent_following_bottom_for_layout(cx);
+        if let Some(view) = self.session_agent.conversation_view.as_ref().cloned() {
+            view.update(cx, |view, cx| {
+                view.push_message(message, cx);
+            });
         }
+    }
+
+    fn sync_session_agent_message_view(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(message) = self.session_agent.messages.get(index).cloned() else {
+            return;
+        };
+        if let Some(view) = self.session_agent.conversation_view.as_ref().cloned() {
+            view.update(cx, |view, cx| {
+                view.set_message_snapshot(index, message, cx);
+            });
+        }
+    }
+
+    fn append_session_agent_message_view_delta(
+        &mut self,
+        index: usize,
+        delta: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if delta.is_empty() {
+            return;
+        }
+        if let Some(view) = self.session_agent.conversation_view.as_ref().cloned() {
+            view.update(cx, |view, cx| {
+                view.append_to_message(index, delta, cx);
+            });
+        }
+    }
+
+    fn clear_session_agent_conversation_view(&mut self, cx: &mut Context<Self>) {
+        self.finish_session_agent_text_drag(cx);
+        if let Some(view) = self.session_agent.conversation_view.as_ref().cloned() {
+            view.update(cx, |view, cx| view.clear(cx));
+        }
+    }
+
+    /// Releases the expensive message/Markdown projection while retaining the authoritative
+    /// session state for background streaming and a lightweight viewport anchor for restoration.
+    pub(in crate::ui::shell) fn release_session_agent_conversation_view(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_session_agent_text_drag(cx);
+        if let Some(view) = self.session_agent.conversation_view.as_ref() {
+            let view = view.read(cx);
+            let motion_keys = view.enter_motion_keys_for_rebuild(cx);
+            for (message, motion_key) in self.session_agent.messages.iter_mut().zip(motion_keys) {
+                message.motion.enter_key = motion_key;
+            }
+            let search_layout_active = self
+                .session_agent
+                .search_query
+                .as_ref()
+                .is_some_and(|query| !query.trim().is_empty());
+            self.session_agent.conversation_viewport = Some(SessionAgentConversationViewport {
+                offset: view.list_state().logical_scroll_top(),
+                following_tail: view.is_following_tail(),
+                search_layout_active,
+            });
+        }
+        self.session_agent.conversation_view_observation = None;
+        self.session_agent.conversation_view = None;
+    }
+
+    fn sync_session_agent_generating_view(&mut self, cx: &mut Context<Self>) {
+        let generating = self.session_agent.has_pending_task();
+        if let Some(view) = self.session_agent.conversation_view.as_ref().cloned() {
+            view.update(cx, |view, cx| view.set_generating(generating, cx));
+        }
+    }
+
+    fn install_session_agent_pending_task(
+        &mut self,
+        task: gpui::Task<()>,
+        stop: watch::Sender<bool>,
+        agent_cancellation: Option<AgentToolCancellation>,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent.pending_stream_stop = Some(stop);
+        self.session_agent.pending_agent_cancellation = agent_cancellation;
+        self.session_agent.pending_task = Some(task);
+        self.sync_session_agent_generating_view(cx);
+    }
+
+    fn take_session_agent_pending_task(&mut self, cx: &mut Context<Self>) -> bool {
+        self.session_agent.pending_stream_stop = None;
+        self.session_agent.pending_agent_cancellation = None;
+        let had_pending_task = self.session_agent.pending_task.take().is_some();
+        self.sync_session_agent_generating_view(cx);
+        had_pending_task
+    }
+
+    fn request_session_agent_stream_stop(&self) -> bool {
+        let Some(stop) = self.session_agent.pending_stream_stop.as_ref() else {
+            return false;
+        };
+        if let Some(cancellation) = self.session_agent.pending_agent_cancellation.as_ref() {
+            cancellation.cancel();
+        }
+        stop.send(true).is_ok()
+    }
+
+    fn session_agent_active_thinking_index(&self) -> Option<usize> {
+        self.session_agent
+            .messages
+            .len()
+            .checked_sub(1)
+            .filter(|&index| {
+                self.session_agent.messages[index].role == SessionAgentMessageRole::Thinking
+                    && self.session_agent.messages[index]
+                        .thinking
+                        .as_ref()
+                        .is_some_and(|thinking| thinking.elapsed_ms.is_none())
+            })
+    }
+
+    fn session_agent_tool_message_index(&self, tool_id: &str) -> Option<usize> {
+        self.session_agent.messages.iter().rposition(|message| {
+            message
+                .tool_call
+                .as_ref()
+                .is_some_and(|tool_call| tool_call.id == tool_id)
+        })
+    }
+
+    fn push_session_agent_message_views_from(&mut self, start: usize, cx: &mut Context<Self>) {
+        let start = start.min(self.session_agent.messages.len());
+        let messages = self.session_agent.messages[start..].to_vec();
+        for (offset, message) in messages.into_iter().enumerate() {
+            let index = start + offset;
+            self.push_session_agent_message_view(message, cx);
+            self.refresh_conversation_search_message(index, cx);
+        }
+    }
+
+    fn start_session_agent_reply(&mut self, cx: &mut Context<Self>) {
+        let previous_message_count = self.session_agent.messages.len();
+        let thinking_index = self.session_agent_active_thinking_index();
+        self.session_agent.start_assistant_reply();
+        if let Some(index) = thinking_index {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        self.push_session_agent_message_views_from(previous_message_count, cx);
     }
 
     fn push_session_agent_message(&mut self, message: SessionAgentMessage, cx: &mut Context<Self>) {
         let previous_message_count = self.session_agent.messages.len();
-        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
         self.session_agent.push_message_with_enter_motion(message);
-        self.scroll_session_agent_to_bottom_if_following(
-            previous_message_count,
-            was_scrolled_to_bottom,
-            false,
-            cx,
-        );
+        self.push_session_agent_message_views_from(previous_message_count, cx);
     }
 
     pub(in crate::ui::shell) fn reset_session_agent_chat(
@@ -541,17 +1037,23 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_conversation_search_state(cx);
+        self.clear_session_agent_conversation_view(cx);
         self.session_agent.messages.clear();
+        self.session_agent.conversation_view = None;
+        self.session_agent.conversation_view_observation = None;
+        self.session_agent.conversation_viewport = None;
         self.session_agent.session_id = None;
         self.session_agent.last_error = None;
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
+        self.session_agent.pending_stream_stop = None;
+        self.session_agent.pending_agent_cancellation = None;
         self.session_agent.pending_task = None;
         self.session_agent.selected_at_targets.clear();
         self.session_agent.active_at_targets.clear();
         self.session_agent.active_exec_context = None;
         self.session_agent.title = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
-        self.reset_session_agent_scroll();
         set_input_value(
             &self.workspace_forms.agent.prompt_input,
             String::new(),
@@ -565,7 +1067,10 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn show_session_agent_history(&mut self, cx: &mut Context<Self>) {
-        self.stash_current_session_agent();
+        self.finish_session_agent_text_drag(cx);
+        self.release_session_agent_conversation_view(cx);
+        self.clear_conversation_search_state(cx);
+        self.stash_current_session_agent(cx);
         self.refresh_chat_sessions();
         self.session_agent = SessionAgentState {
             panel_view: ChatPanelView::SessionList,
@@ -576,7 +1081,6 @@ impl AppView {
         self.workspace_forms.chat_search.session_filter_visible = false;
         self.workspace_forms.chat_search.session_filter_visibility = 0.0;
         self.workspace_forms.chat_search.session_filter_animation = None;
-        self.reset_session_agent_scroll();
         self.workspace_forms.agent.editing_title = false;
         cx.notify();
     }
@@ -586,11 +1090,10 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.finish_session_agent_text_drag(cx);
+        self.release_session_agent_conversation_view(cx);
         // Clear any active search state
-        self.session_agent.search_query = None;
-        self.session_agent.search_match_indices.clear();
-        self.session_agent.search_current_match = None;
-        self.session_agent.search_scroll_target = None;
+        self.clear_conversation_search_state(cx);
         let chat_search = &mut self.workspace_forms.chat_search;
         chat_search.conversation_search_open = false;
         chat_search.conversation_search_visible = false;
@@ -600,7 +1103,7 @@ impl AppView {
         chat_search.current_match = None;
         chat_search.status = None;
 
-        self.stash_current_session_agent();
+        self.stash_current_session_agent(cx);
         self.reset_session_agent_chat(window, cx);
         self.session_agent.panel_view = ChatPanelView::Conversation;
         cx.notify();
@@ -611,11 +1114,10 @@ impl AppView {
         session_id: String,
         cx: &mut Context<Self>,
     ) {
+        self.finish_session_agent_text_drag(cx);
+        self.release_session_agent_conversation_view(cx);
         // Clear any active search state when loading a session
-        self.session_agent.search_query = None;
-        self.session_agent.search_match_indices.clear();
-        self.session_agent.search_current_match = None;
-        self.session_agent.search_scroll_target = None;
+        self.clear_conversation_search_state(cx);
         let chat_search = &mut self.workspace_forms.chat_search;
         chat_search.conversation_search_open = false;
         chat_search.conversation_search_visible = false;
@@ -627,16 +1129,15 @@ impl AppView {
 
         if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
             self.session_agent.panel_view = ChatPanelView::Conversation;
-            self.reset_session_agent_scroll();
             cx.notify();
             return;
         }
 
-        self.stash_current_session_agent();
+        self.stash_current_session_agent(cx);
         if let Some(mut state) = self.session_agent_sessions.remove(&session_id) {
             state.panel_view = ChatPanelView::Conversation;
             self.session_agent = state;
-            self.reset_session_agent_scroll();
+            self.clear_conversation_search_state(cx);
             self.status_message = i18n::string("workspace.panel.agent.messages.restored");
             cx.notify();
             return;
@@ -684,7 +1185,6 @@ impl AppView {
         self.session_agent.active_at_targets.clear();
         self.session_agent.active_exec_context = None;
         self.session_agent.panel_view = ChatPanelView::Conversation;
-        self.reset_session_agent_scroll();
         self.status_message = i18n::string("workspace.panel.agent.messages.history_loaded");
         cx.notify();
     }
@@ -717,8 +1217,12 @@ impl AppView {
         }
 
         if self.session_agent.session_id.as_deref() == Some(session_id.as_str()) {
+            self.clear_session_agent_conversation_view(cx);
             self.session_agent.session_id = None;
             self.session_agent.messages.clear();
+            self.session_agent.conversation_view = None;
+            self.session_agent.conversation_view_observation = None;
+            self.session_agent.conversation_viewport = None;
             self.session_agent.title = None;
         }
         self.session_agent_sessions.remove(&session_id);
@@ -859,13 +1363,14 @@ impl AppView {
         self.rename_session_agent_chat(pending.session_id, new_title, cx);
     }
 
-    fn stash_current_session_agent(&mut self) {
+    fn stash_current_session_agent(&mut self, cx: &mut Context<Self>) {
         let Some(session_id) = self.session_agent.session_id.clone() else {
             return;
         };
         if self.session_agent.messages.is_empty() && !self.session_agent.is_busy() {
             return;
         }
+        self.release_session_agent_conversation_view(cx);
         let state = std::mem::take(&mut self.session_agent);
         self.session_agent_sessions.insert(session_id, state);
     }
@@ -906,7 +1411,11 @@ impl AppView {
             .is_some_and(SessionAgentState::has_tool_call_waiting_for_confirmation)
     }
 
-    fn with_session_agent_state(&mut self, session_id: &str, f: impl FnOnce(&mut Self)) -> bool {
+    pub(in crate::ui::shell) fn with_session_agent_state(
+        &mut self,
+        session_id: &str,
+        f: impl FnOnce(&mut Self),
+    ) -> bool {
         if self.session_agent.session_id.as_deref() == Some(session_id) {
             f(self);
             return true;
@@ -915,9 +1424,18 @@ impl AppView {
         let Some(mut target) = self.session_agent_sessions.remove(session_id) else {
             return false;
         };
+        let foreground_status = self.status_message.clone();
+        let previous_projection_state = self
+            .workspace_state
+            .session_agent_background_projection_active;
+        self.workspace_state
+            .session_agent_background_projection_active = true;
         std::mem::swap(&mut self.session_agent, &mut target);
         f(self);
         std::mem::swap(&mut self.session_agent, &mut target);
+        self.workspace_state
+            .session_agent_background_projection_active = previous_projection_state;
+        self.status_message = foreground_status;
         self.session_agent_sessions
             .insert(session_id.to_string(), target);
         true
@@ -1030,6 +1548,26 @@ impl AppView {
             .cloned()
     }
 
+    fn session_agent_terminal_target_marker_for_context(
+        &self,
+        context: &SessionAgentExecutionContext,
+    ) -> Option<String> {
+        (context.exec_mode == AgentExecMode::Pty)
+            .then_some(context.terminal_tab_id)
+            .flatten()
+            .and_then(|tab_id| {
+                self.workspace_state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+            })
+            .and_then(|tab| {
+                tab.as_session()
+                    .filter(|session| session.purpose == SessionPurpose::Terminal)
+                    .map(|_| format!("@{}", tab.title))
+            })
+    }
+
     fn session_agent_pty_commands_for_context(
         &self,
         context: &SessionAgentExecutionContext,
@@ -1071,6 +1609,22 @@ impl AppView {
     ) {
         self.session_agent.last_error = Some(message.clone());
         self.status_message = message;
+        cx.notify();
+    }
+
+    fn fail_session_agent_tool_start(
+        &mut self,
+        tool_id: &str,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent.fail_tool_call(tool_id, message.clone());
+        if let Some(index) = self.session_agent_tool_message_index(tool_id) {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        self.session_agent.last_error = Some(message.clone());
+        self.status_message = message;
+        self.persist_session_agent_chat();
         cx.notify();
     }
 
@@ -1122,6 +1676,14 @@ impl AppView {
 
         let target_names = self.session_agent.selected_at_targets.clone();
         let mentions = self.resolve_session_agent_mentions(&target_names);
+        if mentions.pty_busy {
+            self.session_agent.active_exec_context = None;
+            self.set_session_agent_execution_context_error(
+                i18n::string("workspace.panel.agent.messages.pty_terminal_busy"),
+                cx,
+            );
+            return;
+        }
         if !mentions.unresolved.is_empty() {
             self.clear_session_pty_taps_if_same(&mentions.pty_taps);
             self.session_agent.active_exec_context = None;
@@ -1142,11 +1704,20 @@ impl AppView {
         }
 
         let pty_target_taps = mentions.pty_taps.clone();
-        let Some((tools, active_pty_tap)) =
+        let pty_target_interrupts = mentions.pty_interrupts.clone();
+        let Some((tools, active_pty_context)) =
             self.build_session_agent_tools(mentions.aux_channels, cx)
         else {
+            self.clear_session_pty_taps_if_same(&pty_target_taps);
             self.session_agent.active_exec_context = None;
             return;
+        };
+        let active_pty_tap = active_pty_context
+            .as_ref()
+            .map(|context| context.tap.clone());
+        let pty_interrupts = SessionAgentPtyInterrupts {
+            active: active_pty_context.map(|context| context.interrupt),
+            targets: pty_target_interrupts,
         };
         let target_guidance = mentions.guidance;
         self.session_agent.panel_view = ChatPanelView::Conversation;
@@ -1207,31 +1778,57 @@ impl AppView {
         self.session_agent.selected_at_targets.clear();
 
         let runtime = self.services.runtime.clone();
+        let agent_cancellation = tools.as_ref().map(AgentToolSet::cancellation);
+        let wait_for_producer_close = agent_cancellation.is_some();
+        let (stream_stop, mut stream_stop_receiver) = watch::channel(false);
         let task = cx.spawn(async move |this, cx| {
             let stream_session_id_for_error = stream_session_id.clone();
-            let stream_result = runtime
-                .spawn(async move {
-                    miaominal_agent::stream_chat(AgentChatRequest {
-                        provider,
-                        messages: history,
-                        prompt: llm_prompt,
-                        prompt_images,
-                        tools,
-                        target_guidance,
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
+            let mut stream_task = runtime.spawn(async move {
+                miaominal_agent::stream_chat(AgentChatRequest {
+                    provider,
+                    messages: history,
+                    prompt: llm_prompt,
+                    prompt_images,
+                    tools,
+                    target_guidance,
                 })
                 .await
-                .unwrap_or_else(|error| {
+                .map_err(anyhow::Error::from)
+            });
+            let stream_result = tokio::select! {
+                biased;
+                _ = wait_for_session_agent_stop(&mut stream_stop_receiver) => {
+                    pty_interrupts.cancel_commands();
+                    stream_task.abort();
+                    let stopped_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let stop_pty_interrupts = pty_interrupts.clone();
+                    let _ = this.update(cx, move |this, cx| {
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            Some(&stop_pty_interrupts),
+                            cx,
+                        );
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                        }
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                    });
+                    return;
+                }
+                result = &mut stream_task => result.unwrap_or_else(|error| {
                     Err(anyhow::anyhow!(
                         "session agent stream task cancelled: {error}"
                     ))
-                });
+                }),
+            };
 
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
                 Err(error) => {
+                    pty_interrupts.cancel_commands();
                     let cleanup_active_pty_tap = active_pty_tap.clone();
                     let cleanup_pty_target_taps = pty_target_taps.clone();
                     let _ = this.update(cx, move |this, cx| {
@@ -1250,51 +1847,107 @@ impl AppView {
                 }
             };
 
-            while let Some(event) = receiver.recv().await {
-                match event {
-                    Ok(event) => {
-                        let done = matches!(event, AgentChatEvent::Finished(_));
-                        let event_session_id = stream_session_id.clone();
-                        if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event_for_session(
-                                &event_session_id,
+            loop {
+                let received = receive_session_agent_event_batch(
+                    &mut receiver,
+                    &mut stream_stop_receiver,
+                    wait_for_producer_close,
+                    cx.background_executor(),
+                )
+                .await;
+                if !received.events.is_empty() {
+                    let releases_pty_lease = received
+                        .events
+                        .iter()
+                        .any(session_agent_event_releases_pty_lease);
+                    if releases_pty_lease {
+                        pty_interrupts.cancel_commands();
+                    }
+                    let release_active_pty_tap =
+                        releases_pty_lease.then(|| active_pty_tap.clone()).flatten();
+                    let release_pty_target_taps = releases_pty_lease
+                        .then(|| pty_target_taps.clone())
+                        .unwrap_or_default();
+                    let event_session_id = stream_session_id.clone();
+                    if let Err(error) = this.update(cx, move |this, cx| {
+                        if let Some(tap) = release_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                        }
+                        this.clear_session_pty_taps_if_same(&release_pty_target_taps);
+                        this.apply_session_agent_events_for_session(
+                            &event_session_id,
+                            request_id,
+                            received.events,
+                            cx,
+                        );
+                    }) {
+                        log::debug!("failed to apply session agent chat events: {error:?}");
+                        break;
+                    }
+                }
+
+                if received.stopped {
+                    // Wake the producer's `sender.closed()` branch before doing UI cleanup so an
+                    // in-flight auto-approved rig tool is dropped immediately.
+                    drop(receiver);
+                    pty_interrupts.cancel_commands();
+                    let stopped_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let stop_pty_interrupts = pty_interrupts.clone();
+                    let producer_stop_ack_timed_out = received.producer_stop_ack_timed_out;
+                    let _ = this.update(cx, move |this, cx| {
+                        if producer_stop_ack_timed_out {
+                            this.mark_session_agent_tools_unconfirmed_for_session(
+                                &stopped_session_id,
                                 request_id,
-                                event,
                                 cx,
                             );
-                        }) {
-                            log::debug!("failed to apply session agent chat event: {error:?}");
-                            break;
                         }
-                        if done {
-                            break;
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            Some(&stop_pty_interrupts),
+                            cx,
+                        );
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                         }
-                    }
-                    Err(error) => {
-                        let error_session_id = stream_session_id.clone();
-                        let cleanup_active_pty_tap = active_pty_tap.clone();
-                        let cleanup_pty_target_taps = pty_target_taps.clone();
-                        let _ = this
-                            .update(cx, move |this, cx| {
-                                this.handle_session_agent_stream_error_for_session(
-                                    &error_session_id,
-                                    request_id,
-                                    anyhow::Error::from(error),
-                                    cx,
-                                );
-                                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
-                                }
-                                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
-                            })
-                            .map_err(|error| {
-                                log::debug!("failed to apply session agent chat error: {error:?}");
-                            });
-                        return;
-                    }
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                    });
+                    return;
+                }
+
+                if let Some(error) = received.error {
+                    pty_interrupts.cancel_commands();
+                    let error_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let _ = this
+                        .update(cx, move |this, cx| {
+                            this.handle_session_agent_stream_error_for_session(
+                                &error_session_id,
+                                request_id,
+                                anyhow::Error::from(error),
+                                cx,
+                            );
+                            if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                                this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                            }
+                            this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                        })
+                        .map_err(|error| {
+                            log::debug!("failed to apply session agent chat error: {error:?}");
+                        });
+                    return;
+                }
+
+                if received.finished || received.stream_closed {
+                    break;
                 }
             }
 
+            pty_interrupts.cancel_commands();
             let finish_session_id = stream_session_id.clone();
             let cleanup_active_pty_tap = active_pty_tap.clone();
             let cleanup_pty_target_taps = pty_target_taps.clone();
@@ -1306,18 +1959,19 @@ impl AppView {
                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
         });
-        self.session_agent.pending_task = Some(task);
+        self.install_session_agent_pending_task(task, stream_stop, agent_cancellation, cx);
         cx.notify();
     }
 
     fn build_session_agent_tools(
         &mut self,
-        aux_channels: HashMap<String, AgentExecChannel>,
+        mut aux_channels: HashMap<String, AgentExecChannel>,
         cx: &mut Context<Self>,
     ) -> SessionAgentTools {
         let Some(context) = self.session_agent.active_exec_context.clone() else {
             return Some((None, None));
         };
+        let active_target_marker = self.session_agent_terminal_target_marker_for_context(&context);
 
         let Some(profile) = self.session_agent_profile_for_context(&context) else {
             let message =
@@ -1338,12 +1992,26 @@ impl AppView {
         let mut channel = self.agent_exec_channel_for_profile(profile);
         if let Some((tab_id, command_sender)) = pty_commands {
             let (sender, receiver) = TerminalOutputTap::channel();
-            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
-            active_pty_tap = Some((tab_id, sender));
-            channel = channel.with_terminal_exec(TerminalExecHandle {
-                command_sender,
-                output_tap: Arc::new(Mutex::new(Some(receiver))),
+            let terminal_exec = TerminalExecHandle::new(command_sender, receiver);
+            if !self.try_set_session_pty_tap_by_tab_id(tab_id, sender.clone()) {
+                self.set_session_agent_execution_context_error(
+                    i18n::string("workspace.panel.agent.messages.pty_terminal_busy"),
+                    cx,
+                );
+                return None;
+            }
+            active_pty_tap = Some(SessionAgentPtyContext {
+                tap: (tab_id, sender),
+                interrupt: SessionAgentPtyInterrupt {
+                    handle: terminal_exec.clone(),
+                },
             });
+            channel = channel.with_terminal_exec(terminal_exec);
+        }
+        if let Some(marker) = active_target_marker {
+            aux_channels
+                .entry(marker)
+                .or_insert_with(|| channel.clone());
         }
         channel = channel.with_aux_channels(aux_channels);
         let mode = self.session_agent.agent_mode;
@@ -1353,28 +2021,136 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn stop_session_agent_stream(&mut self, cx: &mut Context<Self>) {
-        let had_pending_task = self.session_agent.pending_task.take().is_some();
+        if self.session_agent.has_pending_task() && self.request_session_agent_stream_stop() {
+            // Keep the task alive long enough to apply any deltas it has already removed from the
+            // provider receiver. The task will call `finalize_session_agent_stopped` immediately
+            // after that batch is visible.
+            cx.notify();
+            return;
+        }
+
+        self.finalize_session_agent_stopped(None, None, cx);
+    }
+
+    fn finalize_session_agent_stopped(
+        &mut self,
+        expected_request_id: Option<u64>,
+        pty_interrupts: Option<&SessionAgentPtyInterrupts>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if expected_request_id
+            .is_some_and(|request_id| self.session_agent.active_request_id != request_id)
+        {
+            return false;
+        }
+
+        if let Some(pty_interrupts) = pty_interrupts {
+            pty_interrupts.cancel_commands();
+        }
+
+        let previous_message_count = self.session_agent.messages.len();
+        let thinking_index = self.session_agent_active_thinking_index();
+        let active_tool_indices: Vec<usize> = self
+            .session_agent
+            .messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                message.tool_call.as_ref().and_then(|tool_call| {
+                    matches!(
+                        tool_call.status,
+                        SessionAgentToolStatus::Pending
+                            | SessionAgentToolStatus::WaitingForConfirmation
+                            | SessionAgentToolStatus::InProgress
+                    )
+                    .then_some(index)
+                })
+            })
+            .collect();
+        let had_pending_task = self.take_session_agent_pending_task(cx);
         let had_active_tool = self.session_agent.reject_active_tool_calls(&i18n::string(
             "workspace.panel.agent.messages.stopped_by_user",
         ));
         if !had_pending_task && !had_active_tool {
-            return;
+            return false;
         }
 
         self.session_agent.active_request_id = self.session_agent.active_request_id.wrapping_add(1);
         self.session_agent.finish_stopped_turn();
-        self.session_agent.active_exec_context = None;
-        for tab in &mut self.workspace_state.tabs {
-            if let Some(session) = tab.as_session_mut() {
-                if let Some(tap) = session.pty_output_tap.take() {
-                    tap.close();
-                }
-            }
+        if let Some(index) = thinking_index {
+            self.sync_session_agent_message_view(index, cx);
         }
+        for index in active_tool_indices {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        if self.session_agent.messages.len() > previous_message_count {
+            self.push_session_agent_message_views_from(previous_message_count, cx);
+        } else if let Some(index) = self.session_agent.messages.len().checked_sub(1)
+            && self.session_agent.messages[index].role == SessionAgentMessageRole::Assistant
+        {
+            self.sync_session_agent_message_view(index, cx);
+            self.refresh_conversation_search_message(index, cx);
+        }
+        self.session_agent.active_exec_context = None;
         self.status_message = i18n::string("workspace.panel.agent.messages.stopped");
         self.session_agent.last_error = None;
         self.persist_session_agent_chat();
         cx.notify();
+        true
+    }
+
+    fn finalize_session_agent_stopped_for_session(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        pty_interrupts: Option<&SessionAgentPtyInterrupts>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
+        let mut stopped = false;
+        let updated = self.with_session_agent_state(session_id, |this| {
+            stopped = this.finalize_session_agent_stopped(Some(request_id), pty_interrupts, cx);
+        });
+        if updated && stopped && !is_loaded_session {
+            self.refresh_chat_sessions();
+            cx.notify();
+        }
+    }
+
+    fn mark_session_agent_tools_unconfirmed_for_session(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let message = i18n::string("workspace.panel.agent.messages.tool_stop_unconfirmed");
+        self.with_session_agent_state(session_id, |this| {
+            if this.session_agent.active_request_id != request_id {
+                return;
+            }
+            let active_tool_indices = this
+                .session_agent
+                .messages
+                .iter()
+                .enumerate()
+                .filter_map(|(index, message)| {
+                    message.tool_call.as_ref().and_then(|tool_call| {
+                        matches!(
+                            tool_call.status,
+                            SessionAgentToolStatus::Pending
+                                | SessionAgentToolStatus::WaitingForConfirmation
+                                | SessionAgentToolStatus::InProgress
+                        )
+                        .then_some(index)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if this.session_agent.fail_active_tool_calls(&message) {
+                for index in active_tool_indices {
+                    this.sync_session_agent_message_view(index, cx);
+                }
+            }
+        });
     }
 
     pub(in crate::ui::shell) fn approve_session_agent_tool_call(
@@ -1388,46 +2164,81 @@ impl AppView {
             return;
         };
         let Some(context) = self.session_agent.active_exec_context.clone() else {
-            self.status_message =
-                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
-            cx.notify();
+            self.fail_session_agent_tool_start(
+                &tool_id,
+                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval"),
+                cx,
+            );
             return;
         };
+        let active_target_marker = self.session_agent_terminal_target_marker_for_context(&context);
         let Some(profile) = self.session_agent_profile_for_context(&context) else {
-            self.status_message =
-                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval");
-            cx.notify();
+            self.fail_session_agent_tool_start(
+                &tool_id,
+                i18n::string("workspace.panel.agent.messages.no_active_session_for_approval"),
+                cx,
+            );
             return;
         };
 
         let arguments = parse_tool_arguments(&tool_call.arguments);
         let reasoning = self.session_agent.reasoning_before_tool_call(&tool_id);
         self.session_agent.approve_tool_call(&tool_id);
+        if let Some(index) = self.session_agent_tool_message_index(&tool_id) {
+            self.sync_session_agent_message_view(index, cx);
+        }
         self.status_message = i18n::string("workspace.panel.agent.messages.tool_approved_running");
         let approval_session_id = self.ensure_session_agent_session();
 
         let pty_commands = match self.session_agent_pty_commands_for_context(&context) {
             Ok(commands) => commands,
             Err(message) => {
-                self.session_agent.fail_tool_call(&tool_id, message.clone());
-                self.set_session_agent_execution_context_error(message, cx);
+                self.fail_session_agent_tool_start(&tool_id, message, cx);
                 return;
             }
         };
-        let mut active_pty_tap = None;
+        let mut active_pty_context = None;
         let pty_handle = if let Some((tab_id, command_sender)) = pty_commands {
             let (sender, receiver) = TerminalOutputTap::channel();
-            self.set_session_pty_tap_by_tab_id(tab_id, Some(sender.clone()));
-            active_pty_tap = Some((tab_id, sender));
-            Some(TerminalExecHandle {
-                command_sender,
-                output_tap: Arc::new(Mutex::new(Some(receiver))),
-            })
+            let terminal_exec = TerminalExecHandle::new(command_sender, receiver);
+            if !self.try_set_session_pty_tap_by_tab_id(tab_id, sender.clone()) {
+                self.fail_session_agent_tool_start(
+                    &tool_id,
+                    i18n::string("workspace.panel.agent.messages.pty_terminal_busy"),
+                    cx,
+                );
+                return;
+            }
+            active_pty_context = Some(SessionAgentPtyContext {
+                tap: (tab_id, sender),
+                interrupt: SessionAgentPtyInterrupt {
+                    handle: terminal_exec.clone(),
+                },
+            });
+            Some(terminal_exec)
         } else {
             None
         };
         let approval_mentions = self.resolve_mentions_from_tool_arguments(&arguments);
+        if approval_mentions.pty_busy {
+            if let Some(context) = active_pty_context.as_ref() {
+                self.clear_session_pty_taps_if_same(std::slice::from_ref(&context.tap));
+            }
+            self.fail_session_agent_tool_start(
+                &tool_id,
+                i18n::string("workspace.panel.agent.messages.pty_terminal_busy"),
+                cx,
+            );
+            return;
+        }
         let approval_pty_target_taps = approval_mentions.pty_taps.clone();
+        let active_pty_tap = active_pty_context
+            .as_ref()
+            .map(|context| context.tap.clone());
+        let pty_interrupts = SessionAgentPtyInterrupts {
+            active: active_pty_context.map(|context| context.interrupt),
+            targets: approval_mentions.pty_interrupts.clone(),
+        };
         let sessions = self.data.sessions.clone();
         let agent_service = self.services.agent_service.clone();
         let secrets = self.services.secrets.clone();
@@ -1439,106 +2250,163 @@ impl AppView {
         );
         let tool_name = tool_call.name.clone();
         let tool_arguments = tool_call.arguments.clone();
+        let execution_request_id = self.session_agent.next_request_id();
+        self.session_agent.active_request_id = execution_request_id;
+        let (tool_stop, mut tool_stop_receiver) = watch::channel(false);
+        let mut worker_stop_receiver = tool_stop.subscribe();
         let task = cx.spawn(async move |this, cx| {
             let worker_tool_name = tool_name.clone();
-            let handle = miaominal_agent::agent_runtime().spawn_blocking(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+            let mut handle = miaominal_agent::agent_runtime().spawn_blocking(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|error| anyhow::anyhow!(error))?;
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        return SessionAgentApprovedToolOutcome::Finished(Err(anyhow::anyhow!(
+                            error
+                        )));
+                    }
+                };
                 runtime.block_on(async move {
-                    let mut channel = agent_service.channel_for_profile_snapshot_with_stores(
-                        profile,
-                        &sessions,
-                        secrets.clone(),
-                        known_hosts,
-                    );
-                    if web_search_config.enabled {
-                        let web_search_api_key =
-                            secrets.get("web_search", SecretKind::WebSearchApiKey)?;
-                        channel =
-                            channel.with_web_search_config(web_search_config, web_search_api_key);
+                    let tool = async move {
+                        let mut channel = agent_service.channel_for_profile_snapshot_with_stores(
+                            profile,
+                            &sessions,
+                            secrets.clone(),
+                            known_hosts,
+                        );
+                        if web_search_config.enabled {
+                            let web_search_api_key =
+                                secrets.get("web_search", SecretKind::WebSearchApiKey)?;
+                            channel = channel
+                                .with_web_search_config(web_search_config, web_search_api_key);
+                        }
+                        if let Some(ref pty_handle) = pty_handle {
+                            channel = channel.with_terminal_exec(pty_handle.clone());
+                        }
+                        let mut aux_channels = approval_mentions.aux_channels;
+                        if let Some(marker) = active_target_marker {
+                            aux_channels
+                                .entry(marker)
+                                .or_insert_with(|| channel.clone());
+                        }
+                        channel = channel.with_aux_channels(aux_channels);
+                        channel
+                            .call_tool(AgentToolCallRequest {
+                                tool_name: worker_tool_name,
+                                arguments,
+                                approved: true,
+                                route: None,
+                                skip_policy,
+                            })
+                            .await
+                            .map_err(anyhow::Error::from)
+                            .and_then(|response| {
+                                serde_json::to_string(&response)
+                                    .map_err(|error| anyhow::anyhow!(error))
+                            })
+                    };
+
+                    match wait_for_session_agent_tool_or_stop(tool, &mut worker_stop_receiver).await
+                    {
+                        Some(result) => SessionAgentApprovedToolOutcome::Finished(result),
+                        None => SessionAgentApprovedToolOutcome::Stopped,
                     }
-                    if let Some(ref pty_handle) = pty_handle {
-                        channel = channel.with_terminal_exec(pty_handle.clone());
-                    }
-                    channel = channel.with_aux_channels(approval_mentions.aux_channels);
-                    channel
-                        .call_tool(AgentToolCallRequest {
-                            tool_name: worker_tool_name,
-                            arguments,
-                            approved: true,
-                            route: None,
-                            skip_policy,
-                        })
-                        .await
-                        .map_err(anyhow::Error::from)
-                        .and_then(|response| {
-                            serde_json::to_string(&response).map_err(|error| anyhow::anyhow!(error))
-                        })
                 })
             });
 
-            let result = match handle.await {
-                Ok(result) => result,
-                Err(e) => Err(anyhow::anyhow!("agent tool task failed: {e}")),
+            let outcome = tokio::select! {
+                biased;
+                result = &mut handle => match result {
+                    Ok(outcome) => outcome,
+                    Err(error) => SessionAgentApprovedToolOutcome::Finished(Err(anyhow::anyhow!(
+                        "agent tool task failed: {error}"
+                    ))),
+                },
+                _ = wait_for_session_agent_stop(&mut tool_stop_receiver) => {
+                    pty_interrupts.cancel_commands();
+                    abort_and_wait_for_session_agent_tool_worker(&mut handle).await;
+                    let _ = pty_interrupts.cancel_commands_and_wait().await;
+                    SessionAgentApprovedToolOutcome::Stopped
+                }
             };
 
             let _ = this.update(cx, move |this, cx| {
+                if approved_tool_was_stopped(&outcome) {
+                    pty_interrupts.cancel_commands();
+                    this.finalize_session_agent_stopped_for_session(
+                        &approval_session_id,
+                        execution_request_id,
+                        Some(&pty_interrupts),
+                        cx,
+                    );
+                    if let Some(tap) = active_pty_tap.as_ref() {
+                        this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                    }
+                    this.clear_session_pty_taps_if_same(&approval_pty_target_taps);
+                    return;
+                }
+
+                let stop_after_finished =
+                    approved_tool_should_stop_after_finished(&outcome, &tool_stop_receiver);
+                pty_interrupts.cancel_commands();
                 if let Some(tap) = active_pty_tap.as_ref() {
                     this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
                 }
                 this.clear_session_pty_taps_if_same(&approval_pty_target_taps);
-                let approval_session_id = approval_session_id.clone();
-                this.with_session_agent_state(&approval_session_id, |this| {
-                    let previous_message_count = this.session_agent.messages.len();
-                    let was_scrolled_to_bottom = this.session_agent_is_scrolled_to_bottom();
+                let state_session_id = approval_session_id.clone();
+                let mut finished_was_committed = false;
+                this.with_session_agent_state(&state_session_id, |this| {
+                    if this.session_agent.active_request_id != execution_request_id {
+                        return;
+                    }
+                    let SessionAgentApprovedToolOutcome::Finished(result) = outcome else {
+                        unreachable!("stopped tool execution returned past stop handling");
+                    };
+                    if !matches!(
+                        this.session_agent
+                            .tool_call(&tool_id)
+                            .map(|tool_call| tool_call.status),
+                        Some(SessionAgentToolStatus::InProgress)
+                    ) {
+                        this.take_session_agent_pending_task(cx);
+                        this.session_agent.active_request_id = 0;
+                        this.status_message =
+                            i18n::string("workspace.panel.agent.messages.stopped");
+                        cx.notify();
+                        return;
+                    }
                     let (tool_result, failed) = match result {
                         Ok(result) => {
-                            if !matches!(
-                                this.session_agent
-                                    .tool_call(&tool_id)
-                                    .map(|tool_call| tool_call.status),
-                                Some(SessionAgentToolStatus::InProgress)
-                            ) {
-                                this.status_message =
-                                    i18n::string("workspace.panel.agent.messages.stopped");
-                                cx.notify();
-                                return;
-                            }
                             this.session_agent
                                 .complete_tool_call(&tool_id, result.clone());
+                            if let Some(index) = this.session_agent_tool_message_index(&tool_id) {
+                                this.sync_session_agent_message_view(index, cx);
+                            }
                             this.status_message = i18n::string(
                                 "workspace.panel.agent.messages.tool_finished_continuing",
                             );
                             (result, false)
                         }
                         Err(error) => {
-                            if !matches!(
-                                this.session_agent
-                                    .tool_call(&tool_id)
-                                    .map(|tool_call| tool_call.status),
-                                Some(SessionAgentToolStatus::InProgress)
-                            ) {
-                                this.status_message =
-                                    i18n::string("workspace.panel.agent.messages.stopped");
-                                cx.notify();
-                                return;
-                            }
                             let result = format!("tool failed after approval: {error}");
                             this.session_agent.fail_tool_call(&tool_id, result.clone());
+                            if let Some(index) = this.session_agent_tool_message_index(&tool_id) {
+                                this.sync_session_agent_message_view(index, cx);
+                            }
                             this.status_message = i18n::string(
                                 "workspace.panel.agent.messages.tool_failed_continuing",
                             );
                             (result, true)
                         }
                     };
-                    this.scroll_session_agent_to_bottom_if_following(
-                        previous_message_count,
-                        was_scrolled_to_bottom,
-                        true,
-                        cx,
-                    );
+                    finished_was_committed = true;
+                    if stop_after_finished {
+                        return;
+                    }
+                    this.take_session_agent_pending_task(cx);
+                    this.session_agent.active_request_id = 0;
                     this.continue_session_agent_after_tool_result(
                         AgentChatToolEvent {
                             id: tool_id,
@@ -1551,10 +2419,18 @@ impl AppView {
                         cx,
                     );
                 });
+                if stop_after_finished && finished_was_committed {
+                    this.finalize_session_agent_stopped_for_session(
+                        &approval_session_id,
+                        execution_request_id,
+                        Some(&pty_interrupts),
+                        cx,
+                    );
+                }
                 cx.notify();
             });
         });
-        task.detach();
+        self.install_session_agent_pending_task(task, tool_stop, None, cx);
         cx.notify();
     }
 
@@ -1637,6 +2513,9 @@ impl AppView {
 
         self.session_agent
             .complete_tool_call(&tool_id, tool_result.clone());
+        if let Some(index) = self.session_agent_tool_message_index(&tool_id) {
+            self.sync_session_agent_message_view(index, cx);
+        }
         set_input_value(
             &self.workspace_forms.agent.ask_user_input,
             String::new(),
@@ -1698,12 +2577,28 @@ impl AppView {
 
         let active_targets = self.session_agent.active_at_targets.clone();
         let mentions = self.resolve_session_agent_mentions(&active_targets);
+        if mentions.pty_busy {
+            self.set_session_agent_execution_context_error(
+                i18n::string("workspace.panel.agent.messages.pty_terminal_busy"),
+                cx,
+            );
+            return;
+        }
         let pty_target_taps = mentions.pty_taps.clone();
+        let pty_target_interrupts = mentions.pty_interrupts.clone();
         let target_guidance = mentions.guidance;
-        let Some((tools, active_pty_tap)) =
+        let Some((tools, active_pty_context)) =
             self.build_session_agent_tools(mentions.aux_channels, cx)
         else {
+            self.clear_session_pty_taps_if_same(&pty_target_taps);
             return;
+        };
+        let active_pty_tap = active_pty_context
+            .as_ref()
+            .map(|context| context.tap.clone());
+        let pty_interrupts = SessionAgentPtyInterrupts {
+            active: active_pty_context.map(|context| context.interrupt),
+            targets: pty_target_interrupts,
         };
         let stream_session_id = self.ensure_session_agent_session();
         let request_id = self.session_agent.next_request_id();
@@ -1711,51 +2606,67 @@ impl AppView {
 
         self.session_agent.active_request_id = request_id;
         self.session_agent.last_error = None;
-        let previous_message_count = self.session_agent.messages.len();
-        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply();
-        self.scroll_session_agent_to_bottom_if_following(
-            previous_message_count,
-            was_scrolled_to_bottom,
-            false,
-            cx,
-        );
+        self.start_session_agent_reply(cx);
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
         let runtime = self.services.runtime.clone();
+        let agent_cancellation = tools.as_ref().map(AgentToolSet::cancellation);
+        let wait_for_producer_close = agent_cancellation.is_some();
+        let (stream_stop, mut stream_stop_receiver) = watch::channel(false);
         let task = cx.spawn(async move |this, cx| {
             let stream_session_id_for_error = stream_session_id.clone();
-            let stream_result = runtime
-                .spawn(async move {
-                    let result = if failed {
-                        format!("ERROR: {result}")
-                    } else {
-                        result
-                    };
-                    miaominal_agent::stream_chat_after_tool_result(
-                        AgentToolResultContinuationRequest {
-                            provider,
-                            messages: history,
-                            tool_call,
-                            reasoning,
-                            result,
-                            tools,
-                            target_guidance,
-                        },
-                    )
-                    .await
-                    .map_err(anyhow::Error::from)
+            let mut stream_task = runtime.spawn(async move {
+                let result = if failed {
+                    format!("ERROR: {result}")
+                } else {
+                    result
+                };
+                miaominal_agent::stream_chat_after_tool_result(AgentToolResultContinuationRequest {
+                    provider,
+                    messages: history,
+                    tool_call,
+                    reasoning,
+                    result,
+                    tools,
+                    target_guidance,
                 })
                 .await
-                .unwrap_or_else(|error| {
+                .map_err(anyhow::Error::from)
+            });
+            let stream_result = tokio::select! {
+                biased;
+                _ = wait_for_session_agent_stop(&mut stream_stop_receiver) => {
+                    pty_interrupts.cancel_commands();
+                    stream_task.abort();
+                    let stopped_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let stop_pty_interrupts = pty_interrupts.clone();
+                    let _ = this.update(cx, move |this, cx| {
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            Some(&stop_pty_interrupts),
+                            cx,
+                        );
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                        }
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                    });
+                    return;
+                }
+                result = &mut stream_task => result.unwrap_or_else(|error| {
                     Err(anyhow::anyhow!(
                         "session agent continuation task cancelled: {error}"
                     ))
-                });
+                }),
+            };
 
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
                 Err(error) => {
+                    pty_interrupts.cancel_commands();
                     let cleanup_active_pty_tap = active_pty_tap.clone();
                     let cleanup_pty_target_taps = pty_target_taps.clone();
                     let _ = this.update(cx, move |this, cx| {
@@ -1774,55 +2685,107 @@ impl AppView {
                 }
             };
 
-            while let Some(event) = receiver.recv().await {
-                match event {
-                    Ok(event) => {
-                        let done = matches!(event, AgentChatEvent::Finished(_));
-                        let event_session_id = stream_session_id.clone();
-                        if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event_for_session(
-                                &event_session_id,
+            loop {
+                let received = receive_session_agent_event_batch(
+                    &mut receiver,
+                    &mut stream_stop_receiver,
+                    wait_for_producer_close,
+                    cx.background_executor(),
+                )
+                .await;
+                if !received.events.is_empty() {
+                    let releases_pty_lease = received
+                        .events
+                        .iter()
+                        .any(session_agent_event_releases_pty_lease);
+                    if releases_pty_lease {
+                        pty_interrupts.cancel_commands();
+                    }
+                    let release_active_pty_tap =
+                        releases_pty_lease.then(|| active_pty_tap.clone()).flatten();
+                    let release_pty_target_taps = releases_pty_lease
+                        .then(|| pty_target_taps.clone())
+                        .unwrap_or_default();
+                    let event_session_id = stream_session_id.clone();
+                    if let Err(error) = this.update(cx, move |this, cx| {
+                        if let Some(tap) = release_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                        }
+                        this.clear_session_pty_taps_if_same(&release_pty_target_taps);
+                        this.apply_session_agent_events_for_session(
+                            &event_session_id,
+                            request_id,
+                            received.events,
+                            cx,
+                        );
+                    }) {
+                        log::debug!("failed to apply session agent continuation events: {error:?}");
+                        break;
+                    }
+                }
+
+                if received.stopped {
+                    drop(receiver);
+                    pty_interrupts.cancel_commands();
+                    let stopped_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let stop_pty_interrupts = pty_interrupts.clone();
+                    let producer_stop_ack_timed_out = received.producer_stop_ack_timed_out;
+                    let _ = this.update(cx, move |this, cx| {
+                        if producer_stop_ack_timed_out {
+                            this.mark_session_agent_tools_unconfirmed_for_session(
+                                &stopped_session_id,
                                 request_id,
-                                event,
                                 cx,
                             );
-                        }) {
-                            log::debug!(
-                                "failed to apply session agent continuation event: {error:?}"
+                        }
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            Some(&stop_pty_interrupts),
+                            cx,
+                        );
+                        if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                            this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                        }
+                        this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                    });
+                    return;
+                }
+
+                if let Some(error) = received.error {
+                    pty_interrupts.cancel_commands();
+                    let error_session_id = stream_session_id.clone();
+                    let cleanup_active_pty_tap = active_pty_tap.clone();
+                    let cleanup_pty_target_taps = pty_target_taps.clone();
+                    let _ = this
+                        .update(cx, move |this, cx| {
+                            this.handle_session_agent_stream_error_for_session(
+                                &error_session_id,
+                                request_id,
+                                anyhow::Error::from(error),
+                                cx,
                             );
-                            break;
-                        }
-                        if done {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        let error_session_id = stream_session_id.clone();
-                        let cleanup_active_pty_tap = active_pty_tap.clone();
-                        let cleanup_pty_target_taps = pty_target_taps.clone();
-                        let _ = this
-                            .update(cx, move |this, cx| {
-                                this.handle_session_agent_stream_error_for_session(
-                                    &error_session_id,
-                                    request_id,
-                                    anyhow::Error::from(error),
-                                    cx,
-                                );
-                                if let Some(tap) = cleanup_active_pty_tap.as_ref() {
-                                    this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
-                                }
-                                this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
-                            })
-                            .map_err(|error| {
-                                log::debug!(
-                                    "failed to apply session agent continuation error: {error:?}"
-                                );
-                            });
-                        return;
-                    }
+                            if let Some(tap) = cleanup_active_pty_tap.as_ref() {
+                                this.clear_session_pty_taps_if_same(std::slice::from_ref(tap));
+                            }
+                            this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
+                        })
+                        .map_err(|error| {
+                            log::debug!(
+                                "failed to apply session agent continuation error: {error:?}"
+                            );
+                        });
+                    return;
+                }
+
+                if received.finished || received.stream_closed {
+                    break;
                 }
             }
 
+            pty_interrupts.cancel_commands();
             let finish_session_id = stream_session_id.clone();
             let cleanup_active_pty_tap = active_pty_tap.clone();
             let cleanup_pty_target_taps = pty_target_taps.clone();
@@ -1834,7 +2797,7 @@ impl AppView {
                 this.clear_session_pty_taps_if_same(&cleanup_pty_target_taps);
             });
         });
-        self.session_agent.pending_task = Some(task);
+        self.install_session_agent_pending_task(task, stream_stop, agent_cancellation, cx);
     }
 
     pub(in crate::ui::shell) fn deny_session_agent_tool_call(
@@ -1843,6 +2806,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.session_agent.reject_tool_call(&tool_id);
+        if let Some(index) = self.session_agent_tool_message_index(&tool_id) {
+            self.sync_session_agent_message_view(index, cx);
+        }
         self.status_message = i18n::string("workspace.panel.agent.messages.tool_denied");
         self.persist_session_agent_chat();
         cx.notify();
@@ -1906,15 +2872,14 @@ impl AppView {
         kind: SessionAgentBackgroundNotificationKind,
         cx: &mut Context<Self>,
     ) {
-        let (title, message, notification) = match kind {
+        let notification = match kind {
             SessionAgentBackgroundNotificationKind::ToolApprovalRequired { tool_name } => {
                 let title = i18n::string("workspace.panel.agent.notifications.tool_approval_title");
                 let message = i18n::string_args(
                     "workspace.panel.agent.notifications.tool_approval",
                     &[("chat", &chat_label), ("tool", &tool_name)],
                 );
-                let notification = Self::warning_notification(title.clone(), message.clone());
-                (title, message, notification)
+                Self::warning_notification(title, message)
             }
             SessionAgentBackgroundNotificationKind::UserInputRequired { tool_name } => {
                 let title = i18n::string("workspace.panel.agent.notifications.user_input_title");
@@ -1922,8 +2887,7 @@ impl AppView {
                     "workspace.panel.agent.notifications.user_input",
                     &[("chat", &chat_label), ("tool", &tool_name)],
                 );
-                let notification = Self::warning_notification(title.clone(), message.clone());
-                (title, message, notification)
+                Self::warning_notification(title, message)
             }
             SessionAgentBackgroundNotificationKind::ReplyReady => {
                 let title = i18n::string("workspace.panel.agent.notifications.reply_ready_title");
@@ -1931,12 +2895,18 @@ impl AppView {
                     "workspace.panel.agent.notifications.reply_ready",
                     &[("chat", &chat_label)],
                 );
-                let notification = Self::success_notification(title.clone(), message.clone());
-                (title, message, notification)
+                Self::success_notification(title, message)
+            }
+            SessionAgentBackgroundNotificationKind::StreamFailed { error } => {
+                let title = i18n::string("workspace.panel.agent.notifications.stream_failed_title");
+                let message = i18n::string_args(
+                    "workspace.panel.agent.notifications.stream_failed",
+                    &[("chat", &chat_label), ("error", &error)],
+                );
+                Self::error_notification(title, message)
             }
         };
 
-        self.status_message = format!("{title}: {message}");
         self.with_active_window(cx, move |window, cx| {
             window.push_notification(notification, cx);
         });
@@ -1952,46 +2922,78 @@ impl AppView {
             return None;
         }
 
-        self.clear_expired_session_agent_follow_bottom_cooldown();
-        let previous_message_count = self.session_agent.messages.len();
-        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        let content_may_have_grown = matches!(
-            &event,
-            AgentChatEvent::TextDelta(_)
-                | AgentChatEvent::ThinkingDelta(_)
-                | AgentChatEvent::ToolCallDelta { .. }
-                | AgentChatEvent::ToolCallCompleted { .. }
-                | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
-                | AgentChatEvent::ToolCallApprovalRequired { .. }
-                | AgentChatEvent::ToolCallUserInputRequired { .. }
-                | AgentChatEvent::Finished(_)
-        );
         let notification_kind = match event {
             AgentChatEvent::TextDelta(delta) => {
-                self.session_agent.append_assistant_delta(delta);
+                let previous_message_count = self.session_agent.messages.len();
+                let thinking_index = self.session_agent_active_thinking_index();
+                self.session_agent.append_assistant_delta(&delta);
+                if let Some(index) = thinking_index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
+                if self.session_agent.messages.len() > previous_message_count {
+                    self.push_session_agent_message_views_from(previous_message_count, cx);
+                } else if !delta.is_empty()
+                    && self
+                        .session_agent
+                        .messages
+                        .last()
+                        .is_some_and(|message| message.role == SessionAgentMessageRole::Assistant)
+                {
+                    let index = self.session_agent.messages.len().saturating_sub(1);
+                    self.append_session_agent_message_view_delta(index, &delta, cx);
+                }
+                if !delta.is_empty()
+                    && let Some(index) = self.session_agent.messages.len().checked_sub(1)
+                    && self.session_agent.messages[index].role == SessionAgentMessageRole::Assistant
+                {
+                    self.schedule_conversation_search_message_refresh(index, cx);
+                }
                 self.session_agent.last_error = None;
                 None
             }
             AgentChatEvent::ThinkingDelta(delta) => {
-                self.session_agent.append_thinking_delta(delta);
+                let previous_message_count = self.session_agent.messages.len();
+                let changed = !delta.trim().is_empty();
+                self.session_agent.append_thinking_delta(&delta);
+                if self.session_agent.messages.len() > previous_message_count {
+                    self.push_session_agent_message_views_from(previous_message_count, cx);
+                } else if changed {
+                    let index = self.session_agent.messages.len().saturating_sub(1);
+                    self.append_session_agent_message_view_delta(index, &delta, cx);
+                }
                 self.status_message = i18n::string("workspace.panel.agent.thinking");
                 None
             }
             AgentChatEvent::ToolCallStarted(tool) => {
+                let previous_message_count = self.session_agent.messages.len();
+                let thinking_index = self.session_agent_active_thinking_index();
                 self.session_agent.push_tool_call(
                     tool.id,
                     tool.name,
                     tool.arguments,
                     SessionAgentToolStatus::InProgress,
                 );
+                if let Some(index) = thinking_index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
+                self.push_session_agent_message_views_from(previous_message_count, cx);
                 None
             }
             AgentChatEvent::ToolCallDelta { id, delta } => {
+                let index = self.session_agent_tool_message_index(&id);
+                let changed = !delta.trim().is_empty();
                 self.session_agent.append_tool_call_delta(&id, delta);
+                if changed && let Some(index) = index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
                 None
             }
             AgentChatEvent::ToolCallCompleted { id, result } => {
+                let index = self.session_agent_tool_message_index(&id);
                 self.session_agent.complete_tool_call(&id, result);
+                if let Some(index) = index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
                 self.session_agent.tool_call(&id).and_then(|tool_call| {
                     if tool_call.status == SessionAgentToolStatus::WaitingForConfirmation {
                         Some(
@@ -2004,19 +3006,31 @@ impl AppView {
                     }
                 })
             }
+            AgentChatEvent::ToolCallCancelled { id } => {
+                let index = self.session_agent_tool_message_index(&id);
+                self.session_agent.reject_tool_call_with_message(
+                    &id,
+                    i18n::string("workspace.panel.agent.messages.stopped_by_user"),
+                );
+                if let Some(index) = index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
+                None
+            }
             AgentChatEvent::ToolCallAutoExecuteRequired { id } => {
-                self.session_agent.pending_task = None;
+                self.take_session_agent_pending_task(cx);
                 self.session_agent.active_request_id = 0;
                 self.approve_session_agent_tool_call(id, cx);
                 None
             }
             AgentChatEvent::ToolCallApprovalRequired { id, message } => {
                 if matches!(self.session_agent.agent_mode, AgentMode::FullAuto) {
-                    self.session_agent.pending_task = None;
+                    self.take_session_agent_pending_task(cx);
                     self.session_agent.active_request_id = 0;
                     self.approve_session_agent_tool_call(id, cx);
                     None
                 } else {
+                    let index = self.session_agent_tool_message_index(&id);
                     let tool_name = self
                         .session_agent
                         .tool_call(&id)
@@ -2024,11 +3038,15 @@ impl AppView {
                         .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool"));
                     self.session_agent
                         .require_tool_call_confirmation(&id, message);
+                    if let Some(index) = index {
+                        self.sync_session_agent_message_view(index, cx);
+                    }
                     self.finish_session_agent_stream(request_id, cx);
                     Some(SessionAgentBackgroundNotificationKind::ToolApprovalRequired { tool_name })
                 }
             }
             AgentChatEvent::ToolCallUserInputRequired { id, message } => {
+                let index = self.session_agent_tool_message_index(&id);
                 let tool_name = self
                     .session_agent
                     .tool_call(&id)
@@ -2036,11 +3054,31 @@ impl AppView {
                     .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool"));
                 self.session_agent
                     .require_tool_call_confirmation(&id, message);
+                if let Some(index) = index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
                 self.finish_session_agent_stream(request_id, cx);
                 Some(SessionAgentBackgroundNotificationKind::UserInputRequired { tool_name })
             }
             AgentChatEvent::Finished(reply) => {
+                let previous_message_count = self.session_agent.messages.len();
+                let thinking_index = self.session_agent_active_thinking_index();
                 self.session_agent.finish_assistant_reply(reply);
+                if let Some(index) = thinking_index {
+                    self.sync_session_agent_message_view(index, cx);
+                }
+                if self.session_agent.messages.len() > previous_message_count {
+                    self.push_session_agent_message_views_from(previous_message_count, cx);
+                } else if let Some(index) = self.session_agent.messages.len().checked_sub(1)
+                    && self.session_agent.messages[index].role == SessionAgentMessageRole::Assistant
+                {
+                    self.sync_session_agent_message_view(index, cx);
+                }
+                if let Some(index) = self.session_agent.messages.len().checked_sub(1)
+                    && self.session_agent.messages[index].role == SessionAgentMessageRole::Assistant
+                {
+                    self.refresh_conversation_search_message(index, cx);
+                }
                 if self.finish_session_agent_stream(request_id, cx)
                     && !self.session_agent.has_active_tool_call()
                 {
@@ -2051,44 +3089,53 @@ impl AppView {
             }
             AgentChatEvent::TokenUsage { .. } => None,
         };
-        self.scroll_session_agent_to_bottom_if_following(
-            previous_message_count,
-            was_scrolled_to_bottom,
-            content_may_have_grown,
-            cx,
-        );
 
-        cx.notify();
         notification_kind
     }
 
-    fn apply_session_agent_event_for_session(
+    fn apply_session_agent_events_for_session(
         &mut self,
         session_id: &str,
         request_id: u64,
-        event: AgentChatEvent,
+        events: Vec<AgentChatEvent>,
         cx: &mut Context<Self>,
     ) {
+        if events.is_empty() {
+            return;
+        }
+
+        let requires_root_notify = events.iter().any(|event| {
+            !matches!(
+                event,
+                AgentChatEvent::TextDelta(_)
+                    | AgentChatEvent::ThinkingDelta(_)
+                    | AgentChatEvent::ToolCallDelta { .. }
+                    | AgentChatEvent::TokenUsage { .. }
+            )
+        });
         let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
-        let should_notify = !self.session_agent_session_is_foreground(session_id);
-        let mut notification = None;
+        let should_background_notify = !self.session_agent_session_is_foreground(session_id);
+        let mut notifications = Vec::new();
         let updated = self.with_session_agent_state(session_id, |this| {
-            let kind = this.apply_session_agent_event(request_id, event, cx);
-            if should_notify {
-                notification =
-                    kind.map(|kind| (this.session_agent_notification_chat_label(), kind));
+            for event in events {
+                let kind = this.apply_session_agent_event(request_id, event, cx);
+                if should_background_notify && let Some(kind) = kind {
+                    notifications.push((this.session_agent_notification_chat_label(), kind));
+                }
             }
         });
         if !updated {
             return;
         }
 
-        if let Some((chat_label, kind)) = notification {
+        for (chat_label, kind) in notifications {
             self.notify_background_session_agent(chat_label, kind, cx);
         }
 
-        if !is_loaded_session {
+        if !is_loaded_session && requires_root_notify {
             self.refresh_chat_sessions();
+        }
+        if requires_root_notify {
             cx.notify();
         }
     }
@@ -2098,7 +3145,12 @@ impl AppView {
             return false;
         }
 
-        self.session_agent.pending_task = None;
+        let thinking_index = self.session_agent_active_thinking_index();
+        self.session_agent.finish_active_thinking();
+        if let Some(index) = thinking_index {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        self.take_session_agent_pending_task(cx);
         self.session_agent.active_request_id = 0;
         let turn_has_output = self
             .session_agent
@@ -2257,7 +3309,12 @@ impl AppView {
             return false;
         }
 
-        self.session_agent.pending_task = None;
+        let thinking_index = self.session_agent_active_thinking_index();
+        self.session_agent.finish_active_thinking();
+        if let Some(index) = thinking_index {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        self.take_session_agent_pending_task(cx);
         self.session_agent.active_request_id = 0;
         let message = error.to_string();
         self.session_agent.last_error = Some(message.clone());
@@ -2273,12 +3330,14 @@ impl AppView {
         request_id: u64,
         error: anyhow::Error,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         let message = error.to_string();
         if is_recoverable_session_agent_prompt_error(&message) {
-            self.recover_session_agent_prompt_error(request_id, message, cx);
+            self.recover_session_agent_prompt_error(request_id, message, cx)
+        } else if self.fail_session_agent_stream(request_id, error, cx) {
+            Some(message)
         } else {
-            self.fail_session_agent_stream(request_id, error, cx);
+            None
         }
     }
 
@@ -2290,11 +3349,31 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let is_loaded_session = self.session_agent.session_id.as_deref() == Some(session_id);
+        let should_background_notify = !self.session_agent_session_is_foreground(session_id);
+        let foreground_status = should_background_notify.then(|| self.status_message.clone());
+        let mut notification = None;
         let updated = self.with_session_agent_state(session_id, |this| {
-            this.handle_session_agent_stream_error(request_id, error, cx);
+            if let Some(error) = this.handle_session_agent_stream_error(request_id, error, cx)
+                && should_background_notify
+            {
+                notification = Some((
+                    this.session_agent_notification_chat_label(),
+                    SessionAgentBackgroundNotificationKind::StreamFailed {
+                        error: truncate_with_ellipsis(&error, 160),
+                    },
+                ));
+            }
         });
         if !updated {
             return;
+        }
+
+        if let Some(foreground_status) = foreground_status {
+            self.status_message = foreground_status;
+        }
+
+        if let Some((chat_label, kind)) = notification {
+            self.notify_background_session_agent(chat_label, kind, cx);
         }
 
         if !is_loaded_session {
@@ -2308,12 +3387,17 @@ impl AppView {
         request_id: u64,
         message: String,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         if self.session_agent.active_request_id != request_id {
-            return;
+            return None;
         }
 
-        self.session_agent.pending_task = None;
+        let thinking_index = self.session_agent_active_thinking_index();
+        self.session_agent.finish_active_thinking();
+        if let Some(index) = thinking_index {
+            self.sync_session_agent_message_view(index, cx);
+        }
+        self.take_session_agent_pending_task(cx);
         self.session_agent.active_request_id = 0;
         self.session_agent.last_error = None;
         self.push_session_agent_message(
@@ -2328,9 +3412,10 @@ impl AppView {
 
         let Some(provider_id) = self.selected_ai_provider_id(cx) else {
             self.session_agent.last_error = Some(message.clone());
-            self.status_message = message;
+            self.status_message = message.clone();
+            self.persist_session_agent_chat();
             cx.notify();
-            return;
+            return Some(message);
         };
 
         let provider = match self.build_session_agent_provider(&provider_id) {
@@ -2338,9 +3423,10 @@ impl AppView {
             Err(error) => {
                 let message = error.to_string();
                 self.session_agent.last_error = Some(message.clone());
-                self.status_message = message;
+                self.status_message = message.clone();
+                self.persist_session_agent_chat();
                 cx.notify();
-                return;
+                return Some(message);
             }
         };
 
@@ -2357,40 +3443,47 @@ impl AppView {
         );
         let request_id = self.session_agent.next_request_id();
         self.session_agent.active_request_id = request_id;
-        let previous_message_count = self.session_agent.messages.len();
-        let was_scrolled_to_bottom = self.session_agent_is_scrolled_to_bottom();
-        self.session_agent.start_assistant_reply();
-        self.scroll_session_agent_to_bottom_if_following(
-            previous_message_count,
-            was_scrolled_to_bottom,
-            false,
-            cx,
-        );
+        self.start_session_agent_reply(cx);
         self.status_message = i18n::string("workspace.panel.agent.thinking");
 
         let runtime = self.services.runtime.clone();
         let recovery_session_id = self.ensure_session_agent_session();
+        let (stream_stop, mut stream_stop_receiver) = watch::channel(false);
         let task = cx.spawn(async move |this, cx| {
             let recovery_session_id_for_error = recovery_session_id.clone();
-            let stream_result = runtime
-                .spawn(async move {
-                    miaominal_agent::stream_chat(AgentChatRequest {
-                        provider,
-                        messages: history,
-                        prompt,
-                        prompt_images: Vec::new(),
-                        tools: None,
-                        target_guidance: None,
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
+            let mut stream_task = runtime.spawn(async move {
+                miaominal_agent::stream_chat(AgentChatRequest {
+                    provider,
+                    messages: history,
+                    prompt,
+                    prompt_images: Vec::new(),
+                    tools: None,
+                    target_guidance: None,
                 })
                 .await
-                .unwrap_or_else(|error| {
+                .map_err(anyhow::Error::from)
+            });
+            let stream_result = tokio::select! {
+                biased;
+                _ = wait_for_session_agent_stop(&mut stream_stop_receiver) => {
+                    stream_task.abort();
+                    let stopped_session_id = recovery_session_id.clone();
+                    let _ = this.update(cx, move |this, cx| {
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            None,
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                result = &mut stream_task => result.unwrap_or_else(|error| {
                     Err(anyhow::anyhow!(
                         "session agent recovery task cancelled: {error}"
                     ))
-                });
+                }),
+            };
 
             let mut receiver = match stream_result {
                 Ok(receiver) => receiver,
@@ -2407,44 +3500,62 @@ impl AppView {
                 }
             };
 
-            while let Some(event) = receiver.recv().await {
-                match event {
-                    Ok(event) => {
-                        let done = matches!(event, AgentChatEvent::Finished(_));
-                        let event_session_id = recovery_session_id.clone();
-                        if let Err(error) = this.update(cx, move |this, cx| {
-                            this.apply_session_agent_event_for_session(
-                                &event_session_id,
+            loop {
+                let received = receive_session_agent_event_batch(
+                    &mut receiver,
+                    &mut stream_stop_receiver,
+                    false,
+                    cx.background_executor(),
+                )
+                .await;
+                if !received.events.is_empty() {
+                    let event_session_id = recovery_session_id.clone();
+                    if let Err(error) = this.update(cx, move |this, cx| {
+                        this.apply_session_agent_events_for_session(
+                            &event_session_id,
+                            request_id,
+                            received.events,
+                            cx,
+                        );
+                    }) {
+                        log::debug!("failed to apply session agent recovery events: {error:?}");
+                        break;
+                    }
+                }
+
+                if received.stopped {
+                    drop(receiver);
+                    let stopped_session_id = recovery_session_id.clone();
+                    let _ = this.update(cx, move |this, cx| {
+                        this.finalize_session_agent_stopped_for_session(
+                            &stopped_session_id,
+                            request_id,
+                            None,
+                            cx,
+                        );
+                    });
+                    return;
+                }
+
+                if let Some(error) = received.error {
+                    let error_session_id = recovery_session_id.clone();
+                    let _ = this
+                        .update(cx, move |this, cx| {
+                            this.handle_session_agent_stream_error_for_session(
+                                &error_session_id,
                                 request_id,
-                                event,
+                                anyhow::Error::from(error),
                                 cx,
                             );
-                        }) {
-                            log::debug!("failed to apply session agent recovery event: {error:?}");
-                            break;
-                        }
-                        if done {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        let error_session_id = recovery_session_id.clone();
-                        let _ = this
-                            .update(cx, move |this, cx| {
-                                this.handle_session_agent_stream_error_for_session(
-                                    &error_session_id,
-                                    request_id,
-                                    anyhow::Error::from(error),
-                                    cx,
-                                );
-                            })
-                            .map_err(|error| {
-                                log::debug!(
-                                    "failed to apply session agent recovery error: {error:?}"
-                                );
-                            });
-                        return;
-                    }
+                        })
+                        .map_err(|error| {
+                            log::debug!("failed to apply session agent recovery error: {error:?}");
+                        });
+                    return;
+                }
+
+                if received.finished || received.stream_closed {
+                    break;
                 }
             }
 
@@ -2453,8 +3564,9 @@ impl AppView {
                 this.finish_session_agent_stream_for_session(&finish_session_id, request_id, cx);
             });
         });
-        self.session_agent.pending_task = Some(task);
+        self.install_session_agent_pending_task(task, stream_stop, None, cx);
         cx.notify();
+        None
     }
 
     fn build_session_agent_provider(&self, provider_id: &str) -> anyhow::Result<AgentChatProvider> {
@@ -2515,6 +3627,13 @@ impl AppView {
         let mut guidance_lines = Vec::new();
         let mut resolved_names = Vec::new();
         let mut pending_pty_taps = Vec::new();
+        let mut pty_interrupts = HashMap::new();
+        let active_terminal_tab_id = self
+            .session_agent
+            .active_exec_context
+            .as_ref()
+            .filter(|context| context.exec_mode == AgentExecMode::Pty)
+            .and_then(|context| context.terminal_tab_id);
 
         match self.session_agent.execution_mode_for_running_tools() {
             AgentExecMode::ExecChannel => {
@@ -2563,15 +3682,30 @@ impl AppView {
                     else {
                         continue;
                     };
+                    if active_terminal_tab_id == Some(tab.id) {
+                        // The default active channel will own this tab's single output tap. An
+                        // explicit `target: "@current-tab"` can safely fall through to that
+                        // channel instead of acquiring a second lease for the same request.
+                        guidance_lines.push(format!(
+                            "- {marker}: terminal session \"{}\" (profile: {}, host: {}, user: {})",
+                            tab.title, profile.name, profile.host, profile.username
+                        ));
+                        resolved_names.push(tab.title.clone());
+                        continue;
+                    }
                     let (sender, receiver) = TerminalOutputTap::channel();
+                    let terminal_exec = TerminalExecHandle::new(command_sender, receiver);
                     let channel = self
                         .agent_exec_channel_for_profile(profile.clone())
-                        .with_terminal_exec(TerminalExecHandle {
-                            command_sender,
-                            output_tap: Arc::new(Mutex::new(Some(receiver))),
-                        });
+                        .with_terminal_exec(terminal_exec.clone());
                     aux_channels.insert(marker.clone(), channel);
                     pending_pty_taps.push((tab.id, sender));
+                    pty_interrupts.insert(
+                        marker.clone(),
+                        SessionAgentPtyInterrupt {
+                            handle: terminal_exec,
+                        },
+                    );
                     guidance_lines.push(format!(
                         "- {marker}: terminal session \"{}\" (profile: {}, host: {}, user: {})",
                         tab.title, profile.name, profile.host, profile.username
@@ -2581,8 +3715,18 @@ impl AppView {
             }
         }
 
+        let mut acquired_pty_taps = Vec::new();
+        let mut pty_busy = false;
         for (tab_id, sender) in &pending_pty_taps {
-            self.set_session_pty_tap_by_tab_id(*tab_id, Some(sender.clone()));
+            if self.try_set_session_pty_tap_by_tab_id(*tab_id, sender.clone()) {
+                acquired_pty_taps.push((*tab_id, sender.clone()));
+            } else {
+                pty_busy = true;
+                break;
+            }
+        }
+        if pty_busy {
+            self.clear_session_pty_taps_if_same(&acquired_pty_taps);
         }
 
         let unresolved = targets
@@ -2608,7 +3752,9 @@ impl AppView {
             aux_channels,
             guidance,
             unresolved,
-            pty_taps: pending_pty_taps,
+            pty_taps: (!pty_busy).then_some(pending_pty_taps).unwrap_or_default(),
+            pty_interrupts,
+            pty_busy,
         }
     }
 
@@ -2619,7 +3765,7 @@ impl AppView {
         let Some(target) = arguments.get("target").and_then(Value::as_str) else {
             return ResolvedSessionAgentMentions::default();
         };
-        let target = target.trim_start_matches('@').to_string();
+        let target = target.trim().trim_start_matches('@').trim().to_string();
         self.resolve_session_agent_mentions(&[target])
     }
 
@@ -2660,6 +3806,8 @@ struct ResolvedSessionAgentMentions {
     guidance: Option<String>,
     unresolved: Vec<String>,
     pty_taps: Vec<(usize, TerminalOutputTap)>,
+    pty_interrupts: HashMap<String, SessionAgentPtyInterrupt>,
+    pty_busy: bool,
 }
 
 fn parse_tool_arguments(arguments: &str) -> Value {
@@ -2985,5 +4133,529 @@ mod tests {
             history.last().map(|message| message.content.as_str()),
             Some("assistant 49")
         );
+    }
+
+    #[tokio::test]
+    async fn stream_stop_flushes_a_delta_already_collected_for_the_ui_batch() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(4);
+        sender
+            .send(Ok(AgentChatEvent::TextDelta("partial reply".into())))
+            .await
+            .expect("stream receiver should remain open");
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+
+        let receive = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            std::future::pending::<()>,
+        );
+        let request_stop = async move {
+            // Let the receiver consume the first delta and enter its pending deadline before the
+            // user stop signal arrives.
+            tokio::task::yield_now().await;
+            stop_sender
+                .send(true)
+                .expect("stop receiver should remain open");
+        };
+        let (batch, ()) = tokio::join!(receive, request_stop);
+
+        assert!(batch.stopped);
+        assert!(!batch.finished);
+        assert!(!batch.stream_closed);
+        assert_eq!(
+            batch.events,
+            vec![AgentChatEvent::TextDelta("partial reply".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_full_auto_tool_completion_wins_over_stop() {
+        let completion = AgentChatEvent::ToolCallCompleted {
+            id: "tool-1".into(),
+            result: "done".into(),
+        };
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+        sender
+            .send(Ok(completion.clone()))
+            .await
+            .expect("stream receiver should remain open");
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let completed = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert_eq!(completed.events, vec![completion]);
+        assert!(completed.stopped);
+    }
+
+    #[tokio::test]
+    async fn stop_bounded_drain_preserves_a_queued_completion_behind_deltas() {
+        let completion = AgentChatEvent::ToolCallCompleted {
+            id: "tool-1".into(),
+            result: "done".into(),
+        };
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(4);
+        sender
+            .send(Ok(AgentChatEvent::TextDelta("before".into())))
+            .await
+            .expect("stream receiver should remain open");
+        sender
+            .send(Ok(completion.clone()))
+            .await
+            .expect("stream receiver should remain open");
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let batch = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert!(batch.stopped);
+        assert_eq!(
+            batch.events,
+            vec![AgentChatEvent::TextDelta("before".into()), completion,]
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_drains_the_entire_fixed_tool_lifecycle_snapshot_in_order() {
+        let events = vec![
+            AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                id: "tool-1".into(),
+                name: "run_shell".into(),
+                arguments: "{}".into(),
+            }),
+            AgentChatEvent::ToolCallCompleted {
+                id: "tool-1".into(),
+                result: "first done".into(),
+            },
+            AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                id: "tool-2".into(),
+                name: "read".into(),
+                arguments: "{}".into(),
+            }),
+            AgentChatEvent::ToolCallCompleted {
+                id: "tool-2".into(),
+                result: "second done".into(),
+            },
+        ];
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(4);
+        for event in events.iter().cloned() {
+            sender
+                .send(Ok(event))
+                .await
+                .expect("stream receiver should remain open");
+        }
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let batch = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert_eq!(batch.events, events);
+        assert!(batch.stopped);
+    }
+
+    #[tokio::test]
+    async fn stop_waits_for_the_producer_close_ack_before_returning_completion() {
+        let started = AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+            id: "tool-1".into(),
+            name: "run_shell".into(),
+            arguments: "{}".into(),
+        });
+        let completion = AgentChatEvent::ToolCallCompleted {
+            id: "tool-1".into(),
+            result: "done".into(),
+        };
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(2);
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let receive = receive_session_agent_event_batch_with_deadlines(
+            &mut receiver,
+            &mut stop_receiver,
+            true,
+            std::future::pending::<()>,
+            std::future::pending::<()>,
+        );
+        let delayed_producer = async move {
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            sender
+                .send(Ok(started.clone()))
+                .await
+                .expect("stop collector should keep the receiver open");
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+            sender
+                .send(Ok(completion.clone()))
+                .await
+                .expect("completion should publish before producer close");
+            (started, completion)
+        };
+
+        let (batch, (started, completion)) = tokio::join!(receive, delayed_producer);
+
+        assert_eq!(batch.events, vec![started, completion]);
+        assert!(batch.stopped);
+        assert!(batch.stream_closed);
+    }
+
+    #[tokio::test]
+    async fn stop_collector_preserves_structured_tool_cancellation() {
+        let events = vec![
+            AgentChatEvent::ToolCallStarted(AgentChatToolEvent {
+                id: "tool-1".into(),
+                name: "run_shell".into(),
+                arguments: "{}".into(),
+            }),
+            AgentChatEvent::ToolCallCancelled {
+                id: "tool-1".into(),
+            },
+        ];
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(2);
+        for event in events.iter().cloned() {
+            sender
+                .send(Ok(event))
+                .await
+                .expect("stop collector should remain open");
+        }
+        drop(sender);
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let batch = receive_session_agent_event_batch_with_deadlines(
+            &mut receiver,
+            &mut stop_receiver,
+            true,
+            std::future::pending::<()>,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert_eq!(batch.events, events);
+        assert!(batch.stopped);
+        assert!(batch.stream_closed);
+    }
+
+    #[tokio::test]
+    async fn producer_error_during_stop_keeps_user_stop_semantics() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let receive = receive_session_agent_event_batch_with_deadlines(
+            &mut receiver,
+            &mut stop_receiver,
+            true,
+            std::future::pending::<()>,
+            std::future::pending::<()>,
+        );
+        let fail_producer = async move {
+            tokio::task::yield_now().await;
+            sender
+                .send(Err(AgentError::Backend(anyhow::anyhow!(
+                    "tool execution cancelled"
+                ))))
+                .await
+                .expect("stop collector should remain open until producer close");
+        };
+
+        let (batch, ()) = tokio::join!(receive, fail_producer);
+
+        assert!(batch.stopped);
+        assert!(batch.error.is_some());
+        assert!(batch.stream_closed);
+    }
+
+    #[tokio::test]
+    async fn producer_stop_ack_timeout_is_reported_without_claiming_channel_close() {
+        let (_sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let batch = receive_session_agent_event_batch_with_deadlines(
+            &mut receiver,
+            &mut stop_receiver,
+            true,
+            std::future::pending::<()>,
+            || std::future::ready(()),
+        )
+        .await;
+
+        assert!(batch.stopped);
+        assert!(batch.producer_stop_ack_timed_out);
+        assert!(!batch.stream_closed);
+    }
+
+    #[tokio::test]
+    async fn stop_discards_a_queued_full_auto_handoff() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+        sender
+            .send(Ok(AgentChatEvent::ToolCallAutoExecuteRequired {
+                id: "tool-1".into(),
+            }))
+            .await
+            .expect("stream receiver should remain open");
+        drop(sender);
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        stop_sender
+            .send(true)
+            .expect("stop receiver should remain open");
+
+        let batch = receive_session_agent_event_batch_with_deadlines(
+            &mut receiver,
+            &mut stop_receiver,
+            true,
+            std::future::pending::<()>,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert!(batch.events.is_empty());
+        assert!(batch.stopped);
+        assert!(batch.stream_closed);
+    }
+
+    #[tokio::test]
+    async fn ready_deadline_is_not_starved_by_a_queued_delta_stream() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(4);
+        for delta in ["first", "second", "third"] {
+            sender
+                .send(Ok(AgentChatEvent::TextDelta(delta.into())))
+                .await
+                .expect("stream receiver should remain open");
+        }
+        let (_stop_sender, mut stop_receiver) = watch::channel(false);
+
+        let batch = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            || std::future::ready(()),
+        )
+        .await;
+
+        assert_eq!(
+            batch.events,
+            vec![AgentChatEvent::TextDelta("first".into())]
+        );
+        assert_eq!(receiver.len(), 2);
+        assert!(!batch.stopped);
+    }
+
+    #[tokio::test]
+    async fn dropping_stream_stop_sender_is_not_a_user_stop() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(4);
+        sender
+            .send(Ok(AgentChatEvent::TextDelta("normal reply".into())))
+            .await
+            .expect("stream receiver should remain open");
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        drop(stop_sender);
+
+        let batch = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            || async { tokio::task::yield_now().await },
+        )
+        .await;
+
+        assert!(!batch.stopped);
+        assert_eq!(
+            batch.events,
+            vec![AgentChatEvent::TextDelta("normal reply".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_tool_stop_drops_the_running_tool_future() {
+        struct DropFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        let tool_started = started.clone();
+        let tool_dropped = dropped.clone();
+        let tool = async move {
+            let _drop_flag = DropFlag(tool_dropped);
+            tool_started.notify_one();
+            std::future::pending::<()>().await;
+        };
+        let stop = async move {
+            started.notified().await;
+            stop_sender
+                .send(true)
+                .expect("tool stop receiver should remain open");
+        };
+
+        let (result, ()) = tokio::join!(
+            wait_for_session_agent_tool_or_stop(tool, &mut stop_receiver),
+            stop
+        );
+
+        assert!(result.is_none());
+        assert!(dropped.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn approved_tool_stop_waits_for_blocking_worker_cleanup() {
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker_started = started.clone();
+        let worker_finished = finished.clone();
+        let mut handle = tokio::task::spawn_blocking(move || {
+            worker_started.notify_one();
+            release_receiver
+                .recv()
+                .expect("cleanup test should release the worker");
+            worker_finished.store(true, std::sync::atomic::Ordering::Release);
+        });
+        started.notified().await;
+
+        let finished_before_release = finished.clone();
+        let release = async move {
+            tokio::task::yield_now().await;
+            assert!(!finished_before_release.load(std::sync::atomic::Ordering::Acquire));
+            release_sender
+                .send(())
+                .expect("blocking worker should remain alive until cleanup");
+        };
+        let ((), ()) = tokio::join!(
+            abort_and_wait_for_session_agent_tool_worker(&mut handle),
+            release,
+        );
+
+        assert!(finished.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn approved_tool_completion_is_committed_before_stopping_the_continuation() {
+        let (stop_sender, stop_receiver) = watch::channel(false);
+        let outcome = SessionAgentApprovedToolOutcome::Finished(Ok("done".to_string()));
+
+        assert!(!approved_tool_was_stopped(&outcome));
+        assert!(!approved_tool_should_stop_after_finished(
+            &outcome,
+            &stop_receiver,
+        ));
+        stop_sender
+            .send(true)
+            .expect("tool stop receiver should remain open");
+        assert!(!approved_tool_was_stopped(&outcome));
+        assert!(approved_tool_should_stop_after_finished(
+            &outcome,
+            &stop_receiver,
+        ));
+
+        let stopped = SessionAgentApprovedToolOutcome::Stopped;
+        assert!(approved_tool_was_stopped(&stopped));
+        assert!(!approved_tool_should_stop_after_finished(
+            &stopped,
+            &stop_receiver,
+        ));
+    }
+
+    #[test]
+    fn tool_handoff_events_release_the_previous_pty_lease() {
+        for event in [
+            AgentChatEvent::ToolCallAutoExecuteRequired {
+                id: "auto".to_string(),
+            },
+            AgentChatEvent::ToolCallApprovalRequired {
+                id: "approval".to_string(),
+                message: "approve".to_string(),
+            },
+            AgentChatEvent::ToolCallUserInputRequired {
+                id: "input".to_string(),
+                message: "answer".to_string(),
+            },
+        ] {
+            assert!(session_agent_event_releases_pty_lease(&event));
+        }
+        assert!(!session_agent_event_releases_pty_lease(
+            &AgentChatEvent::TextDelta("still streaming".to_string())
+        ));
+    }
+
+    #[tokio::test]
+    async fn normal_terminal_events_ignore_a_dropped_stop_sender() {
+        for event in [
+            AgentChatEvent::Finished("done".into()),
+            AgentChatEvent::ToolCallAutoExecuteRequired {
+                id: "tool-1".into(),
+            },
+        ] {
+            let (sender, mut receiver) =
+                tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+            sender
+                .send(Ok(event.clone()))
+                .await
+                .expect("stream receiver should remain open");
+            let (stop_sender, mut stop_receiver) = watch::channel(false);
+            drop(stop_sender);
+
+            let batch = receive_session_agent_event_batch_with_deadline(
+                &mut receiver,
+                &mut stop_receiver,
+                std::future::pending::<()>,
+            )
+            .await;
+
+            assert!(!batch.stopped);
+            assert_eq!(batch.events, vec![event]);
+        }
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<AgentResult<AgentChatEvent>>(1);
+        sender
+            .send(Err(AgentError::InvalidArguments("bad input".into())))
+            .await
+            .expect("stream receiver should remain open");
+        let (stop_sender, mut stop_receiver) = watch::channel(false);
+        drop(stop_sender);
+
+        let batch = receive_session_agent_event_batch_with_deadline(
+            &mut receiver,
+            &mut stop_receiver,
+            std::future::pending::<()>,
+        )
+        .await;
+
+        assert!(!batch.stopped);
+        assert!(batch.error.is_some());
     }
 }

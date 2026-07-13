@@ -2,6 +2,8 @@ use super::super::forms::TerminalSearchAnimation;
 use super::super::*;
 use crate::ui::i18n;
 
+const CONVERSATION_SEARCH_STREAM_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+
 impl AppView {
     pub(in crate::ui::shell) fn open_terminal_search(
         &mut self,
@@ -250,10 +252,7 @@ impl AppView {
             from: forms.conversation_search_visibility,
             to: 0.0,
         });
-        self.session_agent.search_query = None;
-        self.session_agent.search_match_indices.clear();
-        self.session_agent.search_current_match = None;
-        self.session_agent.search_scroll_target = None;
+        self.clear_conversation_search_state(cx);
         cx.notify();
     }
 
@@ -264,10 +263,7 @@ impl AppView {
     ) {
         let query = query.trim().to_string();
         if query.is_empty() {
-            self.session_agent.search_query = None;
-            self.session_agent.search_match_indices.clear();
-            self.session_agent.search_current_match = None;
-            self.session_agent.search_scroll_target = None;
+            self.clear_conversation_search_state(cx);
             let forms = &mut self.workspace_forms.chat_search;
             forms.match_count = 0;
             forms.current_match = None;
@@ -276,6 +272,7 @@ impl AppView {
             return;
         }
 
+        self.cancel_conversation_search_refresh();
         let query_lower = query.to_lowercase();
         let mut match_indices: Vec<(usize, usize)> = Vec::new();
 
@@ -298,6 +295,9 @@ impl AppView {
         self.session_agent.search_query = Some(query);
         self.session_agent.search_match_indices = match_indices;
         self.session_agent.search_current_match = if count > 0 { Some(0) } else { None };
+        if let Some(conversation) = self.session_agent.conversation_view.as_ref() {
+            conversation.read(cx).remeasure_all();
+        }
         if count > 0 {
             self.request_conversation_search_scroll_to_match(0, cx);
         } else {
@@ -352,6 +352,170 @@ impl AppView {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn refresh_conversation_search_message(
+        &mut self,
+        message_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_agent
+            .search_refresh_pending_messages
+            .retain(|index| *index != message_index);
+        let Some(query) = self
+            .session_agent
+            .search_query
+            .as_ref()
+            .map(|query| query.trim().to_lowercase())
+            .filter(|query| !query.is_empty())
+        else {
+            return;
+        };
+
+        let previous_match_count = self.session_agent.search_match_indices.len();
+        let previous_position = self.session_agent.search_current_match.unwrap_or(0);
+        let previous_target = self
+            .session_agent
+            .search_current_match
+            .and_then(|index| self.session_agent.search_match_indices.get(index).copied());
+        self.session_agent
+            .search_match_indices
+            .retain(|(index, _)| *index != message_index);
+
+        let new_matches = self
+            .session_agent
+            .messages
+            .get(message_index)
+            .filter(|message| {
+                matches!(
+                    message.role,
+                    SessionAgentMessageRole::User | SessionAgentMessageRole::Assistant
+                )
+            })
+            .map(|message| {
+                split_message_into_blocks(&message.content)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(block_index, block)| {
+                        block
+                            .to_lowercase()
+                            .contains(&query)
+                            .then_some((message_index, block_index))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let insert_at = self
+            .session_agent
+            .search_match_indices
+            .partition_point(|(index, _)| *index < message_index);
+        self.session_agent
+            .search_match_indices
+            .splice(insert_at..insert_at, new_matches);
+
+        let match_count = self.session_agent.search_match_indices.len();
+        let current_match = resolve_conversation_search_current_match(
+            &self.session_agent.search_match_indices,
+            previous_target,
+            previous_position,
+        );
+        self.session_agent.search_current_match = current_match;
+        let previous_target_was_removed = self
+            .session_agent
+            .search_scroll_target
+            .is_some_and(|target| !self.session_agent.search_match_indices.contains(&target));
+        if previous_target_was_removed {
+            self.session_agent.search_scroll_target = None;
+        }
+        let should_reveal_current = current_match.is_some()
+            && (previous_match_count == 0
+                || previous_target.is_some_and(|target| {
+                    !self.session_agent.search_match_indices.contains(&target)
+                }));
+
+        let forms = &mut self.workspace_forms.chat_search;
+        forms.match_count = match_count;
+        forms.current_match = current_match;
+        forms.status = (match_count == 0).then(|| i18n::string("search.messages.no_matches"));
+        if should_reveal_current && let Some(current_match) = current_match {
+            self.request_conversation_search_scroll_to_match(current_match, cx);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn schedule_conversation_search_message_refresh(
+        &mut self,
+        message_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .session_agent
+            .search_query
+            .as_ref()
+            .is_none_or(|query| query.trim().is_empty())
+        {
+            return;
+        }
+
+        let should_schedule = self
+            .session_agent
+            .search_refresh_pending_messages
+            .is_empty();
+        if !self
+            .session_agent
+            .search_refresh_pending_messages
+            .contains(&message_index)
+        {
+            self.session_agent
+                .search_refresh_pending_messages
+                .push(message_index);
+        }
+        if !should_schedule {
+            return;
+        }
+
+        let Some(session_id) = self.session_agent.session_id.clone() else {
+            self.refresh_conversation_search_message(message_index, cx);
+            return;
+        };
+        self.session_agent.search_refresh_generation =
+            self.session_agent.search_refresh_generation.wrapping_add(1);
+        let generation = self.session_agent.search_refresh_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(CONVERSATION_SEARCH_STREAM_REFRESH_INTERVAL)
+                .await;
+            let _ = this.update(cx, move |this, cx| {
+                this.with_session_agent_state(&session_id, |this| {
+                    if this.session_agent.search_refresh_generation != generation {
+                        return;
+                    }
+                    let pending =
+                        std::mem::take(&mut this.session_agent.search_refresh_pending_messages);
+                    for message_index in pending {
+                        this.refresh_conversation_search_message(message_index, cx);
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
+    pub(in crate::ui::shell) fn cancel_conversation_search_refresh(&mut self) {
+        self.session_agent.search_refresh_generation =
+            self.session_agent.search_refresh_generation.wrapping_add(1);
+        self.session_agent.search_refresh_pending_messages.clear();
+    }
+
+    pub(in crate::ui::shell) fn clear_conversation_search_state(&mut self, cx: &mut Context<Self>) {
+        self.cancel_conversation_search_refresh();
+        self.session_agent.search_query = None;
+        self.session_agent.search_match_indices.clear();
+        self.session_agent.search_current_match = None;
+        self.session_agent.search_scroll_target = None;
+        if let Some(conversation) = self.session_agent.conversation_view.as_ref() {
+            conversation.read(cx).remeasure_all();
+        }
+    }
+
     fn request_conversation_search_scroll_to_match(
         &mut self,
         match_list_index: usize,
@@ -367,19 +531,34 @@ impl AppView {
         };
 
         self.session_agent.search_scroll_target = Some(target);
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(96))
-                .await;
-            let _ = this.update(cx, move |this, cx| {
-                if this.session_agent.search_scroll_target == Some(target) {
-                    this.session_agent.search_scroll_target = None;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        if !self.panels.session_agent_panel_open
+            || self.active_terminal_session_index().is_none()
+            || self.session_agent.panel_view != ChatPanelView::Conversation
+            || self
+                .workspace_state
+                .session_agent_text_drag_conversation
+                .is_some()
+        {
+            return;
+        }
+        let conversation = self.ensure_session_agent_conversation_view(cx);
+        conversation.read(cx).scroll_to(target.0, px(0.0));
     }
+}
+
+fn resolve_conversation_search_current_match(
+    matches: &[(usize, usize)],
+    previous_target: Option<(usize, usize)>,
+    previous_position: usize,
+) -> Option<usize> {
+    previous_target
+        .and_then(|target| matches.iter().position(|candidate| *candidate == target))
+        .or_else(|| {
+            matches
+                .len()
+                .checked_sub(1)
+                .map(|last_index| previous_position.min(last_index))
+        })
 }
 
 /// Escape every regex metacharacter so that the user-entered pattern is treated
@@ -398,4 +577,31 @@ fn regex_escape(input: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_conversation_search_current_match;
+
+    #[test]
+    fn zero_conversation_search_matches_have_no_current_index() {
+        assert_eq!(
+            resolve_conversation_search_current_match(&[], Some((4, 2)), 3),
+            None
+        );
+    }
+
+    #[test]
+    fn conversation_search_refresh_preserves_or_clamps_the_current_match() {
+        let matches = [(1, 0), (4, 2)];
+
+        assert_eq!(
+            resolve_conversation_search_current_match(&matches, Some((4, 2)), 0),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_conversation_search_current_match(&matches, Some((9, 9)), 8),
+            Some(1)
+        );
+    }
 }

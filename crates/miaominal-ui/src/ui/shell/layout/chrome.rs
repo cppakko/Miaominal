@@ -1442,7 +1442,7 @@ impl AppView {
                                     Some(roles.outline_variant),
                                     move |_window, cx| {
                                         agent_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_session_agent_panel();
+                                            this.toggle_session_agent_panel(cx);
                                             cx.notify();
                                         });
                                     },

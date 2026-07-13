@@ -41,8 +41,3 @@ pub(in crate::ui::shell::layout) fn format_duration_ms(ms: u128) -> String {
         format!("{seconds:.1}s")
     }
 }
-
-pub(in crate::ui::shell::layout) fn estimate_session_agent_tokens(text: &str) -> usize {
-    let chars = text.chars().count();
-    chars.saturating_add(3) / 4
-}

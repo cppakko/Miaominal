@@ -14,8 +14,9 @@ pub use backend::{BackendRoute, BackendRouter, ExecMode, SshBackend, SshExecRequ
 pub use capabilities::{CapabilityProbe, CapabilityProbeResult, RemoteCapabilities};
 pub use channel::{
     AgentExecChannel, AgentShellRegistry, AgentToolCallRequest, AgentToolCallResponse,
-    ShellCommandResult, TerminalExecHandle, TerminalOutputReceiver, TerminalOutputTap,
-    TerminalOutputTapError, ToolOutput,
+    ShellCommandResult, TERMINAL_INTERRUPT_SETTLE_TIMEOUT, TerminalExecHandle,
+    TerminalExecLeaseState, TerminalOutputReceiver, TerminalOutputTap, TerminalOutputTapError,
+    ToolOutput,
 };
 pub use chat::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
@@ -26,7 +27,7 @@ pub use error::{AgentError, AgentResult};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
 pub use runtime::agent_runtime;
-pub use tools::{AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
+pub use tools::{AgentToolCancellation, AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
 pub use web::{
     ConfiguredWebSearchProvider, DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider,
 };

@@ -20,7 +20,7 @@ pub use grep::grep;
 pub use job::{list_jobs, poll_job, start_job, stop_job};
 pub use list::list;
 pub use read::read;
-pub use rig_adapter::AgentToolSet;
+pub use rig_adapter::{AgentToolCancellation, AgentToolSet};
 pub use run_shell::run_shell;
 pub use web_fetch::web_fetch;
 pub use web_search::web_search;

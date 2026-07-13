@@ -36,6 +36,24 @@ pub const SESSION_EVENT_QUEUE_CAPACITY: usize = 64;
 const SSH_CHANNEL_BUFFER_SIZE: usize = 64;
 const SSH_MAXIMUM_PACKET_SIZE: u32 = 32 * 1024;
 
+struct AbortTaskOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> AbortTaskOnDrop<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self(handle)
+    }
+
+    fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl<T> Drop for AbortTaskOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub(super) type SessionEventSender = Sender<SessionEvent>;
 
 pub struct SessionEventReceiver {
@@ -338,7 +356,7 @@ pub async fn execute_profile_command(
     let non_interactive_error = Arc::new(Mutex::new(None::<String>));
     let non_interactive_error_for_events = non_interactive_error.clone();
     let event_command_sender = command_sender.clone();
-    let event_task = tokio::spawn(async move {
+    let event_task = AbortTaskOnDrop::new(tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
             match event {
                 SessionEvent::HostKeyPrompt(prompt) => {
@@ -371,7 +389,7 @@ pub async fn execute_profile_command(
                 _ => {}
             }
         }
-    });
+    }));
 
     let result = async {
         let ConnectedSession {
@@ -451,7 +469,7 @@ pub async fn execute_profile_pty_command(
     let non_interactive_error = Arc::new(Mutex::new(None::<String>));
     let non_interactive_error_for_events = non_interactive_error.clone();
     let event_command_sender = command_sender.clone();
-    let event_task = tokio::spawn(async move {
+    let event_task = AbortTaskOnDrop::new(tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
             match event {
                 SessionEvent::HostKeyPrompt(prompt) => {
@@ -484,7 +502,7 @@ pub async fn execute_profile_pty_command(
                 _ => {}
             }
         }
-    });
+    }));
 
     let result = async {
         let ConnectedSession {
@@ -1432,6 +1450,37 @@ mod tests {
     use super::*;
     use crate::forwarding::RemoteForwardTarget;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn abort_task_guard_cancels_detached_event_work_on_drop() {
+        struct DropSignal(Option<oneshot::Sender<()>>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let (started_sender, started_receiver) = oneshot::channel();
+        let (dropped_sender, dropped_receiver) = oneshot::channel();
+        let task = AbortTaskOnDrop::new(tokio::spawn(async move {
+            let _drop_signal = DropSignal(Some(dropped_sender));
+            let _ = started_sender.send(());
+            std::future::pending::<()>().await;
+        }));
+        started_receiver
+            .await
+            .expect("guarded event task should start");
+
+        drop(task);
+
+        tokio::time::timeout(Duration::from_secs(1), dropped_receiver)
+            .await
+            .expect("dropping the guard should abort the event task")
+            .expect("event task should report that its future was dropped");
+    }
 
     #[tokio::test]
     async fn disabled_agent_forwarding_does_not_call_local_agent_connector() {

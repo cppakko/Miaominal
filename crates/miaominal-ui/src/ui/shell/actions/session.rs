@@ -1445,12 +1445,12 @@ impl AppView {
                 SessionEvent::Output(chunk) => {
                     session.bytes_in = session.bytes_in.saturating_add(chunk.len() as u64);
                     session.terminal.push_bytes(&chunk);
-                    let tap_failed = session
-                        .pty_output_tap
-                        .as_ref()
-                        .is_some_and(|tap| tap.try_send(chunk.clone()).is_err());
-                    if tap_failed {
-                        session.pty_output_tap = None;
+                    if let Some(tap) = session.pty_output_tap.as_ref() {
+                        // A failed tap closes its channel, but the slot remains reserved until
+                        // the owning Agent request performs same-channel cleanup. Releasing it
+                        // here would let another request start on the same terminal before the
+                        // first request has interrupted its still-running command.
+                        let _ = tap.try_send(chunk.clone());
                     }
                     if inactive_tab {
                         session.has_activity = true;

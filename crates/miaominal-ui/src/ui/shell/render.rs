@@ -53,6 +53,11 @@ impl Render for AppView {
         let roles = miaominal_settings::current_theme().material.roles;
         let bottom_popup_viewport_height = f32::from(window.bounds().size.height);
         if self.onboarding.show_onboarding {
+            if self.active_terminal_session_index().is_none()
+                && self.session_agent.conversation_view.is_some()
+            {
+                self.release_session_agent_conversation_view(cx);
+            }
             return self.render_onboarding_page(entity, window, cx);
         }
         let has_active_session = self.has_active_session();
@@ -66,6 +71,16 @@ impl Render for AppView {
             self.desired_primary_view_kind(has_active_session, has_active_sftp_tab);
         let primary_view_transition =
             self.primary_view_transition_render_state(desired_primary_view, window);
+        if self.active_terminal_session_index().is_none()
+            && !primary_view_transition.animating
+            && self.session_agent.conversation_view.is_some()
+        {
+            // The workspace surface may disappear immediately (for example when the last
+            // terminal closes), so its side-panel exit animation is not guaranteed to get a
+            // final frame in which to release the expensive conversation projection. Keep the
+            // projection only while an outgoing terminal workspace is actually animating.
+            self.release_session_agent_conversation_view(cx);
+        }
         let primary_view_animating = primary_view_transition.animating;
         let root_right_gutter = self.primary_view_root_right_gutter(primary_view_transition);
 
@@ -191,6 +206,17 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .bg(rgb(roles.surface_container))
+            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+                if event.button == MouseButton::Left {
+                    this.finish_session_agent_text_drag(cx);
+                }
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _event: &MouseUpEvent, _window, cx| {
+                    this.finish_session_agent_text_drag(cx);
+                }),
+            )
             .pr(px(root_right_gutter))
             .child(self.render_top_bar(entity.clone(), window))
             .child(shell_body)

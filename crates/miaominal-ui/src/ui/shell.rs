@@ -65,6 +65,8 @@ mod navigation;
 mod pages;
 mod panes;
 mod render;
+mod session_agent_stream_batch;
+mod session_agent_view;
 mod settings_labels;
 mod sftp_browser;
 mod state;

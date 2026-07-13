@@ -14,7 +14,7 @@ mod terminal;
 mod terminal_element;
 
 pub(in crate::ui::shell) use animation::{
-    BasicDialogConfig, CONTAINER_TRANSITION_DURATION, OVERLAY_ENTER_DURATION,
+    BasicDialogConfig, CONTAINER_TRANSITION_DURATION, LIST_ENTER_DURATION, OVERLAY_ENTER_DURATION,
     container_transition_animation, list_enter_animation, overlay_enter_animation,
     render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
     short_feedback_animation,

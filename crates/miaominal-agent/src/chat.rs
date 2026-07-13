@@ -1,6 +1,6 @@
 use crate::channel::{AgentToolCallResponse, ToolOutput};
 use crate::error::{AgentError, AgentResult};
-use crate::tools::AgentToolSet;
+use crate::tools::{AgentToolCancellation, AgentToolSet};
 use anyhow::Context as _;
 use futures::StreamExt as _;
 use miaominal_core::chat_attachment::ChatImage;
@@ -17,7 +17,7 @@ use rig_core::providers::{
 use rig_core::streaming::{
     StreamedAssistantContent, StreamedUserContent, StreamingChat, ToolCallDeltaContent,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +120,9 @@ pub enum AgentChatEvent {
     ToolCallCompleted {
         id: String,
         result: String,
+    },
+    ToolCallCancelled {
+        id: String,
     },
     ToolCallAutoExecuteRequired {
         id: String,
@@ -265,6 +268,7 @@ pub async fn send_chat(request: AgentChatRequest) -> AgentResult<String> {
             | AgentChatEvent::ToolCallStarted(_)
             | AgentChatEvent::ToolCallDelta { .. }
             | AgentChatEvent::ToolCallCompleted { .. }
+            | AgentChatEvent::ToolCallCancelled { .. }
             | AgentChatEvent::ToolCallAutoExecuteRequired { .. }
             | AgentChatEvent::ToolCallApprovalRequired { .. }
             | AgentChatEvent::ToolCallUserInputRequired { .. }
@@ -342,15 +346,24 @@ macro_rules! build_provider_agent {
         }
         if let Some(the_tools) = $tools {
             let tool_mode = the_tools.mode();
+            let tool_cancellation = the_tools.cancellation();
             spawn_stream_chat(
                 agent_builder.tools(the_tools.into_rig_tools()).build(),
                 $prompt,
                 $history,
                 $sender,
                 Some(tool_mode),
+                Some(tool_cancellation),
             );
         } else {
-            spawn_stream_chat(agent_builder.build(), $prompt, $history, $sender, None);
+            spawn_stream_chat(
+                agent_builder.build(),
+                $prompt,
+                $history,
+                $sender,
+                None,
+                None,
+            );
         }
     }};
 }
@@ -510,12 +523,20 @@ fn spawn_stream_chat<M>(
     history: Vec<Message>,
     sender: mpsc::Sender<AgentResult<AgentChatEvent>>,
     tool_mode: Option<AgentMode>,
+    tool_cancellation: Option<AgentToolCancellation>,
 ) where
     M: CompletionModel + Send + Sync + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage + 'static,
 {
     tokio::spawn(async move {
-        let mut stream = agent.stream_chat(prompt, history).await;
+        let Some(mut stream) =
+            await_or_chat_receiver_closed(&sender, tool_cancellation.as_ref(), true, async move {
+                agent.stream_chat(prompt, history).await
+            })
+            .await
+        else {
+            return;
+        };
         let mut final_reply = String::new();
 
         // Track streamed tool calls to work around a rig_core bug where
@@ -523,8 +544,32 @@ fn spawn_stream_chat<M>(
         // are buffered internally but never executed, so the agent emits
         // FinalResponse without running them.
         let mut pending_streamed_tools: HashMap<String, PendingStreamedTool> = HashMap::new();
+        let mut active_tool_ids = HashSet::new();
 
-        while let Some(item) = stream.next().await {
+        loop {
+            // A UI Stop cancels the shared tool set before it closes this receiver. Finish the
+            // stream item already being polled so a completed tool result can be delivered, but
+            // never poll another item (and potentially another tool) after cancellation.
+            if tool_cancellation
+                .as_ref()
+                .is_some_and(AgentToolCancellation::is_cancelled_runtime)
+                && active_tool_ids.is_empty()
+            {
+                break;
+            }
+            let Some(item) = await_or_chat_receiver_closed(
+                &sender,
+                tool_cancellation.as_ref(),
+                active_tool_ids.is_empty(),
+                stream.next(),
+            )
+            .await
+            else {
+                break;
+            };
+            let Some(item) = item else {
+                break;
+            };
             let event = match item {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(content)) => {
                     // Track streamed tool call deltas for the workaround above.
@@ -580,6 +625,12 @@ fn spawn_stream_chat<M>(
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
                     if !pending_streamed_tools.is_empty() {
+                        if tool_cancellation
+                            .as_ref()
+                            .is_some_and(AgentToolCancellation::is_cancelled_runtime)
+                        {
+                            break;
+                        }
                         let auto_execute = matches!(tool_mode, Some(AgentMode::FullAuto));
                         log::warn!(
                             "rig_core did not execute {} streamed tool call(s); forwarding to client",
@@ -612,12 +663,38 @@ fn spawn_stream_chat<M>(
                 Some(Ok(AgentChatEvent::ToolCallApprovalRequired { .. }))
                     | Some(Ok(AgentChatEvent::ToolCallUserInputRequired { .. }))
             );
+            let stream_failed = matches!(event.as_ref(), Some(Err(_)));
+            if let Some(Ok(event)) = event.as_ref() {
+                match event {
+                    AgentChatEvent::ToolCallStarted(tool) => {
+                        active_tool_ids.insert(tool.id.clone());
+                    }
+                    AgentChatEvent::ToolCallCompleted { id, .. }
+                    | AgentChatEvent::ToolCallCancelled { id }
+                    | AgentChatEvent::ToolCallAutoExecuteRequired { id }
+                    | AgentChatEvent::ToolCallApprovalRequired { id, .. }
+                    | AgentChatEvent::ToolCallUserInputRequired { id, .. } => {
+                        active_tool_ids.remove(id);
+                    }
+                    _ => {}
+                }
+            }
             if let Some(event) = event
                 && sender.send(event).await.is_err()
             {
+                if let Some(tool_cancellation) = tool_cancellation.as_ref() {
+                    tool_cancellation.cancel_and_wait().await;
+                }
                 break;
             }
             if approval_required {
+                break;
+            }
+            if stream_failed
+                && tool_cancellation
+                    .as_ref()
+                    .is_some_and(AgentToolCancellation::is_cancelled_runtime)
+            {
                 break;
             }
         }
@@ -625,7 +702,11 @@ fn spawn_stream_chat<M>(
         // If there are still unexecuted tool calls after the loop (e.g.,
         // FinalResponse was handled without us intercepting it), hand them to
         // the UI for approval or automatic execution depending on agent mode.
-        if !pending_streamed_tools.is_empty() {
+        if !pending_streamed_tools.is_empty()
+            && !tool_cancellation
+                .as_ref()
+                .is_some_and(AgentToolCancellation::is_cancelled_runtime)
+        {
             let auto_execute = matches!(tool_mode, Some(AgentMode::FullAuto));
             log::warn!(
                 "rig_core stream ended with {} unexecuted tool call(s); forwarding to client",
@@ -644,6 +725,42 @@ fn spawn_stream_chat<M>(
             final_reply
         );
     });
+}
+
+async fn await_or_chat_receiver_closed<T>(
+    sender: &mpsc::Sender<AgentResult<AgentChatEvent>>,
+    tool_cancellation: Option<&AgentToolCancellation>,
+    stop_on_tool_cancellation: bool,
+    future: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::pin!(future);
+    let cancellation_requested = async {
+        if stop_on_tool_cancellation {
+            match tool_cancellation {
+                Some(tool_cancellation) => tool_cancellation.cancelled().await,
+                None => std::future::pending::<()>().await,
+            }
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(cancellation_requested);
+    tokio::select! {
+        biased;
+        _ = &mut cancellation_requested => {
+            if let Some(tool_cancellation) = tool_cancellation {
+                tool_cancellation.cancel_and_wait().await;
+            }
+            None
+        },
+        output = &mut future => Some(output),
+        _ = sender.closed() => {
+            if let Some(tool_cancellation) = tool_cancellation {
+                tool_cancellation.cancel_and_wait().await;
+            }
+            None
+        },
+    }
 }
 
 struct PendingStreamedTool {
@@ -801,6 +918,9 @@ fn chat_event_from_user_content(
                         message,
                     }))
                 }
+                Some(ToolPause::Cancelled) => Some(Ok(AgentChatEvent::ToolCallCancelled {
+                    id: internal_call_id,
+                })),
                 None => Some(Ok(AgentChatEvent::ToolCallCompleted {
                     id: internal_call_id,
                     result,
@@ -813,11 +933,13 @@ fn chat_event_from_user_content(
 enum ToolPause {
     ApprovalRequired { message: String },
     UserInputRequired { message: String },
+    Cancelled,
 }
 
 fn structured_tool_pause(result: &str) -> Option<ToolPause> {
     let response: AgentToolCallResponse = serde_json::from_str(result).ok()?;
     match response.output {
+        ToolOutput::Cancelled => Some(ToolPause::Cancelled),
         ToolOutput::Approval { message, .. } => Some(ToolPause::ApprovalRequired { message }),
         ToolOutput::UserQuestion { message, .. } => Some(ToolPause::UserInputRequired { message }),
         _ => None,
@@ -905,6 +1027,33 @@ mod tests {
     }
 
     #[test]
+    fn structured_tool_cancellation_maps_to_a_cancelled_event() {
+        let response = AgentToolCallResponse {
+            tool_name: "run_shell".to_string(),
+            route: BackendRoute::SshExec,
+            output: ToolOutput::Cancelled,
+        };
+        let json = serde_json::to_string(&response).expect("response serializes");
+        let event = chat_event_from_user_content(StreamedUserContent::ToolResult {
+            tool_result: rig_core::message::ToolResult {
+                id: "provider-call".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::text(json)),
+            },
+            internal_call_id: "tool-1".to_string(),
+        })
+        .expect("tool result should map to an event")
+        .expect("structured cancellation should not be a stream error");
+
+        assert_eq!(
+            event,
+            AgentChatEvent::ToolCallCancelled {
+                id: "tool-1".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn structured_tool_pause_ignores_plain_text() {
         assert!(structured_tool_pause("tool `x` requires user approval").is_none());
     }
@@ -963,5 +1112,77 @@ mod tests {
                 message: "tool `apply_patch` requires user approval".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_chat_receiver_cancels_the_in_flight_stream_item() {
+        struct DropFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+
+        let (sender, receiver) = mpsc::channel(1);
+        let tool_cancellation = AgentToolCancellation::new();
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stream_started = started.clone();
+        let stream_dropped = dropped.clone();
+        let stream_item = async move {
+            let _drop_flag = DropFlag(stream_dropped);
+            stream_started.notify_one();
+            std::future::pending::<()>().await;
+        };
+        let close_receiver = async move {
+            started.notified().await;
+            drop(receiver);
+        };
+
+        let (result, ()) = tokio::join!(
+            await_or_chat_receiver_closed(&sender, Some(&tool_cancellation), true, stream_item,),
+            close_receiver,
+        );
+
+        assert!(result.is_none());
+        assert!(dropped.load(std::sync::atomic::Ordering::Acquire));
+        assert!(tool_cancellation.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn completed_stream_item_wins_over_a_simultaneously_closed_receiver() {
+        let (sender, receiver) = mpsc::channel(1);
+        let tool_cancellation = AgentToolCancellation::new();
+        drop(receiver);
+
+        let result = await_or_chat_receiver_closed(
+            &sender,
+            Some(&tool_cancellation),
+            true,
+            std::future::ready("completed"),
+        )
+        .await;
+
+        assert_eq!(result, Some("completed"));
+        assert!(!tool_cancellation.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn explicit_cancellation_interrupts_a_pending_item_without_closing_the_receiver() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let tool_cancellation = AgentToolCancellation::new();
+        tool_cancellation.cancel();
+
+        let result = await_or_chat_receiver_closed(
+            &sender,
+            Some(&tool_cancellation),
+            true,
+            std::future::pending::<()>(),
+        )
+        .await;
+
+        assert!(result.is_none());
+        assert!(tool_cancellation.is_cancelled());
     }
 }

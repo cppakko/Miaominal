@@ -1,7 +1,10 @@
 use super::*;
 use crate::ui::i18n;
-use miaominal_agent::{AgentMode, TerminalOutputTap};
+use crate::ui::shell::session_agent_view::SessionAgentConversationView;
+use gpui::ListOffset;
+use miaominal_agent::{AgentMode, AgentToolCancellation, TerminalOutputTap};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 
 const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
@@ -125,13 +128,14 @@ pub(in crate::ui::shell) struct SessionAgentMessageMotion {
     pub(in crate::ui::shell) enter_key: Option<u64>,
 }
 
+#[derive(Clone)]
 pub(in crate::ui::shell) struct SessionAgentMessage {
     pub(in crate::ui::shell) role: SessionAgentMessageRole,
     pub(in crate::ui::shell) content: String,
     pub(in crate::ui::shell) tool_call: Option<SessionAgentToolCall>,
     pub(in crate::ui::shell) thinking: Option<SessionAgentThinking>,
     pub(in crate::ui::shell) motion: SessionAgentMessageMotion,
-    pub(in crate::ui::shell) attachments: Vec<miaominal_core::chat_attachment::ChatAttachment>,
+    pub(in crate::ui::shell) attachments: Arc<[miaominal_core::chat_attachment::ChatAttachment]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -149,7 +153,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 
@@ -163,7 +167,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
-            attachments,
+            attachments: attachments.into(),
         }
     }
 
@@ -174,7 +178,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 
@@ -189,7 +193,7 @@ impl SessionAgentMessage {
                 expanded: false,
             }),
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 
@@ -207,7 +211,7 @@ impl SessionAgentMessage {
                 expanded: false,
             }),
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 
@@ -219,7 +223,7 @@ impl SessionAgentMessage {
             tool_call: Some(tool_call),
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 
@@ -230,7 +234,7 @@ impl SessionAgentMessage {
             tool_call: None,
             thinking: None,
             motion: SessionAgentMessageMotion::default(),
-            attachments: Vec::new(),
+            attachments: Arc::default(),
         }
     }
 }
@@ -266,8 +270,15 @@ pub(in crate::ui::shell) struct SessionAgentExecutionContext {
 pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) session_id: Option<String>,
     pub(in crate::ui::shell) messages: Vec<SessionAgentMessage>,
+    pub(in crate::ui::shell) conversation_view: Option<Entity<SessionAgentConversationView>>,
+    pub(in crate::ui::shell) conversation_view_observation: Option<Subscription>,
+    /// Lightweight viewport state retained while the expensive conversation projection is
+    /// released for a hidden session.
+    pub(in crate::ui::shell) conversation_viewport: Option<SessionAgentConversationViewport>,
     pub(in crate::ui::shell) next_message_motion_key: u64,
     pub(in crate::ui::shell) pending_task: Option<gpui::Task<()>>,
+    pub(in crate::ui::shell) pending_stream_stop: Option<tokio::sync::watch::Sender<bool>>,
+    pub(in crate::ui::shell) pending_agent_cancellation: Option<AgentToolCancellation>,
     pub(in crate::ui::shell) active_request_id: u64,
     pub(in crate::ui::shell) request_counter: u64,
     pub(in crate::ui::shell) last_error: Option<String>,
@@ -287,8 +298,12 @@ pub(in crate::ui::shell) struct SessionAgentState {
     pub(in crate::ui::shell) search_match_indices: Vec<(usize, usize)>,
     /// Current position in the match navigation (index into search_match_indices).
     pub(in crate::ui::shell) search_current_match: Option<usize>,
-    /// One-shot target block that should be brought into view after layout.
+    /// One-shot block target used for the second phase of virtual-list search scrolling.
     pub(in crate::ui::shell) search_scroll_target: Option<(usize, usize)>,
+    /// Message rows whose streaming content needs a throttled search-index refresh.
+    pub(in crate::ui::shell) search_refresh_pending_messages: Vec<usize>,
+    /// Invalidates detached search-refresh timers when the query/session changes.
+    pub(in crate::ui::shell) search_refresh_generation: u64,
     /// Agent mode controlling tool availability, policy enforcement, and confirmation behavior.
     pub(in crate::ui::shell) agent_mode: AgentMode,
     /// Default execution target captured when the user submitted the prompt.
@@ -296,6 +311,27 @@ pub(in crate::ui::shell) struct SessionAgentState {
     /// Attachments staged in the composer but not yet sent.
     pub(in crate::ui::shell) pending_attachments:
         Vec<miaominal_core::chat_attachment::ChatAttachment>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct SessionAgentConversationViewport {
+    pub(in crate::ui::shell) offset: ListOffset,
+    pub(in crate::ui::shell) following_tail: bool,
+    /// Whether the cached offset was measured against the per-block conversation-search layout.
+    pub(in crate::ui::shell) search_layout_active: bool,
+}
+
+impl SessionAgentConversationViewport {
+    pub(in crate::ui::shell) fn offset_for_search_layout(
+        self,
+        search_layout_active: bool,
+    ) -> ListOffset {
+        let mut offset = self.offset;
+        if self.search_layout_active != search_layout_active {
+            offset.offset_in_item = px(0.0);
+        }
+        offset
+    }
 }
 
 /// Split message content into logical blocks for per-block search matching.
@@ -541,6 +577,17 @@ impl SessionAgentState {
     }
 
     pub(in crate::ui::shell) fn reject_tool_call(&mut self, id: &str) {
+        self.reject_tool_call_with_message(
+            id,
+            i18n::string("workspace.panel.agent.messages.tool_denied"),
+        );
+    }
+
+    pub(in crate::ui::shell) fn reject_tool_call_with_message(
+        &mut self,
+        id: &str,
+        message: String,
+    ) {
         if let Some(tool_call) = self
             .messages
             .iter_mut()
@@ -550,8 +597,7 @@ impl SessionAgentState {
         {
             tool_call.status = SessionAgentToolStatus::Rejected;
             tool_call.requires_confirmation = false;
-            tool_call.confirmation_note =
-                Some(i18n::string("workspace.panel.agent.messages.tool_denied"));
+            tool_call.confirmation_note = Some(message);
         }
     }
 
@@ -575,6 +621,28 @@ impl SessionAgentState {
             }
         }
         rejected
+    }
+
+    pub(in crate::ui::shell) fn fail_active_tool_calls(&mut self, message: &str) -> bool {
+        let mut failed = false;
+        for tool_call in self
+            .messages
+            .iter_mut()
+            .filter_map(|message| message.tool_call.as_mut())
+        {
+            if matches!(
+                tool_call.status,
+                SessionAgentToolStatus::Pending
+                    | SessionAgentToolStatus::WaitingForConfirmation
+                    | SessionAgentToolStatus::InProgress
+            ) {
+                tool_call.status = SessionAgentToolStatus::Failed;
+                tool_call.requires_confirmation = false;
+                tool_call.confirmation_note = Some(message.into());
+                failed = true;
+            }
+        }
+        failed
     }
 
     pub(in crate::ui::shell) fn tool_call(&self, id: &str) -> Option<SessionAgentToolCall> {
@@ -710,7 +778,7 @@ impl SessionAgentState {
         }
     }
 
-    fn finish_active_thinking(&mut self) {
+    pub(in crate::ui::shell) fn finish_active_thinking(&mut self) {
         if let Some(message) = self.messages.last_mut()
             && message.role == SessionAgentMessageRole::Thinking
             && let Some(thinking) = message.thinking.as_mut()
@@ -1797,7 +1865,6 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_monitor_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) sftp_progress_center_scroll_handle: ScrollHandle,
-    pub(in crate::ui::shell) session_agent_scroll_handle: ScrollHandle,
     pub(in crate::ui::shell) session_agent_history_scroll_handle: VirtualListScrollHandle,
     pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
     pub(in crate::ui::shell) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
@@ -1819,8 +1886,11 @@ pub(in crate::ui::shell) struct WorkspaceState {
     pub(in crate::ui::shell) terminal_originated_selection_drag: Option<PaneId>,
     pub(in crate::ui::shell) session_agent_auto_scroll: Option<SessionAgentAutoScrollState>,
     pub(in crate::ui::shell) session_agent_auto_scroll_generation: u64,
-    pub(in crate::ui::shell) session_agent_follow_bottom_generation: u64,
-    pub(in crate::ui::shell) session_agent_follow_bottom_disabled_until: Option<Instant>,
+    pub(in crate::ui::shell) session_agent_text_drag_origin: Option<Point<Pixels>>,
+    pub(in crate::ui::shell) session_agent_text_drag_conversation:
+        Option<Entity<SessionAgentConversationView>>,
+    pub(in crate::ui::shell) session_agent_text_drag_paused_tail: bool,
+    pub(in crate::ui::shell) session_agent_background_projection_active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2018,6 +2088,63 @@ mod tests {
             Some(stopped_by_user.as_str())
         );
         assert!(!state.has_active_tool_call());
+    }
+
+    #[test]
+    fn structured_tool_cancellation_is_rejected_with_the_stop_reason() {
+        let mut state = SessionAgentState::default();
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "run_shell".to_string(),
+            "{}".to_string(),
+            SessionAgentToolStatus::InProgress,
+        );
+        let stopped_by_user = i18n::string("workspace.panel.agent.messages.stopped_by_user");
+
+        state.reject_tool_call_with_message("tool-1", stopped_by_user.clone());
+
+        let tool = state.tool_call("tool-1").expect("tool should exist");
+        assert_eq!(tool.status, SessionAgentToolStatus::Rejected);
+        assert_eq!(
+            tool.confirmation_note.as_deref(),
+            Some(stopped_by_user.as_str())
+        );
+    }
+
+    #[test]
+    fn unacknowledged_tool_stop_is_failed_with_unknown_status() {
+        let mut state = SessionAgentState::default();
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "run_shell".to_string(),
+            "{}".to_string(),
+            SessionAgentToolStatus::InProgress,
+        );
+        let unknown = i18n::string("workspace.panel.agent.messages.tool_stop_unconfirmed");
+
+        assert!(state.fail_active_tool_calls(&unknown));
+
+        let tool = state.tool_call("tool-1").expect("tool should exist");
+        assert_eq!(tool.status, SessionAgentToolStatus::Failed);
+        assert_eq!(tool.confirmation_note.as_deref(), Some(unknown.as_str()));
+    }
+
+    #[test]
+    fn failed_tool_start_no_longer_keeps_the_agent_busy() {
+        let mut state = SessionAgentState::default();
+        state.push_tool_call(
+            "tool-1".to_string(),
+            "run_shell".to_string(),
+            "{\"command\":\"cargo check\"}".to_string(),
+            SessionAgentToolStatus::InProgress,
+        );
+
+        state.fail_tool_call("tool-1", "execution context disappeared".to_string());
+
+        let tool = state.tool_call("tool-1").expect("tool should exist");
+        assert_eq!(tool.status, SessionAgentToolStatus::Failed);
+        assert!(!state.has_active_tool_call());
+        assert!(!state.is_busy());
     }
 
     #[test]
@@ -2239,5 +2366,27 @@ mod tests {
             state.messages[1].content,
             i18n::string("workspace.panel.agent.messages.stopped_by_user")
         );
+    }
+
+    #[test]
+    fn conversation_viewport_preserves_search_offset_on_reopen_and_drops_it_after_clear() {
+        let viewport = SessionAgentConversationViewport {
+            offset: ListOffset {
+                item_ix: 4,
+                offset_in_item: px(72.0),
+            },
+            following_tail: false,
+            search_layout_active: true,
+        };
+
+        assert_eq!(
+            viewport.offset_for_search_layout(true).offset_in_item,
+            px(72.0)
+        );
+        assert_eq!(
+            viewport.offset_for_search_layout(false).offset_in_item,
+            px(0.0)
+        );
+        assert_eq!(viewport.offset_for_search_layout(false).item_ix, 4);
     }
 }

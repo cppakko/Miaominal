@@ -119,12 +119,20 @@ impl AppView {
             &mut self.panels.session_side_panel_transition,
             window,
         );
+        let desired_agent_panel_visible =
+            self.panels.session_agent_panel_open && session_index.is_some();
+        if !desired_agent_panel_visible {
+            self.finish_session_agent_text_drag(cx);
+        }
         let show_agent_panel = workspace_side_panel_render_state(
-            self.panels.session_agent_panel_open && session_index.is_some(),
+            desired_agent_panel_visible,
             &mut self.panels.visible_session_agent_panel,
             &mut self.panels.session_agent_panel_transition,
             window,
         );
+        if !desired_agent_panel_visible && show_agent_panel.is_none() {
+            self.release_session_agent_conversation_view(cx);
+        }
         self.workspace_state.session_agent_panel_width =
             super::session_agent_panel::clamp_session_agent_panel_width(
                 self.workspace_state.session_agent_panel_width,

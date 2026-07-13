@@ -17,6 +17,7 @@ const SESSION_AGENT_AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_AUTO_SCROLL_DEAD_ZONE: f32 = 12.0;
 const SESSION_AGENT_AUTO_SCROLL_SPEED: f32 = 0.55;
 const SESSION_AGENT_AUTO_SCROLL_MAX_STEP: f32 = 72.0;
+const SESSION_AGENT_TEXT_DRAG_THRESHOLD: f32 = 3.0;
 
 #[derive(Clone, Copy)]
 struct SessionAgentPanelResizeMarker;
@@ -202,6 +203,75 @@ impl AppView {
         }
     }
 
+    fn begin_session_agent_text_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.finish_session_agent_text_drag(cx);
+        self.workspace_state.session_agent_text_drag_origin = Some(position);
+        if let Some(conversation) = self.session_agent.conversation_view.as_ref().cloned() {
+            conversation.update(cx, |view, _cx| view.begin_selection_drag());
+            self.workspace_state.session_agent_text_drag_conversation = Some(conversation);
+        }
+    }
+
+    fn update_session_agent_text_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if event.pressed_button != Some(MouseButton::Left) {
+            if self
+                .workspace_state
+                .session_agent_text_drag_origin
+                .is_some()
+                || self
+                    .workspace_state
+                    .session_agent_text_drag_conversation
+                    .is_some()
+            {
+                self.finish_session_agent_text_drag(cx);
+            }
+            return;
+        }
+        if self.workspace_state.session_agent_text_drag_paused_tail {
+            return;
+        }
+        let Some(origin) = self.workspace_state.session_agent_text_drag_origin else {
+            return;
+        };
+        let delta_x = f32::from(event.position.x - origin.x);
+        let delta_y = f32::from(event.position.y - origin.y);
+        if delta_x * delta_x + delta_y * delta_y
+            < SESSION_AGENT_TEXT_DRAG_THRESHOLD * SESSION_AGENT_TEXT_DRAG_THRESHOLD
+        {
+            return;
+        }
+
+        let Some(conversation) = self
+            .workspace_state
+            .session_agent_text_drag_conversation
+            .as_ref()
+            .cloned()
+        else {
+            return;
+        };
+        if conversation.read(cx).pause_tail_following() {
+            self.workspace_state.session_agent_text_drag_paused_tail = true;
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui::shell) fn finish_session_agent_text_drag(&mut self, cx: &mut Context<Self>) {
+        self.workspace_state.session_agent_text_drag_origin = None;
+        let Some(conversation) = self
+            .workspace_state
+            .session_agent_text_drag_conversation
+            .take()
+        else {
+            self.workspace_state.session_agent_text_drag_paused_tail = false;
+            return;
+        };
+        conversation.update(cx, |view, cx| view.finish_selection_drag(cx));
+        if std::mem::take(&mut self.workspace_state.session_agent_text_drag_paused_tail) {
+            conversation.read(cx).restore_tail_follow_mode();
+        }
+        cx.notify();
+    }
+
     fn tick_session_agent_auto_scroll(&mut self, generation: u64, cx: &mut Context<Self>) -> bool {
         if !self.panels.session_agent_panel_open
             || self.session_agent.panel_view != ChatPanelView::Conversation
@@ -226,13 +296,10 @@ impl AppView {
         let step = (active_distance * SESSION_AGENT_AUTO_SCROLL_SPEED)
             .min(SESSION_AGENT_AUTO_SCROLL_MAX_STEP)
             * distance.signum();
-        let scroll_handle = &self.workspace_state.session_agent_scroll_handle;
-        let current_offset = scroll_handle.offset();
-        let max_offset = scroll_handle.max_offset();
-        let next_y = (f32::from(current_offset.y) - step).clamp(-f32::from(max_offset.y), 0.0);
-
-        if (next_y - f32::from(current_offset.y)).abs() >= 0.1 {
-            scroll_handle.set_offset(Point::new(current_offset.x, px(next_y)));
+        if step.abs() >= 0.1
+            && let Some(conversation) = self.session_agent.conversation_view.as_ref()
+        {
+            conversation.read(cx).scroll_by(px(step));
             cx.notify();
         }
 
@@ -342,6 +409,7 @@ impl AppView {
                         move |_window, cx| {
                             let entity = close_entity.clone();
                             entity.update(cx, |this, cx| {
+                                this.finish_session_agent_text_drag(cx);
                                 this.panels.session_agent_panel_open = false;
                                 cx.notify();
                             });
@@ -415,11 +483,12 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let agent_scroll_handle = self.workspace_state.session_agent_scroll_handle.clone();
         let message_column_width =
             session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
         let show_scrollable_messages =
             !self.session_agent.messages.is_empty() || self.session_agent.is_busy();
+        let conversation = self.ensure_session_agent_conversation_view(cx);
+        let conversation_list_state = conversation.read(cx).list_state();
 
         // Chat search state
         let is_search_open = self.workspace_forms.chat_search.conversation_search_open;
@@ -679,8 +748,13 @@ impl AppView {
                                             .size_full()
                                             .overflow_x_hidden()
                                             .capture_any_mouse_down(cx.listener(
-                                                move |this, event: &MouseDownEvent, _window, cx| {
-                                                    this.stop_session_agent_follow_bottom(true);
+                                                 move |this, event: &MouseDownEvent, _window, cx| {
+                                                    if event.button == MouseButton::Left {
+                                                        this.begin_session_agent_text_drag(
+                                                            event.position,
+                                                            cx,
+                                                        );
+                                                    }
                                                     if this
                                                         .workspace_state
                                                         .session_agent_auto_scroll
@@ -691,16 +765,6 @@ impl AppView {
                                                     } else if event.button != MouseButton::Middle {
                                                         this.stop_session_agent_auto_scroll(cx);
                                                     }
-                                                },
-                                            ))
-                                            .on_scroll_wheel(cx.listener(
-                                                move |this,
-                                                      event: &ScrollWheelEvent,
-                                                      window,
-                                                      cx| {
-                                                    this.handle_session_agent_scroll_wheel(
-                                                        event, window, cx,
-                                                    );
                                                 },
                                             ))
                                             .on_mouse_down(
@@ -729,15 +793,17 @@ impl AppView {
                                                       event: &MouseMoveEvent,
                                                       _window,
                                                       cx| {
-                                                    this.update_session_agent_auto_scroll_pointer(
-                                                        f32::from(event.position.y),
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
+                                                        this.update_session_agent_text_drag(
+                                                            event, cx,
+                                                        );
+                                                      this.update_session_agent_auto_scroll_pointer(
+                                                          f32::from(event.position.y),
+                                                          cx,
+                                                      );
+                                                  },
+                                              ))
                                             .child(self.render_session_agent_messages(
                                                 message_column_width,
-                                                Some(&agent_scroll_handle),
                                                 entity.clone(),
                                                 window,
                                                 cx,
@@ -751,7 +817,7 @@ impl AppView {
                                                 },
                                             ),
                                     )
-                                    .vertical_scrollbar(&agent_scroll_handle)
+                                    .vertical_scrollbar(&conversation_list_state)
                                     .into_any_element()
                             } else {
                                 div()
@@ -760,7 +826,6 @@ impl AppView {
                                     .overflow_hidden()
                                     .child(self.render_session_agent_messages(
                                         message_column_width,
-                                        None,
                                         entity.clone(),
                                         window,
                                         cx,
@@ -799,9 +864,8 @@ impl AppView {
     }
 
     fn render_session_agent_messages(
-        &self,
+        &mut self,
         message_column_width: f32,
-        scroll_handle: Option<&ScrollHandle>,
         entity: Entity<Self>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -809,7 +873,6 @@ impl AppView {
         session_agent_conversation::render_session_agent_messages(
             self,
             message_column_width,
-            scroll_handle,
             entity,
             window,
             cx,
