@@ -372,7 +372,7 @@ fn prepare_terminal_canvas_prepaint(
     let snapshot: Arc<TerminalSnapshot> = tab_index
         .and_then(|index| this.workspace_state.tabs.get(index))
         .and_then(|tab| tab.as_session())
-        .map(|session| session.terminal.snapshot(focused).into())?;
+        .map(|session| session.terminal.snapshot(focused))?;
 
     Some(TerminalCanvasPrepaint { snapshot, focus })
 }
@@ -793,26 +793,22 @@ fn hovered_link_range(
     hovered_link: Option<&TerminalHoveredLink>,
 ) -> Option<(usize, usize)> {
     let hovered_link = hovered_link?;
-    if hovered_link.line != row_index || hovered_link.column >= cells.len() {
+    if hovered_link.line != row_index
+        || hovered_link.start_column >= hovered_link.end_column
+        || hovered_link.end_column > cells.len()
+    {
         return None;
     }
 
-    let hovered_uri = hovered_link.uri.as_str();
-    if cells[hovered_link.column].link.as_deref() != Some(hovered_uri) {
+    let hovered_uri = hovered_link.uri.as_ref();
+    if cells[hovered_link.start_column..hovered_link.end_column]
+        .iter()
+        .any(|cell| cell.link.as_deref() != Some(hovered_uri))
+    {
         return None;
     }
 
-    let mut start = hovered_link.column;
-    while start > 0 && cells[start - 1].link.as_deref() == Some(hovered_uri) {
-        start -= 1;
-    }
-
-    let mut end = hovered_link.column + 1;
-    while end < cells.len() && cells[end].link.as_deref() == Some(hovered_uri) {
-        end += 1;
-    }
-
-    Some((start, end))
+    Some((hovered_link.start_column, hovered_link.end_column))
 }
 
 fn runs_compatible(a: &TextRun, b: &TextRun) -> bool {
@@ -930,11 +926,12 @@ mod tests {
         let hovered = TerminalHoveredLink {
             tab_id: 7,
             line: 0,
-            column: 3,
+            start_column: 9,
+            end_column: 13,
             uri: "https://example.test".into(),
         };
 
-        assert_eq!(hovered_link_range(&cells, 0, Some(&hovered)), Some((2, 6)));
+        assert_eq!(hovered_link_range(&cells, 0, Some(&hovered)), Some((9, 13)));
     }
 
     #[test]

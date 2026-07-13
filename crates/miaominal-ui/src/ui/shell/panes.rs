@@ -5,6 +5,7 @@ use gpui::{Bounds, Context, FocusHandle, Pixels, Point};
 use miaominal_terminal::{terminal_cell_width_default, terminal_line_height_default};
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -85,8 +86,17 @@ pub(in crate::ui::shell) struct TerminalScrollbarDrag {
 pub(in crate::ui::shell) struct TerminalHoveredLink {
     pub tab_id: usize,
     pub line: usize,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub uri: Arc<str>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) struct TerminalLinkQuery {
+    pub tab_id: usize,
+    pub generation: u64,
+    pub line: usize,
     pub column: usize,
-    pub uri: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +123,7 @@ pub(in crate::ui::shell) struct PaneViewState {
     pub terminal_mouse_reporting_active: bool,
     pub last_reported_mouse_cell: Option<(usize, usize)>,
     pub terminal_pointer_position: Option<Point<Pixels>>,
+    pub terminal_link_query: Option<TerminalLinkQuery>,
     pub terminal_hovered_link: Option<TerminalHoveredLink>,
     pub terminal_link_open_modifier: bool,
     pub terminal_scrollbar_drag: Option<TerminalScrollbarDrag>,
@@ -131,6 +142,7 @@ impl PaneViewState {
             terminal_mouse_reporting_active: false,
             last_reported_mouse_cell: None,
             terminal_pointer_position: None,
+            terminal_link_query: None,
             terminal_hovered_link: None,
             terminal_link_open_modifier: false,
             terminal_scrollbar_drag: None,
@@ -149,6 +161,7 @@ pub(in crate::ui::shell) struct ParkedPane {
     pub terminal_mouse_reporting_active: bool,
     pub last_reported_mouse_cell: Option<(usize, usize)>,
     pub terminal_pointer_position: Option<Point<Pixels>>,
+    pub terminal_link_query: Option<TerminalLinkQuery>,
     pub terminal_hovered_link: Option<TerminalHoveredLink>,
     pub terminal_link_open_modifier: bool,
     pub terminal_scrollbar_drag: Option<TerminalScrollbarDrag>,
@@ -168,6 +181,7 @@ impl ParkedPane {
             terminal_mouse_reporting_active: false,
             last_reported_mouse_cell: None,
             terminal_pointer_position: None,
+            terminal_link_query: None,
             terminal_hovered_link: None,
             terminal_link_open_modifier: false,
             terminal_scrollbar_drag: None,
@@ -227,6 +241,12 @@ impl AppView {
                     .workspace
                     .active_pane
                     .terminal_pointer_position
+                    .take(),
+                terminal_link_query: self
+                    .workspace_state
+                    .workspace
+                    .active_pane
+                    .terminal_link_query
                     .take(),
                 terminal_hovered_link: self
                     .workspace_state
@@ -296,6 +316,10 @@ impl AppView {
             .workspace
             .active_pane
             .terminal_pointer_position = workspace.active_pane.terminal_pointer_position;
+        self.workspace_state
+            .workspace
+            .active_pane
+            .terminal_link_query = workspace.active_pane.terminal_link_query;
         self.workspace_state
             .workspace
             .active_pane

@@ -510,15 +510,17 @@ impl AppView {
             && let Some(link) = self.terminal_link_at_position(event.position)
         {
             let uri = link.uri.clone();
-            if let Err(error) = open::that(&link.uri) {
+            if let Err(error) = open::that(uri.as_ref()) {
                 let error = error.to_string();
                 self.status_message = i18n::string_args(
                     "session.terminal_messages.failed_to_open_link",
-                    &[("uri", &uri), ("error", &error)],
+                    &[("uri", uri.as_ref()), ("error", &error)],
                 );
             } else {
-                self.status_message =
-                    i18n::string_args("session.terminal_messages.opened_link", &[("uri", &uri)]);
+                self.status_message = i18n::string_args(
+                    "session.terminal_messages.opened_link",
+                    &[("uri", uri.as_ref())],
+                );
             }
             cx.notify();
             return;
@@ -1171,17 +1173,22 @@ impl AppView {
     }
 
     fn terminal_link_at_position(&self, position: Point<Pixels>) -> Option<TerminalHoveredLink> {
+        let (line, column) = self.event_position_to_viewport_cell(position)?;
+        self.terminal_link_at_cell(line, column)
+    }
+
+    fn terminal_link_at_cell(&self, line: usize, column: usize) -> Option<TerminalHoveredLink> {
         let index = self.workspace_state.workspace.active_tab?;
         let tab = self.workspace_state.tabs.get(index)?;
         let session = tab.as_session()?;
-        let (line, column) = self.event_position_to_viewport_cell(position)?;
-        let uri = session.terminal.link_at(line, column)?;
+        let link = session.terminal.link_at(line, column)?;
 
         Some(TerminalHoveredLink {
             tab_id: tab.id,
             line,
-            column,
-            uri,
+            start_column: link.start_column,
+            end_column: link.end_column,
+            uri: link.uri,
         })
     }
 
@@ -1191,30 +1198,58 @@ impl AppView {
         open_modifier: bool,
         cx: &mut Context<Self>,
     ) {
-        let hovered_link = position.and_then(|position| self.terminal_link_at_position(position));
-        let changed = self
+        let cell = position.and_then(|position| self.event_position_to_viewport_cell(position));
+        let previous_modifier = self
             .workspace_state
             .workspace
             .active_pane
-            .terminal_pointer_position
-            != position
-            || self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_link_open_modifier
-                != open_modifier
-            || self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_hovered_link
-                != hovered_link;
+            .terminal_link_open_modifier;
+        let previous_link = self
+            .workspace_state
+            .workspace
+            .active_pane
+            .terminal_hovered_link
+            .clone();
+        let active_terminal = self
+            .workspace_state
+            .workspace
+            .active_tab
+            .and_then(|index| self.workspace_state.tabs.get(index))
+            .and_then(|tab| {
+                tab.as_session()
+                    .map(|session| (tab.id, session.terminal.generation()))
+            });
+        let query = cell
+            .zip(active_terminal)
+            .map(|((line, column), (tab_id, generation))| TerminalLinkQuery {
+                tab_id,
+                generation,
+                line,
+                column,
+            });
+        let previous_query = self
+            .workspace_state
+            .workspace
+            .active_pane
+            .terminal_link_query;
+        let should_query = open_modifier && query != previous_query;
+        let hovered_link = if !open_modifier {
+            None
+        } else if should_query {
+            cell.and_then(|(line, column)| self.terminal_link_at_cell(line, column))
+        } else {
+            previous_link.clone()
+        };
+        let changed = previous_modifier != open_modifier || previous_link != hovered_link;
 
         self.workspace_state
             .workspace
             .active_pane
             .terminal_pointer_position = position;
+        self.workspace_state
+            .workspace
+            .active_pane
+            .terminal_link_query = open_modifier.then_some(query).flatten();
         self.workspace_state
             .workspace
             .active_pane
@@ -1582,6 +1617,22 @@ fn terminal_alternate_scroll_bytes(lines: i32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_link_query_changes_with_terminal_generation() {
+        let previous = TerminalLinkQuery {
+            tab_id: 7,
+            generation: 10,
+            line: 3,
+            column: 4,
+        };
+        let current = TerminalLinkQuery {
+            generation: 11,
+            ..previous
+        };
+
+        assert_ne!(previous, current);
+    }
 
     fn key(
         key: &str,

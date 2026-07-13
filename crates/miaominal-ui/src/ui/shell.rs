@@ -107,7 +107,9 @@ pub(in crate::ui::shell) use metrics::*;
 pub(in crate::ui::shell) use miaominal_services::AppServices;
 pub(in crate::ui::shell) use navigation::SidebarSection;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
-pub(in crate::ui::shell) use panes::{PaneId, TerminalHoveredLink, TerminalScrollbarDrag};
+pub(in crate::ui::shell) use panes::{
+    PaneId, TerminalHoveredLink, TerminalLinkQuery, TerminalScrollbarDrag,
+};
 pub(in crate::ui::shell) use settings_labels::*;
 pub(in crate::ui::shell) use sftp_browser::{
     SftpBrowserSelectionModifiers, SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,

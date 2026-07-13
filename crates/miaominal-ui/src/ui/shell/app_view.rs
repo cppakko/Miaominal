@@ -135,6 +135,12 @@ impl AppView {
                 .active_pane
                 .terminal_pointer_position
                 .take(),
+            terminal_link_query: self
+                .workspace_state
+                .workspace
+                .active_pane
+                .terminal_link_query
+                .take(),
             terminal_hovered_link: self
                 .workspace_state
                 .workspace
@@ -192,6 +198,10 @@ impl AppView {
                 .workspace
                 .active_pane
                 .terminal_pointer_position = incoming.terminal_pointer_position;
+            self.workspace_state
+                .workspace
+                .active_pane
+                .terminal_link_query = incoming.terminal_link_query;
             self.workspace_state
                 .workspace
                 .active_pane
@@ -284,6 +294,12 @@ impl AppView {
                 .workspace
                 .active_pane
                 .terminal_pointer_position
+                .take(),
+            terminal_link_query: self
+                .workspace_state
+                .workspace
+                .active_pane
+                .terminal_link_query
                 .take(),
             terminal_hovered_link: self
                 .workspace_state

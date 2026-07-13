@@ -1,12 +1,17 @@
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::search::{Match, RegexSearch};
-use alacritty_terminal::term::{Config, Term, cell::Cell, cell::Flags, color::Colors};
+use alacritty_terminal::term::{
+    Config, Term,
+    cell::{Cell, Flags, Hyperlink},
+    color::Colors,
+};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
 use gpui::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -118,7 +123,7 @@ pub struct TerminalCell {
     pub wide: bool,
     pub spacer: bool,
     pub is_cursor: bool,
-    pub link: Option<String>,
+    pub link: Option<Arc<str>>,
     pub search_match: SearchMatchKind,
 }
 
@@ -160,6 +165,13 @@ pub struct TerminalSnapshot {
     pub search_current: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalLink {
+    pub start_column: usize,
+    pub end_column: usize,
+    pub uri: Arc<str>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TerminalScroll {
     Lines(i32),
@@ -189,6 +201,36 @@ struct TerminalShared {
     core: Mutex<TerminalCore>,
     dirty_generation: AtomicU64,
     pending_inputs: AtomicU64,
+    snapshot_cache: Mutex<Option<CachedTerminalSnapshot>>,
+}
+
+struct CachedTerminalSnapshot {
+    generation: u64,
+    focused: bool,
+    palette: TerminalPaletteKey,
+    snapshot: Arc<TerminalSnapshot>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct TerminalPaletteKey {
+    default_fg: u32,
+    default_bg: u32,
+    cursor: u32,
+    selection: u32,
+    ansi: [u32; 16],
+}
+
+impl TerminalPaletteKey {
+    fn current() -> Self {
+        let palette = settings::current_theme().terminal;
+        Self {
+            default_fg: palette.default_fg,
+            default_bg: palette.default_bg,
+            cursor: palette.cursor,
+            selection: palette.selection,
+            ansi: palette.ansi,
+        }
+    }
 }
 
 struct ParserHandle {
@@ -405,18 +447,62 @@ impl TerminalCore {
         self.term.selection_to_string()
     }
 
-    /// Look up the hyperlink URI at a viewport-relative cell position, using
-    /// OSC 8 metadata when present and falling back to visible URL detection.
-    pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<String> {
+    /// Look up the hyperlink at a viewport-relative cell position directly in
+    /// the grid, using OSC 8 metadata when present and falling back to visible
+    /// URL detection on only the target row.
+    pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<TerminalLink> {
         if column >= self.columns || viewport_line >= self.screen_lines {
             return None;
         }
 
-        self.snapshot(false)
-            .cells
-            .get(viewport_line)
-            .and_then(|row| row.get(column))
-            .and_then(|cell| cell.link.clone())
+        let grid = self.term.grid();
+        let grid_line = Line(viewport_line as i32 - grid.display_offset() as i32);
+        let row = &grid[grid_line];
+
+        if let Some(hyperlink) = row[Column(column)].hyperlink() {
+            let uri = hyperlink.uri();
+            let mut start_column = column;
+            while start_column > 0
+                && row[Column(start_column - 1)]
+                    .hyperlink()
+                    .is_some_and(|candidate| candidate.uri() == uri)
+            {
+                start_column -= 1;
+            }
+
+            let mut end_column = column + 1;
+            while end_column < self.columns
+                && row[Column(end_column)]
+                    .hyperlink()
+                    .is_some_and(|candidate| candidate.uri() == uri)
+            {
+                end_column += 1;
+            }
+
+            return Some(TerminalLink {
+                start_column,
+                end_column,
+                uri: Arc::from(uri),
+            });
+        }
+
+        let row_chars = visible_grid_row_chars(row, self.columns);
+        detect_visible_urls(&row_chars)
+            .into_iter()
+            .find(|url| (url.start..url.end).contains(&column))
+            .and_then(|url| {
+                let overlaps_osc_8 =
+                    (url.start..url.end).any(|column| row[Column(column)].hyperlink().is_some());
+                if overlaps_osc_8 {
+                    return None;
+                }
+
+                Some(TerminalLink {
+                    start_column: url.start,
+                    end_column: url.end,
+                    uri: Arc::from(row_chars[url.start..url.end].iter().collect::<String>()),
+                })
+            })
     }
 
     /// Run a regex search across the entire scrollback grid. The pattern is
@@ -565,6 +651,7 @@ impl TerminalCore {
 
         let selection_range = renderable.selection;
 
+        let mut hyperlinks: HashMap<Hyperlink, Arc<str>> = HashMap::new();
         for indexed in renderable.display_iter {
             let viewport_line = indexed.point.line.0 + display_offset;
             let Ok(line_index) = usize::try_from(viewport_line) else {
@@ -585,6 +672,15 @@ impl TerminalCore {
                 .map(|range| range.contains(indexed.point))
                 .unwrap_or(false);
 
+            let link = indexed.cell.hyperlink().map(|hyperlink| {
+                if let Some(uri) = hyperlinks.get(&hyperlink) {
+                    uri.clone()
+                } else {
+                    let uri: Arc<str> = Arc::from(hyperlink.uri());
+                    hyperlinks.insert(hyperlink, uri.clone());
+                    uri
+                }
+            });
             let cell = build_cell(
                 indexed.cell,
                 renderable.colors,
@@ -592,6 +688,7 @@ impl TerminalCore {
                 is_selected,
                 default_fg,
                 default_bg,
+                link,
             );
             cells[line_index][column] = cell;
         }
@@ -671,6 +768,7 @@ impl TerminalState {
             core: Mutex::new(TerminalCore::new(columns, screen_lines)),
             dirty_generation: AtomicU64::new(0),
             pending_inputs: AtomicU64::new(0),
+            snapshot_cache: Mutex::new(None),
         });
         let (sender, receiver) = mpsc::channel::<ParserInput>();
         let parser = Arc::new(ParserHandle { sender });
@@ -729,9 +827,14 @@ impl TerminalState {
     }
 
     pub fn resize(&mut self, columns: usize, screen_lines: usize) -> bool {
-        let changed = self.with_core_mut(|core| core.resize(columns, screen_lines));
+        let mut core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let changed = core.resize(columns, screen_lines);
         if changed {
-            self.mark_dirty();
+            self.mark_dirty_locked();
         }
         changed
     }
@@ -753,18 +856,15 @@ impl TerminalState {
     }
 
     pub fn scroll(&mut self, scroll: TerminalScroll) {
-        self.with_core_mut(|core| core.scroll(scroll));
-        self.mark_dirty();
+        self.with_core_mut_and_mark(|core| core.scroll(scroll));
     }
 
     pub fn scroll_to_display_offset(&mut self, target_offset: usize) {
-        self.with_core_mut(|core| core.scroll_to_display_offset(target_offset));
-        self.mark_dirty();
+        self.with_core_mut_and_mark(|core| core.scroll_to_display_offset(target_offset));
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.with_core_mut(TerminalCore::scroll_to_bottom);
-        self.mark_dirty();
+        self.with_core_mut_and_mark(TerminalCore::scroll_to_bottom);
     }
 
     pub fn input_modes(&self) -> TerminalInputModes {
@@ -788,18 +888,15 @@ impl TerminalState {
     }
 
     pub fn start_selection(&mut self, line: i32, column: usize, side: Side, block: bool) {
-        self.with_core_mut(|core| core.start_selection(line, column, side, block));
-        self.mark_dirty();
+        self.with_core_mut_and_mark(|core| core.start_selection(line, column, side, block));
     }
 
     pub fn update_selection(&mut self, line: i32, column: usize, side: Side) {
-        self.with_core_mut(|core| core.update_selection(line, column, side));
-        self.mark_dirty();
+        self.with_core_mut_and_mark(|core| core.update_selection(line, column, side));
     }
 
     pub fn clear_selection(&mut self) {
-        self.with_core_mut(TerminalCore::clear_selection);
-        self.mark_dirty();
+        self.with_core_mut_and_mark(TerminalCore::clear_selection);
     }
 
     pub fn has_selection(&self) -> bool {
@@ -810,33 +907,56 @@ impl TerminalState {
         self.with_core(TerminalCore::selection_text)
     }
 
-    pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<String> {
+    pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<TerminalLink> {
         self.with_core(|core| core.link_at(viewport_line, column))
     }
 
     pub fn set_search(&mut self, pattern: &str) -> Result<usize, String> {
-        let result = self.with_core_mut(|core| core.set_search(pattern));
-        self.mark_dirty();
-        result
+        self.with_core_mut_and_mark(|core| core.set_search(pattern))
     }
 
     pub fn clear_search(&mut self) {
-        self.with_core_mut(TerminalCore::clear_search);
-        self.mark_dirty();
+        self.with_core_mut_and_mark(TerminalCore::clear_search);
     }
 
     pub fn next_match(&mut self) {
-        self.with_core_mut(TerminalCore::next_match);
-        self.mark_dirty();
+        self.with_core_mut_and_mark(TerminalCore::next_match);
     }
 
     pub fn prev_match(&mut self) {
-        self.with_core_mut(TerminalCore::prev_match);
-        self.mark_dirty();
+        self.with_core_mut_and_mark(TerminalCore::prev_match);
     }
 
-    pub fn snapshot(&self, focused: bool) -> TerminalSnapshot {
-        self.with_core(|core| core.snapshot(focused))
+    pub fn snapshot(&self, focused: bool) -> Arc<TerminalSnapshot> {
+        let palette = TerminalPaletteKey::current();
+        let core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let generation = self.shared.dirty_generation.load(Ordering::Acquire);
+
+        let mut cache = self
+            .shared
+            .snapshot_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(cached) = cache.as_ref()
+            && cached.generation == generation
+            && cached.focused == focused
+            && cached.palette == palette
+        {
+            return cached.snapshot.clone();
+        }
+
+        let snapshot = Arc::new(core.snapshot(focused));
+        *cache = Some(CachedTerminalSnapshot {
+            generation,
+            focused,
+            palette,
+            snapshot: snapshot.clone(),
+        });
+        snapshot
     }
 
     fn with_core<R>(&self, f: impl FnOnce(&TerminalCore) -> R) -> R {
@@ -848,17 +968,24 @@ impl TerminalState {
         f(&core)
     }
 
-    fn with_core_mut<R>(&self, f: impl FnOnce(&mut TerminalCore) -> R) -> R {
+    fn with_core_mut_and_mark<R>(&self, f: impl FnOnce(&mut TerminalCore) -> R) -> R {
         let mut core = self
             .shared
             .core
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        f(&mut core)
+        let result = f(&mut core);
+        self.mark_dirty_locked();
+        result
     }
 
-    fn mark_dirty(&self) {
+    fn mark_dirty_locked(&self) {
         self.shared.dirty_generation.fetch_add(1, Ordering::Release);
+        *self
+            .shared
+            .snapshot_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
     }
 }
 
@@ -875,8 +1002,12 @@ fn parse_input(shared: &TerminalShared, input: ParserInput) {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         core.push_bytes(bytes);
-        drop(core);
         shared.dirty_generation.fetch_add(1, Ordering::Release);
+        *shared
+            .snapshot_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        drop(core);
     }
     shared.pending_inputs.fetch_sub(1, Ordering::AcqRel);
     if let Some(completion) = input.completion {
@@ -891,6 +1022,7 @@ fn build_cell(
     is_selected: bool,
     default_fg: Hsla,
     default_bg: Hsla,
+    link: Option<Arc<str>>,
 ) -> TerminalCell {
     let mut fg = resolve_color(cell.fg, colors);
     let mut bg = resolve_color(cell.bg, colors);
@@ -935,9 +1067,7 @@ fn build_cell(
             .flags
             .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER),
         is_cursor,
-        link: cell
-            .hyperlink()
-            .map(|hyperlink| hyperlink.uri().to_string()),
+        link,
         search_match: SearchMatchKind::None,
     }
     .with_default_fg(default_fg)
@@ -957,6 +1087,24 @@ impl TerminalCell {
         self
     }
 }
+fn visible_grid_row_chars(row: &Row<Cell>, columns: usize) -> Vec<char> {
+    (0..columns)
+        .map(|column| {
+            let cell = &row[Column(column)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                || cell.flags.contains(Flags::HIDDEN)
+                || cell.c == '\0'
+            {
+                ' '
+            } else {
+                cell.c
+            }
+        })
+        .collect()
+}
+
 fn apply_detected_links(cells: &mut [Vec<TerminalCell>]) {
     for row in cells {
         let row_chars: Vec<char> = row
@@ -970,13 +1118,20 @@ fn apply_detected_links(cells: &mut [Vec<TerminalCell>]) {
             })
             .collect();
 
-        for (start, end, url) in detect_visible_urls(&row_chars) {
-            let has_existing_link = row[start..end].iter().any(|cell| cell.link.is_some());
+        for detected in detect_visible_urls(&row_chars) {
+            let has_existing_link = row[detected.start..detected.end]
+                .iter()
+                .any(|cell| cell.link.is_some());
             if has_existing_link {
                 continue;
             }
 
-            for cell in &mut row[start..end] {
+            let url: Arc<str> = Arc::from(
+                row_chars[detected.start..detected.end]
+                    .iter()
+                    .collect::<String>(),
+            );
+            for cell in &mut row[detected.start..detected.end] {
                 if !cell.spacer && cell.character != '\0' {
                     cell.link = Some(url.clone());
                 }
@@ -985,15 +1140,24 @@ fn apply_detected_links(cells: &mut [Vec<TerminalCell>]) {
     }
 }
 
-fn detect_visible_urls(chars: &[char]) -> Vec<(usize, usize, String)> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DetectedUrl {
+    start: usize,
+    end: usize,
+}
+
+const HTTPS_SCHEME: &[char] = &['h', 't', 't', 'p', 's', ':', '/', '/'];
+const HTTP_SCHEME: &[char] = &['h', 't', 't', 'p', ':', '/', '/'];
+
+fn detect_visible_urls(chars: &[char]) -> Vec<DetectedUrl> {
     let mut urls = Vec::new();
     let mut index = 0;
 
     while index < chars.len() {
-        let scheme_len = if starts_with_chars(chars, index, "https://") {
-            Some("https://".len())
-        } else if starts_with_chars(chars, index, "http://") {
-            Some("http://".len())
+        let scheme_len = if starts_with_chars(chars, index, HTTPS_SCHEME) {
+            Some(HTTPS_SCHEME.len())
+        } else if starts_with_chars(chars, index, HTTP_SCHEME) {
+            Some(HTTP_SCHEME.len())
         } else {
             None
         };
@@ -1018,8 +1182,7 @@ fn detect_visible_urls(chars: &[char]) -> Vec<(usize, usize, String)> {
         }
 
         if end > index + scheme_len {
-            let url = chars[index..end].iter().collect();
-            urls.push((index, end, url));
+            urls.push(DetectedUrl { start: index, end });
             index = end;
         } else {
             index += 1;
@@ -1029,9 +1192,8 @@ fn detect_visible_urls(chars: &[char]) -> Vec<(usize, usize, String)> {
     urls
 }
 
-fn starts_with_chars(chars: &[char], start: usize, prefix: &str) -> bool {
-    let prefix_chars: Vec<char> = prefix.chars().collect();
-    chars.get(start..start + prefix_chars.len()) == Some(prefix_chars.as_slice())
+fn starts_with_chars(chars: &[char], start: usize, prefix: &[char]) -> bool {
+    chars.get(start..start.saturating_add(prefix.len())) == Some(prefix)
 }
 
 fn is_url_char(ch: char) -> bool {
@@ -1454,7 +1616,10 @@ mod tests {
         let urls = detect_visible_urls(&chars);
 
         assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0].2, "https://example.com/pkg?x=1");
+        assert_eq!(
+            chars[urls[0].start..urls[0].end].iter().collect::<String>(),
+            "https://example.com/pkg?x=1"
+        );
     }
 
     #[test]
@@ -1540,6 +1705,61 @@ mod tests {
             .map(|cell| cell.character)
             .collect();
         assert!(first_line.starts_with("background parser"));
+    }
+
+    #[test]
+    fn snapshot_is_reused_until_terminal_generation_changes() {
+        let terminal = TerminalState::default();
+        let first = terminal.snapshot(false);
+        let second = terminal.snapshot(false);
+
+        assert!(Arc::ptr_eq(&first, &second));
+
+        terminal.push_bytes(b"changed");
+        wait_for_parser(&terminal);
+        let changed = terminal.snapshot(false);
+
+        assert!(!Arc::ptr_eq(&first, &changed));
+    }
+
+    #[test]
+    fn link_at_detects_visible_url_without_snapshot() {
+        let terminal = TerminalState::default();
+        terminal.push_text("open https://example.test/path now");
+
+        let link = terminal.link_at(0, 10).expect("expected visible URL");
+
+        assert_eq!(link.start_column, 5);
+        assert_eq!(link.end_column, 30);
+        assert_eq!(link.uri.as_ref(), "https://example.test/path");
+    }
+
+    #[test]
+    fn link_at_prefers_osc_8_hyperlink_span() {
+        let terminal = TerminalState::default();
+        terminal.push_text("\x1b]8;;https://example.test/target\x1b\\click\x1b]8;;\x1b\\");
+
+        let link = terminal.link_at(0, 2).expect("expected OSC 8 link");
+
+        assert_eq!(link.start_column, 0);
+        assert_eq!(link.end_column, 5);
+        assert_eq!(link.uri.as_ref(), "https://example.test/target");
+    }
+
+    #[test]
+    fn link_at_suppresses_detected_url_when_osc_8_overlaps_its_span() {
+        let terminal = TerminalState::default();
+        terminal
+            .push_text("https://\x1b]8;;https://osc.test/target\x1b\\example\x1b]8;;\x1b\\.test");
+
+        assert_eq!(terminal.link_at(0, 1), None);
+
+        let osc_link = terminal
+            .link_at(0, 9)
+            .expect("expected overlapping OSC 8 link");
+        assert_eq!(osc_link.start_column, 8);
+        assert_eq!(osc_link.end_column, 15);
+        assert_eq!(osc_link.uri.as_ref(), "https://osc.test/target");
     }
 
     fn wait_for_parser(terminal: &TerminalState) {
