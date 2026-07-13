@@ -993,6 +993,16 @@ impl SftpTransferRow {
         else {
             return;
         };
+        if matches!(update.state, SftpTransferChildState::Running)
+            && matches!(
+                child.status,
+                SftpTransferChildStatus::Done
+                    | SftpTransferChildStatus::Cancelled
+                    | SftpTransferChildStatus::Failed(_)
+            )
+        {
+            return;
+        }
         child.bytes_complete = update.bytes_complete;
         child.status = match update.state {
             SftpTransferChildState::Running => SftpTransferChildStatus::Running,
@@ -1392,6 +1402,8 @@ pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) selected_local_paths: Vec<PathBuf>,
     pub(in crate::ui::shell) local_selection_anchor: Option<PathBuf>,
     pub(in crate::ui::shell) remote_path: String,
+    pub(in crate::ui::shell) requested_remote_path: Option<String>,
+    pub(in crate::ui::shell) remote_directory_request_id: Option<SftpDirectoryRequestId>,
     pub(in crate::ui::shell) remote_entries: Vec<SftpEntry>,
     pub(in crate::ui::shell) selected_remote_path: Option<String>,
     pub(in crate::ui::shell) selected_remote_paths: Vec<String>,
@@ -1412,6 +1424,10 @@ pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) inline_rename: Option<InlineRenameState>,
     pub(in crate::ui::shell) edit_pending_downloads: std::collections::HashMap<TransferId, String>,
     pub(in crate::ui::shell) edit_sessions: std::collections::HashMap<String, SftpEditSession>,
+    pub(in crate::ui::shell) pending_local_refresh_paths: std::collections::HashSet<PathBuf>,
+    pub(in crate::ui::shell) pending_remote_refresh_paths: std::collections::HashSet<String>,
+    pub(in crate::ui::shell) directory_refresh_generation: u64,
+    pub(in crate::ui::shell) local_scan_generation: u64,
     pub(in crate::ui::shell) layout: SftpLayoutState,
 }
 
@@ -1607,6 +1623,8 @@ impl TabState {
                 selected_local_paths: Vec::new(),
                 local_selection_anchor: None,
                 remote_path: ".".into(),
+                requested_remote_path: None,
+                remote_directory_request_id: None,
                 remote_entries: Vec::new(),
                 selected_remote_path: None,
                 selected_remote_paths: Vec::new(),
@@ -1627,6 +1645,10 @@ impl TabState {
                 inline_rename: None,
                 edit_pending_downloads: std::collections::HashMap::new(),
                 edit_sessions: std::collections::HashMap::new(),
+                pending_local_refresh_paths: std::collections::HashSet::new(),
+                pending_remote_refresh_paths: std::collections::HashSet::new(),
+                directory_refresh_generation: 0,
+                local_scan_generation: 0,
                 layout: SftpLayoutState::default(),
             })),
             workspace: None,
@@ -2301,6 +2323,29 @@ mod tests {
         assert!(matches!(
             &transfer.children[1].status,
             SftpTransferChildStatus::Cancelled
+        ));
+    }
+
+    #[test]
+    fn delayed_running_progress_does_not_regress_completed_child() {
+        let mut transfer = transfer_row();
+        transfer.push_child(transfer_children().remove(0));
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(0),
+            bytes_complete: 3,
+            state: SftpTransferChildState::Done,
+        });
+
+        transfer.apply_child_update(SftpTransferChildUpdate {
+            child_id: TransferChildId(0),
+            bytes_complete: 2,
+            state: SftpTransferChildState::Running,
+        });
+
+        assert_eq!(transfer.children[0].bytes_complete, 3);
+        assert!(matches!(
+            transfer.children[0].status,
+            SftpTransferChildStatus::Done
         ));
     }
 

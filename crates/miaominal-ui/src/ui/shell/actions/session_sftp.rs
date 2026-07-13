@@ -3,6 +3,9 @@ use crate::ui::i18n;
 use gpui_component::WindowExt as _;
 use miaominal_services::SftpService;
 
+const SFTP_PROGRESS_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+const SFTP_DIRECTORY_REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+
 impl AppView {
     fn sftp_service(&self) -> SftpService {
         SftpService::new(
@@ -97,6 +100,7 @@ impl AppView {
         self.workspace_state.tabs.push(tab);
         self.refresh_sftp_local_directory(tab_id, cx);
         self.spawn_sftp_event_loop(tab_id, connection.events, cx);
+        self.spawn_sftp_progress_loop(tab_id, connection.progress, cx);
         self.sync_sftp_path_inputs_for_tab(tab_id, cx);
         self.sync_sftp_tables_for_tab(tab_id, cx);
         self.status_message = i18n::string_args(
@@ -397,6 +401,7 @@ impl AppView {
         self.editors.host_editor_is_new = false;
         self.refresh_sftp_local_directory(tab_id, cx);
         self.spawn_sftp_event_loop(tab_id, connection.events, cx);
+        self.spawn_sftp_progress_loop(tab_id, connection.progress, cx);
         self.sync_sftp_path_inputs_for_tab(tab_id, cx);
         self.sync_sftp_tables_for_tab(tab_id, cx);
         self.status_message = i18n::string_args(
@@ -425,6 +430,105 @@ impl AppView {
         .detach();
     }
 
+    fn spawn_sftp_progress_loop(
+        &self,
+        tab_id: usize,
+        mut progress: SftpProgressReceiver,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            while let Some(first) = progress.recv().await {
+                cx.background_executor()
+                    .timer(SFTP_PROGRESS_REFRESH_INTERVAL)
+                    .await;
+
+                let mut latest = std::collections::HashMap::new();
+                latest.insert(first.transfer_id, first);
+                while let Some(update) = progress.try_recv() {
+                    latest.insert(update.transfer_id, update);
+                }
+
+                if this
+                    .update(cx, |this, cx| {
+                        for update in latest.into_values() {
+                            this.handle_sftp_progress(tab_id, update);
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_sftp_progress(&mut self, tab_id: usize, progress: SftpTransferProgress) {
+        let Some(sftp) = self
+            .workspace_state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp_mut)
+        else {
+            return;
+        };
+        let Some(transfer) = sftp
+            .transfers
+            .iter_mut()
+            .find(|transfer| transfer.transfer_id == progress.transfer_id)
+        else {
+            return;
+        };
+        Self::apply_sftp_transfer_progress(transfer, progress);
+    }
+
+    fn apply_sftp_transfer_progress(
+        transfer: &mut SftpTransferRow,
+        progress: SftpTransferProgress,
+    ) {
+        if matches!(
+            transfer.status,
+            SftpTransferStatus::Done
+                | SftpTransferStatus::Cancelled
+                | SftpTransferStatus::Failed(_)
+        ) {
+            return;
+        }
+        if progress.bytes_complete < transfer.bytes_complete {
+            return;
+        }
+
+        let is_paused = matches!(transfer.status, SftpTransferStatus::Paused);
+        let now = std::time::Instant::now();
+        if let Some(sample_at) = transfer.last_progress_at {
+            let elapsed = now.duration_since(sample_at).as_secs_f64();
+            if elapsed >= 0.5 {
+                let delta = progress
+                    .bytes_complete
+                    .saturating_sub(transfer.last_bytes_complete);
+                transfer.bytes_per_second = Some((delta as f64 / elapsed) as u64);
+                transfer.last_progress_at = Some(now);
+                transfer.last_bytes_complete = progress.bytes_complete;
+            }
+        } else {
+            transfer.last_progress_at = Some(now);
+            transfer.last_bytes_complete = progress.bytes_complete;
+        }
+        transfer.bytes_complete = progress.bytes_complete;
+        transfer.bytes_total = progress.bytes_total;
+        if !is_paused {
+            transfer.status = SftpTransferStatus::Running;
+        }
+        if let Some(child) = progress.child {
+            transfer.apply_child_update(child);
+            if is_paused {
+                transfer.pause_active_child();
+            }
+        }
+    }
+
     fn handle_sftp_event(&mut self, tab_id: usize, event: SftpEvent, cx: &mut Context<Self>) {
         let Some(tab_index) = self
             .workspace_state
@@ -450,7 +554,7 @@ impl AppView {
             return;
         };
         let mut should_sync_paths = false;
-        let mut refresh_local_directory = false;
+        let mut refresh_local_directory = None;
         let mut refresh_remote_directory = None;
         let mut subdirectory_listing: Option<(String, Vec<SftpEntry>)> = None;
         let mut edit_complete: Option<(PathBuf, String)> = None;
@@ -468,7 +572,20 @@ impl AppView {
                 sftp.last_status = message;
                 sftp.last_error = None;
             }
-            SftpEvent::DirectoryListing { path, entries } => {
+            SftpEvent::DirectoryListing {
+                request_id,
+                path,
+                entries,
+            } => {
+                let is_current = Self::is_current_sftp_directory_response(
+                    sftp.remote_directory_request_id,
+                    request_id,
+                );
+                if !is_current {
+                    return;
+                }
+                sftp.remote_directory_request_id = None;
+                sftp.requested_remote_path = None;
                 *status = i18n::string_args("sftp.ui.remote_path_label", &[("path", &path)]);
                 sftp.remote_path = path;
                 sftp.remote_entries = entries;
@@ -525,47 +642,54 @@ impl AppView {
                     transfer.push_child(child);
                 }
             }
-            SftpEvent::TransferProgress {
-                transfer_id,
-                bytes_complete,
-                bytes_total,
-                child,
-            } => {
+            SftpEvent::TransferChildFinished { transfer_id, child } => {
                 if let Some(transfer) = sftp
                     .transfers
                     .iter_mut()
                     .find(|transfer| transfer.transfer_id == transfer_id)
                 {
-                    let is_paused = matches!(transfer.status, SftpTransferStatus::Paused);
-                    let now = std::time::Instant::now();
-                    // Only recompute speed when at least 500 ms have elapsed since the last
-                    // sample point. Without this guard, events that queue up in the channel
-                    // would be processed back-to-back with microsecond-level elapsed times,
-                    // inflating the estimated speed by orders of magnitude.
-                    if let Some(sample_at) = transfer.last_progress_at {
-                        let elapsed = now.duration_since(sample_at).as_secs_f64();
-                        if elapsed >= 0.5 {
-                            let delta = bytes_complete.saturating_sub(transfer.last_bytes_complete);
-                            transfer.bytes_per_second = Some((delta as f64 / elapsed) as u64);
-                            transfer.last_progress_at = Some(now);
-                            transfer.last_bytes_complete = bytes_complete;
-                        }
-                    } else {
-                        transfer.last_progress_at = Some(now);
-                        transfer.last_bytes_complete = bytes_complete;
-                    }
-                    transfer.bytes_complete = bytes_complete;
-                    transfer.bytes_total = bytes_total;
-                    if !is_paused {
-                        transfer.status = SftpTransferStatus::Running;
-                    }
-                    if let Some(child) = child {
-                        transfer.apply_child_update(child);
-                        if is_paused {
-                            transfer.pause_active_child();
-                        }
-                    }
+                    transfer.apply_child_update(child);
                 }
+            }
+            SftpEvent::TransferProgressFinal(progress) => {
+                if let Some(transfer) = sftp
+                    .transfers
+                    .iter_mut()
+                    .find(|transfer| transfer.transfer_id == progress.transfer_id)
+                {
+                    Self::apply_sftp_transfer_progress(transfer, progress);
+                }
+            }
+            SftpEvent::DirectoryListingFailed {
+                request_id,
+                path,
+                message,
+            } => {
+                if !Self::is_current_sftp_directory_response(
+                    sftp.remote_directory_request_id,
+                    Some(request_id),
+                ) {
+                    return;
+                }
+                sftp.remote_directory_request_id = None;
+                sftp.requested_remote_path = None;
+                sftp.loading_remote = false;
+                *status = i18n::string("session.status.error");
+                sftp.last_error = Some(format!("list_directory: {message}"));
+                sftp.last_status = i18n::string_args(
+                    "sftp.messages.context_failed",
+                    &[("context", "list_directory")],
+                );
+                remote_table_loading_finished = true;
+                let notification_message = i18n::string_args(
+                    "sftp.messages.operation_failed",
+                    &[("context", "list_directory"), ("message", &message)],
+                );
+                self.status_message = notification_message.clone();
+                if remote_path_submit_pending {
+                    validation_notification = Some(notification_message);
+                }
+                log::debug!("failed to list requested SFTP directory {path}: {message}");
             }
             SftpEvent::TransferPaused { transfer_id } => {
                 if let Some(transfer) = sftp
@@ -613,14 +737,21 @@ impl AppView {
                     }
                     match transfer.direction {
                         TransferDirection::Upload => {
-                            refresh_remote_directory = Some(sftp.remote_path.clone());
+                            refresh_remote_directory =
+                                Some(Self::sftp_remote_parent_path(&transfer.destination));
                         }
                         TransferDirection::Download => {
                             // Only refresh the local directory for ordinary downloads.
                             // Edit-initiated downloads land in the system temp dir,
                             // not the current local path, so no refresh is needed.
                             if edit_remote_path.is_none() {
-                                refresh_local_directory = true;
+                                refresh_local_directory = Some(
+                                    transfer
+                                        .source
+                                        .parent()
+                                        .unwrap_or_else(|| std::path::Path::new("."))
+                                        .to_path_buf(),
+                                );
                                 download_done_filename = Some(
                                     transfer
                                         .source
@@ -691,6 +822,9 @@ impl AppView {
                 path,
                 message,
             } => {
+                if context == "list_directory" && sftp.remote_directory_request_id.is_some() {
+                    return;
+                }
                 *status = i18n::string("session.status.error");
                 if context == "list_directory" {
                     sftp.loading_remote = false;
@@ -779,12 +913,13 @@ impl AppView {
             self.apply_sftp_progress_center_visibility(true);
         }
 
-        if refresh_local_directory {
-            self.refresh_sftp_local_directory(tab_id, cx);
-        }
-
-        if let Some(path) = refresh_remote_directory {
-            self.request_sftp_remote_directory(tab_id, path, cx);
+        if refresh_local_directory.is_some() || refresh_remote_directory.is_some() {
+            self.schedule_sftp_directory_refresh(
+                tab_id,
+                refresh_local_directory,
+                refresh_remote_directory,
+                cx,
+            );
         }
 
         if let Some((parent_path, entries)) = subdirectory_listing {
@@ -834,34 +969,45 @@ impl AppView {
         match side {
             SftpBrowserSide::Local => {
                 let path_buf = std::path::PathBuf::from(&path);
-                let children = match Self::read_local_sftp_entries(&path_buf) {
-                    Ok(entries) => entries
-                        .iter()
-                        .map(SftpBrowserTableRow::from_local)
-                        .collect::<Vec<_>>(),
-                    Err(error) => {
-                        let error = error.to_string();
-                        self.status_message = i18n::string_args(
-                            "status.sftp.expand_local_failed",
-                            &[("path", &path), ("error", &error)],
-                        );
-                        cx.notify();
-                        self.workspace_forms
-                            .sftp_browser
-                            .local_table
-                            .update(cx, |table, cx| {
-                                table.delegate_mut().cancel_expand(&path);
-                                cx.notify();
-                            });
-                        return;
-                    }
-                };
-                self.workspace_forms
-                    .sftp_browser
-                    .local_table
-                    .update(cx, |table, cx| {
-                        table.delegate_mut().receive_children(path, children, cx);
+                cx.spawn(async move |this, cx| {
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move { Self::read_local_sftp_entries(&path_buf) })
+                        .await;
+                    let _ = this.update(cx, move |this, cx| {
+                        if !this.workspace_state.tabs.iter().any(|tab| tab.id == tab_id) {
+                            return;
+                        }
+                        let local_table = this.workspace_forms.sftp_browser.local_table.clone();
+                        match result {
+                            Ok(entries) => {
+                                let children = entries
+                                    .iter()
+                                    .map(SftpBrowserTableRow::from_local)
+                                    .collect::<Vec<_>>();
+                                local_table.update(cx, |table, cx| {
+                                    if table.delegate().tab_id() == Some(tab_id) {
+                                        table.delegate_mut().receive_children(path, children, cx);
+                                    }
+                                });
+                            }
+                            Err(error) => {
+                                let error = error.to_string();
+                                this.status_message = i18n::string_args(
+                                    "status.sftp.expand_local_failed",
+                                    &[("path", &path), ("error", &error)],
+                                );
+                                local_table.update(cx, |table, cx| {
+                                    if table.delegate().tab_id() == Some(tab_id) {
+                                        table.delegate_mut().cancel_expand(&path);
+                                        cx.notify();
+                                    }
+                                });
+                            }
+                        }
                     });
+                })
+                .detach();
             }
             SftpBrowserSide::Remote => {
                 let Some(sftp) = self
@@ -912,83 +1058,182 @@ impl AppView {
             });
     }
 
+    fn schedule_sftp_directory_refresh(
+        &mut self,
+        tab_id: usize,
+        local_path: Option<std::path::PathBuf>,
+        remote_path: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(sftp) = self
+            .workspace_state
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp_mut)
+        else {
+            return;
+        };
+        if let Some(path) = local_path {
+            sftp.pending_local_refresh_paths.insert(path);
+        }
+        if let Some(path) = remote_path {
+            sftp.pending_remote_refresh_paths.insert(path);
+        }
+        sftp.directory_refresh_generation = sftp.directory_refresh_generation.wrapping_add(1);
+        let generation = sftp.directory_refresh_generation;
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SFTP_DIRECTORY_REFRESH_DEBOUNCE)
+                .await;
+            let _ = this.update(cx, move |this, cx| {
+                let Some(sftp) = this
+                    .workspace_state
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(TabState::as_sftp_mut)
+                else {
+                    return;
+                };
+                if sftp.directory_refresh_generation != generation {
+                    return;
+                }
+
+                let local_paths = std::mem::take(&mut sftp.pending_local_refresh_paths);
+                let remote_paths = std::mem::take(&mut sftp.pending_remote_refresh_paths);
+                let refresh_local = local_paths.contains(&sftp.local_path);
+                let remote_path = Self::sftp_debounced_remote_refresh_target(
+                    &remote_paths,
+                    &sftp.remote_path,
+                    sftp.requested_remote_path.as_deref(),
+                );
+
+                if refresh_local {
+                    this.refresh_sftp_local_directory(tab_id, cx);
+                }
+                if let Some(path) = remote_path {
+                    this.request_sftp_remote_directory(tab_id, path, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn sftp_remote_parent_path(path: &str) -> String {
+        let path = path.trim_end_matches('/');
+        match path.rsplit_once('/') {
+            Some(("", _)) => "/".to_string(),
+            Some((parent, _)) if !parent.is_empty() => parent.to_string(),
+            _ => ".".to_string(),
+        }
+    }
+
+    fn is_current_sftp_directory_response(
+        current: Option<SftpDirectoryRequestId>,
+        response: Option<SftpDirectoryRequestId>,
+    ) -> bool {
+        current == response
+    }
+
+    fn sftp_debounced_remote_refresh_target(
+        pending_paths: &std::collections::HashSet<String>,
+        loaded_path: &str,
+        requested_path: Option<&str>,
+    ) -> Option<String> {
+        let target = requested_path.unwrap_or(loaded_path);
+        pending_paths.contains(target).then(|| target.to_string())
+    }
+
     pub(in crate::ui::shell) fn refresh_sftp_local_directory(
         &mut self,
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab_index) = self
+        let Some((path, generation)) = self
             .workspace_state
             .tabs
-            .iter()
-            .position(|tab| tab.id == tab_id)
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_sftp_mut)
+            .map(|sftp| {
+                sftp.local_scan_generation = sftp.local_scan_generation.wrapping_add(1);
+                (sftp.local_path.clone(), sftp.local_scan_generation)
+            })
         else {
             return;
         };
-        let mut should_sync_paths = false;
 
-        {
-            let Some(sftp) = self
-                .workspace_state
-                .tabs
-                .get_mut(tab_index)
-                .and_then(TabState::as_sftp_mut)
-            else {
-                return;
-            };
-
-            match Self::read_local_sftp_entries(&sftp.local_path) {
-                Ok(entries) => {
-                    sftp.local_entries = entries;
-                    sftp.selected_local_paths.retain(|selected| {
-                        sftp.local_entries
-                            .iter()
-                            .any(|entry| &entry.path == selected)
-                    });
-                    if let Some(selected) = sftp.selected_local_path.as_ref()
-                        && !sftp
-                            .local_entries
-                            .iter()
-                            .any(|entry| &entry.path == selected)
-                    {
-                        sftp.selected_local_path = None;
-                    }
-                    if sftp.selected_local_path.is_none() {
-                        sftp.selected_local_path = sftp.selected_local_paths.first().cloned();
-                    }
-                    if let Some(selected) = sftp.selected_local_path.clone()
-                        && !sftp
-                            .selected_local_paths
-                            .iter()
-                            .any(|path| path == &selected)
-                    {
-                        sftp.selected_local_paths.insert(0, selected);
-                    }
-                    if let Some(anchor) = sftp.local_selection_anchor.as_ref()
-                        && !sftp.local_entries.iter().any(|entry| &entry.path == anchor)
-                    {
-                        sftp.local_selection_anchor = None;
-                    }
-                    should_sync_paths = true;
+        cx.spawn(async move |this, cx| {
+            let scan_path = path.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { Self::read_local_sftp_entries(&scan_path) })
+                .await;
+            let _ = this.update(cx, move |this, cx| {
+                let Some(sftp) = this
+                    .workspace_state
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(TabState::as_sftp_mut)
+                else {
+                    return;
+                };
+                if sftp.local_scan_generation != generation || sftp.local_path != path {
+                    return;
                 }
-                Err(error) => {
-                    sftp.last_error = Some(error.to_string());
-                    let path = sftp.local_path.display().to_string();
-                    let error = error.to_string();
-                    self.status_message = i18n::string_args(
-                        "sftp.messages.local_read_failed",
-                        &[("path", &path), ("error", &error)],
-                    );
+
+                match result {
+                    Ok(entries) => {
+                        sftp.local_entries = entries;
+                        sftp.selected_local_paths.retain(|selected| {
+                            sftp.local_entries
+                                .iter()
+                                .any(|entry| &entry.path == selected)
+                        });
+                        if let Some(selected) = sftp.selected_local_path.as_ref()
+                            && !sftp
+                                .local_entries
+                                .iter()
+                                .any(|entry| &entry.path == selected)
+                        {
+                            sftp.selected_local_path = None;
+                        }
+                        if sftp.selected_local_path.is_none() {
+                            sftp.selected_local_path = sftp.selected_local_paths.first().cloned();
+                        }
+                        if let Some(selected) = sftp.selected_local_path.clone()
+                            && !sftp
+                                .selected_local_paths
+                                .iter()
+                                .any(|path| path == &selected)
+                        {
+                            sftp.selected_local_paths.insert(0, selected);
+                        }
+                        if let Some(anchor) = sftp.local_selection_anchor.as_ref()
+                            && !sftp.local_entries.iter().any(|entry| &entry.path == anchor)
+                        {
+                            sftp.local_selection_anchor = None;
+                        }
+                        this.sync_sftp_path_input_for_side(tab_id, SftpBrowserSide::Local, cx);
+                        this.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Local, cx);
+                    }
+                    Err(error) => {
+                        sftp.last_error = Some(error.to_string());
+                        let path = sftp.local_path.display().to_string();
+                        let error = error.to_string();
+                        this.status_message = i18n::string_args(
+                            "sftp.messages.local_read_failed",
+                            &[("path", &path), ("error", &error)],
+                        );
+                    }
                 }
-            }
-        }
-
-        if should_sync_paths {
-            self.sync_sftp_path_input_for_side(tab_id, SftpBrowserSide::Local, cx);
-            self.sync_sftp_table_for_side(tab_id, SftpBrowserSide::Local, cx);
-        }
-
-        cx.notify();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn read_local_sftp_entries(path: &std::path::Path) -> Result<Vec<LocalSftpEntry>> {
@@ -1610,18 +1855,30 @@ impl AppView {
             return;
         };
 
+        // An immediate directory request supersedes any transfer-completion refresh that has not
+        // reached the command queue yet. Since the SFTP session executes directory commands in
+        // order, a refresh already submitted before this request is safe; its response will also
+        // arrive before this one.
+        sftp.pending_remote_refresh_paths.clear();
         sftp.loading_remote = true;
         sftp.last_error = None;
-        if let Some(commands) = sftp.commands.as_ref()
-            && let Err(error) = commands.list_directory(path)
-        {
-            sftp.loading_remote = false;
-            sftp.last_error = Some(error.to_string());
-            let error = error.to_string();
-            let message = i18n::string_args("sftp.messages.refresh_failed", &[("error", &error)]);
-            self.status_message = message.clone();
-            if from_path_input {
-                validation_message = Some(message);
+        if let Some(commands) = sftp.commands.as_ref() {
+            match commands.list_directory(path.clone()) {
+                Ok(request_id) => {
+                    sftp.remote_directory_request_id = Some(request_id);
+                    sftp.requested_remote_path = Some(path);
+                }
+                Err(error) => {
+                    sftp.loading_remote = false;
+                    sftp.last_error = Some(error.to_string());
+                    let error = error.to_string();
+                    let message =
+                        i18n::string_args("sftp.messages.refresh_failed", &[("error", &error)]);
+                    self.status_message = message.clone();
+                    if from_path_input {
+                        validation_message = Some(message);
+                    }
+                }
             }
         }
         let remote_loading = sftp.loading_remote;
@@ -1974,5 +2231,52 @@ impl AppView {
 
     pub(in crate::ui::shell) fn join_remote_path(base: &str, name: &str) -> String {
         SftpService::join_remote_path(base, name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppView;
+    use miaominal_sftp::SftpDirectoryRequestId;
+    use std::collections::HashSet;
+
+    #[test]
+    fn transfer_refresh_uses_destination_parent_directory() {
+        assert_eq!(AppView::sftp_remote_parent_path("/file.txt"), "/");
+        assert_eq!(
+            AppView::sftp_remote_parent_path("/home/user/file.txt"),
+            "/home/user"
+        );
+        assert_eq!(AppView::sftp_remote_parent_path("file.txt"), ".");
+    }
+
+    #[test]
+    fn directory_response_must_match_the_latest_request() {
+        let current = Some(SftpDirectoryRequestId(2));
+        assert!(!AppView::is_current_sftp_directory_response(
+            current,
+            Some(SftpDirectoryRequestId(1))
+        ));
+        assert!(!AppView::is_current_sftp_directory_response(current, None));
+        assert!(AppView::is_current_sftp_directory_response(
+            current,
+            Some(SftpDirectoryRequestId(2))
+        ));
+        assert!(AppView::is_current_sftp_directory_response(None, None));
+    }
+
+    #[test]
+    fn pending_navigation_blocks_refresh_of_the_loaded_directory() {
+        let mut pending = HashSet::from(["/a".to_string()]);
+        assert_eq!(
+            AppView::sftp_debounced_remote_refresh_target(&pending, "/a", Some("/b")),
+            None
+        );
+
+        pending.insert("/b".to_string());
+        assert_eq!(
+            AppView::sftp_debounced_remote_refresh_target(&pending, "/a", Some("/b")),
+            Some("/b".to_string())
+        );
     }
 }

@@ -1,4 +1,4 @@
-use super::session::{SftpEvent, SftpEventSender, send_event};
+use super::session::{SftpDirectoryRequestId, SftpEvent, SftpEventSender, send_event};
 use anyhow::{Context, Result};
 use miaominal_core::sftp::{SftpEntry, SftpEntryKind};
 use russh_sftp::{client::SftpSession, protocol::FileType};
@@ -77,10 +77,19 @@ pub(super) fn join_remote_path(base: &str, filename: &str) -> String {
 
 pub(super) async fn emit_directory_listing(
     event_sender: &SftpEventSender,
+    request_id: Option<SftpDirectoryRequestId>,
     path: String,
     entries: Vec<SftpEntry>,
 ) -> Result<()> {
-    send_event(event_sender, SftpEvent::DirectoryListing { path, entries }).await
+    send_event(
+        event_sender,
+        SftpEvent::DirectoryListing {
+            request_id,
+            path,
+            entries,
+        },
+    )
+    .await
 }
 
 pub(super) async fn emit_subdirectory_listing(

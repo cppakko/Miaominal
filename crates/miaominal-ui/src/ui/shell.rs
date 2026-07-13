@@ -31,9 +31,9 @@ use miaominal_core::profile::{
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_settings::{self, KeyBinding};
 use miaominal_sftp::{
-    self, SftpCommandSender, SftpEntry, SftpEvent, SftpEventReceiver, SftpTransferChild,
-    SftpTransferChildState, SftpTransferChildUpdate, TransferChildId, TransferDirection,
-    TransferId,
+    self, SftpCommandSender, SftpDirectoryRequestId, SftpEntry, SftpEvent, SftpEventReceiver,
+    SftpProgressReceiver, SftpTransferChild, SftpTransferChildState, SftpTransferChildUpdate,
+    SftpTransferProgress, TransferChildId, TransferDirection, TransferId,
 };
 use miaominal_ssh::{
     self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,

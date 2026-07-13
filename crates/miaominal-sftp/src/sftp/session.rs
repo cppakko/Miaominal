@@ -3,9 +3,9 @@ use super::paths::{
     list_directory_entries,
 };
 use super::transfer::{
-    TransferControl, cancel_all_transfers, cleanup_finished_transfers, emit_error,
-    emit_error_with_path, emit_transfer_paused, emit_transfer_queued, emit_transfer_resumed,
-    spawn_download_task, spawn_upload_task,
+    TransferControl, cancel_all_transfers, emit_error, emit_error_with_path, emit_transfer_paused,
+    emit_transfer_queued, emit_transfer_resumed, remove_completed_transfer, spawn_download_task,
+    spawn_upload_task,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use futures::SinkExt as _;
@@ -24,20 +24,23 @@ use russh_sftp::{
     protocol::{FileType, StatusCode},
 };
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 use tokio::runtime::Handle as TokioHandle;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::{Mutex, Semaphore};
 
 const SFTP_EVENT_CHANNEL_CAPACITY: usize = 256;
+const SFTP_TRANSFER_CONCURRENCY: usize = 6;
 
 #[derive(Debug)]
 enum SftpCommand {
     ListDirectory {
+        request_id: SftpDirectoryRequestId,
         path: String,
     },
     ListSubdirectory {
@@ -81,6 +84,9 @@ enum SftpCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransferChildId(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SftpDirectoryRequestId(pub u64);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SftpTransferChild {
     pub child_id: TransferChildId,
@@ -103,12 +109,26 @@ pub struct SftpTransferChildUpdate {
     pub state: SftpTransferChildState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SftpTransferProgress {
+    pub transfer_id: TransferId,
+    pub bytes_complete: u64,
+    pub bytes_total: Option<u64>,
+    pub child: Option<SftpTransferChildUpdate>,
+}
+
 #[derive(Debug, Clone)]
 pub enum SftpEvent {
     Status(String),
     DirectoryListing {
+        request_id: Option<SftpDirectoryRequestId>,
         path: String,
         entries: Vec<SftpEntry>,
+    },
+    DirectoryListingFailed {
+        request_id: SftpDirectoryRequestId,
+        path: String,
+        message: String,
     },
     SubdirectoryListing {
         parent_path: String,
@@ -124,12 +144,11 @@ pub enum SftpEvent {
         transfer_id: TransferId,
         child: SftpTransferChild,
     },
-    TransferProgress {
+    TransferChildFinished {
         transfer_id: TransferId,
-        bytes_complete: u64,
-        bytes_total: Option<u64>,
-        child: Option<SftpTransferChildUpdate>,
+        child: SftpTransferChildUpdate,
     },
+    TransferProgressFinal(SftpTransferProgress),
     TransferPaused {
         transfer_id: TransferId,
     },
@@ -171,15 +190,102 @@ pub(crate) async fn send_event(event_sender: &SftpEventSender, event: SftpEvent)
         .map_err(|_| anyhow!("SFTP event receiver is closed"))
 }
 
+#[derive(Default)]
+struct SftpProgressState {
+    latest: HashMap<TransferId, SftpTransferProgress>,
+    queued: HashSet<TransferId>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SftpProgressSender {
+    state: Arc<std::sync::Mutex<SftpProgressState>>,
+    notifications: UnboundedSender<TransferId>,
+}
+
+pub struct SftpProgressReceiver {
+    state: Arc<std::sync::Mutex<SftpProgressState>>,
+    notifications: UnboundedReceiver<TransferId>,
+}
+
+pub(crate) fn sftp_progress_channel() -> (SftpProgressSender, SftpProgressReceiver) {
+    let state = Arc::new(std::sync::Mutex::new(SftpProgressState::default()));
+    let (notifications, receiver) = unbounded_channel();
+    (
+        SftpProgressSender {
+            state: state.clone(),
+            notifications,
+        },
+        SftpProgressReceiver {
+            state,
+            notifications: receiver,
+        },
+    )
+}
+
+impl SftpProgressSender {
+    pub(crate) fn send(&self, progress: SftpTransferProgress) {
+        let transfer_id = progress.transfer_id;
+        let should_notify = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.latest.insert(transfer_id, progress);
+            state.queued.insert(transfer_id)
+        };
+        if should_notify && self.notifications.send(transfer_id).is_err() {
+            self.take_latest(transfer_id);
+        }
+    }
+
+    pub(crate) fn take_latest(&self, transfer_id: TransferId) -> Option<SftpTransferProgress> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.queued.remove(&transfer_id);
+        state.latest.remove(&transfer_id)
+    }
+}
+
+impl SftpProgressReceiver {
+    pub async fn recv(&mut self) -> Option<SftpTransferProgress> {
+        loop {
+            let transfer_id = self.notifications.recv().await?;
+            if let Some(progress) = self.take(transfer_id) {
+                return Some(progress);
+            }
+        }
+    }
+
+    pub fn try_recv(&mut self) -> Option<SftpTransferProgress> {
+        while let Ok(transfer_id) = self.notifications.try_recv() {
+            if let Some(progress) = self.take(transfer_id) {
+                return Some(progress);
+            }
+        }
+        None
+    }
+
+    fn take(&self, transfer_id: TransferId) -> Option<SftpTransferProgress> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.queued.remove(&transfer_id);
+        state.latest.get(&transfer_id).cloned()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SftpCommandSender {
     sender: UnboundedSender<SftpCommand>,
     next_transfer_id: Arc<AtomicU64>,
+    next_directory_request_id: Arc<AtomicU64>,
 }
 
 impl SftpCommandSender {
-    pub fn list_directory(&self, path: impl Into<String>) -> Result<()> {
-        self.send_command(SftpCommand::ListDirectory { path: path.into() })
+    pub fn list_directory(&self, path: impl Into<String>) -> Result<SftpDirectoryRequestId> {
+        let request_id = SftpDirectoryRequestId(
+            self.next_directory_request_id
+                .fetch_add(1, Ordering::Relaxed),
+        );
+        self.send_command(SftpCommand::ListDirectory {
+            request_id,
+            path: path.into(),
+        })?;
+        Ok(request_id)
     }
 
     pub fn list_subdirectory(&self, path: impl Into<String>) -> Result<()> {
@@ -263,6 +369,7 @@ impl SftpCommandSender {
 pub struct SftpConnection {
     pub commands: SftpCommandSender,
     pub events: SftpEventReceiver,
+    pub progress: SftpProgressReceiver,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,9 +434,11 @@ pub fn start_session(
     known_hosts: KnownHostsStore,
 ) -> SftpConnection {
     let (event_sender, event_receiver) = sftp_event_channel();
+    let (progress_sender, progress_receiver) = sftp_progress_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
     let next_transfer_id = Arc::new(AtomicU64::new(1));
+    let next_directory_request_id = Arc::new(AtomicU64::new(1));
 
     std::thread::Builder::new()
         .name(format!("sftp-session-{}", profile.id))
@@ -341,6 +450,7 @@ pub fn start_session(
                 known_hosts,
                 command_receiver,
                 event_sender.clone(),
+                progress_sender,
             ));
             runtime.block_on(async {
                 if let Err(error) = result {
@@ -363,8 +473,10 @@ pub fn start_session(
         commands: SftpCommandSender {
             sender: command_sender,
             next_transfer_id,
+            next_directory_request_id,
         },
         events: event_receiver,
+        progress: progress_receiver,
     }
 }
 
@@ -375,6 +487,7 @@ async fn run_session(
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SftpCommand>,
     event_sender: SftpEventSender,
+    progress_sender: SftpProgressSender,
 ) -> Result<()> {
     let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
     let connected_session = connect_authenticated_session(
@@ -391,6 +504,8 @@ async fn run_session(
 
         let mut transfer_controls = HashMap::new();
         let mut transfer_tasks = HashMap::new();
+        let transfer_semaphore = Arc::new(Semaphore::new(SFTP_TRANSFER_CONCURRENCY));
+        let (transfer_completion_sender, mut transfer_completion_receiver) = unbounded_channel();
 
         let command_result: Result<()> = async {
             emit_status(&event_sender, format!("Connected SFTP session to {remote}")).await?;
@@ -407,14 +522,29 @@ async fn run_session(
                 recover_operation_result(&event_sender, "list_directory", Some("."), initial_result)
                     .await?
             {
-                emit_directory_listing(&event_sender, initial_path, entries).await?;
+                emit_directory_listing(&event_sender, None, initial_path, entries).await?;
             }
 
-            while let Some(command) = command_receiver.recv().await {
-                cleanup_finished_transfers(&mut transfer_tasks, &mut transfer_controls);
+            loop {
+                let command = tokio::select! {
+                    completed = transfer_completion_receiver.recv() => {
+                        if let Some(transfer_id) = completed {
+                            remove_completed_transfer(
+                                transfer_id,
+                                &mut transfer_tasks,
+                                &mut transfer_controls,
+                            );
+                        }
+                        continue;
+                    }
+                    command = command_receiver.recv() => command,
+                };
+                let Some(command) = command else {
+                    break;
+                };
 
                 match command {
-                    SftpCommand::ListDirectory { path } => {
+                    SftpCommand::ListDirectory { request_id, path } => {
                         let result: Result<_> = async {
                             let canonical_path =
                                 canonical_remote_path(&sftp, &path).await.with_context(|| {
@@ -424,15 +554,28 @@ async fn run_session(
                             Ok((canonical_path, entries))
                         }
                         .await;
-                        if let Some((canonical_path, entries)) = recover_operation_result(
-                            &event_sender,
-                            "list_directory",
-                            Some(&path),
-                            result,
-                        )
-                        .await?
-                        {
-                            emit_directory_listing(&event_sender, canonical_path, entries).await?;
+                        match result {
+                            Ok((canonical_path, entries)) => {
+                                emit_directory_listing(
+                                    &event_sender,
+                                    Some(request_id),
+                                    canonical_path,
+                                    entries,
+                                )
+                                .await?;
+                            }
+                            Err(error) if is_recoverable_operation_error(&error) => {
+                                send_event(
+                                    &event_sender,
+                                    SftpEvent::DirectoryListingFailed {
+                                        request_id,
+                                        path,
+                                        message: format!("{error:#}"),
+                                    },
+                                )
+                                .await?;
+                            }
+                            Err(error) => return Err(error),
                         }
                     }
                     SftpCommand::ListSubdirectory { path } => {
@@ -530,6 +673,9 @@ async fn run_session(
                             local_path,
                             remote_path,
                             control.clone(),
+                            transfer_semaphore.clone(),
+                            transfer_completion_sender.clone(),
+                            progress_sender.clone(),
                         );
                         transfer_controls.insert(transfer_id, control);
                         transfer_tasks.insert(transfer_id, task);
@@ -556,6 +702,9 @@ async fn run_session(
                             remote_path,
                             local_path,
                             control.clone(),
+                            transfer_semaphore.clone(),
+                            transfer_completion_sender.clone(),
+                            progress_sender.clone(),
                         );
                         transfer_controls.insert(transfer_id, control);
                         transfer_tasks.insert(transfer_id, task);
@@ -932,6 +1081,58 @@ mod tests {
                 );
                 producer.abort();
             });
+    }
+
+    #[test]
+    fn directory_commands_receive_monotonic_request_ids() {
+        let (sender, mut receiver) = unbounded_channel();
+        let commands = SftpCommandSender {
+            sender,
+            next_transfer_id: Arc::new(AtomicU64::new(1)),
+            next_directory_request_id: Arc::new(AtomicU64::new(1)),
+        };
+
+        assert_eq!(
+            commands.list_directory("/first").expect("queue first"),
+            SftpDirectoryRequestId(1)
+        );
+        assert_eq!(
+            commands.list_directory("/second").expect("queue second"),
+            SftpDirectoryRequestId(2)
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(SftpCommand::ListDirectory {
+                request_id: SftpDirectoryRequestId(1),
+                path,
+            }) if path == "/first"
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(SftpCommand::ListDirectory {
+                request_id: SftpDirectoryRequestId(2),
+                path,
+            }) if path == "/second"
+        ));
+    }
+
+    #[test]
+    fn closed_progress_receiver_does_not_retain_transfer_ids() {
+        let (sender, receiver) = sftp_progress_channel();
+        drop(receiver);
+        sender.send(SftpTransferProgress {
+            transfer_id: TransferId(77),
+            bytes_complete: 1,
+            bytes_total: Some(1),
+            child: None,
+        });
+
+        let state = sender
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(state.latest.is_empty());
+        assert!(state.queued.is_empty());
     }
 
     #[test]

@@ -9,9 +9,9 @@ mod transfer;
 
 pub use miaominal_core::sftp::{SftpEntry, SftpEntryKind, TransferDirection, TransferId};
 pub use session::{
-    ResolvedRemotePath, SftpCommandSender, SftpEvent, SftpEventReceiver, SftpTransferChild,
-    SftpTransferChildState, SftpTransferChildUpdate, TransferChildId, resolve_profile_paths,
-    start_session,
+    ResolvedRemotePath, SftpCommandSender, SftpDirectoryRequestId, SftpEvent, SftpEventReceiver,
+    SftpProgressReceiver, SftpTransferChild, SftpTransferChildState, SftpTransferChildUpdate,
+    SftpTransferProgress, TransferChildId, resolve_profile_paths, start_session,
 };
 
 #[allow(unused_imports)]
