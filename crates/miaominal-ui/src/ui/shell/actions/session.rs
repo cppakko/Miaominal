@@ -6,6 +6,7 @@ use miaominal_services::TerminalService;
 
 const TERMINAL_OUTPUT_BATCH_MAX_CHUNKS: usize = 64;
 const TERMINAL_OUTPUT_BATCH_MAX_BYTES: usize = 256 * 1024;
+const TERMINAL_OUTPUT_WAKEUP_INTERVAL: Duration = Duration::from_millis(4);
 
 fn coalesce_session_output(
     mut chunk: Vec<u8>,
@@ -26,6 +27,10 @@ fn coalesce_session_output(
     }
 
     (chunk, None)
+}
+
+fn should_notify_for_session_output(inactive_tab: bool, had_activity: bool) -> bool {
+    !inactive_tab || !had_activity
 }
 
 impl AppView {
@@ -1326,6 +1331,17 @@ impl AppView {
         mut events: SessionEventReceiver,
         cx: &mut Context<Self>,
     ) {
+        let Some(terminal) = self
+            .workspace_state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(TabState::as_session)
+            .map(|session| session.terminal.clone())
+        else {
+            return;
+        };
+
         cx.spawn(async move |this, cx| {
             let mut pending_event = None;
 
@@ -1342,6 +1358,15 @@ impl AppView {
                     SessionEvent::Output(chunk) => {
                         let (chunk, pending) = coalesce_session_output(chunk, &mut events);
                         pending_event = pending;
+                        terminal.push_bytes(&chunk);
+                        cx.background_executor()
+                            .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
+                            .await;
+                        while terminal.has_pending_input() {
+                            cx.background_executor()
+                                .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
+                                .await;
+                        }
                         SessionEvent::Output(chunk)
                     }
                     event => event,
@@ -1384,6 +1409,7 @@ impl AppView {
         let mut monitor_snapshot: Option<(String, bool, SessionMonitorSnapshot)> = None;
         let mut monitor_error: Option<(String, bool, String)> = None;
         let mut refresh_monitoring_profile: Option<String> = None;
+        let mut should_notify = true;
 
         {
             let tab = &mut self.workspace_state.tabs[tab_index];
@@ -1444,7 +1470,6 @@ impl AppView {
                 }
                 SessionEvent::Output(chunk) => {
                     session.bytes_in = session.bytes_in.saturating_add(chunk.len() as u64);
-                    session.terminal.push_bytes(&chunk);
                     if let Some(tap) = session.pty_output_tap.as_ref() {
                         // A failed tap closes its channel, but the slot remains reserved until
                         // the owning Agent request performs same-channel cleanup. Releasing it
@@ -1453,6 +1478,8 @@ impl AppView {
                         let _ = tap.try_send(chunk.clone());
                     }
                     if inactive_tab {
+                        should_notify =
+                            should_notify_for_session_output(true, session.has_activity);
                         session.has_activity = true;
                     }
                 }
@@ -1671,8 +1698,8 @@ impl AppView {
                 }
             }
 
-            // Drain OSC / Bell events emitted by the alacritty parser as a
-            // direct consequence of the bytes we just pushed.
+            // Drain OSC / Bell events emitted by the background parser before
+            // this throttled terminal wakeup reached the foreground.
             while let Some(emu_event) = session.terminal.try_recv_event() {
                 match emu_event {
                     miaominal_terminal::TerminalEvent::ClipboardStore(content) => {
@@ -1711,6 +1738,7 @@ impl AppView {
         for content in clipboard_writes {
             cx.write_to_clipboard(ClipboardItem::new_string(content));
             self.status_message = i18n::string("session.messages.clipboard_osc52");
+            should_notify = true;
         }
 
         if let Some(profile_id) = record_connected_profile_id {
@@ -1771,7 +1799,9 @@ impl AppView {
             return;
         }
 
-        cx.notify();
+        if should_notify {
+            cx.notify();
+        }
     }
 
     pub(in crate::ui::shell) fn close_other_tabs(
@@ -2107,5 +2137,12 @@ mod tests {
 
         assert_eq!(chunk, b"ab");
         assert!(matches!(pending, Some(SessionEvent::Status(status)) if status == "ready"));
+    }
+
+    #[test]
+    fn inactive_terminal_output_only_notifies_for_new_activity() {
+        assert!(should_notify_for_session_output(true, false));
+        assert!(!should_notify_for_session_output(true, true));
+        assert!(should_notify_for_session_output(false, true));
     }
 }

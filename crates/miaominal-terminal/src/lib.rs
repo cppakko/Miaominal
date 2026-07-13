@@ -7,8 +7,10 @@ use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{Config, Term, cell::Cell, cell::Flags, color::Colors};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
 use gpui::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 mod input;
 
@@ -167,13 +169,36 @@ pub enum TerminalScroll {
     Bottom,
 }
 
-pub struct TerminalState {
+const PARSER_SLICE_BYTES: usize = 16 * 1024;
+
+struct TerminalCore {
     term: Term<MiaominalListener>,
     parser: Processor,
     columns: usize,
     screen_lines: usize,
     events: Receiver<TerminalEvent>,
     search: Mutex<SearchState>,
+}
+
+struct ParserInput {
+    bytes: Vec<u8>,
+    completion: Option<mpsc::SyncSender<()>>,
+}
+
+struct TerminalShared {
+    core: Mutex<TerminalCore>,
+    dirty_generation: AtomicU64,
+    pending_inputs: AtomicU64,
+}
+
+struct ParserHandle {
+    sender: Sender<ParserInput>,
+}
+
+#[derive(Clone)]
+pub struct TerminalState {
+    shared: Arc<TerminalShared>,
+    parser: Arc<ParserHandle>,
 }
 
 #[derive(Default)]
@@ -189,8 +214,8 @@ impl Default for TerminalState {
     }
 }
 
-impl TerminalState {
-    pub fn new(columns: usize, screen_lines: usize) -> Self {
+impl TerminalCore {
+    fn new(columns: usize, screen_lines: usize) -> Self {
         let columns = columns.max(MIN_TERMINAL_COLUMNS);
         let screen_lines = screen_lines.max(1);
         let dimensions = TerminalDimensions {
@@ -226,10 +251,6 @@ impl TerminalState {
         }
 
         self.parser.advance(&mut self.term, bytes);
-    }
-
-    pub fn push_text(&mut self, text: &str) {
-        self.push_bytes(text.as_bytes());
     }
 
     pub fn resize(&mut self, columns: usize, screen_lines: usize) -> bool {
@@ -641,6 +662,225 @@ impl TerminalState {
             }
         }
         (search.matches.len(), search.current)
+    }
+}
+
+impl TerminalState {
+    pub fn new(columns: usize, screen_lines: usize) -> Self {
+        let shared = Arc::new(TerminalShared {
+            core: Mutex::new(TerminalCore::new(columns, screen_lines)),
+            dirty_generation: AtomicU64::new(0),
+            pending_inputs: AtomicU64::new(0),
+        });
+        let (sender, receiver) = mpsc::channel::<ParserInput>();
+        let parser = Arc::new(ParserHandle { sender });
+        let worker_shared = shared.clone();
+
+        thread::Builder::new()
+            .name("miaominal-terminal-parser".to_string())
+            .spawn(move || run_parser_loop(worker_shared, receiver))
+            .expect("failed to spawn terminal parser thread");
+
+        Self { shared, parser }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.shared.dirty_generation.load(Ordering::Acquire)
+    }
+
+    pub fn has_pending_input(&self) -> bool {
+        self.shared.pending_inputs.load(Ordering::Acquire) != 0
+    }
+
+    pub fn try_recv_event(&self) -> Option<TerminalEvent> {
+        self.with_core(TerminalCore::try_recv_event)
+    }
+
+    pub fn push_bytes(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
+        let input = ParserInput {
+            bytes: bytes.to_vec(),
+            completion: None,
+        };
+        if let Err(error) = self.parser.sender.send(input) {
+            parse_input(&self.shared, error.0);
+        }
+    }
+
+    pub fn push_text(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        let (completion, completed) = mpsc::sync_channel(1);
+        self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
+        let input = ParserInput {
+            bytes: text.as_bytes().to_vec(),
+            completion: Some(completion),
+        };
+        if let Err(error) = self.parser.sender.send(input) {
+            parse_input(&self.shared, error.0);
+        }
+        let _ = completed.recv();
+    }
+
+    pub fn resize(&mut self, columns: usize, screen_lines: usize) -> bool {
+        let changed = self.with_core_mut(|core| core.resize(columns, screen_lines));
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    pub fn columns(&self) -> usize {
+        self.with_core(TerminalCore::columns)
+    }
+
+    pub fn screen_lines(&self) -> usize {
+        self.with_core(TerminalCore::screen_lines)
+    }
+
+    pub fn display_offset(&self) -> usize {
+        self.with_core(TerminalCore::display_offset)
+    }
+
+    pub fn history_size(&self) -> usize {
+        self.with_core(TerminalCore::history_size)
+    }
+
+    pub fn scroll(&mut self, scroll: TerminalScroll) {
+        self.with_core_mut(|core| core.scroll(scroll));
+        self.mark_dirty();
+    }
+
+    pub fn scroll_to_display_offset(&mut self, target_offset: usize) {
+        self.with_core_mut(|core| core.scroll_to_display_offset(target_offset));
+        self.mark_dirty();
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.with_core_mut(TerminalCore::scroll_to_bottom);
+        self.mark_dirty();
+    }
+
+    pub fn input_modes(&self) -> TerminalInputModes {
+        self.with_core(TerminalCore::input_modes)
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.with_core(TerminalCore::bracketed_paste_enabled)
+    }
+
+    pub fn mouse_protocol(&self) -> MouseProtocol {
+        self.with_core(TerminalCore::mouse_protocol)
+    }
+
+    pub fn mouse_encoding(&self) -> MouseEncoding {
+        self.with_core(TerminalCore::mouse_encoding)
+    }
+
+    pub fn alternate_scroll_active(&self) -> bool {
+        self.with_core(TerminalCore::alternate_scroll_active)
+    }
+
+    pub fn start_selection(&mut self, line: i32, column: usize, side: Side, block: bool) {
+        self.with_core_mut(|core| core.start_selection(line, column, side, block));
+        self.mark_dirty();
+    }
+
+    pub fn update_selection(&mut self, line: i32, column: usize, side: Side) {
+        self.with_core_mut(|core| core.update_selection(line, column, side));
+        self.mark_dirty();
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.with_core_mut(TerminalCore::clear_selection);
+        self.mark_dirty();
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.with_core(TerminalCore::has_selection)
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        self.with_core(TerminalCore::selection_text)
+    }
+
+    pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<String> {
+        self.with_core(|core| core.link_at(viewport_line, column))
+    }
+
+    pub fn set_search(&mut self, pattern: &str) -> Result<usize, String> {
+        let result = self.with_core_mut(|core| core.set_search(pattern));
+        self.mark_dirty();
+        result
+    }
+
+    pub fn clear_search(&mut self) {
+        self.with_core_mut(TerminalCore::clear_search);
+        self.mark_dirty();
+    }
+
+    pub fn next_match(&mut self) {
+        self.with_core_mut(TerminalCore::next_match);
+        self.mark_dirty();
+    }
+
+    pub fn prev_match(&mut self) {
+        self.with_core_mut(TerminalCore::prev_match);
+        self.mark_dirty();
+    }
+
+    pub fn snapshot(&self, focused: bool) -> TerminalSnapshot {
+        self.with_core(|core| core.snapshot(focused))
+    }
+
+    fn with_core<R>(&self, f: impl FnOnce(&TerminalCore) -> R) -> R {
+        let core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        f(&core)
+    }
+
+    fn with_core_mut<R>(&self, f: impl FnOnce(&mut TerminalCore) -> R) -> R {
+        let mut core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        f(&mut core)
+    }
+
+    fn mark_dirty(&self) {
+        self.shared.dirty_generation.fetch_add(1, Ordering::Release);
+    }
+}
+
+fn run_parser_loop(shared: Arc<TerminalShared>, receiver: Receiver<ParserInput>) {
+    while let Ok(input) = receiver.recv() {
+        parse_input(&shared, input);
+    }
+}
+
+fn parse_input(shared: &TerminalShared, input: ParserInput) {
+    for bytes in input.bytes.chunks(PARSER_SLICE_BYTES) {
+        let mut core = shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        core.push_bytes(bytes);
+        drop(core);
+        shared.dirty_generation.fetch_add(1, Ordering::Release);
+    }
+    shared.pending_inputs.fetch_sub(1, Ordering::AcqRel);
+    if let Some(completion) = input.completion {
+        let _ = completion.send(());
     }
 }
 
@@ -1277,11 +1517,37 @@ mod tests {
 
     #[test]
     fn alternate_scroll_is_active_in_alternate_screen() {
-        let mut terminal = TerminalState::default();
+        let terminal = TerminalState::default();
 
         terminal.push_bytes(b"\x1b[?1049h");
+        wait_for_parser(&terminal);
 
         assert!(terminal.alternate_scroll_active());
+    }
+
+    #[test]
+    fn cloned_terminal_observes_background_parser_updates() {
+        let terminal = TerminalState::default();
+        let view = terminal.clone();
+        let initial_generation = view.generation();
+
+        terminal.push_bytes(b"background parser");
+        wait_for_parser(&terminal);
+
+        assert!(view.generation() > initial_generation);
+        let first_line: String = view.snapshot(false).cells[0]
+            .iter()
+            .map(|cell| cell.character)
+            .collect();
+        assert!(first_line.starts_with("background parser"));
+    }
+
+    fn wait_for_parser(terminal: &TerminalState) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while terminal.has_pending_input() && std::time::Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(!terminal.has_pending_input(), "terminal parser timed out");
     }
 
     fn assert_rgba_close(actual: Hsla, expected: Hsla) {
