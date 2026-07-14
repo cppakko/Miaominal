@@ -20,12 +20,14 @@ pub(in crate::ui::shell) struct SessionMonitoringState {
     pub(in crate::ui::shell) auto_collect_enabled: bool,
     pub(in crate::ui::shell) last_snapshot: Option<SessionMonitorSnapshot>,
     pub(in crate::ui::shell) last_error: Option<String>,
+    pub(in crate::ui::shell) last_updated_at: Option<SystemTime>,
     pub(in crate::ui::shell) cpu_history: Vec<MonitorChartPoint>,
     pub(in crate::ui::shell) memory_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) swap_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) disk_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) network_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) load_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui::shell) network_rx_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui::shell) network_tx_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui::shell) cpu_sample_ready: bool,
+    pub(in crate::ui::shell) network_sample_ready: bool,
+    rates_warming_up: bool,
     sample_count: usize,
 }
 
@@ -35,41 +37,68 @@ impl SessionMonitoringState {
             auto_collect_enabled,
             last_snapshot: None,
             last_error: None,
+            last_updated_at: None,
             cpu_history: Vec::new(),
             memory_history: Vec::new(),
-            swap_history: Vec::new(),
-            disk_history: Vec::new(),
-            network_history: Vec::new(),
-            load_history: Vec::new(),
+            network_rx_history: Vec::new(),
+            network_tx_history: Vec::new(),
+            cpu_sample_ready: false,
+            network_sample_ready: false,
+            rates_warming_up: true,
             sample_count: 0,
         }
     }
 
     pub(in crate::ui::shell) fn set_enabled(&mut self, enabled: bool) {
+        let was_enabled = self.auto_collect_enabled;
         self.auto_collect_enabled = enabled;
-        if enabled {
+        if enabled && !was_enabled {
             self.last_error = None;
+        }
+        if !enabled || !was_enabled {
+            self.mark_rates_warming_up();
         }
     }
 
     pub(in crate::ui::shell) fn apply_snapshot(&mut self, snapshot: SessionMonitorSnapshot) {
         self.sample_count = self.sample_count.saturating_add(1);
         let label = self.sample_count.to_string();
-        let network_total = snapshot.network_rx_kbps + snapshot.network_tx_kbps;
+        let rates_warming_up = self.rates_warming_up;
+        self.cpu_sample_ready = !rates_warming_up
+            || snapshot.platform != miaominal_core::forwarding::SessionMonitorPlatform::Linux;
+        self.network_sample_ready = !rates_warming_up
+            || snapshot.platform == miaominal_core::forwarding::SessionMonitorPlatform::Windows;
 
-        Self::push_history_point(&mut self.cpu_history, &label, snapshot.cpu_percent);
         Self::push_history_point(&mut self.memory_history, &label, snapshot.memory_percent);
-        Self::push_history_point(&mut self.swap_history, &label, snapshot.swap_percent);
-        Self::push_history_point(&mut self.disk_history, &label, snapshot.disk_percent);
-        Self::push_history_point(&mut self.network_history, &label, network_total);
-        Self::push_history_point(&mut self.load_history, &label, snapshot.load);
+        if self.cpu_sample_ready {
+            Self::push_history_point(&mut self.cpu_history, &label, snapshot.cpu_percent);
+        }
+        if self.network_sample_ready {
+            Self::push_history_point(
+                &mut self.network_rx_history,
+                &label,
+                snapshot.network_rx_kbps,
+            );
+            Self::push_history_point(
+                &mut self.network_tx_history,
+                &label,
+                snapshot.network_tx_kbps,
+            );
+        }
+        self.rates_warming_up = false;
 
         self.last_snapshot = Some(snapshot);
         self.last_error = None;
+        self.last_updated_at = Some(SystemTime::now());
     }
 
     pub(in crate::ui::shell) fn report_error(&mut self, error: String) {
         self.last_error = Some(error);
+        self.mark_rates_warming_up();
+    }
+
+    pub(in crate::ui::shell) fn mark_rates_warming_up(&mut self) {
+        self.rates_warming_up = true;
     }
 
     fn push_history_point(history: &mut Vec<MonitorChartPoint>, label: &str, value: f64) {
@@ -1968,6 +1997,187 @@ mod tests {
             monitoring: SessionMonitoringState::new(false),
             purpose,
         }
+    }
+
+    fn monitor_snapshot(cpu_percent: f64, rx: f64, tx: f64) -> SessionMonitorSnapshot {
+        monitor_snapshot_for(
+            miaominal_core::forwarding::SessionMonitorPlatform::Linux,
+            cpu_percent,
+            rx,
+            tx,
+        )
+    }
+
+    fn monitor_snapshot_for(
+        platform: miaominal_core::forwarding::SessionMonitorPlatform,
+        cpu_percent: f64,
+        rx: f64,
+        tx: f64,
+    ) -> SessionMonitorSnapshot {
+        SessionMonitorSnapshot {
+            platform,
+            hostname: Some("host".into()),
+            logical_cpu_count: Some(4),
+            uptime_seconds: Some(60),
+            cpu_percent,
+            memory_percent: 25.0,
+            memory_used_bytes: 1,
+            memory_total_bytes: 4,
+            swap_percent: 0.0,
+            swap_used_bytes: 0,
+            swap_total_bytes: 0,
+            disk_percent: 50.0,
+            disk_used_bytes: Some(1),
+            disk_total_bytes: Some(2),
+            network_rx_kbps: rx,
+            network_tx_kbps: tx,
+            load: 1.0,
+        }
+    }
+
+    #[test]
+    fn monitoring_history_treats_the_first_rate_sample_as_warmup() {
+        let mut state = SessionMonitoringState::new(true);
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+
+        assert_eq!(state.sample_count, 1);
+        assert!(state.cpu_history.is_empty());
+        assert!(state.network_rx_history.is_empty());
+        assert!(state.network_tx_history.is_empty());
+        assert_eq!(state.memory_history.len(), 1);
+        assert!(!state.cpu_sample_ready);
+        assert!(!state.network_sample_ready);
+
+        state.apply_snapshot(monitor_snapshot(42.0, 12.0, 8.0));
+
+        assert_eq!(state.sample_count, 2);
+        assert_eq!(state.cpu_history[0].value, 42.0);
+        assert_eq!(state.network_rx_history[0].value, 12.0);
+        assert_eq!(state.network_tx_history[0].value, 8.0);
+        assert_eq!(state.memory_history.len(), 2);
+        assert!(state.last_updated_at.is_some());
+        assert!(state.cpu_sample_ready);
+        assert!(state.network_sample_ready);
+    }
+
+    #[test]
+    fn monitoring_warmup_is_platform_aware() {
+        let mut macos = SessionMonitoringState::new(true);
+        macos.apply_snapshot(monitor_snapshot_for(
+            miaominal_core::forwarding::SessionMonitorPlatform::Macos,
+            20.0,
+            0.0,
+            0.0,
+        ));
+        assert!(macos.cpu_sample_ready);
+        assert!(!macos.network_sample_ready);
+        assert_eq!(macos.cpu_history.len(), 1);
+        assert!(macos.network_rx_history.is_empty());
+
+        let mut windows = SessionMonitoringState::new(true);
+        windows.apply_snapshot(monitor_snapshot_for(
+            miaominal_core::forwarding::SessionMonitorPlatform::Windows,
+            20.0,
+            4.0,
+            2.0,
+        ));
+        assert!(windows.cpu_sample_ready);
+        assert!(windows.network_sample_ready);
+        assert_eq!(windows.cpu_history.len(), 1);
+        assert_eq!(windows.network_rx_history.len(), 1);
+    }
+
+    #[test]
+    fn monitoring_error_rearms_the_next_unix_rate_sample() {
+        let mut state = SessionMonitoringState::new(true);
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+        state.apply_snapshot(monitor_snapshot(25.0, 10.0, 5.0));
+        assert_eq!(state.cpu_history.len(), 1);
+        assert_eq!(state.network_rx_history.len(), 1);
+
+        state.report_error("failed".into());
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+        assert_eq!(state.cpu_history.len(), 1);
+        assert_eq!(state.network_rx_history.len(), 1);
+        assert!(!state.cpu_sample_ready);
+        assert!(!state.network_sample_ready);
+
+        state.apply_snapshot(monitor_snapshot(30.0, 12.0, 6.0));
+        assert_eq!(state.cpu_history.len(), 2);
+        assert_eq!(state.network_rx_history.len(), 2);
+        assert!(state.cpu_sample_ready);
+        assert!(state.network_sample_ready);
+    }
+
+    #[test]
+    fn monitoring_rewarm_after_full_history_skips_only_the_rate_label() {
+        let mut state = SessionMonitoringState::new(true);
+        for sample in 0..=SESSION_MONITOR_HISTORY_LIMIT {
+            state.apply_snapshot(monitor_snapshot(sample as f64, 1.0, 1.0));
+        }
+        let before_rewarm_label = (SESSION_MONITOR_HISTORY_LIMIT + 1).to_string();
+        let warmup_label = (SESSION_MONITOR_HISTORY_LIMIT + 2).to_string();
+        let resumed_label = (SESSION_MONITOR_HISTORY_LIMIT + 3).to_string();
+
+        assert_eq!(state.cpu_history.len(), SESSION_MONITOR_HISTORY_LIMIT);
+        assert_eq!(state.memory_history.len(), SESSION_MONITOR_HISTORY_LIMIT);
+        assert_eq!(state.cpu_history.last().unwrap().label, before_rewarm_label);
+        assert_eq!(
+            state.memory_history.last().unwrap().label,
+            before_rewarm_label
+        );
+
+        state.report_error("failed".into());
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+
+        assert_eq!(state.cpu_history.len(), SESSION_MONITOR_HISTORY_LIMIT);
+        assert_eq!(state.memory_history.len(), SESSION_MONITOR_HISTORY_LIMIT);
+        assert_eq!(state.cpu_history.last().unwrap().label, before_rewarm_label);
+        assert_eq!(state.memory_history.last().unwrap().label, warmup_label);
+
+        state.apply_snapshot(monitor_snapshot(25.0, 2.0, 2.0));
+        assert_eq!(state.cpu_history.last().unwrap().label, resumed_label);
+        assert_eq!(state.memory_history.last().unwrap().label, resumed_label);
+        assert!(
+            !state
+                .cpu_history
+                .iter()
+                .any(|point| point.label == warmup_label)
+        );
+        assert!(
+            state
+                .memory_history
+                .iter()
+                .any(|point| point.label == warmup_label)
+        );
+    }
+
+    #[test]
+    fn disabling_monitoring_rearms_the_next_unix_rate_sample() {
+        let mut state = SessionMonitoringState::new(true);
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+        state.apply_snapshot(monitor_snapshot(25.0, 10.0, 5.0));
+
+        state.set_enabled(false);
+        state.set_enabled(true);
+        state.apply_snapshot(monitor_snapshot(0.0, 0.0, 0.0));
+
+        assert_eq!(state.cpu_history.len(), 1);
+        assert_eq!(state.network_rx_history.len(), 1);
+        assert!(!state.cpu_sample_ready);
+        assert!(!state.network_sample_ready);
+    }
+
+    #[test]
+    fn retrying_enabled_monitoring_keeps_the_error_until_a_new_snapshot_arrives() {
+        let mut state = SessionMonitoringState::new(true);
+        state.report_error("failed".into());
+
+        state.set_enabled(true);
+        assert_eq!(state.last_error.as_deref(), Some("failed"));
+
+        state.apply_snapshot(monitor_snapshot(10.0, 1.0, 1.0));
+        assert_eq!(state.last_error, None);
     }
 
     fn transfer_row() -> SftpTransferRow {

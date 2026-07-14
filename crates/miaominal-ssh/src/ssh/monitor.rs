@@ -1,8 +1,10 @@
 use super::session::{ClientHandler, SessionEvent, SessionEventSender};
 use anyhow::{Context, Result, bail};
+use base64::Engine as _;
 use miaominal_core::forwarding::{SessionMonitorPlatform, SessionMonitorSnapshot};
 use russh::ChannelMsg;
 use russh::client;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -18,6 +20,43 @@ struct NetworkTotals {
     rx_bytes: u64,
     tx_bytes: u64,
 }
+
+#[derive(Debug, Default)]
+struct MonitorMetadata {
+    hostname: Option<String>,
+    logical_cpu_count: Option<u32>,
+    uptime_seconds: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WindowsMonitorPayload {
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    cores: Option<u32>,
+    #[serde(default)]
+    uptime: Option<u64>,
+    cpu: f64,
+    mem: f64,
+    mem_used: f64,
+    mem_total: f64,
+    swap: f64,
+    swap_used: f64,
+    swap_total: f64,
+    #[serde(default)]
+    disk: f64,
+    #[serde(default)]
+    disk_used: Option<f64>,
+    #[serde(default)]
+    disk_total: Option<f64>,
+    rx: f64,
+    tx: f64,
+    load: f64,
+}
+
+const LINUX_MONITOR_SCRIPT: &str = include_str!("monitor_scripts/linux.sh");
+const MACOS_MONITOR_SCRIPT: &str = include_str!("monitor_scripts/macos.sh");
+const WINDOWS_MONITOR_SCRIPT: &str = include_str!("monitor_scripts/windows.ps1");
 
 #[derive(Default)]
 struct RemoteMonitorCollector {
@@ -58,9 +97,12 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const LINUX_MONITOR_COMMAND: &str = "awk 'NR==1 { printf(\"cpu %s %s %s %s %s %s %s %s\\n\", $2, $3, $4, $5, $6, $7, $8, $9) }' /proc/stat; awk '/MemTotal:/ { total=$2 } /MemAvailable:/ { available=$2 } /SwapTotal:/ { swap_total=$2 } /SwapFree:/ { swap_free=$2 } END { printf(\"mem %s %s %s %s\\n\", total, available, swap_total, swap_free) }' /proc/meminfo; awk 'NR>2 && $1 !~ /^lo:/ { rx+=$2; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }' /proc/net/dev; awk '{ printf(\"load %s\\n\", $1) }' /proc/loadavg; df -P / 2>/dev/null | awk 'NR==2 { gsub(/%/, \"\", $5); printf(\"disk %s\\n\", $5) }'";
+        let output = run_posix_monitor_script(session, LINUX_MONITOR_SCRIPT).await?;
+        self.parse_linux_snapshot(&output)
+    }
 
-        let output = run_exec_command(session, LINUX_MONITOR_COMMAND).await?;
+    fn parse_linux_snapshot(&mut self, output: &str) -> Result<SessionMonitorSnapshot> {
+        let mut metadata = MonitorMetadata::default();
         let mut cpu_totals = None;
         let mut memory_total_kib = None;
         let mut memory_available_kib = None;
@@ -69,6 +111,8 @@ impl RemoteMonitorCollector {
         let mut network_totals = None;
         let mut load = None;
         let mut disk_percent = None;
+        let mut disk_total_kib = None;
+        let mut disk_used_kib = None;
 
         for line in output
             .lines()
@@ -77,6 +121,19 @@ impl RemoteMonitorCollector {
         {
             let mut parts = line.split_whitespace();
             match parts.next() {
+                Some("host") => {
+                    metadata.hostname = non_empty_string(parts.collect::<Vec<_>>().join(" "));
+                }
+                Some("meta") => {
+                    metadata.logical_cpu_count = parts
+                        .next()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .filter(|value| *value > 0);
+                    metadata.uptime_seconds = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .filter(|value| *value > 0);
+                }
                 Some("cpu") => {
                     let values: Vec<u64> = parts.filter_map(|value| value.parse().ok()).collect();
                     if values.len() >= 4 {
@@ -108,6 +165,8 @@ impl RemoteMonitorCollector {
                     load = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
                 Some("disk") => {
+                    disk_total_kib = parts.next().and_then(|value| value.parse::<u64>().ok());
+                    disk_used_kib = parts.next().and_then(|value| value.parse::<u64>().ok());
                     disk_percent = parts.next().and_then(parse_disk_percent);
                 }
                 _ => {}
@@ -121,6 +180,8 @@ impl RemoteMonitorCollector {
             memory_available_kib.context("missing Linux memory available")? as f64;
         let swap_total_kib = swap_total_kib.context("missing Linux swap total")? as f64;
         let swap_free_kib = swap_free_kib.context("missing Linux swap free")? as f64;
+        let memory_used_kib = (memory_total_kib - memory_available_kib).max(0.0);
+        let swap_used_kib = (swap_total_kib - swap_free_kib).max(0.0);
 
         let cpu_percent = self.compute_cpu_percent(cpu_totals);
         let (network_rx_kbps, network_tx_kbps) = self.compute_network_rates(network_totals);
@@ -136,10 +197,20 @@ impl RemoteMonitorCollector {
         };
 
         Ok(SessionMonitorSnapshot {
+            platform: SessionMonitorPlatform::Linux,
+            hostname: metadata.hostname,
+            logical_cpu_count: metadata.logical_cpu_count,
+            uptime_seconds: metadata.uptime_seconds,
             cpu_percent,
             memory_percent,
+            memory_used_bytes: kib_to_bytes(memory_used_kib),
+            memory_total_bytes: kib_to_bytes(memory_total_kib),
             swap_percent,
+            swap_used_bytes: kib_to_bytes(swap_used_kib),
+            swap_total_bytes: kib_to_bytes(swap_total_kib),
             disk_percent: disk_percent.unwrap_or_default(),
+            disk_used_bytes: disk_used_kib.map(kib_u64_to_bytes),
+            disk_total_bytes: disk_total_kib.map(kib_u64_to_bytes),
             network_rx_kbps,
             network_tx_kbps,
             load: load.unwrap_or_default(),
@@ -150,9 +221,12 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const MACOS_MONITOR_COMMAND: &str = "top -l 1 -n 0 | awk -F'[:,% ]+' '/CPU usage/ { printf(\"cpu %.2f\\n\", 100 - $(NF-1)) } /PhysMem:/ { used=0; free=0; for (i=1; i<=NF; i++) { if ($(i+1) == \"used\") used=$i; if ($(i+1) == \"unused\") free=$i } if (used + free > 0) { printf(\"mem %s %s\\n\", used, used + free) } }'; sysctl -n vm.swapusage | awk -F'[ =]+' '{ printf(\"swap %s %s\\n\", $4, $7) }'; netstat -ibn | awk 'NR>1 && $1 !~ /^lo/ && $7 ~ /^[0-9]+$/ && $10 ~ /^[0-9]+$/ { rx+=$7; tx+=$10 } END { printf(\"net %s %s\\n\", rx, tx) }'; sysctl -n vm.loadavg | awk '{ gsub(/[{}]/, \"\"); printf(\"load %s\\n\", $1) }'; df -P / 2>/dev/null | awk 'NR==2 { gsub(/%/, \"\", $5); printf(\"disk %s\\n\", $5) }'";
+        let output = run_posix_monitor_script(session, MACOS_MONITOR_SCRIPT).await?;
+        self.parse_macos_snapshot(&output)
+    }
 
-        let output = run_exec_command(session, MACOS_MONITOR_COMMAND).await?;
+    fn parse_macos_snapshot(&mut self, output: &str) -> Result<SessionMonitorSnapshot> {
+        let mut metadata = MonitorMetadata::default();
         let mut cpu_percent = None;
         let mut memory_used = None;
         let mut memory_total = None;
@@ -161,6 +235,8 @@ impl RemoteMonitorCollector {
         let mut network_totals = None;
         let mut load = None;
         let mut disk_percent = None;
+        let mut disk_total_kib = None;
+        let mut disk_used_kib = None;
 
         for line in output
             .lines()
@@ -169,16 +245,33 @@ impl RemoteMonitorCollector {
         {
             let mut parts = line.split_whitespace();
             match parts.next() {
+                Some("host") => {
+                    metadata.hostname = non_empty_string(parts.collect::<Vec<_>>().join(" "));
+                }
+                Some("meta") => {
+                    metadata.logical_cpu_count = parts
+                        .next()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .filter(|value| *value > 0);
+                    metadata.uptime_seconds = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .filter(|value| *value > 0);
+                }
                 Some("cpu") => {
                     cpu_percent = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
-                Some("mem") => {
-                    memory_used = parts.next().and_then(parse_scaled_number);
-                    memory_total = parts.next().and_then(parse_scaled_number);
+                Some("memtotal") => {
+                    memory_total = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
-                Some("swap") => {
-                    swap_total = parts.next().and_then(parse_scaled_number);
-                    swap_used = parts.next().and_then(parse_scaled_number);
+                Some("physmem") => {
+                    let raw = parts.collect::<Vec<_>>().join(" ");
+                    memory_used = parse_value_before_label(&raw, "used");
+                }
+                Some("swapraw") => {
+                    let raw = parts.collect::<Vec<_>>().join(" ");
+                    swap_total = parse_value_after_label(&raw, "total");
+                    swap_used = parse_value_after_label(&raw, "used");
                 }
                 Some("net") => {
                     let values: Vec<u64> = parts.filter_map(|value| value.parse().ok()).collect();
@@ -193,6 +286,8 @@ impl RemoteMonitorCollector {
                     load = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
                 Some("disk") => {
+                    disk_total_kib = parts.next().and_then(|value| value.parse::<u64>().ok());
+                    disk_used_kib = parts.next().and_then(|value| value.parse::<u64>().ok());
                     disk_percent = parts.next().and_then(parse_disk_percent);
                 }
                 _ => {}
@@ -207,18 +302,28 @@ impl RemoteMonitorCollector {
         let (network_rx_kbps, network_tx_kbps) = self.compute_network_rates(network_totals);
 
         Ok(SessionMonitorSnapshot {
+            platform: SessionMonitorPlatform::Macos,
+            hostname: metadata.hostname,
+            logical_cpu_count: metadata.logical_cpu_count,
+            uptime_seconds: metadata.uptime_seconds,
             cpu_percent: cpu_percent.unwrap_or_default(),
             memory_percent: if memory_total > 0.0 {
                 (memory_used / memory_total) * 100.0
             } else {
                 0.0
             },
+            memory_used_bytes: f64_to_u64(memory_used),
+            memory_total_bytes: f64_to_u64(memory_total),
             swap_percent: if swap_total > 0.0 {
                 (swap_used / swap_total) * 100.0
             } else {
                 0.0
             },
+            swap_used_bytes: f64_to_u64(swap_used),
+            swap_total_bytes: f64_to_u64(swap_total),
             disk_percent: disk_percent.unwrap_or_default(),
+            disk_used_bytes: disk_used_kib.map(kib_u64_to_bytes),
+            disk_total_bytes: disk_total_kib.map(kib_u64_to_bytes),
             network_rx_kbps,
             network_tx_kbps,
             load: load.unwrap_or_default(),
@@ -229,33 +334,32 @@ impl RemoteMonitorCollector {
         &mut self,
         session: &Arc<client::Handle<ClientHandler>>,
     ) -> Result<SessionMonitorSnapshot> {
-        const WINDOWS_MONITOR_COMMAND: &str = r#"powershell -NoProfile -Command "$cpu=(Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples[0].CookedValue; $os=Get-CimInstance Win32_OperatingSystem; $mem=if($os.TotalVisibleMemorySize -gt 0){100 - (($os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100)} else {0}; $swapBase=[double]($os.TotalVirtualMemorySize - $os.TotalVisibleMemorySize); $swapUsed=[double](($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) - ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory)); $swap=if($swapBase -gt 0){[Math]::Max(0,[Math]::Min(100,($swapUsed / $swapBase) * 100))} else {0}; $stats=Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'Loopback' -and $_.ReceivedBytes -ne $null -and $_.SentBytes -ne $null }; $rx=($stats | Measure-Object -Property ReceivedBytes -Sum).Sum; $tx=($stats | Measure-Object -Property SentBytes -Sum).Sum; if($null -eq $rx){$rx=0}; if($null -eq $tx){$tx=0}; $load=(Get-Counter '\System\Processor Queue Length').CounterSamples[0].CookedValue; $systemDrive=$env:SystemDrive; $diskInfo=Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $systemDrive }; $disk=if($diskInfo -and $diskInfo.Size -gt 0){100 - (($diskInfo.FreeSpace / $diskInfo.Size) * 100)} else {0}; [pscustomobject]@{cpu=$cpu;mem=$mem;swap=$swap;disk=$disk;rx=$rx;tx=$tx;load=$load} | ConvertTo-Json -Compress""#;
+        let command = powershell_encoded_command(WINDOWS_MONITOR_SCRIPT);
+        let output = run_exec_command(session, &command).await?;
+        self.parse_windows_snapshot(&output)
+    }
 
-        #[derive(serde::Deserialize)]
-        struct WindowsMonitorPayload {
-            cpu: f64,
-            mem: f64,
-            swap: f64,
-            #[serde(default)]
-            disk: f64,
-            rx: f64,
-            tx: f64,
-            load: f64,
-        }
-
-        let output = run_exec_command(session, WINDOWS_MONITOR_COMMAND).await?;
+    fn parse_windows_snapshot(&mut self, output: &str) -> Result<SessionMonitorSnapshot> {
         let payload: WindowsMonitorPayload = serde_json::from_str(output.trim())
             .context("failed to parse Windows monitoring payload")?;
-        let (network_rx_kbps, network_tx_kbps) = self.compute_network_rates(NetworkTotals {
-            rx_bytes: payload.rx.max(0.0) as u64,
-            tx_bytes: payload.tx.max(0.0) as u64,
-        });
+        let network_rx_kbps = payload.rx.max(0.0) / 1024.0;
+        let network_tx_kbps = payload.tx.max(0.0) / 1024.0;
 
         Ok(SessionMonitorSnapshot {
+            platform: SessionMonitorPlatform::Windows,
+            hostname: payload.hostname.and_then(non_empty_string),
+            logical_cpu_count: payload.cores.filter(|value| *value > 0),
+            uptime_seconds: payload.uptime.filter(|value| *value > 0),
             cpu_percent: payload.cpu,
             memory_percent: payload.mem,
+            memory_used_bytes: f64_to_u64(payload.mem_used),
+            memory_total_bytes: f64_to_u64(payload.mem_total),
             swap_percent: payload.swap,
+            swap_used_bytes: f64_to_u64(payload.swap_used),
+            swap_total_bytes: f64_to_u64(payload.swap_total),
             disk_percent: payload.disk.clamp(0.0, 100.0),
+            disk_used_bytes: payload.disk_used.map(f64_to_u64),
+            disk_total_bytes: payload.disk_total.map(f64_to_u64),
             network_rx_kbps,
             network_tx_kbps,
             load: payload.load,
@@ -377,6 +481,42 @@ async fn detect_monitor_platform(
             }
         }
     }
+}
+
+async fn run_posix_monitor_script(
+    session: &Arc<client::Handle<ClientHandler>>,
+    script: &str,
+) -> Result<String> {
+    let script = normalize_posix_script_line_endings(script);
+    let command = format!("/bin/sh -c {}", quote_shell_argument(&script));
+    run_exec_command(session, &command).await
+}
+
+fn normalize_posix_script_line_endings(script: &str) -> Cow<'_, str> {
+    if script.contains('\r') {
+        Cow::Owned(script.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(script)
+    }
+}
+
+fn quote_shell_argument(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn powershell_encoded_payload(script: &str) -> String {
+    let mut bytes = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn powershell_encoded_command(script: &str) -> String {
+    format!(
+        "powershell.exe -NoProfile -EncodedCommand {}",
+        powershell_encoded_payload(script)
+    )
 }
 
 pub(super) async fn run_exec_command(
@@ -524,6 +664,61 @@ fn strip_ansi_text(input: &str) -> String {
     output
 }
 
+fn non_empty_string(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn f64_to_u64(value: f64) -> u64 {
+    if value.is_finite() && value > 0.0 {
+        value.min(u64::MAX as f64).round() as u64
+    } else {
+        0
+    }
+}
+
+fn kib_to_bytes(value: f64) -> u64 {
+    f64_to_u64(value * 1024.0)
+}
+
+fn kib_u64_to_bytes(value: u64) -> u64 {
+    value.saturating_mul(1024)
+}
+
+fn normalized_label(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphabetic())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn parse_value_before_label(input: &str, label: &str) -> Option<f64> {
+    let parts = input.split_whitespace().collect::<Vec<_>>();
+    parts.windows(2).find_map(|pair| {
+        (normalized_label(pair[1]) == label)
+            .then(|| {
+                parse_scaled_number(
+                    pair[0].trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.'),
+                )
+            })
+            .flatten()
+    })
+}
+
+fn parse_value_after_label(input: &str, label: &str) -> Option<f64> {
+    let parts = input.split_whitespace().collect::<Vec<_>>();
+    let label_index = parts
+        .iter()
+        .position(|part| normalized_label(part) == label)?;
+    parts[label_index + 1..].iter().find_map(|part| {
+        let value = part.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.');
+        (!value.is_empty())
+            .then(|| parse_scaled_number(value))
+            .flatten()
+    })
+}
+
 fn parse_scaled_number(value: &str) -> Option<f64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -566,6 +761,139 @@ fn parse_disk_percent(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_linux_snapshot_with_resource_capacities() {
+        let mut collector = RemoteMonitorCollector::default();
+        let snapshot = collector
+            .parse_linux_snapshot(
+                "host demo-linux\nmeta 8 86461\ncpu 10 2 3 85 0 0 0 0\nmem 8192 2048 4096 3072\nnet 102400 204800\nload 2.4\ndisk 1024000 512000 50\n",
+            )
+            .expect("Linux fixture should parse");
+
+        assert_eq!(snapshot.platform, SessionMonitorPlatform::Linux);
+        assert_eq!(snapshot.hostname.as_deref(), Some("demo-linux"));
+        assert_eq!(snapshot.logical_cpu_count, Some(8));
+        assert_eq!(snapshot.uptime_seconds, Some(86461));
+        assert_eq!(snapshot.memory_used_bytes, 6 * 1024 * 1024);
+        assert_eq!(snapshot.memory_total_bytes, 8 * 1024 * 1024);
+        assert_eq!(snapshot.swap_used_bytes, 1024 * 1024);
+        assert_eq!(snapshot.swap_total_bytes, 4 * 1024 * 1024);
+        assert_eq!(snapshot.disk_used_bytes, Some(512000 * 1024));
+        assert_eq!(snapshot.disk_total_bytes, Some(1024000 * 1024));
+        assert_eq!(snapshot.disk_percent, 50.0);
+    }
+
+    #[test]
+    fn parses_macos_snapshot_and_tolerates_missing_metadata() {
+        let mut collector = RemoteMonitorCollector::default();
+        let snapshot = collector
+            .parse_macos_snapshot(
+                "cpu 24.5\nmemtotal 8589934592\nphysmem PhysMem: 6G used (1536M wired, 512M compressor), 2G unused.\nswapraw total = 2048.00M used = 512.00M free = 1536.00M (encrypted)\nnet 1000 2000\nload 1.25\ndisk 2048000 1024000 50\n",
+            )
+            .expect("macOS fixture should parse");
+
+        assert_eq!(snapshot.platform, SessionMonitorPlatform::Macos);
+        assert_eq!(snapshot.hostname, None);
+        assert_eq!(snapshot.logical_cpu_count, None);
+        assert_eq!(snapshot.uptime_seconds, None);
+        assert_eq!(snapshot.memory_used_bytes, 6 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.memory_total_bytes, 8 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.swap_used_bytes, 512 * 1024 * 1024);
+        assert_eq!(snapshot.swap_total_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.disk_percent, 50.0);
+    }
+
+    #[test]
+    fn quotes_posix_monitor_scripts_for_the_login_shell() {
+        assert_eq!(
+            quote_shell_argument("printf '%s' \"$HOME\""),
+            "'printf '\"'\"'%s'\"'\"' \"$HOME\"'"
+        );
+    }
+
+    #[test]
+    fn normalizes_embedded_posix_scripts_to_lf() {
+        let lf = "first\nsecond\n";
+        assert!(matches!(
+            normalize_posix_script_line_endings(lf),
+            Cow::Borrowed(_)
+        ));
+
+        let normalized = normalize_posix_script_line_endings("first\r\nsecond\rthird\r\n");
+        assert_eq!(normalized, "first\nsecond\nthird\n");
+        assert!(!normalized.contains('\r'));
+
+        for script in [LINUX_MONITOR_SCRIPT, MACOS_MONITOR_SCRIPT] {
+            assert!(!normalize_posix_script_line_endings(script).contains('\r'));
+        }
+    }
+
+    #[test]
+    fn windows_monitor_script_uses_utf16_encoded_command() {
+        let command = powershell_encoded_command(WINDOWS_MONITOR_SCRIPT);
+        let payload = command
+            .strip_prefix("powershell.exe -NoProfile -EncodedCommand ")
+            .expect("Windows monitor command should use EncodedCommand");
+        assert!(!command.contains("$cpu"));
+        assert!(
+            command.len() < 8191,
+            "encoded command exceeds cmd.exe limit"
+        );
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("payload should be valid base64");
+        let mut chunks = bytes.chunks_exact(2);
+        let units = chunks
+            .by_ref()
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        assert!(chunks.remainder().is_empty());
+        assert_eq!(String::from_utf16(&units).unwrap(), WINDOWS_MONITOR_SCRIPT);
+    }
+
+    #[test]
+    fn windows_monitor_script_rejects_missing_required_counters() {
+        assert!(WINDOWS_MONITOR_SCRIPT.contains("throw \"Missing performance counter: $pattern\""));
+        for required_counter in [
+            "processor time$' $false $true",
+            "processor queue length$' $false $true",
+            "system up time$' $false $true",
+            "bytes received/sec$' $true $true",
+            "bytes sent/sec$' $true $true",
+        ] {
+            assert!(
+                WINDOWS_MONITOR_SCRIPT.contains(required_counter),
+                "counter should be required: {required_counter}"
+            );
+        }
+        assert!(
+            WINDOWS_MONITOR_SCRIPT.contains("paging file\\(_total\\)\\\\% usage$' $false $false")
+        );
+        assert!(!WINDOWS_MONITOR_SCRIPT.contains("if ($null -eq $rx)"));
+        assert!(!WINDOWS_MONITOR_SCRIPT.contains("if ($null -eq $tx)"));
+    }
+
+    #[test]
+    fn parses_windows_snapshot_with_optional_disk_details() {
+        let mut collector = RemoteMonitorCollector::default();
+        let snapshot = collector
+            .parse_windows_snapshot(
+                r#"{"hostname":"WIN-HOST","cores":16,"uptime":3600,"cpu":30.5,"mem":62.5,"mem_used":5368709120.0,"mem_total":8589934592.0,"swap":25.0,"swap_used":536870912.0,"swap_total":2147483648.0,"disk":75.0,"disk_used":80530636800.0,"disk_total":107374182400.0,"rx":1000.0,"tx":2000.0,"load":3.0}"#,
+            )
+            .expect("Windows fixture should parse");
+
+        assert_eq!(snapshot.platform, SessionMonitorPlatform::Windows);
+        assert_eq!(snapshot.hostname.as_deref(), Some("WIN-HOST"));
+        assert_eq!(snapshot.logical_cpu_count, Some(16));
+        assert_eq!(snapshot.uptime_seconds, Some(3600));
+        assert_eq!(snapshot.memory_used_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.disk_percent, 75.0);
+        assert_eq!(snapshot.disk_total_bytes, Some(100 * 1024 * 1024 * 1024));
+        assert!((snapshot.network_rx_kbps - (1000.0 / 1024.0)).abs() < f64::EPSILON);
+        assert!((snapshot.network_tx_kbps - (2000.0 / 1024.0)).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn parses_disk_percent_variants() {

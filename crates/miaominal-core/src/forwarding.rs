@@ -44,10 +44,20 @@ pub enum SessionMonitorPlatform {
 
 #[derive(Debug, Clone)]
 pub struct SessionMonitorSnapshot {
+    pub platform: SessionMonitorPlatform,
+    pub hostname: Option<String>,
+    pub logical_cpu_count: Option<u32>,
+    pub uptime_seconds: Option<u64>,
     pub cpu_percent: f64,
     pub memory_percent: f64,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
     pub swap_percent: f64,
+    pub swap_used_bytes: u64,
+    pub swap_total_bytes: u64,
     pub disk_percent: f64,
+    pub disk_used_bytes: Option<u64>,
+    pub disk_total_bytes: Option<u64>,
     pub network_rx_kbps: f64,
     pub network_tx_kbps: f64,
     pub load: f64,

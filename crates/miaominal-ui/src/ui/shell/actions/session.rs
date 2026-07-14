@@ -298,6 +298,8 @@ impl AppView {
             return source_tab_id == tab_id;
         }
 
+        self.ensure_shared_monitoring_state(profile_id, enabled)
+            .mark_rates_warming_up();
         self.workspace_state
             .monitor_source_tabs
             .insert(profile_id.to_string(), tab_id);
@@ -345,6 +347,10 @@ impl AppView {
             return Ok(false);
         };
 
+        if current_source.is_none() {
+            self.ensure_shared_monitoring_state(profile_id, enabled)
+                .mark_rates_warming_up();
+        }
         self.workspace_state
             .monitor_source_tabs
             .insert(profile_id.to_string(), source_tab_id);
@@ -370,6 +376,8 @@ impl AppView {
                 return;
             }
         } else if enabled {
+            self.ensure_shared_monitoring_state(profile_id, enabled)
+                .mark_rates_warming_up();
             self.workspace_state
                 .monitor_source_tabs
                 .insert(profile_id.to_string(), tab_id);
@@ -437,6 +445,8 @@ impl AppView {
             return;
         };
 
+        self.ensure_shared_monitoring_state(profile_id, true)
+            .mark_rates_warming_up();
         self.workspace_state
             .monitor_source_tabs
             .insert(profile_id.to_string(), source_tab_id);
