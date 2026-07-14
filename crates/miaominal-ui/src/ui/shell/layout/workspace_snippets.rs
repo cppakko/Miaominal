@@ -337,8 +337,7 @@ impl AppView {
                 div()
                     .flex_1()
                     .min_h(px(0.0))
-                    .overflow_y_scrollbar()
-                    .child(content),
+                    .child(div().size_full().overflow_y_scrollbar().child(content)),
             )
             .into_any_element()
     }
