@@ -302,14 +302,87 @@ impl TerminalCore {
             return false;
         }
 
+        let old_columns = self.columns;
+        let old_screen_lines = self.screen_lines;
+        let was_scrolled = self.term.grid().display_offset() != 0;
+        let is_alternate_screen = self.term.mode().contains(TermMode::ALT_SCREEN);
+
+        if columns < old_columns {
+            // Alacritty applies height changes before column reflow. Keep that order, but split
+            // the operations so history created specifically by reflow can be identified.
+            if screen_lines != old_screen_lines {
+                self.term.resize(TerminalDimensions {
+                    columns: old_columns,
+                    screen_lines,
+                });
+            }
+
+            let absorbable_lines = if was_scrolled || is_alternate_screen {
+                0
+            } else {
+                self.trailing_clear_screen_lines()
+            };
+
+            // Give reflow enough temporary scrollback headroom to expose every row we could
+            // absorb. Without this, a full history buffer evicts old rows while reflowing and the
+            // net history size does not reveal how many new rows were created.
+            if absorbable_lines != 0 {
+                self.term
+                    .grid_mut()
+                    .update_history(SCROLLBACK_LINES.saturating_add(absorbable_lines));
+            }
+            let history_before_reflow = self.term.grid().history_size();
+
+            self.term.resize(TerminalDimensions {
+                columns,
+                screen_lines,
+            });
+
+            let reflow_history_growth = self
+                .term
+                .grid()
+                .history_size()
+                .saturating_sub(history_before_reflow);
+            let lines_to_absorb = reflow_history_growth.min(absorbable_lines);
+
+            // Column reflow anchors the cursor in place and puts newly wrapped rows into
+            // scrollback, even when the bottom of the viewport is empty. Temporarily growing the
+            // viewport pulls only those rows back from history; restoring the requested height
+            // then removes the same number of unused trailing rows.
+            if lines_to_absorb != 0
+                && let Some(expanded_lines) = screen_lines.checked_add(lines_to_absorb)
+            {
+                self.term.resize(TerminalDimensions {
+                    columns,
+                    screen_lines: expanded_lines,
+                });
+                self.term.resize(TerminalDimensions {
+                    columns,
+                    screen_lines,
+                });
+            }
+
+            if absorbable_lines != 0 {
+                self.term.grid_mut().update_history(SCROLLBACK_LINES);
+            }
+        } else {
+            self.term.resize(TerminalDimensions {
+                columns,
+                screen_lines,
+            });
+        }
+
         self.columns = columns;
         self.screen_lines = screen_lines;
-        self.term.resize(TerminalDimensions {
-            columns,
-            screen_lines,
-        });
 
         true
+    }
+
+    fn trailing_clear_screen_lines(&self) -> usize {
+        (0..self.term.screen_lines())
+            .rev()
+            .take_while(|line| self.term.grid()[Line(*line as i32)].is_clear())
+            .count()
     }
 
     pub fn columns(&self) -> usize {
@@ -1609,6 +1682,9 @@ fn rgba_to_hsla(color: Rgba) -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
+
+    const RESIZE_REFLOW_TEXT: &str = "Linux localhost 7.0.10-x64v3-xanmod1 #0~20260523.ga55d99c SMP PREEMPT_DYNAMIC Sat May 23 18:51:58 UTC x86_64";
 
     #[test]
     fn detect_visible_urls_stops_before_trailing_punctuation() {
@@ -1723,6 +1799,165 @@ mod tests {
     }
 
     #[test]
+    fn width_reflow_uses_trailing_blank_rows_before_scrollback() {
+        let mut core = TerminalCore::new(120, 32);
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+
+        assert_eq!(core.history_size(), 0);
+        assert!(core.resize(60, 32));
+
+        assert_eq!(core.history_size(), 0);
+        assert_eq!(terminal_grid_row_text(&core, 0), text_chunk(0, 60));
+        assert_eq!(terminal_grid_row_text(&core, 1), text_chunk(60, 60));
+        assert_eq!(terminal_grid_row_text(&core, 2), "$");
+        assert_eq!(
+            core.term.grid().cursor.point,
+            Point::new(Line(2), Column(2))
+        );
+    }
+
+    #[test]
+    fn width_reflow_keeps_an_unterminated_first_line_visible() {
+        let mut core = TerminalCore::new(120, 32);
+        core.push_bytes(RESIZE_REFLOW_TEXT.as_bytes());
+
+        assert!(core.resize(60, 32));
+
+        assert_eq!(core.history_size(), 0);
+        assert_eq!(terminal_grid_row_text(&core, 0), text_chunk(0, 60));
+        assert_eq!(terminal_grid_row_text(&core, 1), text_chunk(60, 60));
+        assert_eq!(
+            core.term.grid().cursor.point,
+            Point::new(Line(1), Column(48))
+        );
+    }
+
+    #[test]
+    fn width_reflow_uses_blank_rows_after_height_shrink() {
+        let mut core = TerminalCore::new(120, 8);
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+
+        assert!(core.resize(60, 4));
+
+        assert_eq!(core.history_size(), 0);
+        assert_eq!(core.screen_lines(), 4);
+        assert_eq!(terminal_grid_row_text(&core, 0), text_chunk(0, 60));
+        assert_eq!(terminal_grid_row_text(&core, 1), text_chunk(60, 60));
+        assert_eq!(terminal_grid_row_text(&core, 2), "$");
+    }
+
+    #[test]
+    fn width_reflow_preserves_existing_history_when_blank_rows_are_available() {
+        let mut core = TerminalCore::new(120, 6);
+        core.push_bytes(
+            b"old0\r\nold1\r\nold2\r\nold3\r\nold4\r\nold5\r\nold6\r\nold7\r\n\x1b[2J\x1b[H",
+        );
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+        let history_before_resize = core.history_size();
+
+        assert!(history_before_resize > 0);
+        assert!(core.resize(60, 6));
+
+        assert_eq!(core.history_size(), history_before_resize);
+        assert_eq!(terminal_grid_row_text(&core, 0), text_chunk(0, 60));
+        assert_eq!(terminal_grid_row_text(&core, 1), text_chunk(60, 60));
+        assert_eq!(terminal_grid_row_text(&core, 2), "$");
+    }
+
+    #[test]
+    fn width_reflow_at_scrollback_limit_does_not_evict_old_history() {
+        let mut core = TerminalCore::new(120, 6);
+        fill_scrollback_to_limit(&mut core);
+        core.push_bytes(b"\x1b[2J\x1b[H");
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
+        let oldest_history_line = terminal_grid_row_text(&core, -(SCROLLBACK_LINES as i32));
+
+        assert!(core.resize(60, 6));
+
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
+        assert_eq!(
+            terminal_grid_row_text(&core, -(SCROLLBACK_LINES as i32)),
+            oldest_history_line
+        );
+        assert_eq!(terminal_grid_row_text(&core, 0), text_chunk(0, 60));
+        assert_eq!(terminal_grid_row_text(&core, 1), text_chunk(60, 60));
+        assert_eq!(terminal_grid_row_text(&core, 2), "$");
+    }
+
+    #[test]
+    fn width_reflow_near_scrollback_limit_observes_more_than_remaining_capacity() {
+        let mut core = TerminalCore::new(120, 10);
+        fill_scrollback_to_limit(&mut core);
+        core.push_bytes(b"\x1b[2J\x1b[H");
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+        core.term.grid_mut().update_history(SCROLLBACK_LINES - 1);
+        core.term.grid_mut().update_history(SCROLLBACK_LINES);
+        let oldest_history_line = terminal_grid_row_text(&core, -((SCROLLBACK_LINES - 1) as i32));
+
+        assert_eq!(core.history_size(), SCROLLBACK_LINES - 1);
+        assert!(core.resize(20, 10));
+
+        assert_eq!(core.history_size(), SCROLLBACK_LINES - 1);
+        assert_eq!(
+            terminal_grid_row_text(&core, -((SCROLLBACK_LINES - 1) as i32)),
+            oldest_history_line
+        );
+        assert_eq!(terminal_grid_row_text(&core, 6), "$");
+    }
+
+    #[test]
+    fn width_reflow_keeps_real_overflow_in_history_when_screen_is_full() {
+        let mut core = TerminalCore::new(60, 4);
+        let logical_lines = [
+            "1".repeat(40),
+            "2".repeat(40),
+            "3".repeat(40),
+            "4".repeat(40),
+        ];
+        core.push_bytes(logical_lines.join("\r\n").as_bytes());
+
+        assert_eq!(core.trailing_clear_screen_lines(), 0);
+        assert!(core.resize(20, 4));
+
+        assert!(core.history_size() > 0);
+        assert_eq!(all_terminal_text(&core), logical_lines.concat());
+    }
+
+    #[test]
+    fn width_reflow_can_absorb_multiple_wrapped_rows() {
+        let mut core = TerminalCore::new(120, 10);
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+
+        assert!(core.resize(20, 10));
+
+        assert_eq!(core.history_size(), 0);
+        assert_eq!(terminal_grid_row_text(&core, 6), "$");
+        assert_eq!(
+            core.term.grid().cursor.point,
+            Point::new(Line(6), Column(2))
+        );
+    }
+
+    #[test]
+    fn width_reflow_does_not_reanchor_a_scrolled_viewport() {
+        let mut core = TerminalCore::new(120, 6);
+        core.push_bytes(
+            b"old0\r\nold1\r\nold2\r\nold3\r\nold4\r\nold5\r\nold6\r\nold7\r\n\x1b[2J\x1b[H",
+        );
+        core.push_bytes(format!("{RESIZE_REFLOW_TEXT}\r\n$ ").as_bytes());
+        core.scroll(TerminalScroll::Top);
+        let history_before_resize = core.history_size();
+
+        assert!(core.display_offset() > 0);
+        assert!(core.resize(60, 6));
+
+        assert!(core.display_offset() > 0);
+        assert!(core.history_size() > history_before_resize);
+    }
+
+    #[test]
     fn link_at_detects_visible_url_without_snapshot() {
         let terminal = TerminalState::default();
         terminal.push_text("open https://example.test/path now");
@@ -1760,6 +1995,41 @@ mod tests {
         assert_eq!(osc_link.start_column, 8);
         assert_eq!(osc_link.end_column, 15);
         assert_eq!(osc_link.uri.as_ref(), "https://osc.test/target");
+    }
+
+    fn terminal_grid_row_text(core: &TerminalCore, line: i32) -> String {
+        (0..core.term.columns())
+            .map(|column| core.term.grid()[Line(line)][Column(column)].c)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    fn text_chunk(start: usize, length: usize) -> String {
+        RESIZE_REFLOW_TEXT
+            .chars()
+            .skip(start)
+            .take(length)
+            .collect()
+    }
+
+    fn all_terminal_text(core: &TerminalCore) -> String {
+        let mut text = String::new();
+        let topmost_line = -(core.history_size() as i32);
+        for line in topmost_line..core.screen_lines() as i32 {
+            text.push_str(&terminal_grid_row_text(core, line));
+        }
+        text
+    }
+
+    fn fill_scrollback_to_limit(core: &mut TerminalCore) {
+        let input_lines = SCROLLBACK_LINES + core.screen_lines() - 1;
+        let mut history_input = String::with_capacity(input_lines * 16);
+        for index in 0..input_lines {
+            write!(&mut history_input, "history-{index:05}\r\n").unwrap();
+        }
+        core.push_bytes(history_input.as_bytes());
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
     }
 
     fn wait_for_parser(terminal: &TerminalState) {
