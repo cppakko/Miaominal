@@ -1,9 +1,3 @@
-use super::state::{
-    PendingAiProviderPopupState, PendingChatSessionRenameState, PendingLocalDataResetConfirmState,
-    PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
-    PendingSyncPassphrasePopupState, PendingSyncProviderConfigPopupState,
-    PendingWebSearchConfigPopupState,
-};
 use super::*;
 use crate::ui::i18n;
 use gpui_component::Disableable;
@@ -44,7 +38,7 @@ const PRIMARY_VIEW_GUTTER: f32 = 8.0;
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let window_title = self.window_title();
+        let window_title = self.window_title(cx);
         if window.window_title() != window_title {
             window.set_window_title(&window_title);
         }
@@ -52,97 +46,133 @@ impl Render for AppView {
         let entity = cx.entity();
         let roles = miaominal_settings::current_theme().material.roles;
         let bottom_popup_viewport_height = f32::from(window.bounds().size.height);
-        if self.onboarding.show_onboarding {
-            if self.active_terminal_session_index().is_none()
-                && self.session_agent.conversation_view.is_some()
+        if self.controllers.settings.read(cx).show_onboarding() {
+            if self.active_terminal_session_index(cx).is_none()
+                && self
+                    .controllers
+                    .agent
+                    .read(cx)
+                    .session_agent()
+                    .conversation_view
+                    .is_some()
             {
-                self.release_session_agent_conversation_view(cx);
+                self.controllers.agent.update(cx, |controller, cx| {
+                    controller.finish_text_drag(cx);
+                    controller.release_conversation_view(cx);
+                });
             }
-            return self.render_onboarding_page(entity, window, cx);
+            let notification_layer =
+                Root::render_notification_layer(window, cx).map(IntoElement::into_any_element);
+            return pages::render_onboarding_page(
+                self.controllers.settings.clone(),
+                notification_layer,
+                window,
+                cx,
+            );
         }
         let has_active_session = self.has_active_session();
         let has_active_sftp_tab = self
-            .workspace_state
+            .workspace
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_sftp)
-            .is_some();
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .is_some_and(|tab| tab.is_sftp());
         let desired_primary_view =
-            self.desired_primary_view_kind(has_active_session, has_active_sftp_tab);
+            self.desired_primary_view_kind(has_active_session, has_active_sftp_tab, cx);
         let primary_view_transition =
-            self.primary_view_transition_render_state(desired_primary_view, window);
-        if self.active_terminal_session_index().is_none()
+            self.primary_view_transition_render_state(desired_primary_view, window, cx);
+        if self.active_terminal_session_index(cx).is_none()
             && !primary_view_transition.animating
-            && self.session_agent.conversation_view.is_some()
+            && self
+                .controllers
+                .agent
+                .read(cx)
+                .session_agent()
+                .conversation_view
+                .is_some()
         {
             // The workspace surface may disappear immediately (for example when the last
             // terminal closes), so its side-panel exit animation is not guaranteed to get a
             // final frame in which to release the expensive conversation projection. Keep the
             // projection only while an outgoing terminal workspace is actually animating.
-            self.release_session_agent_conversation_view(cx);
+            self.controllers.agent.update(cx, |controller, cx| {
+                controller.finish_text_drag(cx);
+                controller.release_conversation_view(cx);
+            });
         }
         let primary_view_animating = primary_view_transition.animating;
         let root_right_gutter = self.primary_view_root_right_gutter(primary_view_transition);
 
-        let pending_host_key = self.pending_host_key_prompt();
-        let pending_kbi = self.pending_keyboard_interactive_prompt();
-        let pending_profile_delete = self.pending_profile_delete_prompt();
-        let pending_managed_key_delete = self.pending_managed_key_delete_prompt();
-        let pending_known_host_delete = self.pending_known_host_delete_prompt();
-        let pending_snippet_delete = self.pending_snippet_delete_prompt();
-        let pending_port_forward_rule_delete = self.pending_port_forward_rule_delete_prompt();
-        let pending_chat_session_delete = self.pending_chat_session_delete_prompt();
-        let pending_chat_session_rename = self.pending_chat_session_rename_prompt();
-        let pending_sync_direction = self.pending_sync_direction_prompt();
-        let pending_sync_pull_confirm = self.pending_sync_pull_confirm_prompt();
-        let pending_local_vault_disable_confirm = self.pending_local_vault_disable_confirm_prompt();
-        let pending_local_data_reset_confirm = self.pending_local_data_reset_confirm_prompt();
+        let ordered_tab_ids = self.workspace.tabs.ids().collect::<Vec<_>>();
+        let active_tab_id = self.workspace.workspace.active_tab;
+        let (pending_host_key, pending_kbi) = {
+            let controller = self.controllers.session.read(cx);
+            (
+                controller.pending_host_key_prompt(active_tab_id, &ordered_tab_ids),
+                controller.pending_keyboard_interactive_prompt(active_tab_id, &ordered_tab_ids),
+            )
+        };
+        let pending_profile_delete = self.pending_profile_delete_prompt(cx);
+        let pending_managed_key_delete = self.pending_managed_key_delete_prompt(cx);
+        let pending_known_host_delete = self.pending_known_host_delete_prompt(cx);
+        let pending_snippet_delete = self.pending_snippet_delete_prompt(cx);
+        let pending_port_forward_rule_delete = self.pending_port_forward_rule_delete_prompt(cx);
+        let pending_chat_session_delete = self.pending_chat_session_delete_prompt(cx);
+        let pending_chat_session_rename = self.pending_chat_session_rename_prompt(cx);
+        let pending_sync_direction = self.pending_sync_direction_prompt(cx);
+        let pending_sync_pull_confirm = self.pending_sync_pull_confirm_prompt(cx);
+        let pending_local_vault_disable_confirm =
+            self.pending_local_vault_disable_confirm_prompt(cx);
+        let pending_local_data_reset_confirm = self.pending_local_data_reset_confirm_prompt(cx);
         let pending_local_data_reset_confirmation_popup =
-            self.pending_local_data_reset_confirmation_popup();
+            self.pending_local_data_reset_confirmation_popup(cx);
         let pending_sync_passphrase_clear_confirm_popup =
-            self.pending_sync_passphrase_clear_confirm_popup();
-        let pending_sync_passphrase_popup = self.pending_sync_passphrase_popup();
-        let pending_ai_provider_popup = self.pending_ai_provider_popup();
-        let pending_web_search_config_popup = self.pending_web_search_config_popup();
-        let pending_sync_provider_config_popup = self.pending_sync_provider_config_popup();
-        let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup();
-        let pending_sftp_prompt = self.pending_sftp_prompt();
+            self.pending_sync_passphrase_clear_confirm_popup(cx);
+        let pending_sync_passphrase_popup = self.pending_sync_passphrase_popup(cx);
+        let pending_ai_provider_popup = self.pending_ai_provider_popup(cx);
+        let pending_web_search_config_popup = self.pending_web_search_config_popup(cx);
+        let pending_sync_provider_config_popup = self.pending_sync_provider_config_popup(cx);
+        let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup(cx);
+        let pending_sftp_prompt = self.pending_sftp_prompt(cx);
         let exiting_dialogs = self.active_exiting_dialogs(window);
-        let has_exiting_kbi = exiting_dialogs
-            .iter()
-            .any(|(snapshot, _)| matches!(snapshot, DialogOverlaySnapshot::KeyboardInteractive(_)));
+        let has_exiting_kbi = exiting_dialogs.iter().any(|(snapshot, _)| {
+            matches!(snapshot, DialogOverlaySnapshot::KeyboardInteractive { .. })
+        });
 
-        if let Some(challenge) = &pending_kbi {
-            if self.kbi_inputs.len() != challenge.prompts.len() {
-                self.kbi_inputs = challenge
-                    .prompts
-                    .iter()
-                    .map(|prompt| new_input_state("", "", !prompt.echo, window, cx))
-                    .collect();
-            }
-        } else if !has_exiting_kbi && !self.kbi_inputs.is_empty() {
-            self.kbi_inputs.clear();
-        }
+        let pending_kbi_challenge = pending_kbi.as_ref().map(|(_, challenge)| challenge.clone());
+        self.controllers.session.update(cx, |controller, cx| {
+            controller.sync_keyboard_interactive_inputs(
+                pending_kbi_challenge,
+                has_exiting_kbi,
+                window,
+                cx,
+            );
+        });
 
-        let show_host_editor_sidebar = self.editors.host_editor_open
+        let editor_state = self.controllers.session.read(cx).editor_state();
+        let show_host_editor_sidebar = editor_state.host_editor_open
             && !has_active_session
-            && self.panel_view.sidebar_section == SidebarSection::Hosts;
-        let show_port_forward_editor_sidebar = self.editors.port_forward_editor_open
-            && !has_active_session
-            && !has_active_sftp_tab
-            && self.panel_view.sidebar_section == SidebarSection::PortForwarding;
-        let show_snippets_editor_sidebar = self.editors.snippets_editor_open
+            && self.shell.shell_state.sidebar_section == SidebarSection::Hosts;
+        let show_port_forward_editor_sidebar = editor_state.port_forward_editor_open
             && !has_active_session
             && !has_active_sftp_tab
-            && self.panel_view.sidebar_section == SidebarSection::Snippets;
-        let show_keychain_editor_sidebar = self.editors.keychain_editor_open
+            && self.shell.shell_state.sidebar_section == SidebarSection::PortForwarding;
+        let show_snippets_editor_sidebar = editor_state.snippets_editor_open
             && !has_active_session
             && !has_active_sftp_tab
-            && self.panel_view.sidebar_section == SidebarSection::Keychain;
-        let show_known_hosts_sidebar = self.panels.selected_known_host.is_some()
+            && self.shell.shell_state.sidebar_section == SidebarSection::Snippets;
+        let show_keychain_editor_sidebar = self.controllers.keychain.read(cx).editor_open()
             && !has_active_session
             && !has_active_sftp_tab
-            && self.panel_view.sidebar_section == SidebarSection::KnownHosts;
+            && self.shell.shell_state.sidebar_section == SidebarSection::Keychain;
+        let show_known_hosts_sidebar = self
+            .controllers
+            .session
+            .read(cx)
+            .selected_known_host()
+            .is_some()
+            && !has_active_session
+            && !has_active_sftp_tab
+            && self.shell.shell_state.sidebar_section == SidebarSection::KnownHosts;
         let page_editor_sidebar =
             if primary_view_animating || has_active_session || has_active_sftp_tab {
                 self.clear_page_editor_sidebar_transition_state();
@@ -200,41 +230,45 @@ impl Render for AppView {
             )
         };
 
+        let finish_agent_drag = self.controllers.agent.clone();
+        let finish_agent_drag_out = finish_agent_drag.clone();
+
         div()
             .size_full()
             .relative()
             .flex()
             .flex_col()
             .bg(rgb(roles.surface_container))
-            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+            .capture_any_mouse_up(move |event: &MouseUpEvent, _window, cx| {
                 if event.button == MouseButton::Left {
-                    this.finish_session_agent_text_drag(cx);
+                    finish_agent_drag.update(cx, |controller, cx| {
+                        controller.finish_text_drag(cx);
+                    });
                 }
-            }))
+            })
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(move |this, _event: &MouseUpEvent, _window, cx| {
-                    this.finish_session_agent_text_drag(cx);
-                }),
+                move |_event: &MouseUpEvent, _window, cx| {
+                    finish_agent_drag_out.update(cx, |controller, cx| {
+                        controller.finish_text_drag(cx);
+                    });
+                },
             )
             .pr(px(root_right_gutter))
-            .child(self.render_top_bar(entity.clone(), window))
+            .child(self.render_top_bar(entity.clone(), window, cx))
             .child(shell_body)
-            .child(self.render_status_footer(entity.clone()))
-            .when_some(pending_host_key, |this, prompt| {
-                this.child(self.render_trusted_host_key_prompt(
-                    entity.clone(),
+            .child(self.render_status_footer(entity.clone(), cx))
+            .when_some(pending_host_key, |this, (tab_id, prompt)| {
+                this.child(self.render_session_host_key_prompt(
+                    tab_id,
                     &prompt,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
-            .when_some(pending_kbi, |this, challenge| {
-                this.child(self.render_keyboard_interactive_prompt(
-                    entity.clone(),
-                    &challenge,
-                    None,
-                ))
+            .when_some(pending_kbi, |this, (tab_id, challenge)| {
+                this.child(self.render_keyboard_interactive_prompt(tab_id, &challenge, None, cx))
             })
             .when_some(pending_profile_delete, |this, prompt| {
                 this.child(self.render_profile_delete_prompt(entity.clone(), &prompt, None))
@@ -243,8 +277,9 @@ impl Render for AppView {
                 this.child(self.render_managed_key_delete_prompt(entity.clone(), &prompt, None))
             })
             .when_some(pending_known_host_delete, |this, prompt| {
-                this.child(self.render_trusted_known_host_delete_prompt(
-                    entity.clone(),
+                let controller = self.controllers.session.clone();
+                this.child(controller.read(cx).render_trusted_known_host_delete_prompt(
+                    controller.clone(),
                     &prompt,
                     None,
                 ))
@@ -253,17 +288,13 @@ impl Render for AppView {
                 this.child(self.render_snippet_delete_prompt(entity.clone(), &prompt, None))
             })
             .when_some(pending_port_forward_rule_delete, |this, prompt| {
-                this.child(self.render_port_forward_rule_delete_prompt(
-                    entity.clone(),
-                    &prompt,
-                    None,
-                ))
+                this.child(self.render_port_forward_rule_delete_prompt(&prompt, None))
             })
             .when_some(pending_chat_session_delete, |this, prompt| {
-                this.child(self.render_chat_session_delete_prompt(entity.clone(), &prompt, None))
+                this.child(self.render_chat_session_delete_prompt(&prompt, None))
             })
             .when_some(pending_chat_session_rename, |this, prompt| {
-                this.child(self.render_chat_session_rename_prompt(entity.clone(), &prompt, None))
+                this.child(self.render_chat_session_rename_prompt(&prompt, None, cx))
             })
             .when_some(pending_sync_direction, |this, prompt| {
                 this.child(self.render_sync_direction_prompt(entity.clone(), &prompt, None))
@@ -293,6 +324,7 @@ impl Render for AppView {
                         prompt,
                         None,
                         bottom_popup_viewport_height,
+                        cx,
                     ))
                 },
             )
@@ -304,6 +336,7 @@ impl Render for AppView {
                         prompt,
                         None,
                         bottom_popup_viewport_height,
+                        cx,
                     ))
                 },
             )
@@ -313,6 +346,7 @@ impl Render for AppView {
                     prompt,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
             .when_some(pending_ai_provider_popup, |this, popup| {
@@ -321,6 +355,7 @@ impl Render for AppView {
                     popup,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
             .when_some(pending_web_search_config_popup, |this, popup| {
@@ -329,6 +364,7 @@ impl Render for AppView {
                     popup,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
             .when_some(pending_sync_provider_config_popup, |this, popup| {
@@ -337,6 +373,7 @@ impl Render for AppView {
                     popup,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
             .when_some(pending_local_vault_passphrase_popup, |this, mode| {
@@ -345,11 +382,18 @@ impl Render for AppView {
                     mode,
                     None,
                     bottom_popup_viewport_height,
+                    cx,
                 ))
             })
             .when_some(pending_sftp_prompt, |this, prompt| {
                 let (tab_id, prompt) = prompt;
-                this.child(self.render_sftp_prompt_overlay(entity.clone(), tab_id, &prompt, None))
+                let controller = self.controllers.sftp.clone();
+                this.child(controller.read(cx).render_sftp_prompt_overlay(
+                    controller.clone(),
+                    tab_id,
+                    &prompt,
+                    None,
+                ))
             })
             .children(exiting_dialogs.into_iter().map(|(snapshot, progress)| {
                 self.render_exiting_dialog_overlay(
@@ -357,6 +401,7 @@ impl Render for AppView {
                     snapshot,
                     progress,
                     bottom_popup_viewport_height,
+                    cx,
                 )
             }))
             .when_some(
@@ -368,23 +413,20 @@ impl Render for AppView {
 }
 
 impl AppView {
-    fn active_terminal_tab_id(&self) -> Option<usize> {
-        self.workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| {
-                tab.as_session()
-                    .filter(|session| session.purpose == SessionPurpose::Terminal)
-                    .map(|_| tab.id)
-            })
+    fn active_terminal_tab_id(&self, cx: &App) -> Option<TabId> {
+        let tab_id = self.workspace.active_topbar_tab?;
+        self.session_tab(tab_id, cx)
+            .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+            .then_some(tab_id)
     }
 
     fn desired_primary_view_kind(
         &self,
         has_active_session: bool,
         has_active_sftp_tab: bool,
+        cx: &App,
     ) -> PrimaryViewKind {
-        if has_active_session && let Some(tab_id) = self.active_terminal_tab_id() {
+        if has_active_session && let Some(tab_id) = self.active_terminal_tab_id(cx) {
             return PrimaryViewKind::Terminal(tab_id);
         }
 
@@ -392,33 +434,28 @@ impl AppView {
             return PrimaryViewKind::Sftp(tab_id);
         }
 
-        PrimaryViewKind::Sidebar(self.panel_view.sidebar_section)
+        PrimaryViewKind::Sidebar(self.shell.shell_state.sidebar_section)
     }
 
-    fn primary_view_exists(&self, view: PrimaryViewKind) -> bool {
+    fn primary_view_exists(&self, view: PrimaryViewKind, cx: &App) -> bool {
         match view {
             PrimaryViewKind::Sidebar(_) => true,
-            PrimaryViewKind::Terminal(tab_id) => self.workspace_state.tabs.iter().any(|tab| {
-                tab.id == tab_id
-                    && tab
-                        .as_session()
-                        .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
-            }),
+            PrimaryViewKind::Terminal(tab_id) => self
+                .session_tab(tab_id, cx)
+                .is_some_and(|session| session.purpose == SessionPurpose::Terminal),
             PrimaryViewKind::Sftp(tab_id) => self
-                .workspace_state
+                .workspace
                 .tabs
-                .iter()
-                .any(|tab| tab.id == tab_id && tab.as_sftp().is_some()),
+                .get(tab_id)
+                .is_some_and(|tab| tab.is_sftp()),
         }
     }
 
     fn primary_view_tab_index(&self, view: PrimaryViewKind) -> Option<usize> {
         match view {
-            PrimaryViewKind::Terminal(tab_id) | PrimaryViewKind::Sftp(tab_id) => self
-                .workspace_state
-                .tabs
-                .iter()
-                .position(|tab| tab.id == tab_id),
+            PrimaryViewKind::Terminal(tab_id) | PrimaryViewKind::Sftp(tab_id) => {
+                self.workspace.tabs.index_of(tab_id)
+            }
             PrimaryViewKind::Sidebar(_) => None,
         }
     }
@@ -466,7 +503,7 @@ impl AppView {
         }
     }
 
-    fn finish_primary_view_transition(&mut self, transition: PrimaryViewTransition) {
+    fn finish_primary_view_transition(&mut self, transition: PrimaryViewTransition, cx: &App) {
         if matches!(
             (transition.from, transition.to),
             (
@@ -474,46 +511,49 @@ impl AppView {
                 PrimaryViewKind::Terminal(_)
             )
         ) {
-            self.editors.host_editor_open = false;
-            self.editors.host_editor_is_new = false;
+            self.controllers
+                .session
+                .read(cx)
+                .set_host_editor_state(false, false);
         }
 
-        self.workspace_state.primary_view_transition = None;
+        self.workspace.primary_view_transition = None;
     }
 
     fn primary_view_transition_render_state(
         &mut self,
         desired: PrimaryViewKind,
         window: &mut Window,
+        cx: &App,
     ) -> PrimaryViewTransitionRenderState {
         let now = Instant::now();
         let duration = super::support::CONTAINER_TRANSITION_DURATION;
 
-        if self.workspace_state.visible_primary_view.is_none() {
-            self.workspace_state.visible_primary_view = Some(desired);
+        if self.workspace.visible_primary_view.is_none() {
+            self.workspace.visible_primary_view = Some(desired);
         }
 
-        if self.workspace_state.visible_primary_view != Some(desired) {
+        if self.workspace.visible_primary_view != Some(desired) {
             let from = self
-                .workspace_state
+                .workspace
                 .primary_view_transition
                 .map(|transition| transition.to)
-                .or(self.workspace_state.visible_primary_view)
+                .or(self.workspace.visible_primary_view)
                 .unwrap_or(desired);
-            self.workspace_state.visible_primary_view = Some(desired);
+            self.workspace.visible_primary_view = Some(desired);
             if self.should_animate_primary_view_transition(from, desired) {
-                self.workspace_state.primary_view_transition = Some(PrimaryViewTransition {
+                self.workspace.primary_view_transition = Some(PrimaryViewTransition {
                     from,
                     to: desired,
                     started_at: now,
                     duration,
                 });
             } else {
-                self.workspace_state.primary_view_transition = None;
+                self.workspace.primary_view_transition = None;
             }
         }
 
-        let Some(transition) = self.workspace_state.primary_view_transition else {
+        let Some(transition) = self.workspace.primary_view_transition else {
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -522,9 +562,11 @@ impl AppView {
             };
         };
 
-        if !self.primary_view_exists(transition.from) || !self.primary_view_exists(transition.to) {
-            self.workspace_state.primary_view_transition = None;
-            self.workspace_state.visible_primary_view = Some(desired);
+        if !self.primary_view_exists(transition.from, cx)
+            || !self.primary_view_exists(transition.to, cx)
+        {
+            self.workspace.primary_view_transition = None;
+            self.workspace.visible_primary_view = Some(desired);
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -535,7 +577,7 @@ impl AppView {
 
         let duration_seconds = transition.duration.as_secs_f32();
         if duration_seconds <= f32::EPSILON {
-            self.finish_primary_view_transition(transition);
+            self.finish_primary_view_transition(transition, cx);
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -549,7 +591,7 @@ impl AppView {
         let eased = progress * progress * (3.0 - 2.0 * progress);
 
         if progress >= 1.0 {
-            self.finish_primary_view_transition(transition);
+            self.finish_primary_view_transition(transition, cx);
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -570,23 +612,74 @@ impl AppView {
     fn render_sidebar_primary_panel(
         &mut self,
         section: SidebarSection,
-        entity: Entity<Self>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match section {
-            SidebarSection::Hosts => self.render_hosts_page(entity, cx),
-            SidebarSection::Keychain => self.render_keychain_page(entity, cx),
-            SidebarSection::PortForwarding => self.render_forward_page(entity, cx),
-            SidebarSection::KnownHosts => self.render_trusted_page(entity, cx),
-            SidebarSection::Settings => self.render_settings_page(entity),
-            SidebarSection::Snippets => self.render_snippets_page(entity, cx),
+            SidebarSection::Hosts => {
+                let controller = self.controllers.session.clone();
+                let connect_controller = controller.clone();
+                let edit_controller = controller.clone();
+                let sftp_controller = controller.clone();
+                controller.read(cx).render_hosts_page(
+                    controller.clone(),
+                    move |index, _window, cx| {
+                        connect_controller.update(cx, |controller, cx| {
+                            controller.request_session_at_profile_index(index, cx);
+                        });
+                    },
+                    move |index, _window, cx| {
+                        edit_controller.update(cx, |controller, cx| {
+                            controller.request_profile_editor_at_index(index, cx);
+                        });
+                    },
+                    move |index, _window, cx| {
+                        sftp_controller.update(cx, |controller, cx| {
+                            controller.request_sftp_at_profile_index(index, cx);
+                        });
+                    },
+                    cx,
+                )
+            }
+            SidebarSection::Keychain => {
+                let controller = self.controllers.keychain.clone();
+                controller
+                    .read(cx)
+                    .render_keychain_page(controller.clone(), cx)
+            }
+            SidebarSection::PortForwarding => {
+                let controller = self.controllers.session.clone();
+                controller
+                    .read(cx)
+                    .render_forward_page(controller.clone(), cx)
+            }
+            SidebarSection::KnownHosts => {
+                let controller = self.controllers.session.clone();
+                controller
+                    .read(cx)
+                    .render_trusted_page(controller.clone(), cx)
+            }
+            SidebarSection::Settings => {
+                pages::render_settings_page(self.controllers.settings.clone())
+            }
+            SidebarSection::Snippets => {
+                let controller = self.controllers.session.clone();
+                let edit_controller = controller.clone();
+                controller.read(cx).render_snippets_page(
+                    controller.clone(),
+                    move |index, window, cx| {
+                        edit_controller.update(cx, |controller, cx| {
+                            controller.open_existing_snippet_editor(index, window, cx);
+                        });
+                    },
+                    cx,
+                )
+            }
         }
     }
 
     fn render_primary_view_panel(
         &mut self,
         view: PrimaryViewKind,
-        entity: Entity<Self>,
         current_surface: Option<PrimarySurfaceRenderState>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -604,14 +697,13 @@ impl AppView {
                 });
                 render_state.has_active_session = false;
                 render_state.has_active_sftp_tab = false;
-                (
-                    self.render_sidebar_primary_panel(section, entity, cx),
-                    render_state,
-                )
+                (self.render_sidebar_primary_panel(section, cx), render_state)
             }
             PrimaryViewKind::Terminal(tab_id) => (
                 self.render_terminal_page_for_tab(tab_id, window, cx)
-                    .unwrap_or_else(|| self.render_terminal_page(window, cx)),
+                    .unwrap_or_else(|| {
+                        layout::workspace::render_workspace_surface(self, window, cx)
+                    }),
                 PrimarySurfaceRenderState {
                     has_active_session: true,
                     has_active_sftp_tab: false,
@@ -622,18 +714,35 @@ impl AppView {
                     show_known_hosts_sidebar: false,
                 },
             ),
-            PrimaryViewKind::Sftp(tab_id) => (
-                self.render_sftp_page_for_tab(entity, tab_id, window, cx),
-                PrimarySurfaceRenderState {
-                    has_active_session: false,
-                    has_active_sftp_tab: true,
-                    show_host_editor_sidebar: false,
-                    show_port_forward_editor_sidebar: false,
-                    show_keychain_editor_sidebar: false,
-                    show_snippets_editor_sidebar: false,
-                    show_known_hosts_sidebar: false,
-                },
-            ),
+            PrimaryViewKind::Sftp(tab_id) => {
+                let controller = self.controllers.sftp.clone();
+                let render_controller = controller.clone();
+                let ordered_tab_ids = self.workspace.tabs.ids().collect::<Vec<_>>();
+                let fallback_section = self.shell.shell_state.sidebar_section;
+                let page = controller.update(cx, |controller, cx| {
+                    controller.render_sftp_page_for_tab(
+                        render_controller,
+                        tab_id,
+                        &ordered_tab_ids,
+                        Some(tab_id),
+                        fallback_section,
+                        window,
+                        cx,
+                    )
+                });
+                (
+                    page,
+                    PrimarySurfaceRenderState {
+                        has_active_session: false,
+                        has_active_sftp_tab: true,
+                        show_host_editor_sidebar: false,
+                        show_port_forward_editor_sidebar: false,
+                        show_keychain_editor_sidebar: false,
+                        show_snippets_editor_sidebar: false,
+                        show_known_hosts_sidebar: false,
+                    },
+                )
+            }
         }
     }
 
@@ -647,7 +756,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (primary_panel, primary_surface) =
-            self.render_primary_view_panel(view, entity.clone(), Some(current_surface), window, cx);
+            self.render_primary_view_panel(view, Some(current_surface), window, cx);
         self.render_shell_body(
             entity,
             primary_panel,
@@ -661,42 +770,35 @@ impl AppView {
     }
 
     fn clear_page_editor_sidebar_transition_state(&mut self) {
-        self.shell_state.page_editor_sidebar_transition = None;
-        self.shell_state.visible_page_editor_sidebar = None;
+        self.shell.shell_state.page_editor_sidebar_transition = None;
+        self.shell.shell_state.visible_page_editor_sidebar = None;
     }
 
     fn render_terminal_page_for_tab(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let index = self
-            .workspace_state
+            .workspace
             .tabs
             .iter()
             .position(|tab| tab.id == tab_id)?;
 
-        if self.workspace_state.active_topbar_tab == Some(index)
-            && self
-                .workspace_state
-                .tabs
-                .get(index)
-                .and_then(TabState::as_session)
-                .is_some()
+        if self.workspace.active_topbar_tab == self.workspace.tabs.id_at(index)
+            && self.session_tab(tab_id, cx).is_some()
         {
-            return Some(self.render_terminal_page(window, cx));
+            return Some(layout::workspace::render_workspace_surface(
+                self, window, cx,
+            ));
         }
 
-        let parked_workspace = self.workspace_state.tabs.get_mut(index)?.workspace.take()?;
-        let live_workspace =
-            std::mem::replace(&mut self.workspace_state.workspace, parked_workspace);
-        let rendered = self.render_workspace_surface(window, cx);
-        let parked_workspace =
-            std::mem::replace(&mut self.workspace_state.workspace, live_workspace);
-        if let Some(tab) = self.workspace_state.tabs.get_mut(index) {
-            tab.workspace = Some(parked_workspace);
-        }
+        let parked_workspace = self.workspace.take_parked_workspace(tab_id)?;
+        let live_workspace = std::mem::replace(&mut self.workspace.workspace, parked_workspace);
+        let rendered = layout::workspace::render_workspace_surface(self, window, cx);
+        let parked_workspace = std::mem::replace(&mut self.workspace.workspace, live_workspace);
+        self.workspace.park_workspace(tab_id, parked_workspace);
 
         Some(rendered)
     }
@@ -733,10 +835,10 @@ impl AppView {
         let duration = super::support::OVERLAY_ENTER_DURATION;
 
         match desired {
-            Some(kind) => match self.shell_state.page_editor_sidebar_transition {
+            Some(kind) => match self.shell.shell_state.page_editor_sidebar_transition {
                 Some(transition) if transition.kind == kind => {
                     if transition.phase == PageEditorSidebarTransitionPhase::Exiting {
-                        self.shell_state.page_editor_sidebar_transition =
+                        self.shell.shell_state.page_editor_sidebar_transition =
                             Some(PageEditorSidebarTransition {
                                 phase: PageEditorSidebarTransitionPhase::Entering,
                                 started_at: now,
@@ -745,11 +847,15 @@ impl AppView {
                     }
                 }
                 _ => {
-                    if self.shell_state.visible_page_editor_sidebar != Some(kind)
-                        || self.shell_state.page_editor_sidebar_transition.is_some()
+                    if self.shell.shell_state.visible_page_editor_sidebar != Some(kind)
+                        || self
+                            .shell
+                            .shell_state
+                            .page_editor_sidebar_transition
+                            .is_some()
                     {
-                        self.shell_state.visible_page_editor_sidebar = Some(kind);
-                        self.shell_state.page_editor_sidebar_transition =
+                        self.shell.shell_state.visible_page_editor_sidebar = Some(kind);
+                        self.shell.shell_state.page_editor_sidebar_transition =
                             Some(PageEditorSidebarTransition {
                                 kind,
                                 phase: PageEditorSidebarTransitionPhase::Entering,
@@ -760,11 +866,11 @@ impl AppView {
                 }
             },
             None => {
-                if let Some(kind) = self.shell_state.visible_page_editor_sidebar {
-                    match self.shell_state.page_editor_sidebar_transition {
+                if let Some(kind) = self.shell.shell_state.visible_page_editor_sidebar {
+                    match self.shell.shell_state.page_editor_sidebar_transition {
                         Some(transition) if transition.kind == kind => {
                             if transition.phase == PageEditorSidebarTransitionPhase::Entering {
-                                self.shell_state.page_editor_sidebar_transition =
+                                self.shell.shell_state.page_editor_sidebar_transition =
                                     Some(PageEditorSidebarTransition {
                                         phase: PageEditorSidebarTransitionPhase::Exiting,
                                         started_at: now,
@@ -773,7 +879,7 @@ impl AppView {
                             }
                         }
                         _ => {
-                            self.shell_state.page_editor_sidebar_transition =
+                            self.shell.shell_state.page_editor_sidebar_transition =
                                 Some(PageEditorSidebarTransition {
                                     kind,
                                     phase: PageEditorSidebarTransitionPhase::Exiting,
@@ -786,20 +892,22 @@ impl AppView {
             }
         }
 
-        if let Some(transition) = self.shell_state.page_editor_sidebar_transition {
+        if let Some(transition) = self.shell.shell_state.page_editor_sidebar_transition {
             let duration_seconds = transition.duration.as_secs_f32();
             if duration_seconds <= f32::EPSILON {
-                self.shell_state.page_editor_sidebar_transition = None;
-                self.shell_state.visible_page_editor_sidebar = match transition.phase {
+                self.shell.shell_state.page_editor_sidebar_transition = None;
+                self.shell.shell_state.visible_page_editor_sidebar = match transition.phase {
                     PageEditorSidebarTransitionPhase::Entering => Some(transition.kind),
                     PageEditorSidebarTransitionPhase::Exiting => None,
                 };
-                return self.shell_state.visible_page_editor_sidebar.map(|kind| {
-                    PageEditorSidebarRenderState {
+                return self
+                    .shell
+                    .shell_state
+                    .visible_page_editor_sidebar
+                    .map(|kind| PageEditorSidebarRenderState {
                         kind,
                         visibility: 1.0,
-                    }
-                });
+                    });
             }
 
             let elapsed = now.saturating_duration_since(transition.started_at);
@@ -807,18 +915,20 @@ impl AppView {
             let eased = progress * progress * (3.0 - 2.0 * progress);
 
             if progress >= 1.0 {
-                self.shell_state.page_editor_sidebar_transition = None;
-                self.shell_state.visible_page_editor_sidebar = match transition.phase {
+                self.shell.shell_state.page_editor_sidebar_transition = None;
+                self.shell.shell_state.visible_page_editor_sidebar = match transition.phase {
                     PageEditorSidebarTransitionPhase::Entering => Some(transition.kind),
                     PageEditorSidebarTransitionPhase::Exiting => None,
                 };
 
-                return self.shell_state.visible_page_editor_sidebar.map(|kind| {
-                    PageEditorSidebarRenderState {
+                return self
+                    .shell
+                    .shell_state
+                    .visible_page_editor_sidebar
+                    .map(|kind| PageEditorSidebarRenderState {
                         kind,
                         visibility: 1.0,
-                    }
-                });
+                    });
             }
 
             window.request_animation_frame();
@@ -832,7 +942,7 @@ impl AppView {
             });
         }
 
-        self.shell_state.visible_page_editor_sidebar = desired;
+        self.shell.shell_state.visible_page_editor_sidebar = desired;
         desired.map(|kind| PageEditorSidebarRenderState {
             kind,
             visibility: 1.0,
@@ -863,7 +973,10 @@ impl AppView {
             .rounded(px(16.0))
             .overflow_hidden()
             .when(show_sidebar, |this| {
-                this.child(self.render_sidebar(entity.clone()))
+                this.child(layout::sidebar::render_sidebar(
+                    self,
+                    self.controllers.settings.clone(),
+                ))
             })
             .when(
                 primary_surface.has_active_session || primary_surface.has_active_sftp_tab,
@@ -881,6 +994,7 @@ impl AppView {
                         entity.clone(),
                         primary_panel,
                         primary_surface,
+                        cx,
                     ))
                     .when_some(page_editor_sidebar, |this, sidebar| {
                         this.child(self.render_page_editor_sidebar(sidebar, entity.clone(), cx))
@@ -915,13 +1029,13 @@ impl AppView {
         };
 
         let (incoming_panel, incoming_state) =
-            self.render_primary_view_panel(transition.to, entity.clone(), None, window, cx);
+            self.render_primary_view_panel(transition.to, None, window, cx);
         let (outgoing_panel, outgoing_state) =
-            self.render_primary_view_panel(transition.from, entity.clone(), None, window, cx);
+            self.render_primary_view_panel(transition.from, None, window, cx);
         let incoming_surface =
-            self.render_primary_surface_layer(entity.clone(), incoming_panel, incoming_state);
+            self.render_primary_surface_layer(entity.clone(), incoming_panel, incoming_state, cx);
         let outgoing_surface =
-            self.render_primary_surface_layer(entity.clone(), outgoing_panel, outgoing_state);
+            self.render_primary_surface_layer(entity.clone(), outgoing_panel, outgoing_state, cx);
         let incoming_opacity = if full_surface_to_full_surface {
             0.7 + progress * 0.3
         } else {
@@ -972,7 +1086,10 @@ impl AppView {
                                 .bottom(px(0.0))
                                 .w(px(LEFT_RAIL_WIDTH))
                                 .opacity(sidebar_visibility)
-                                .child(self.render_sidebar(entity.clone())),
+                                .child(layout::sidebar::render_sidebar(
+                                    self,
+                                    self.controllers.settings.clone(),
+                                )),
                         ),
                 )
             })
@@ -1019,25 +1136,87 @@ impl AppView {
     fn render_page_editor_sidebar_content(
         &self,
         kind: PageEditorSidebarKind,
-        entity: Entity<Self>,
+        _entity: Entity<Self>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match kind {
-            PageEditorSidebarKind::Hosts => self
-                .render_hosts_editor_sidebar(entity, cx)
-                .into_any_element(),
-            PageEditorSidebarKind::PortForwarding => self
-                .render_port_forward_editor_sidebar(entity, cx)
-                .into_any_element(),
-            PageEditorSidebarKind::Snippets => self
-                .render_snippets_editor_sidebar(entity)
-                .into_any_element(),
+            PageEditorSidebarKind::Hosts => {
+                let controller = self.controllers.session.clone();
+                let test_controller = controller.clone();
+                let save_controller = controller.clone();
+                let visibility_controller = controller.clone();
+                controller
+                    .read(cx)
+                    .render_hosts_editor_sidebar(
+                        controller.clone(),
+                        move |window, cx| {
+                            test_controller.update(cx, |controller, cx| {
+                                controller.request_profile_connection_test(window, cx);
+                            });
+                        },
+                        move |window, cx| {
+                            save_controller.update(cx, |controller, cx| {
+                                controller.request_profile_save(window, cx);
+                            });
+                        },
+                        move |window, cx| {
+                            visibility_controller.update(cx, |controller, cx| {
+                                controller.toggle_host_password_visibility(window, cx);
+                            });
+                        },
+                        cx,
+                    )
+                    .into_any_element()
+            }
+            PageEditorSidebarKind::PortForwarding => {
+                let controller = self.controllers.session.clone();
+                let settings_controller = self.controllers.settings.clone();
+                let save_controller = controller.clone();
+                controller
+                    .read(cx)
+                    .render_port_forward_editor_sidebar(
+                        controller.clone(),
+                        move |window, cx| {
+                            let unlock_required = settings_controller
+                                .read(cx)
+                                .sync_requires_local_vault_unlock();
+                            save_controller.update(cx, |controller, cx| {
+                                controller.save_port_forward_rule(unlock_required, window, cx);
+                            });
+                        },
+                        cx,
+                    )
+                    .into_any_element()
+            }
+            PageEditorSidebarKind::Snippets => {
+                let controller = self.controllers.session.clone();
+                let save_controller = controller.clone();
+                controller
+                    .read(cx)
+                    .render_snippets_editor_sidebar(
+                        controller.clone(),
+                        move |window, cx| {
+                            save_controller.update(cx, |controller, cx| {
+                                controller.request_save_snippet(window, cx);
+                            });
+                        },
+                        cx,
+                    )
+                    .into_any_element()
+            }
             PageEditorSidebarKind::Keychain => self
-                .render_keychain_editor_sidebar(entity)
+                .controllers
+                .keychain
+                .read(cx)
+                .render_keychain_editor_sidebar(self.controllers.keychain.clone())
                 .into_any_element(),
-            PageEditorSidebarKind::KnownHosts => self
-                .render_trusted_known_host_sidebar(entity)
-                .into_any_element(),
+            PageEditorSidebarKind::KnownHosts => {
+                let controller = self.controllers.session.clone();
+                controller
+                    .read(cx)
+                    .render_trusted_known_host_sidebar(controller.clone())
+                    .into_any_element()
+            }
         }
     }
 
@@ -1076,6 +1255,7 @@ impl AppView {
         entity: Entity<Self>,
         panel: AnyElement,
         render_state: PrimarySurfaceRenderState,
+        cx: &App,
     ) -> AnyElement {
         let PrimarySurfaceRenderState {
             has_active_session,
@@ -1103,7 +1283,7 @@ impl AppView {
             .when(!has_active_session, |this| this.bg(rgb(roles.background)))
             .child(panel)
             .when(
-                self.panel_view.sidebar_section == SidebarSection::Hosts
+                self.shell.shell_state.sidebar_section == SidebarSection::Hosts
                     && !has_active_session
                     && !has_active_sftp_tab
                     && !show_host_editor_sidebar,
@@ -1118,63 +1298,66 @@ impl AppView {
                 },
             )
             .when(
-                self.panel_view.sidebar_section == SidebarSection::PortForwarding
+                self.shell.shell_state.sidebar_section == SidebarSection::PortForwarding
                     && !has_active_session
                     && !has_active_sftp_tab
                     && !show_port_forward_editor_sidebar,
                 |this| {
                     this.child(
-                        div()
-                            .absolute()
-                            .right(px(28.0))
-                            .bottom(px(28.0))
-                            .child(self.render_forward_fab(entity.clone())),
+                        div().absolute().right(px(28.0)).bottom(px(28.0)).child(
+                            self.controllers
+                                .session
+                                .read(cx)
+                                .render_forward_fab(self.controllers.session.clone()),
+                        ),
                     )
                 },
             )
             .when(
-                self.panel_view.sidebar_section == SidebarSection::Keychain
+                self.shell.shell_state.sidebar_section == SidebarSection::Keychain
                     && !has_active_session
                     && !has_active_sftp_tab
                     && !show_keychain_editor_sidebar,
                 |this| {
                     this.child(
-                        div()
-                            .absolute()
-                            .right(px(28.0))
-                            .bottom(px(28.0))
-                            .child(self.render_keychain_fab(entity.clone())),
+                        div().absolute().right(px(28.0)).bottom(px(28.0)).child(
+                            self.controllers
+                                .keychain
+                                .read(cx)
+                                .render_keychain_fab(self.controllers.keychain.clone()),
+                        ),
                     )
                 },
             )
             .when(
-                self.panel_view.sidebar_section == SidebarSection::Snippets
+                self.shell.shell_state.sidebar_section == SidebarSection::Snippets
                     && !has_active_session
                     && !has_active_sftp_tab
                     && !show_snippets_editor_sidebar,
                 |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .right(px(28.0))
-                            .bottom(px(28.0))
-                            .child(self.render_snippets_fab(entity.clone())),
-                    )
+                    this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
+                        let controller = self.controllers.session.clone();
+                        let open_controller = controller.clone();
+                        controller.read(cx).render_snippets_fab(move |window, cx| {
+                            open_controller.update(cx, |controller, cx| {
+                                controller.open_snippets_editor(window, cx);
+                            });
+                        })
+                    }))
                 },
             )
             .when(
-                self.panel_view.sidebar_section == SidebarSection::KnownHosts
+                self.shell.shell_state.sidebar_section == SidebarSection::KnownHosts
                     && !has_active_session
                     && !has_active_sftp_tab
                     && !show_known_hosts_sidebar,
                 |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .right(px(28.0))
-                            .bottom(px(28.0))
-                            .child(self.render_known_hosts_refresh_fab(entity.clone())),
-                    )
+                    this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
+                        let controller = self.controllers.session.clone();
+                        controller
+                            .read(cx)
+                            .render_known_hosts_refresh_fab(controller.clone())
+                    }))
                 },
             )
             .into_any_element()
@@ -1182,7 +1365,7 @@ impl AppView {
 
     fn render_managed_key_delete_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         prompt: &PendingManagedKeyDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -1196,8 +1379,8 @@ impl AppView {
             &[("key_name", key_name.as_str())],
         );
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.keychain.clone();
+        let controller_confirm = self.controllers.keychain.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1209,8 +1392,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_managed_key_delete(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_managed_key_delete(cx);
                     });
                 }),
             )
@@ -1221,8 +1404,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, window, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_managed_key_delete(window, cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_managed_key_delete(window, cx);
                     });
                 }),
             );
@@ -1239,7 +1422,7 @@ impl AppView {
 
     fn render_profile_delete_prompt(
         &self,
-        entity: Entity<AppView>,
+        entity: Entity<Self>,
         prompt: &PendingProfileDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -1253,7 +1436,7 @@ impl AppView {
             &[("profile_name", profile_name.as_str())],
         );
 
-        let entity_cancel = entity.clone();
+        let controller_cancel = self.controllers.session.clone();
         let entity_confirm = entity.clone();
 
         let actions = h_flex()
@@ -1266,8 +1449,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_profile_delete(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_profile_delete(cx);
                     });
                 }),
             )
@@ -1296,7 +1479,7 @@ impl AppView {
 
     fn render_snippet_delete_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         prompt: &PendingSnippetDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -1310,8 +1493,8 @@ impl AppView {
             &[("description", description.as_str())],
         );
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.session.clone();
+        let controller_confirm = self.controllers.session.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1323,8 +1506,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_snippet_delete(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_snippet_delete(cx);
                     });
                 }),
             )
@@ -1335,8 +1518,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_snippet_delete(cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_snippet_delete(cx);
                     });
                 }),
             );
@@ -1353,7 +1536,6 @@ impl AppView {
 
     fn render_port_forward_rule_delete_prompt(
         &self,
-        entity: Entity<AppView>,
         prompt: &PendingPortForwardRuleDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -1365,8 +1547,8 @@ impl AppView {
             ],
         );
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.session.clone();
+        let controller_confirm = self.controllers.session.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1378,8 +1560,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_port_forward_rule_removal(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_port_forward_rule_removal(cx);
                     });
                 }),
             )
@@ -1390,8 +1572,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_port_forward_rule_removal(cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_port_forward_rule_removal(cx);
                     });
                 }),
             );
@@ -1408,7 +1590,6 @@ impl AppView {
 
     fn render_chat_session_delete_prompt(
         &self,
-        entity: Entity<AppView>,
         prompt: &PendingChatSessionDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -1419,8 +1600,8 @@ impl AppView {
         };
         let subtitle = i18n::string_args("dialogs.chat_delete.message", &[("title", &title)]);
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.agent.clone();
+        let controller_confirm = self.controllers.agent.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1432,8 +1613,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_session_agent_chat_delete(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_chat_session_delete(cx);
                     });
                 }),
             )
@@ -1444,8 +1625,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_session_agent_chat_delete(cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_chat_session_delete(cx);
                     });
                 }),
             );
@@ -1462,11 +1643,11 @@ impl AppView {
 
     fn render_chat_session_rename_prompt(
         &self,
-        entity: Entity<AppView>,
         prompt: &PendingChatSessionRenameState,
         exit_progress: Option<f32>,
+        cx: &App,
     ) -> gpui::AnyElement {
-        let title_input = self.workspace_forms.agent.rename_title_input.clone();
+        let title_input = self.controllers.agent.read(cx).rename_title_input();
         let current_title = if prompt.current_title.trim().is_empty() {
             i18n::string("workspace.panel.agent.history.untitled_chat")
         } else {
@@ -1475,8 +1656,8 @@ impl AppView {
         let subtitle =
             i18n::string_args("dialogs.chat_rename.message", &[("title", &current_title)]);
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.agent.clone();
+        let controller_confirm = self.controllers.agent.clone();
 
         let body = v_flex()
             .w_full()
@@ -1498,8 +1679,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_session_agent_chat_rename(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_chat_session_rename(cx);
                     });
                 }),
             )
@@ -1510,12 +1691,12 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click({
-                    let entity = entity_confirm.clone();
+                    let controller = controller_confirm.clone();
                     let title_input = title_input.clone();
                     move |_, _, cx| {
-                        entity.update(cx, |this, cx| {
+                        controller.update(cx, |controller, cx| {
                             let new_title = title_input.read(cx).value().to_string();
-                            this.confirm_session_agent_chat_rename(new_title, cx);
+                            controller.confirm_chat_session_rename(new_title, cx);
                         });
                     }
                 }),
@@ -1533,13 +1714,13 @@ impl AppView {
 
     fn render_sync_direction_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _prompt: &PendingSyncDirectionState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
-        let entity_cancel = entity.clone();
-        let entity_pull = entity.clone();
-        let entity_push = entity.clone();
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_pull = self.controllers.settings.clone();
+        let controller_push = self.controllers.settings.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1551,8 +1732,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_sync_direction_prompt(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_sync_direction(cx);
                     });
                 }),
             )
@@ -1563,8 +1744,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_pull.update(cx, |this, cx| {
-                        this.select_sync_now_pull(cx);
+                    controller_pull.update(cx, |controller, cx| {
+                        controller.select_sync_pull(cx);
                     });
                 }),
             )
@@ -1575,8 +1756,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, window, cx| {
-                    entity_push.update(cx, |this, cx| {
-                        this.select_sync_now_push(window, cx);
+                    controller_push.update(cx, |controller, cx| {
+                        controller.select_sync_push(window, cx);
                     });
                 }),
             );
@@ -1593,13 +1774,13 @@ impl AppView {
 
     fn render_sync_pull_confirm_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         prompt: &PendingSyncPullConfirmState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
-        let entity_cancel = entity.clone();
-        let entity_force_push = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_force_push = self.controllers.settings.clone();
+        let controller_confirm = self.controllers.settings.clone();
 
         let message_key = match prompt.reason {
             SyncPullConfirmReason::Manual => "settings.sync.dialogs.pull_confirm.message",
@@ -1618,8 +1799,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_sync_pull_confirm(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_sync_pull_confirm(cx);
                     });
                 }),
             )
@@ -1633,8 +1814,8 @@ impl AppView {
                             BasicDialogActionTone::Default,
                         )
                         .on_click(move |_, window, cx| {
-                            entity_force_push.update(cx, |this, cx| {
-                                this.confirm_sync_force_push(window, cx);
+                            controller_force_push.update(cx, |controller, cx| {
+                                controller.confirm_sync_force_push(window, cx);
                             });
                         }),
                     )
@@ -1647,8 +1828,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, window, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_sync_pull(window, cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_sync_pull(window, cx);
                     });
                 }),
             );
@@ -1665,12 +1846,12 @@ impl AppView {
 
     fn render_local_vault_disable_confirm_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _prompt: &PendingLocalVaultDisableConfirmState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_confirm = self.controllers.settings.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1682,8 +1863,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_local_vault_disable_confirm(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_local_vault_disable_confirm(cx);
                     });
                 }),
             )
@@ -1694,8 +1875,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_local_vault_disable(cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_local_vault_disable(cx);
                     });
                 }),
             );
@@ -1714,12 +1895,12 @@ impl AppView {
 
     fn render_local_data_reset_confirm_prompt(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _prompt: &PendingLocalDataResetConfirmState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_confirm = self.controllers.settings.clone();
 
         let actions = h_flex()
             .gap_2()
@@ -1731,8 +1912,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_local_data_reset_confirm(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_local_data_reset_confirm(cx);
                     });
                 }),
             )
@@ -1743,8 +1924,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, window, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.continue_local_data_reset_confirm(window, cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.continue_local_data_reset_confirm(window, cx);
                     });
                 }),
             );
@@ -1761,9 +1942,10 @@ impl AppView {
 
     fn render_keyboard_interactive_prompt(
         &self,
-        entity: Entity<AppView>,
+        tab_id: TabId,
         challenge: &KbiChallenge,
         exit_progress: Option<f32>,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let title: SharedString = if challenge.name.is_empty() {
@@ -1772,7 +1954,14 @@ impl AppView {
             challenge.name.clone().into()
         };
 
-        let entity_submit = entity.clone();
+        let submit_controller = self.controllers.session.clone();
+        let cancel_controller = self.controllers.session.clone();
+        let inputs = self
+            .controllers
+            .session
+            .read(cx)
+            .keyboard_interactive_inputs();
+        let submit_inputs = inputs.clone();
 
         let submit_button = basic_dialog_action_button(
             "keyboard-interactive-submit",
@@ -1780,39 +1969,12 @@ impl AppView {
             BasicDialogActionTone::Default,
         )
         .on_click(move |_, _, cx| {
-            entity_submit.update(cx, |this, cx| {
-                let responses: Vec<String> = this
-                    .kbi_inputs
-                    .iter()
-                    .map(|input| input.read(cx).value().to_string())
-                    .collect();
-                let challenge = this.workspace_state.tabs.iter().find_map(|tab| {
-                    tab.as_session()
-                        .and_then(|session| session.pending_keyboard_interactive.clone())
-                });
-                let commands = this.workspace_state.tabs.iter().find_map(|tab| {
-                    tab.as_session()
-                        .filter(|s| s.pending_keyboard_interactive.is_some())
-                        .and_then(|s| s.commands.clone())
-                });
-                if let Some(commands) = commands {
-                    let _ = commands.respond_keyboard_interactive(responses);
-                }
-                for tab in &mut this.workspace_state.tabs {
-                    if let TabKind::Session(session) = &mut tab.kind
-                        && session.pending_keyboard_interactive.is_some()
-                    {
-                        session.pending_keyboard_interactive = None;
-                        break;
-                    }
-                }
-                if let Some(challenge) = challenge {
-                    this.start_dialog_exit(
-                        DialogOverlaySnapshot::KeyboardInteractive(challenge),
-                        cx,
-                    );
-                }
-                cx.notify();
+            let responses: Vec<String> = submit_inputs
+                .iter()
+                .map(|input| input.read(cx).value().to_string())
+                .collect();
+            submit_controller.update(cx, |controller, cx| {
+                controller.submit_keyboard_interactive(tab_id, responses, cx);
             });
         });
 
@@ -1822,29 +1984,8 @@ impl AppView {
             BasicDialogActionTone::Default,
         )
         .on_click(move |_, _, cx| {
-            entity.update(cx, |this, cx| {
-                let challenge = this.workspace_state.tabs.iter().find_map(|tab| {
-                    tab.as_session()
-                        .and_then(|session| session.pending_keyboard_interactive.clone())
-                });
-                for tab in &mut this.workspace_state.tabs {
-                    if let TabKind::Session(session) = &mut tab.kind
-                        && session.pending_keyboard_interactive.is_some()
-                    {
-                        session.pending_keyboard_interactive = None;
-                        if let Some(commands) = &session.commands {
-                            let _ = commands.close();
-                        }
-                        break;
-                    }
-                }
-                if let Some(challenge) = challenge {
-                    this.start_dialog_exit(
-                        DialogOverlaySnapshot::KeyboardInteractive(challenge),
-                        cx,
-                    );
-                }
-                cx.notify();
+            cancel_controller.update(cx, |controller, cx| {
+                controller.cancel_keyboard_interactive(tab_id, cx);
             });
         });
 
@@ -1857,7 +1998,7 @@ impl AppView {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, prompt)| {
-                        self.kbi_inputs.get(i).map(|input| {
+                        inputs.get(i).map(|input| {
                             v_flex()
                                 .id(SharedString::from(format!(
                                     "keyboard-interactive-prompt-{:?}",
@@ -1902,35 +2043,33 @@ impl AppView {
 
     fn render_local_vault_passphrase_popup(
         &self,
-        entity: Entity<AppView>,
+        entity: Entity<Self>,
         mode: LocalVaultPassphrasePopupMode,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let operation_in_progress = self.local_vault_unlock_in_progress;
-        let input = self
-            .panel_forms
-            .settings
-            .local_vault_passphrase_input
-            .clone();
-        let confirmation_input = self
-            .panel_forms
-            .settings
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let operation_in_progress = settings_controller
+            .read(cx)
+            .local_vault_unlock_in_progress();
+        let input = settings_forms.local_vault_passphrase_input.clone();
+        let confirmation_input = settings_forms
             .local_vault_passphrase_confirmation_input
             .clone();
-        let local_vault_auto_lock_duration_select = self
-            .panel_forms
-            .settings
-            .local_vault_auto_lock_duration_select
-            .clone();
+        let local_vault_auto_lock_duration_select =
+            settings_forms.local_vault_auto_lock_duration_select.clone();
         let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
-        let title = self.local_vault_passphrase_popup_title(mode);
+        let controller_submit = settings_controller.clone();
+        let title = settings_controller
+            .read(cx)
+            .local_vault_passphrase_popup_title(mode);
         let requires_passphrase_confirmation = mode
             == LocalVaultPassphrasePopupMode::ChangePassphrase
             || (mode == LocalVaultPassphrasePopupMode::PrimaryAction
-                && self.local_vault_status == LocalVaultStatus::Disabled);
+                && settings_controller.read(cx).local_vault_status() == LocalVaultStatus::Disabled);
         let popup_body = v_flex()
             .w_full()
             .gap_5()
@@ -1951,13 +2090,15 @@ impl AppView {
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
-                    reveal_icon: self.secret_reveal_icon(SecretRevealTarget::LocalVaultPassphrase),
+                    reveal_icon: settings_controller
+                        .read(cx)
+                        .secret_reveal_icon(&SecretRevealTarget::LocalVaultPassphrase),
                 },
                 {
-                    let entity = entity.clone();
+                    let controller = settings_controller.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.toggle_secret_visibility(
+                        controller.update(cx, |controller, cx| {
+                            controller.toggle_secret_visibility(
                                 SecretRevealTarget::LocalVaultPassphrase,
                                 window,
                                 cx,
@@ -1976,15 +2117,15 @@ impl AppView {
                         required: true,
                         disabled: operation_in_progress,
                         trailing: None,
-                        reveal_icon: self.secret_reveal_icon(
-                            SecretRevealTarget::LocalVaultPassphraseConfirmation,
+                        reveal_icon: settings_controller.read(cx).secret_reveal_icon(
+                            &SecretRevealTarget::LocalVaultPassphraseConfirmation,
                         ),
                     },
                     {
-                        let entity = entity.clone();
+                        let controller = settings_controller.clone();
                         move |window, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.toggle_secret_visibility(
+                            controller.update(cx, |controller, cx| {
+                                controller.toggle_secret_visibility(
                                     SecretRevealTarget::LocalVaultPassphraseConfirmation,
                                     window,
                                     cx,
@@ -2056,10 +2197,14 @@ impl AppView {
                     .large()
                     .disabled(operation_in_progress)
                     .text_color(rgb(roles.primary))
-                    .label(self.local_vault_passphrase_popup_title(mode))
+                    .label(
+                        settings_controller
+                            .read(cx)
+                            .local_vault_passphrase_popup_title(mode),
+                    )
                     .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_local_vault_passphrase_popup_action(mode, window, cx);
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.submit_local_vault_passphrase_popup_action(mode, window, cx);
                         });
                     })
                     .into_any_element()
@@ -2086,23 +2231,27 @@ impl AppView {
 
     fn render_sync_passphrase_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _popup: PendingSyncPassphrasePopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let operation_in_progress = self.sync_passphrase_operation_in_progress();
-        let save_in_progress = self.sync_passphrase_save_in_progress();
-        let input = self.panel_forms.settings.sync_passphrase_input.clone();
-        let confirmation_input = self
-            .panel_forms
-            .settings
-            .sync_passphrase_confirmation_input
-            .clone();
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
-        let title = self.sync_passphrase_action_label();
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let operation_in_progress = settings_controller
+            .read(cx)
+            .sync_passphrase_operation_in_progress();
+        let save_in_progress = settings_controller
+            .read(cx)
+            .sync_passphrase_save_in_progress();
+        let input = settings_forms.sync_passphrase_input.clone();
+        let confirmation_input = settings_forms.sync_passphrase_confirmation_input.clone();
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
+        let title = settings_controller.read(cx).sync_passphrase_action_label();
         let popup_body = v_flex()
             .w_full()
             .gap_5()
@@ -2123,13 +2272,15 @@ impl AppView {
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
-                    reveal_icon: self.secret_reveal_icon(SecretRevealTarget::SyncPassphrase),
+                    reveal_icon: settings_controller
+                        .read(cx)
+                        .secret_reveal_icon(&SecretRevealTarget::SyncPassphrase),
                 },
                 {
-                    let entity = entity.clone();
+                    let controller = settings_controller.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.toggle_secret_visibility(
+                        controller.update(cx, |controller, cx| {
+                            controller.toggle_secret_visibility(
                                 SecretRevealTarget::SyncPassphrase,
                                 window,
                                 cx,
@@ -2147,14 +2298,15 @@ impl AppView {
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
-                    reveal_icon: self
-                        .secret_reveal_icon(SecretRevealTarget::SyncPassphraseConfirmation),
+                    reveal_icon: settings_controller
+                        .read(cx)
+                        .secret_reveal_icon(&SecretRevealTarget::SyncPassphraseConfirmation),
                 },
                 {
-                    let entity = entity.clone();
+                    let controller = settings_controller.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.toggle_secret_visibility(
+                        controller.update(cx, |controller, cx| {
+                            controller.toggle_secret_visibility(
                                 SecretRevealTarget::SyncPassphraseConfirmation,
                                 window,
                                 cx,
@@ -2179,8 +2331,8 @@ impl AppView {
                     .text_color(rgb(roles.on_surface_variant))
                     .label(i18n::string("dialogs.common.cancel"))
                     .on_click(move |_, window, cx| {
-                        entity_cancel.update(cx, |this, cx| {
-                            this.close_sync_passphrase_popup(window, cx);
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_sync_passphrase_popup(window, cx);
                         });
                     }),
             )
@@ -2204,8 +2356,8 @@ impl AppView {
                     .text_color(rgb(roles.primary))
                     .label(title.clone())
                     .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_sync_passphrase_popup_action(window, cx);
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.submit_sync_passphrase_popup_action(window, cx);
                         });
                     })
                     .into_any_element()
@@ -2223,8 +2375,8 @@ impl AppView {
             "sync-passphrase",
             exit_progress,
             move |window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_sync_passphrase_popup(window, cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_sync_passphrase_popup(window, cx);
                 });
             },
         )
@@ -2232,46 +2384,38 @@ impl AppView {
 
     fn render_ai_provider_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _popup: PendingAiProviderPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let kind_select = self.panel_forms.settings.ai_provider_kind_select.clone();
-        let name_input = self.panel_forms.settings.ai_provider_name_input.clone();
-        let model_input = self.panel_forms.settings.ai_provider_model_input.clone();
-        let base_url_input = self.panel_forms.settings.ai_provider_base_url_input.clone();
-        let api_key_input = self.panel_forms.settings.ai_provider_api_key_input.clone();
-        let temperature_input = self
-            .panel_forms
-            .settings
-            .ai_provider_temperature_input
-            .clone();
-        let max_tokens_input = self
-            .panel_forms
-            .settings
-            .ai_provider_max_tokens_input
-            .clone();
-        let context_window_input = self
-            .panel_forms
-            .settings
-            .ai_provider_context_window_input
-            .clone();
-        let provider_id = self
-            .panel_forms
-            .settings
-            .editing_ai_provider_id
-            .clone()
-            .unwrap_or_default();
-        let editing_provider_id = self.panel_forms.settings.editing_ai_provider_id.clone();
-        let save_in_progress = self.ai_provider_save_in_progress();
-        let api_key_load_in_progress = self.ai_provider_api_key_load_in_progress_for(&provider_id);
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let kind_select = settings_forms.ai_provider_kind_select.clone();
+        let name_input = settings_forms.ai_provider_name_input.clone();
+        let model_input = settings_forms.ai_provider_model_input.clone();
+        let base_url_input = settings_forms.ai_provider_base_url_input.clone();
+        let api_key_input = settings_forms.ai_provider_api_key_input.clone();
+        let temperature_input = settings_forms.ai_provider_temperature_input.clone();
+        let max_tokens_input = settings_forms.ai_provider_max_tokens_input.clone();
+        let context_window_input = settings_forms.ai_provider_context_window_input.clone();
+        let editing_provider_id = settings_controller
+            .read(cx)
+            .editing_ai_provider_id()
+            .map(str::to_owned);
+        let provider_id = editing_provider_id.clone().unwrap_or_default();
+        let save_in_progress = settings_controller.read(cx).ai_provider_save_in_progress();
+        let api_key_load_in_progress = settings_controller
+            .read(cx)
+            .ai_provider_api_key_load_in_progress_for(&provider_id);
         let operation_in_progress = save_in_progress || api_key_load_in_progress;
         let target = SecretRevealTarget::AiProviderApiKey(provider_id);
-        let reveal_icon = self.secret_reveal_icon(target.clone());
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
+        let reveal_icon = settings_controller.read(cx).secret_reveal_icon(&target);
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
 
         let popup_body = v_flex()
             .w_full()
@@ -2334,11 +2478,11 @@ impl AppView {
                     reveal_icon,
                 },
                 {
-                    let entity = entity.clone();
+                    let controller = settings_controller.clone();
                     move |window, cx| {
                         let target = target.clone();
-                        entity.update(cx, |this, cx| {
-                            this.toggle_secret_visibility(target, window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.toggle_secret_visibility(target, window, cx);
                         });
                     }
                 },
@@ -2368,7 +2512,7 @@ impl AppView {
             .justify_between()
             .gap_3()
             .child(if let Some(provider_id) = editing_provider_id {
-                let entity_delete = entity.clone();
+                let controller_delete = settings_controller.clone();
                 Button::new("ai-provider-popup-delete")
                     .ghost()
                     .border_0()
@@ -2379,8 +2523,8 @@ impl AppView {
                     .label(i18n::string("settings.ai_providers.actions.delete"))
                     .on_click(move |_, window, cx| {
                         let provider_id = provider_id.clone();
-                        entity_delete.update(cx, |this, cx| {
-                            this.delete_ai_provider(provider_id, window, cx);
+                        controller_delete.update(cx, |controller, cx| {
+                            controller.delete_ai_provider(provider_id, window, cx);
                         });
                     })
                     .into_any_element()
@@ -2400,8 +2544,8 @@ impl AppView {
                             .text_color(rgb(roles.on_surface_variant))
                             .label(i18n::string("dialogs.common.cancel"))
                             .on_click(move |_, window, cx| {
-                                entity_cancel.update(cx, |this, cx| {
-                                    this.close_ai_provider_popup(window, cx);
+                                controller_cancel.update(cx, |controller, cx| {
+                                    controller.close_ai_provider_popup(window, cx);
                                 });
                             }),
                     )
@@ -2425,8 +2569,8 @@ impl AppView {
                             .text_color(rgb(roles.primary))
                             .label(i18n::string("settings.ai_providers.actions.save"))
                             .on_click(move |_, window, cx| {
-                                entity_submit.update(cx, |this, cx| {
-                                    this.submit_ai_provider_save(window, cx);
+                                controller_submit.update(cx, |controller, cx| {
+                                    controller.submit_ai_provider_save(window, cx);
                                 });
                             })
                             .into_any_element()
@@ -2447,8 +2591,8 @@ impl AppView {
             "ai-provider",
             exit_progress,
             move |window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_ai_provider_popup(window, cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_ai_provider_popup(window, cx);
                 });
             },
         )
@@ -2456,29 +2600,29 @@ impl AppView {
 
     fn render_web_search_config_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _popup: PendingWebSearchConfigPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let kind_select = self.panel_forms.settings.web_search_kind_select.clone();
-        let api_key_input = self.panel_forms.settings.web_search_api_key_input.clone();
-        let endpoint_input = self.panel_forms.settings.web_search_endpoint_input.clone();
-        let max_results_input = self
-            .panel_forms
-            .settings
-            .web_search_max_results_input
-            .clone();
-        let save_in_progress = self.web_search_save_in_progress();
-        let current_kind = self.settings_store.settings().web_search.kind;
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let kind_select = settings_forms.web_search_kind_select.clone();
+        let api_key_input = settings_forms.web_search_api_key_input.clone();
+        let endpoint_input = settings_forms.web_search_endpoint_input.clone();
+        let max_results_input = settings_forms.web_search_max_results_input.clone();
+        let save_in_progress = settings_controller.read(cx).web_search_save_in_progress();
+        let current_kind = settings_controller.read(cx).settings().web_search.kind;
         let api_key_required = current_kind.requires_api_key();
         let endpoint_required = current_kind == miaominal_settings::WebSearchProviderKind::SearXng;
         let target = SecretRevealTarget::WebSearchApiKey;
-        let reveal_icon = self.secret_reveal_icon(target.clone());
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
-        let entity_toggle = entity.clone();
+        let reveal_icon = settings_controller.read(cx).secret_reveal_icon(&target);
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_toggle = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
 
         let popup_body = v_flex()
             .w_full()
@@ -2512,8 +2656,8 @@ impl AppView {
                     reveal_icon,
                 },
                 move |window, cx| {
-                    entity_toggle.update(cx, |this, cx| {
-                        this.toggle_secret_visibility(
+                    controller_toggle.update(cx, |controller, cx| {
+                        controller.toggle_secret_visibility(
                             SecretRevealTarget::WebSearchApiKey,
                             window,
                             cx,
@@ -2549,8 +2693,8 @@ impl AppView {
                     .text_color(rgb(roles.on_surface_variant))
                     .label(i18n::string("dialogs.common.cancel"))
                     .on_click(move |_, window, cx| {
-                        entity_cancel.update(cx, |this, cx| {
-                            this.close_web_search_config_popup(window, cx);
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_web_search_config_popup(window, cx);
                         });
                     }),
             )
@@ -2573,8 +2717,8 @@ impl AppView {
                     .text_color(rgb(roles.primary))
                     .label(i18n::string("settings.web_search.actions.save"))
                     .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_web_search_settings_save(window, cx);
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.submit_web_search_settings_save(window, cx);
                         });
                     })
                     .into_any_element()
@@ -2592,8 +2736,8 @@ impl AppView {
             "web-search-config",
             exit_progress,
             move |window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_web_search_config_popup(window, cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_web_search_config_popup(window, cx);
                 });
             },
         )
@@ -2601,23 +2745,29 @@ impl AppView {
 
     fn render_sync_provider_config_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         popup: PendingSyncProviderConfigPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let save_in_progress = self.sync_provider_config_save_in_progress_for(popup.provider);
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let save_in_progress = settings_controller
+            .read(cx)
+            .sync_provider_config_save_in_progress_for(popup.provider);
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
 
         let (title, description, popup_body, popup_key) = match popup.provider {
             SyncProvider::GithubGist => {
-                let token_input = self.panel_forms.settings.sync_github_token_input.clone();
-                let gist_id_input = self.panel_forms.settings.sync_github_gist_id_input.clone();
+                let token_input = settings_forms.sync_github_token_input.clone();
+                let gist_id_input = settings_forms.sync_github_gist_id_input.clone();
                 let target = SecretRevealTarget::SyncGithubToken;
-                let reveal_icon = self.secret_reveal_icon(target.clone());
-                let entity_toggle = entity.clone();
+                let reveal_icon = settings_controller.read(cx).secret_reveal_icon(&target);
+                let controller_toggle = settings_controller.clone();
                 (
                     i18n::string("settings.sync.gist_group.title"),
                     i18n::string("settings.sync.gist_group.description"),
@@ -2636,8 +2786,8 @@ impl AppView {
                                 reveal_icon,
                             },
                             move |window, cx| {
-                                entity_toggle.update(cx, |this, cx| {
-                                    this.toggle_secret_visibility(
+                                controller_toggle.update(cx, |controller, cx| {
+                                    controller.toggle_secret_visibility(
                                         SecretRevealTarget::SyncGithubToken,
                                         window,
                                         cx,
@@ -2656,12 +2806,12 @@ impl AppView {
                 )
             }
             SyncProvider::WebDav => {
-                let url_input = self.panel_forms.settings.sync_webdav_url_input.clone();
-                let username_input = self.panel_forms.settings.sync_webdav_username_input.clone();
-                let password_input = self.panel_forms.settings.sync_webdav_password_input.clone();
+                let url_input = settings_forms.sync_webdav_url_input.clone();
+                let username_input = settings_forms.sync_webdav_username_input.clone();
+                let password_input = settings_forms.sync_webdav_password_input.clone();
                 let target = SecretRevealTarget::SyncWebdavPassword;
-                let reveal_icon = self.secret_reveal_icon(target.clone());
-                let entity_toggle = entity.clone();
+                let reveal_icon = settings_controller.read(cx).secret_reveal_icon(&target);
+                let controller_toggle = settings_controller.clone();
                 (
                     i18n::string("settings.sync.webdav_group.title"),
                     i18n::string("settings.sync.webdav_group.description"),
@@ -2692,8 +2842,8 @@ impl AppView {
                                 reveal_icon,
                             },
                             move |window, cx| {
-                                entity_toggle.update(cx, |this, cx| {
-                                    this.toggle_secret_visibility(
+                                controller_toggle.update(cx, |controller, cx| {
+                                    controller.toggle_secret_visibility(
                                         SecretRevealTarget::SyncWebdavPassword,
                                         window,
                                         cx,
@@ -2727,8 +2877,8 @@ impl AppView {
                     .text_color(rgb(roles.on_surface_variant))
                     .label(i18n::string("dialogs.common.cancel"))
                     .on_click(move |_, window, cx| {
-                        entity_cancel.update(cx, |this, cx| {
-                            this.close_sync_provider_config_popup(window, cx);
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_sync_provider_config_popup(window, cx);
                         });
                     }),
             )
@@ -2750,9 +2900,9 @@ impl AppView {
                     .large()
                     .text_color(rgb(roles.primary))
                     .label(i18n::string("settings.sync.save_action"))
-                    .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_sync_provider_config_popup_action(window, cx);
+                    .on_click(move |_, _window, cx| {
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.submit_sync_provider_config_popup_action(cx);
                         });
                     })
                     .into_any_element()
@@ -2770,8 +2920,8 @@ impl AppView {
             popup_key,
             exit_progress,
             move |window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_sync_provider_config_popup(window, cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_sync_provider_config_popup(window, cx);
                 });
             },
         )
@@ -2779,15 +2929,20 @@ impl AppView {
 
     fn render_sync_passphrase_clear_confirm_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _popup: PendingSyncPassphraseClearConfirmPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let operation_in_progress = self.sync_passphrase_operation_in_progress();
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
+        let settings_controller = self.controllers.settings.clone();
+        let operation_in_progress = settings_controller
+            .read(cx)
+            .sync_passphrase_operation_in_progress();
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
         let popup_body = v_flex()
             .w_full()
             .gap_5()
@@ -2826,8 +2981,8 @@ impl AppView {
                     .text_color(rgb(roles.on_surface_variant))
                     .label(i18n::string("dialogs.common.cancel"))
                     .on_click(move |_, _window, cx| {
-                        entity_cancel.update(cx, |this, cx| {
-                            this.close_sync_passphrase_clear_confirm_popup(cx);
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_sync_passphrase_clear_confirm_popup(cx);
                         });
                     }),
             )
@@ -2842,9 +2997,9 @@ impl AppView {
                     .label(i18n::string(
                         "settings.sync.encryption.passphrase.clear_confirm.confirm",
                     ))
-                    .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_sync_passphrase_clear_confirm_popup_action(window, cx);
+                    .on_click(move |_, _window, cx| {
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.submit_sync_passphrase_clear_confirm_popup_action(cx);
                         });
                     }),
             )
@@ -2861,8 +3016,8 @@ impl AppView {
             "sync-passphrase-clear-confirm",
             exit_progress,
             move |_window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_sync_passphrase_clear_confirm_popup(cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_sync_passphrase_clear_confirm_popup(cx);
                 });
             },
         )
@@ -2870,19 +3025,21 @@ impl AppView {
 
     fn render_local_data_reset_confirmation_popup(
         &self,
-        entity: Entity<AppView>,
+        _entity: Entity<Self>,
         _popup: PendingLocalDataResetConfirmationPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let input = self
-            .panel_forms
-            .settings
-            .local_data_reset_confirmation_input
-            .clone();
-        let entity_cancel = entity.clone();
-        let entity_submit = entity.clone();
+        let settings_controller = self.controllers.settings.clone();
+        let input = settings_controller
+            .read(cx)
+            .forms()
+            .local_data_reset_confirmation_input;
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
         let popup_body = v_flex()
             .w_full()
             .gap_5()
@@ -2932,8 +3089,8 @@ impl AppView {
                     .text_color(rgb(roles.on_surface_variant))
                     .label(i18n::string("dialogs.common.cancel"))
                     .on_click(move |_, window, cx| {
-                        entity_cancel.update(cx, |this, cx| {
-                            this.close_local_data_reset_confirmation_popup(window, cx);
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_local_data_reset_confirmation_popup(window, cx);
                         });
                     }),
             )
@@ -2946,8 +3103,9 @@ impl AppView {
                     .text_color(rgb(roles.error))
                     .label(i18n::string("settings.about.reset_local.popup.confirm"))
                     .on_click(move |_, window, cx| {
-                        entity_submit.update(cx, |this, cx| {
-                            this.submit_local_data_reset_confirmation_popup_action(window, cx);
+                        controller_submit.update(cx, |controller, cx| {
+                            controller
+                                .submit_local_data_reset_confirmation_popup_action(window, cx);
                         });
                     }),
             )
@@ -2964,29 +3122,54 @@ impl AppView {
             "local-data-reset-confirmation",
             exit_progress,
             move |window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.close_local_data_reset_confirmation_popup(window, cx);
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_local_data_reset_confirmation_popup(window, cx);
                 });
             },
         )
     }
 
+    fn render_session_host_key_prompt(
+        &self,
+        tab_id: TabId,
+        prompt: &HostKeyPrompt,
+        exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        let controller = self.controllers.session.clone();
+        let action_controller = controller.clone();
+        controller.read(cx).render_trusted_host_key_prompt(
+            move |decision, cx| {
+                action_controller.update(cx, |controller, cx| {
+                    controller.resolve_host_key_prompt(tab_id, decision, cx);
+                });
+            },
+            prompt,
+            exit_progress,
+            bottom_popup_viewport_height,
+        )
+    }
+
     fn render_exiting_dialog_overlay(
         &self,
-        entity: Entity<AppView>,
+        entity: Entity<Self>,
         snapshot: DialogOverlaySnapshot,
         exit_progress: f32,
         bottom_popup_viewport_height: f32,
+        cx: &App,
     ) -> gpui::AnyElement {
         match snapshot {
-            DialogOverlaySnapshot::HostKey(prompt) => self.render_trusted_host_key_prompt(
-                entity,
-                &prompt,
-                Some(exit_progress),
-                bottom_popup_viewport_height,
-            ),
-            DialogOverlaySnapshot::KeyboardInteractive(challenge) => {
-                self.render_keyboard_interactive_prompt(entity, &challenge, Some(exit_progress))
+            DialogOverlaySnapshot::HostKey { tab_id, prompt } => self
+                .render_session_host_key_prompt(
+                    tab_id,
+                    &prompt,
+                    Some(exit_progress),
+                    bottom_popup_viewport_height,
+                    cx,
+                ),
+            DialogOverlaySnapshot::KeyboardInteractive { tab_id, challenge } => {
+                self.render_keyboard_interactive_prompt(tab_id, &challenge, Some(exit_progress), cx)
             }
             DialogOverlaySnapshot::ProfileDelete(prompt) => {
                 self.render_profile_delete_prompt(entity, &prompt, Some(exit_progress))
@@ -2995,19 +3178,24 @@ impl AppView {
                 self.render_managed_key_delete_prompt(entity, &prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::KnownHostDelete(prompt) => {
-                self.render_trusted_known_host_delete_prompt(entity, &prompt, Some(exit_progress))
+                let controller = self.controllers.session.clone();
+                controller.read(cx).render_trusted_known_host_delete_prompt(
+                    controller.clone(),
+                    &prompt,
+                    Some(exit_progress),
+                )
             }
             DialogOverlaySnapshot::SnippetDelete(prompt) => {
                 self.render_snippet_delete_prompt(entity, &prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::PortForwardRuleDelete(prompt) => {
-                self.render_port_forward_rule_delete_prompt(entity, &prompt, Some(exit_progress))
+                self.render_port_forward_rule_delete_prompt(&prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::ChatSessionDelete(prompt) => {
-                self.render_chat_session_delete_prompt(entity, &prompt, Some(exit_progress))
+                self.render_chat_session_delete_prompt(&prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::ChatSessionRename(prompt) => {
-                self.render_chat_session_rename_prompt(entity, &prompt, Some(exit_progress))
+                self.render_chat_session_rename_prompt(&prompt, Some(exit_progress), cx)
             }
             DialogOverlaySnapshot::SyncDirection(prompt) => {
                 self.render_sync_direction_prompt(entity, &prompt, Some(exit_progress))
@@ -3027,6 +3215,7 @@ impl AppView {
                     popup,
                     Some(exit_progress),
                     bottom_popup_viewport_height,
+                    cx,
                 ),
             DialogOverlaySnapshot::SyncPassphraseClearConfirmPopup(popup) => self
                 .render_sync_passphrase_clear_confirm_popup(
@@ -3034,18 +3223,21 @@ impl AppView {
                     popup,
                     Some(exit_progress),
                     bottom_popup_viewport_height,
+                    cx,
                 ),
             DialogOverlaySnapshot::SyncPassphrasePopup(popup) => self.render_sync_passphrase_popup(
                 entity,
                 popup,
                 Some(exit_progress),
                 bottom_popup_viewport_height,
+                cx,
             ),
             DialogOverlaySnapshot::AiProviderPopup(popup) => self.render_ai_provider_popup(
                 entity,
                 popup,
                 Some(exit_progress),
                 bottom_popup_viewport_height,
+                cx,
             ),
             DialogOverlaySnapshot::WebSearchConfigPopup(popup) => self
                 .render_web_search_config_popup(
@@ -3053,6 +3245,7 @@ impl AppView {
                     popup,
                     Some(exit_progress),
                     bottom_popup_viewport_height,
+                    cx,
                 ),
             DialogOverlaySnapshot::SyncProviderConfigPopup(popup) => self
                 .render_sync_provider_config_popup(
@@ -3060,6 +3253,7 @@ impl AppView {
                     popup,
                     Some(exit_progress),
                     bottom_popup_viewport_height,
+                    cx,
                 ),
             DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode) => self
                 .render_local_vault_passphrase_popup(
@@ -3067,9 +3261,16 @@ impl AppView {
                     mode,
                     Some(exit_progress),
                     bottom_popup_viewport_height,
+                    cx,
                 ),
             DialogOverlaySnapshot::SftpPrompt { tab_id, prompt } => {
-                self.render_sftp_prompt_overlay(entity, tab_id, &prompt, Some(exit_progress))
+                let controller = self.controllers.sftp.clone();
+                controller.read(cx).render_sftp_prompt_overlay(
+                    controller.clone(),
+                    tab_id,
+                    &prompt,
+                    Some(exit_progress),
+                )
             }
         }
     }

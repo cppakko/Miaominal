@@ -1,5 +1,6 @@
 #[path = "layout/chrome.rs"]
 mod chrome;
+pub(in crate::ui::shell) use chrome::ChromeAppViewExt;
 #[path = "layout/session_agent_composer.rs"]
 mod session_agent_composer;
 #[path = "layout/session_agent_conversation.rs"]
@@ -19,13 +20,14 @@ mod session_agent_tools;
 #[path = "layout/session_agent_utils.rs"]
 mod session_agent_utils;
 #[path = "layout/sidebar.rs"]
-mod sidebar;
+pub(in crate::ui::shell) mod sidebar;
 #[path = "layout/workspace.rs"]
-mod workspace;
+pub(in crate::ui::shell) mod workspace;
 #[path = "layout/workspace_monitor.rs"]
 mod workspace_monitor;
 #[path = "layout/workspace_panes.rs"]
 mod workspace_panes;
+pub(in crate::ui::shell) use workspace_panes::WorkspacePanesAppViewExt;
 #[path = "layout/workspace_session_status.rs"]
 mod workspace_session_status;
 #[path = "layout/workspace_side_panel.rs"]

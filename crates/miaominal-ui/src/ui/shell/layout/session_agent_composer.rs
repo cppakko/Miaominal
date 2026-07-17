@@ -18,10 +18,13 @@ fn ai_provider_kind_supports_vision(kind: miaominal_settings::AiProviderKind) ->
     )
 }
 
-fn selected_ai_provider_kind(app: &AppView) -> Option<miaominal_settings::AiProviderKind> {
-    let settings = app.settings_store.settings();
-    let selected_id = settings.selected_ai_provider_id.as_deref()?;
-    settings
+fn selected_ai_provider_kind(
+    settings: &SettingsController,
+    _cx: &App,
+) -> Option<miaominal_settings::AiProviderKind> {
+    let app_settings = settings.settings();
+    let selected_id = app_settings.selected_ai_provider_id.as_deref()?;
+    app_settings
         .ai_providers
         .iter()
         .find(|provider| provider.id == selected_id && provider.enabled)
@@ -29,8 +32,10 @@ fn selected_ai_provider_kind(app: &AppView) -> Option<miaominal_settings::AiProv
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_composer(
-    app: &AppView,
-    entity: Entity<AppView>,
+    agent_controller: &AgentController,
+    agent: Entity<AgentController>,
+    settings: Entity<SettingsController>,
+    cx: &App,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
@@ -38,25 +43,30 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
         material.palettes.neutral_variant,
         if material.dark { 65 } else { 50 },
     );
-    let provider_select = app.panel_forms.settings.ai_provider_select.clone();
-    let prompt_input = app.workspace_forms.agent.prompt_input.clone();
+    let provider_select = settings.read(cx).forms().ai_provider_select;
+    let state = agent_controller.session_agent();
+    let prompt_input = agent_controller.prompt_input();
+    let agent_mode_select = agent_controller.agent_mode_select();
     let prompt_menu_input = prompt_input.clone();
-    let pty_toggle_entity = entity.clone();
-    let attach_entity = entity.clone();
-    let paste_entity = entity.clone();
-    let badge_entity = entity.clone();
-    let mention_entity = entity.clone();
-    let send_entity = entity;
-    let waiting = app.session_agent.is_busy();
-    let has_attachments = !app.session_agent.pending_attachments.is_empty();
-    let has_pending_images = app
-        .session_agent
+    let pty_toggle_controller = agent.clone();
+    let attach_controller = agent.clone();
+    let paste_controller = agent.clone();
+    let badge_controller = agent.clone();
+    let mention_controller = agent.clone();
+    let send_controller = agent.clone();
+    let waiting = state.is_busy();
+    let has_attachments = !state.pending_attachments.is_empty();
+    let has_pending_images = state
         .pending_attachments
         .iter()
         .any(|attachment| attachment.is_image());
-    let has_targets = !app.session_agent.selected_at_targets.is_empty();
-    let at_mention_query = app.session_agent.at_mention_query.clone();
-    let selected_provider_kind = selected_ai_provider_kind(app);
+    let has_targets = !state.selected_at_targets.is_empty();
+    let at_mention_query = state.at_mention_query.clone();
+    let selected_at_targets = state.selected_at_targets.clone();
+    let pending_attachments = state.pending_attachments.clone();
+    let exec_mode_is_pty = state.exec_mode.is_pty();
+    let target_candidates = agent_controller.target_candidates();
+    let selected_provider_kind = selected_ai_provider_kind(&settings.read(cx), cx);
     let has_provider = selected_provider_kind.is_some();
     let image_text_fallback = has_pending_images
         && selected_provider_kind.is_some_and(|kind| !ai_provider_kind_supports_vision(kind));
@@ -66,11 +76,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
         .p_2()
         .relative()
         .on_drop::<ExternalPaths>({
-            let drop_entity = send_entity.clone();
+            let drop_controller = agent.clone();
             move |paths: &ExternalPaths, _window, cx| {
                 let local_paths: Vec<std::path::PathBuf> = paths.paths().to_vec();
-                drop_entity.update(cx, |this, cx| {
-                    this.ingest_attachment_paths(local_paths, cx);
+                drop_controller.update(cx, |controller, cx| {
+                    controller.ingest_attachment_paths_and_report(local_paths, cx);
                 });
             }
         })
@@ -81,8 +91,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                 .when_some(at_mention_query, |this, query| {
                     this.child(
                         session_agent_mentions::render_session_agent_at_mention_popup(
-                            app,
-                            mention_entity.clone(),
+                            mention_controller.clone(),
+                            target_candidates.clone(),
                             query,
                         ),
                     )
@@ -104,11 +114,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 .when(has_targets || has_attachments, |this| {
                                     this.child(div().flex_shrink_0().child(
                                         render_composer_badge_row(
-                                            app,
-                                            badge_entity.clone(),
+                                            badge_controller.clone(),
                                             roles,
                                             has_targets,
                                             has_attachments,
+                                            target_candidates.clone(),
+                                            selected_at_targets.clone(),
+                                            pending_attachments.clone(),
                                         ),
                                     ))
                                 })
@@ -141,9 +153,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     ),
                                 )
                                 .on_key_down({
-                                    let entity = paste_entity.clone();
+                                    let controller = paste_controller.clone();
                                     move |event: &KeyDownEvent, _window, cx| {
-                                        handle_paste_key(event, entity.clone(), cx);
+                                        handle_paste_key(event, controller.clone(), cx);
                                     }
                                 })
                                 .context_menu(move |menu, _window, cx| {
@@ -197,45 +209,43 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     Some(roles.surface_container_high),
                                     Some(text_muted),
                                     None,
-                                    move |window, cx| {
-                                        let entity = attach_entity.clone();
-                                        entity.update(cx, |this, cx| {
-                                            this.open_attachment_picker(window, cx);
+                                    move |_window, cx| {
+                                        let controller = attach_controller.clone();
+                                        controller.update(cx, |controller, cx| {
+                                            controller.open_attachment_picker(cx);
                                         });
                                     },
                                 ))
                                 .child(icon_button_with_tooltip(
                                     AppIcon::LaptopMinimal,
-                                    i18n::string(if app.session_agent.exec_mode.is_pty() {
+                                    i18n::string(if exec_mode_is_pty {
                                         "workspace.panel.agent.tooltips.disable_pty"
                                     } else {
                                         "workspace.panel.agent.tooltips.enable_pty"
                                     }),
                                     24.0,
                                     8.0,
-                                    Some(if app.session_agent.exec_mode.is_pty() {
+                                    Some(if exec_mode_is_pty {
                                         roles.secondary_container
                                     } else {
                                         roles.surface_container_high
                                     }),
-                                    Some(if app.session_agent.exec_mode.is_pty() {
+                                    Some(if exec_mode_is_pty {
                                         roles.on_secondary_container
                                     } else {
                                         text_muted
                                     }),
                                     None,
                                     move |_window, cx| {
-                                        let entity = pty_toggle_entity.clone();
-                                        entity.update(cx, |this, cx| {
-                                            this.session_agent.exec_mode =
-                                                this.session_agent.exec_mode.toggle();
-                                            cx.notify();
+                                        let controller = pty_toggle_controller.clone();
+                                        controller.update(cx, |controller, cx| {
+                                            controller.toggle_execution_mode(cx);
                                         });
                                     },
                                 ))
                                 .child(
                                     div().w(px(108.0)).child(
-                                        md3_select(&app.workspace_forms.agent.agent_mode_select)
+                                        md3_select(&agent_mode_select)
                                             .with_size(gpui_component::Size::Medium)
                                             .w_full(),
                                     ),
@@ -279,14 +289,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                             }),
                                             None,
                                             move |window, cx| {
-                                                let entity = send_entity.clone();
-                                                entity.update(cx, |this, cx| {
-                                                    if this.session_agent.is_busy() {
-                                                        this.stop_session_agent_stream(cx);
+                                                let controller = send_controller.clone();
+                                                controller.update(cx, |controller, cx| {
+                                                    if controller.session_agent().is_busy() {
+                                                        controller.stop_session_agent_stream(cx);
                                                     } else {
-                                                        this.submit_session_agent_prompt(
-                                                            window, cx,
-                                                        );
+                                                        controller
+                                                            .submit_session_agent_prompt(window, cx);
                                                     }
                                                 });
                                             },
@@ -319,7 +328,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
 
 /// Handles Ctrl+V / Cmd+V in the composer: if the clipboard holds an image,
 /// ingest it as an attachment; otherwise let the default text paste proceed.
-fn handle_paste_key(event: &KeyDownEvent, entity: Entity<AppView>, cx: &mut gpui::App) {
+fn handle_paste_key(event: &KeyDownEvent, controller: Entity<AgentController>, cx: &mut gpui::App) {
     let keystroke = &event.keystroke;
     let is_paste = (keystroke.key == "v" || keystroke.key == "V")
         && (keystroke.modifiers.control || keystroke.modifiers.platform);
@@ -333,8 +342,8 @@ fn handle_paste_key(event: &KeyDownEvent, entity: Entity<AppView>, cx: &mut gpui
         if let ClipboardEntry::Image(image) = entry {
             let bytes = image.bytes.clone();
             let format = image.format;
-            entity.update(cx, |this, cx| {
-                this.ingest_clipboard_image(format, bytes, cx);
+            controller.update(cx, |controller, cx| {
+                controller.ingest_clipboard_image_and_report(format, bytes, cx);
             });
             return;
         }
@@ -346,26 +355,27 @@ fn handle_paste_key(event: &KeyDownEvent, entity: Entity<AppView>, cx: &mut gpui
 /// show a filename with a Close button; target chips show `@name` with
 /// a Close button.
 fn render_composer_badge_row(
-    app: &AppView,
-    entity: Entity<AppView>,
+    agent: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
     has_targets: bool,
     has_attachments: bool,
+    candidates: Vec<SessionAgentTargetCandidate>,
+    selected_at_targets: Vec<String>,
+    pending_attachments: Vec<miaominal_core::chat_attachment::ChatAttachment>,
 ) -> gpui::AnyElement {
     h_flex()
         .w_full()
         .gap_1()
         .flex_wrap()
         .when(has_targets, |this| {
-            let candidates = app.session_agent_target_candidates();
-            let names = app.session_agent.selected_at_targets.clone();
+            let names = selected_at_targets.clone();
             this.children(names.into_iter().map(|name| {
                 let remove_name = name.clone();
                 let badge_id =
                     SharedString::from(format!("session-agent-target-badge-{}", name.as_str()));
                 let remove_id =
                     SharedString::from(format!("session-agent-target-remove-{}", name.as_str()));
-                let remove_entity = entity.clone();
+                let remove_controller = agent.clone();
                 let resolved = candidates.iter().any(|candidate| {
                     candidate.name == name
                         || candidate
@@ -407,10 +417,10 @@ fn render_composer_badge_row(
                                     .on_mouse_down(
                                         gpui::MouseButton::Left,
                                         move |_, _window, cx| {
-                                            let entity = remove_entity.clone();
+                                            let controller = remove_controller.clone();
                                             let name = remove_name.clone();
-                                            entity.update(cx, |this, cx| {
-                                                this.remove_session_agent_at_target(name, cx);
+                                            controller.update(cx, |controller, cx| {
+                                                controller.remove_at_target(&name, cx);
                                             });
                                         },
                                     )
@@ -427,11 +437,11 @@ fn render_composer_badge_row(
             }))
         })
         .when(has_attachments, |this| {
-            let attachments = app.session_agent.pending_attachments.clone();
+            let attachments = pending_attachments.clone();
             this.children(attachments.iter().map(|attachment| {
                 let attachment_id = attachment.id.clone();
                 let filename = SharedString::from(attachment.filename.clone());
-                let remove_entity = entity.clone();
+                let remove_controller = agent.clone();
                 let remove_id = attachment_id.clone();
                 let icon = match &attachment.content {
                     miaominal_core::chat_attachment::ChatAttachmentContent::Image(_) => {
@@ -479,10 +489,13 @@ fn render_composer_badge_row(
                                     .on_mouse_down(
                                         gpui::MouseButton::Left,
                                         move |_, _window, cx| {
-                                            let entity = remove_entity.clone();
+                                            let controller = remove_controller.clone();
                                             let id = remove_id.clone();
-                                            entity.update(cx, |this, cx| {
-                                                this.remove_pending_attachment(id.as_ref(), cx);
+                                            controller.update(cx, |controller, cx| {
+                                                controller.remove_pending_attachment_and_report(
+                                                    id.as_ref(),
+                                                    cx,
+                                                );
                                             });
                                         },
                                     )

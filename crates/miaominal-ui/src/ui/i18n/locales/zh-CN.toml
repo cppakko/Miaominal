@@ -564,7 +564,6 @@ invalid_text_file = "文件不是有效的 UTF-8 文本：{filename}"
 
 [workspace.panel.agent.labels]
 message = "消息"
-selection = "选中内容"
 tool_call = "工具调用"
 
 [workspace.panel.agent.tool_titles]
@@ -1280,7 +1279,6 @@ saved_memory_only = "已仅在内存中保存 {name}"
 save_failed = "保存失败：{message}"
 test_connection_failed = "测试连接失败：{message}"
 test_connection_failed_title = "测试连接失败"
-selected = "已选择 {name}"
 
 [forwarding.status]
 idle = "空闲"
@@ -1635,7 +1633,6 @@ font_set = "字体已设为 {font}"
 font_reset = "字体已重置为 {font}"
 font_size = "字号 {value}"
 line_height = "行高 {value}"
-invalid_seed_color = "无效的种子色，请使用 #RRGGBB。"
 theme_seed = "主题种子色：{value}"
 theme_seed_reset = "主题种子色已重置为 {value}"
 theme_changed = "主题：{theme}"
@@ -1653,9 +1650,6 @@ last_tab_close_behavior_exit = "关闭最后一个标签页时将退出应用"
 last_tab_close_behavior_open_home = "关闭最后一个标签页时将打开新的主页标签页"
 monitor_history_duration_changed = "监控历史窗口已更新"
 local_vault_auto_lock_duration_changed = "本地机密库自动锁定时间已更新"
-session_monitoring_started = "已开始当前会话的远端监控"
-session_monitoring_pending = "当前会话就绪后将开始远端监控"
-session_monitoring_start_failed = "启动远端监控失败：{error}"
 
 [settings.ai_providers.providers_group]
 title = "已配置提供商"

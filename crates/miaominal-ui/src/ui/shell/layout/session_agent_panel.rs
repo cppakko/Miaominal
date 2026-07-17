@@ -38,8 +38,8 @@ fn session_agent_message_column_width(panel_width: f32) -> f32 {
 }
 
 fn render_session_agent_resize_handle(
+    controller: Entity<AgentController>,
     is_dragging: bool,
-    cx: &mut Context<AppView>,
 ) -> gpui::AnyElement {
     div()
         .id("session-agent-sidebar-resize-handle")
@@ -61,14 +61,17 @@ fn render_session_agent_resize_handle(
         )
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                this.workspace_state.session_agent_panel_drag = Some(SessionAgentPanelDragState {
-                    initial_pointer: f32::from(event.position.x),
-                    initial_width: this.workspace_state.session_agent_panel_width,
+            move |event: &MouseDownEvent, _window, cx| {
+                controller.update(cx, |controller, cx| {
+                    let initial_width = controller.panel_width();
+                    controller.set_panel_drag(Some(SessionAgentPanelDragState {
+                        initial_pointer: f32::from(event.position.x),
+                        initial_width,
+                    }));
+                    cx.notify();
                 });
                 cx.stop_propagation();
-                cx.notify();
-            }),
+            },
         )
         .hover(move |this| {
             if is_dragging {
@@ -99,25 +102,7 @@ fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
     .into_any_element()
 }
 
-impl AppView {
-    pub(in crate::ui::shell::layout) fn copy_session_agent_message_or_selection(
-        &mut self,
-        fallback_label: String,
-        fallback_text: String,
-        selected_text: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(selected_text) = selected_text {
-            self.copy_session_agent_text(
-                i18n::string("workspace.panel.agent.labels.selection"),
-                selected_text,
-                cx,
-            );
-        } else {
-            self.copy_session_agent_text(fallback_label, fallback_text, cx);
-        }
-    }
-
+impl AgentController {
     fn handle_session_agent_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -130,7 +115,8 @@ impl AppView {
 
         if is_search {
             cx.stop_propagation();
-            if self.session_agent.panel_view == ChatPanelView::SessionList {
+            let panel_view = self.session_agent().panel_view;
+            if panel_view == ChatPanelView::SessionList {
                 self.open_session_filter(window, cx);
             } else {
                 self.open_conversation_search(window, cx);
@@ -140,26 +126,16 @@ impl AppView {
 
         if is_escape {
             cx.stop_propagation();
-            let forms = &self.workspace_forms.chat_search;
-            if forms.session_filter_open {
+            if self.session_filter_open() {
                 self.close_session_filter(cx);
-            } else if forms.conversation_search_open {
+            } else if self.conversation_search_open() {
                 self.close_conversation_search(cx);
             }
         }
     }
 
     fn start_session_agent_auto_scroll(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
-        self.workspace_state.session_agent_auto_scroll_generation = self
-            .workspace_state
-            .session_agent_auto_scroll_generation
-            .wrapping_add(1);
-        let generation = self.workspace_state.session_agent_auto_scroll_generation;
-        self.workspace_state.session_agent_auto_scroll = Some(SessionAgentAutoScrollState {
-            anchor_y: pointer_y,
-            pointer_y,
-            generation,
-        });
+        let generation = self.start_auto_scroll(pointer_y);
 
         cx.spawn(async move |this, cx| {
             loop {
@@ -182,55 +158,37 @@ impl AppView {
     }
 
     fn update_session_agent_auto_scroll_pointer(&mut self, pointer_y: f32, cx: &mut Context<Self>) {
-        if let Some(auto_scroll) = self.workspace_state.session_agent_auto_scroll.as_mut() {
-            auto_scroll.pointer_y = pointer_y;
+        if self.update_auto_scroll_pointer(pointer_y) {
             cx.notify();
         }
     }
 
     fn stop_session_agent_auto_scroll(&mut self, cx: &mut Context<Self>) {
-        if self
-            .workspace_state
-            .session_agent_auto_scroll
-            .take()
-            .is_some()
-        {
-            self.workspace_state.session_agent_auto_scroll_generation = self
-                .workspace_state
-                .session_agent_auto_scroll_generation
-                .wrapping_add(1);
+        if self.stop_auto_scroll() {
             cx.notify();
         }
     }
 
     fn begin_session_agent_text_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.finish_session_agent_text_drag(cx);
-        self.workspace_state.session_agent_text_drag_origin = Some(position);
-        if let Some(conversation) = self.session_agent.conversation_view.as_ref().cloned() {
+        self.finish_text_drag(cx);
+        let conversation = self.session_agent().conversation_view.as_ref().cloned();
+        if let Some(conversation) = conversation.as_ref() {
             conversation.update(cx, |view, _cx| view.begin_selection_drag());
-            self.workspace_state.session_agent_text_drag_conversation = Some(conversation);
         }
+        self.begin_text_drag(position, conversation);
     }
 
     fn update_session_agent_text_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         if event.pressed_button != Some(MouseButton::Left) {
-            if self
-                .workspace_state
-                .session_agent_text_drag_origin
-                .is_some()
-                || self
-                    .workspace_state
-                    .session_agent_text_drag_conversation
-                    .is_some()
-            {
-                self.finish_session_agent_text_drag(cx);
+            if self.text_drag_active() {
+                self.finish_text_drag(cx);
             }
             return;
         }
-        if self.workspace_state.session_agent_text_drag_paused_tail {
+        if self.text_drag_paused_tail() {
             return;
         }
-        let Some(origin) = self.workspace_state.session_agent_text_drag_origin else {
+        let Some(origin) = self.text_drag_origin() else {
             return;
         };
         let delta_x = f32::from(event.position.x - origin.x);
@@ -241,46 +199,22 @@ impl AppView {
             return;
         }
 
-        let Some(conversation) = self
-            .workspace_state
-            .session_agent_text_drag_conversation
-            .as_ref()
-            .cloned()
-        else {
+        let Some(conversation) = self.text_drag_conversation() else {
             return;
         };
         if conversation.read(cx).pause_tail_following() {
-            self.workspace_state.session_agent_text_drag_paused_tail = true;
+            self.set_text_drag_paused_tail(true);
             cx.notify();
         }
     }
 
-    pub(in crate::ui::shell) fn finish_session_agent_text_drag(&mut self, cx: &mut Context<Self>) {
-        self.workspace_state.session_agent_text_drag_origin = None;
-        let Some(conversation) = self
-            .workspace_state
-            .session_agent_text_drag_conversation
-            .take()
-        else {
-            self.workspace_state.session_agent_text_drag_paused_tail = false;
-            return;
-        };
-        conversation.update(cx, |view, cx| view.finish_selection_drag(cx));
-        if std::mem::take(&mut self.workspace_state.session_agent_text_drag_paused_tail) {
-            conversation.read(cx).restore_tail_follow_mode();
-        }
-        cx.notify();
-    }
-
     fn tick_session_agent_auto_scroll(&mut self, generation: u64, cx: &mut Context<Self>) -> bool {
-        if !self.panels.session_agent_panel_open
-            || self.session_agent.panel_view != ChatPanelView::Conversation
-        {
+        if !self.panel_open() || self.session_agent().panel_view != ChatPanelView::Conversation {
             self.stop_session_agent_auto_scroll(cx);
             return false;
         }
 
-        let Some(auto_scroll) = self.workspace_state.session_agent_auto_scroll.as_ref() else {
+        let Some(auto_scroll) = self.auto_scroll() else {
             return false;
         };
         if auto_scroll.generation != generation {
@@ -296,8 +230,9 @@ impl AppView {
         let step = (active_distance * SESSION_AGENT_AUTO_SCROLL_SPEED)
             .min(SESSION_AGENT_AUTO_SCROLL_MAX_STEP)
             * distance.signum();
+        let conversation = self.session_agent().conversation_view.as_ref().cloned();
         if step.abs() >= 0.1
-            && let Some(conversation) = self.session_agent.conversation_view.as_ref()
+            && let Some(conversation) = conversation
         {
             conversation.read(cx).scroll_by(px(step));
             cx.notify();
@@ -310,7 +245,6 @@ impl AppView {
         &self,
         entity: Entity<Self>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -319,11 +253,11 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
         let icon_bg = roles.surface_container;
-        let is_conversation = self.session_agent.panel_view != ChatPanelView::SessionList;
+        let is_conversation = self.session_agent().panel_view != ChatPanelView::SessionList;
         let is_search_open = if is_conversation {
-            self.workspace_forms.chat_search.conversation_search_open
+            self.conversation_search_open()
         } else {
-            self.workspace_forms.chat_search.session_filter_open
+            self.session_filter_open()
         };
         let search_tooltip = i18n::string(if is_conversation {
             if is_search_open {
@@ -338,13 +272,14 @@ impl AppView {
         });
         let back_entity = entity.clone();
         let new_chat_entity = entity.clone();
-        let search_entity = entity.clone();
+        let search_controller = entity.clone();
         let close_entity = entity.clone();
         let edit_entity = entity.clone();
-        let editing = is_conversation && self.workspace_forms.agent.editing_title;
-        let title_input = self.workspace_forms.agent.title_input.clone();
+        let editing = is_conversation && self.editing_title();
+        let title_input = self.title_input();
+        let title_input_for_edit = title_input.clone();
         let display_text = if is_conversation {
-            self.session_agent
+            self.session_agent()
                 .title
                 .clone()
                 .unwrap_or_else(|| i18n::string("workspace.panel.agent.sidebar_title"))
@@ -370,7 +305,8 @@ impl AppView {
                         move |_window, cx| {
                             let entity = back_entity.clone();
                             entity.update(cx, |this, cx| {
-                                this.show_session_agent_history(cx);
+                                this.finish_text_drag(cx);
+                                this.show_chat_history(cx);
                             });
                         },
                     ),
@@ -390,7 +326,8 @@ impl AppView {
                         move |window, cx| {
                             let entity = new_chat_entity.clone();
                             entity.update(cx, |this, cx| {
-                                this.start_session_agent_conversation(window, cx);
+                                this.finish_text_drag(cx);
+                                this.start_new_conversation(window, cx);
                             });
                         },
                     )),
@@ -412,6 +349,7 @@ impl AppView {
                     })
                     .when(!editing, move |this| {
                         let click_entity = edit_entity.clone();
+                        let edit_title_input = title_input_for_edit.clone();
                         let text = display_text.clone();
                         this.child(
                             div()
@@ -422,18 +360,17 @@ impl AppView {
                                     this.cursor_text().on_click(move |_click, window, cx| {
                                         click_entity.update(cx, |this, cx| {
                                             let current_title = this
-                                                .session_agent
+                                                .session_agent()
                                                 .title
                                                 .clone()
                                                 .unwrap_or_default();
                                             set_input_value(
-                                                &this.workspace_forms.agent.title_input,
+                                                &edit_title_input,
                                                 current_title,
                                                 window,
                                                 cx,
                                             );
-                                            this.workspace_forms.agent.editing_title = true;
-                                            cx.notify();
+                                            this.set_editing_title(true, cx);
                                         });
                                     })
                                 })
@@ -457,19 +394,19 @@ impl AppView {
                         }),
                         None,
                         move |window, cx| {
-                            let entity = search_entity.clone();
-                            entity.update(cx, |this, cx| {
-                                if this.session_agent.panel_view == ChatPanelView::SessionList {
-                                    if this.workspace_forms.chat_search.session_filter_open {
-                                        this.close_session_filter(cx);
+                            let controller = search_controller.clone();
+                            controller.update(cx, |controller, cx| {
+                                let panel_view = { controller.session_agent().panel_view };
+                                if panel_view == ChatPanelView::SessionList {
+                                    if controller.session_filter_open() {
+                                        controller.close_session_filter(cx);
                                     } else {
-                                        this.open_session_filter(window, cx);
+                                        controller.open_session_filter(window, cx);
                                     }
-                                } else if this.workspace_forms.chat_search.conversation_search_open
-                                {
-                                    this.close_conversation_search(cx);
+                                } else if controller.conversation_search_open() {
+                                    controller.close_conversation_search(cx);
                                 } else {
-                                    this.open_conversation_search(window, cx);
+                                    controller.open_conversation_search(window, cx);
                                 }
                             });
                         },
@@ -489,8 +426,8 @@ impl AppView {
                         move |_window, cx| {
                             let entity = close_entity.clone();
                             entity.update(cx, |this, cx| {
-                                this.finish_session_agent_text_drag(cx);
-                                this.panels.session_agent_panel_open = false;
+                                this.finish_text_drag(cx);
+                                this.set_panel_open(false);
                                 cx.notify();
                             });
                         },
@@ -502,13 +439,14 @@ impl AppView {
     pub(in crate::ui::shell::layout) fn render_session_agent_sidebar(
         &mut self,
         entity: Entity<Self>,
+        settings: Entity<SettingsController>,
+        terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let panel_width =
-            clamp_session_agent_panel_width(self.workspace_state.session_agent_panel_width);
-        let is_dragging = self.workspace_state.session_agent_panel_drag.is_some();
+        let panel_width = clamp_session_agent_panel_width(self.panel_width());
+        let is_dragging = self.panel_drag().is_some();
 
         card_surface(roles.surface_container, 16.0)
             .id("session-agent-sidebar")
@@ -519,7 +457,10 @@ impl AppView {
             .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_hidden()
-            .child(render_session_agent_resize_handle(is_dragging, cx))
+            .child(render_session_agent_resize_handle(
+                entity.clone(),
+                is_dragging,
+            ))
             .child(
                 v_flex()
                     .size_full()
@@ -531,17 +472,21 @@ impl AppView {
                             .flex_shrink_0()
                             .items_center()
                             .px_2()
-                            .child(self.render_session_agent_sidebar_toolbar(
-                                entity.clone(),
-                                window,
-                                cx,
-                            )),
+                            .child(
+                                self.render_session_agent_sidebar_toolbar(entity.clone(), window),
+                            ),
                     )
                     .child(
                         div()
                             .flex_1()
                             .min_h(px(0.0))
-                            .child(self.render_session_agent_panel(entity, window, cx)),
+                            .child(self.render_session_agent_panel(
+                                entity,
+                                settings,
+                                terminal_originated_selection_drag_active,
+                                window,
+                                cx,
+                            )),
                     ),
             )
             .into_any_element()
@@ -550,11 +495,13 @@ impl AppView {
     pub(in crate::ui::shell::layout) fn render_session_agent_panel(
         &mut self,
         entity: Entity<Self>,
+        settings: Entity<SettingsController>,
+        terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        if self.session_agent.panel_view == ChatPanelView::SessionList {
-            return self.render_session_agent_history_panel(entity, window, cx);
+        if self.session_agent().panel_view == ChatPanelView::SessionList {
+            return self.render_session_agent_history_panel(entity, settings, window, cx);
         }
 
         let material = miaominal_settings::current_theme().material;
@@ -563,22 +510,17 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let message_column_width =
-            session_agent_message_column_width(self.workspace_state.session_agent_panel_width);
+        let message_column_width = session_agent_message_column_width(self.panel_width());
         let show_scrollable_messages =
-            !self.session_agent.messages.is_empty() || self.session_agent.is_busy();
-        let conversation = self.ensure_session_agent_conversation_view(cx);
+            !self.session_agent().messages.is_empty() || self.session_agent().is_busy();
+        let conversation = self.ensure_panel_conversation_view(cx);
         let conversation_list_state = conversation.read(cx).list_state();
 
         // Chat search state
-        let search_input_entity = self
-            .workspace_forms
-            .chat_search
-            .conversation_search_input
-            .clone();
-        let search_match_count = self.workspace_forms.chat_search.match_count;
-        let search_current_match = self.workspace_forms.chat_search.current_match;
-        let search_status = self.workspace_forms.chat_search.status.clone();
+        let search_input_entity = self.conversation_search_input();
+        let search_match_count = self.conversation_search_match_count();
+        let search_current_match = self.conversation_search_current_match();
+        let search_status = self.conversation_search_status();
         let search_visibility = self.advance_conversation_search_bar(window);
 
         let close_search_entity = entity.clone();
@@ -589,7 +531,7 @@ impl AppView {
             .id("session-agent-panel-content")
             .size_full()
             .relative()
-            .track_focus(&self.session_agent_focus)
+            .track_focus(&self.focus())
             .on_key_down(cx.listener(Self::handle_session_agent_key_down))
             .child(
                 v_flex()
@@ -653,8 +595,8 @@ impl AppView {
                                                                 Some(text_muted),
                                                                 None,
                                                                 move |_window, cx| {
-                                                                    prev_ent.update(cx, |this, cx| {
-                                                                        this.navigate_conversation_search_prev(cx);
+                                                                    prev_ent.update(cx, |controller, cx| {
+                                                                        controller.navigate_conversation_search_prev(cx);
                                                                     });
                                                                 },
                                                             ))
@@ -667,8 +609,8 @@ impl AppView {
                                                                 Some(text_muted),
                                                                 None,
                                                                 move |_window, cx| {
-                                                                    next_ent.update(cx, |this, cx| {
-                                                                        this.navigate_conversation_search_next(cx);
+                                                                    next_ent.update(cx, |controller, cx| {
+                                                                        controller.navigate_conversation_search_next(cx);
                                                                     });
                                                                 },
                                                             ))
@@ -681,8 +623,8 @@ impl AppView {
                                                                 Some(text_muted),
                                                                 None,
                                                                 move |_window, cx| {
-                                                                    close_ent.update(cx, |this, cx| {
-                                                                        this.close_conversation_search(cx);
+                                                                    close_ent.update(cx, |controller, cx| {
+                                                                        controller.close_conversation_search(cx);
                                                                     });
                                                                 },
                                                             ))
@@ -711,11 +653,7 @@ impl AppView {
                                                             cx,
                                                         );
                                                     }
-                                                    if this
-                                                        .workspace_state
-                                                        .session_agent_auto_scroll
-                                                        .is_some()
-                                                    {
+                                                    if this.auto_scroll().is_some() {
                                                         this.stop_session_agent_auto_scroll(cx);
                                                         cx.stop_propagation();
                                                     } else if event.button != MouseButton::Middle {
@@ -730,11 +668,7 @@ impl AppView {
                                                           event: &MouseDownEvent,
                                                           _window,
                                                           cx| {
-                                                        if this
-                                                            .workspace_state
-                                                            .session_agent_auto_scroll
-                                                            .is_none()
-                                                        {
+                                                        if this.auto_scroll().is_none() {
                                                             this.start_session_agent_auto_scroll(
                                                                 f32::from(event.position.y),
                                                                 cx,
@@ -759,19 +693,15 @@ impl AppView {
                                                   },
                                               ))
                                             .child(self.render_session_agent_messages(
-                                                message_column_width,
                                                 entity.clone(),
+                                                message_column_width,
+                                                terminal_originated_selection_drag_active,
                                                 window,
                                                 cx,
                                             ))
-                                            .when(
-                                                self.workspace_state
-                                                    .session_agent_auto_scroll
-                                                    .is_some(),
-                                                |this| {
-                                                    this.child(render_session_agent_auto_scroll_cursor_layer())
-                                                },
-                                            ),
+                                            .when(self.auto_scroll().is_some(), |this| {
+                                                this.child(render_session_agent_auto_scroll_cursor_layer())
+                                            }),
                                     )
                                     .vertical_scrollbar(&conversation_list_state)
                                     .into_any_element()
@@ -781,15 +711,20 @@ impl AppView {
                                     .size_full()
                                     .overflow_hidden()
                                     .child(self.render_session_agent_messages(
-                                        message_column_width,
                                         entity.clone(),
+                                        message_column_width,
+                                        terminal_originated_selection_drag_active,
                                         window,
                                         cx,
                                     ))
                                     .into_any_element()
                             })),
                     )
-                    .child(self.render_session_agent_composer(entity.clone())),
+                    .child(self.render_session_agent_composer(
+                        entity,
+                        settings,
+                        cx,
+                    )),
             )
             .with_animation(
                 "session-agent-conversation-view",
@@ -799,13 +734,19 @@ impl AppView {
             .into_any_element()
     }
 
-    fn render_session_agent_composer(&self, entity: Entity<Self>) -> gpui::AnyElement {
-        session_agent_composer::render_session_agent_composer(self, entity)
+    fn render_session_agent_composer(
+        &self,
+        entity: Entity<Self>,
+        settings: Entity<SettingsController>,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        session_agent_composer::render_session_agent_composer(self, entity, settings, cx)
     }
 
     fn render_session_agent_history_panel(
         &mut self,
         entity: Entity<Self>,
+        settings: Entity<SettingsController>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -813,6 +754,7 @@ impl AppView {
         session_agent_history::render_session_agent_history_panel(
             self,
             entity,
+            settings,
             window,
             cx,
             search_visibility,
@@ -821,93 +763,19 @@ impl AppView {
 
     fn render_session_agent_messages(
         &mut self,
-        message_column_width: f32,
         entity: Entity<Self>,
+        message_column_width: f32,
+        terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         session_agent_conversation::render_session_agent_messages(
             self,
             message_column_width,
+            terminal_originated_selection_drag_active,
             entity,
             window,
             cx,
         )
-    }
-}
-
-impl AppView {
-    fn advance_conversation_search_bar(&mut self, window: &mut Window) -> Option<f32> {
-        let forms = &mut self.workspace_forms.chat_search;
-        if let Some(animation) = forms.conversation_search_animation {
-            let duration_seconds = animation.duration.as_secs_f32();
-            if duration_seconds <= f32::EPSILON {
-                forms.conversation_search_visibility = animation.to;
-                forms.conversation_search_animation = None;
-            } else {
-                let elapsed = Instant::now().saturating_duration_since(animation.started_at);
-                let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-                let eased = progress * progress * (3.0 - 2.0 * progress);
-                forms.conversation_search_visibility =
-                    animation.from + (animation.to - animation.from) * eased;
-
-                if progress >= 1.0 {
-                    forms.conversation_search_visibility = animation.to;
-                    forms.conversation_search_animation = None;
-                } else {
-                    window.request_animation_frame();
-                }
-            }
-        }
-
-        if forms.conversation_search_visibility <= f32::EPSILON && !forms.conversation_search_open {
-            forms.conversation_search_visible = false;
-            return None;
-        }
-
-        if forms.conversation_search_open || forms.conversation_search_visibility > f32::EPSILON {
-            forms.conversation_search_visible = true;
-            return Some(forms.conversation_search_visibility.clamp(0.0, 1.0));
-        }
-
-        forms.conversation_search_visible = false;
-        None
-    }
-
-    fn advance_session_filter_bar(&mut self, window: &mut Window) -> Option<f32> {
-        let forms = &mut self.workspace_forms.chat_search;
-        if let Some(animation) = forms.session_filter_animation {
-            let duration_seconds = animation.duration.as_secs_f32();
-            if duration_seconds <= f32::EPSILON {
-                forms.session_filter_visibility = animation.to;
-                forms.session_filter_animation = None;
-            } else {
-                let elapsed = Instant::now().saturating_duration_since(animation.started_at);
-                let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-                let eased = progress * progress * (3.0 - 2.0 * progress);
-                forms.session_filter_visibility =
-                    animation.from + (animation.to - animation.from) * eased;
-
-                if progress >= 1.0 {
-                    forms.session_filter_visibility = animation.to;
-                    forms.session_filter_animation = None;
-                } else {
-                    window.request_animation_frame();
-                }
-            }
-        }
-
-        if forms.session_filter_visibility <= f32::EPSILON && !forms.session_filter_open {
-            forms.session_filter_visible = false;
-            return None;
-        }
-
-        if forms.session_filter_open || forms.session_filter_visibility > f32::EPSILON {
-            forms.session_filter_visible = true;
-            return Some(forms.session_filter_visibility.clamp(0.0, 1.0));
-        }
-
-        forms.session_filter_visible = false;
-        None
     }
 }

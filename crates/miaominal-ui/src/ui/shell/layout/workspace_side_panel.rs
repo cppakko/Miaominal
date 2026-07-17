@@ -1,4 +1,4 @@
-use crate::ui::shell::state::SessionSidePanelView;
+use crate::ui::shell::SessionSidePanelView;
 use crate::ui::{
     components::{SegmentedSwitch, editor_button},
     i18n,
@@ -140,110 +140,113 @@ pub(in crate::ui::shell::layout) fn render_workspace_side_panel(
         .into_any_element()
 }
 
-impl AppView {
-    pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
-        &self,
-        entity: Entity<Self>,
-        session_tab_id: usize,
-        session: &SessionTabState,
-        cx: &App,
-    ) -> gpui::AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
-        let selected_index = match self.panels.session_side_panel_view {
-            SessionSidePanelView::Monitor => 0,
-            SessionSidePanelView::Snippets => 1,
-            SessionSidePanelView::Sftp => 2,
-        };
-        let switch = SegmentedSwitch::new("session-side-panel-switch")
-            .selected_index(selected_index)
-            .width(204.0)
-            .height(34.0)
-            .padding(2.0)
-            .item(i18n::string("workspace.panel.monitor.title"))
-            .item(i18n::string("snippets.page.snippets"))
-            .item("SFTP")
-            .on_click({
-                let entity = entity.clone();
-                move |index, _, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.panels.session_side_panel_open = true;
-                        match index {
-                            0 => {
-                                this.panels.session_side_panel_view = SessionSidePanelView::Monitor;
-                            }
-                            1 => {
-                                this.panels.session_side_panel_view =
-                                    SessionSidePanelView::Snippets;
-                            }
-                            _ => {
-                                this.panels.session_side_panel_view = SessionSidePanelView::Sftp;
-                                this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
-                            }
+pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
+    app: &AppView,
+    session_controller: Entity<SessionController>,
+    session_tab_id: TabId,
+    session: &SessionTabState,
+    cx: &App,
+) -> gpui::AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let side_panel_view = app.controllers.session.read(cx).side_panel_view();
+    let selected_index = match side_panel_view {
+        SessionSidePanelView::Monitor => 0,
+        SessionSidePanelView::Snippets => 1,
+        SessionSidePanelView::Sftp => 2,
+    };
+    let switch = SegmentedSwitch::new("session-side-panel-switch")
+        .selected_index(selected_index)
+        .width(204.0)
+        .height(34.0)
+        .padding(2.0)
+        .item(i18n::string("workspace.panel.monitor.title"))
+        .item(i18n::string("snippets.page.snippets"))
+        .item("SFTP")
+        .on_click({
+            let entity = session_controller.clone();
+            move |index, _, cx| {
+                entity.update(cx, |controller, cx| {
+                    controller.set_side_panel_open(true);
+                    match index {
+                        0 => controller.set_side_panel_view(SessionSidePanelView::Monitor),
+                        1 => controller.set_side_panel_view(SessionSidePanelView::Snippets),
+                        _ => {
+                            controller.set_side_panel_view(SessionSidePanelView::Sftp);
+                            controller
+                                .emit(AppCommand::EnsureSessionSftpRequested(session_tab_id), cx);
                         }
-                        cx.notify();
-                    });
-                }
-            });
+                    }
+                    cx.notify();
+                });
+            }
+        });
 
-        let content = match self.panels.session_side_panel_view {
-            SessionSidePanelView::Monitor => {
-                self.render_session_monitor_panel(entity.clone(), session)
-            }
-            SessionSidePanelView::Snippets => {
-                self.render_session_snippets_panel(entity.clone(), cx)
-            }
-            SessionSidePanelView::Sftp => {
-                self.render_session_sftp_panel(entity.clone(), session_tab_id)
-            }
-        };
-
-        card_surface(roles.surface_container, 16.0)
-            .id("session-workspace-side-panel")
-            .w(px(SESSION_MONITOR_PANEL_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .overflow_hidden()
-            .child(
-                v_flex()
-                    .size_full()
-                    .overflow_hidden()
-                    .child(div().flex_1().min_h(px(0.0)).child(content))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .h(px(56.0))
-                            .flex_shrink_0()
-                            .items_center()
-                            .justify_center()
-                            .px_3()
-                            .child(switch),
-                    ),
+    let content = match side_panel_view {
+        SessionSidePanelView::Monitor => {
+            let settings = app.controllers.settings.read(cx);
+            let history_duration = settings.settings().monitor_history_duration;
+            let history_select = settings.forms().monitor_history_select;
+            session_controller.read(cx).render_session_monitor_panel(
+                session_controller.clone(),
+                session,
+                history_duration,
+                history_select,
             )
-            .into_any_element()
-    }
+        }
+        SessionSidePanelView::Snippets => super::workspace_snippets::render_session_snippets_panel(
+            session_controller.clone(),
+            app.workspace.workspace.active_tab,
+            cx,
+        ),
+        SessionSidePanelView::Sftp => {
+            render_session_sftp_panel(app, session_controller, session_tab_id, cx)
+        }
+    };
 
-    fn render_session_sftp_panel(
-        &self,
-        entity: Entity<Self>,
-        session_tab_id: usize,
-    ) -> gpui::AnyElement {
-        let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
+    card_surface(roles.surface_container, 16.0)
+        .id("session-workspace-side-panel")
+        .w(px(SESSION_MONITOR_PANEL_WIDTH))
+        .h_full()
+        .flex_shrink_0()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .child(
+            v_flex()
+                .size_full()
+                .overflow_hidden()
+                .child(div().flex_1().min_h(px(0.0)).child(content))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .h(px(56.0))
+                        .flex_shrink_0()
+                        .items_center()
+                        .justify_center()
+                        .px_3()
+                        .child(switch),
+                ),
+        )
+        .into_any_element()
+}
 
-        if let Some(tab_id) = self.session_side_panel_sftp_tab_id()
-            && let Some(sftp_tab) = self
-                .workspace_state
-                .tabs
-                .iter()
-                .find(|tab| tab.id == tab_id)
-                .and_then(TabState::as_sftp)
-        {
+fn render_session_sftp_panel(
+    app: &AppView,
+    session_controller: Entity<SessionController>,
+    session_tab_id: TabId,
+    cx: &App,
+) -> gpui::AnyElement {
+    let material = miaominal_settings::current_theme().material;
+    let roles = material.roles;
+    let text_muted = crate::ui::theme::palette_tone_rgb(
+        material.palettes.neutral_variant,
+        if material.dark { 65 } else { 50 },
+    );
+
+    if let Some(tab_id) = app.session_side_panel_sftp_tab_id(cx) {
+        let controller = app.controllers.sftp.clone();
+        let sftp_controller = controller.read(cx);
+        if let Some(sftp_tab) = sftp_controller.tab(tab_id) {
             return div()
                 .id("session-sftp-panel-content")
                 .size_full()
@@ -251,46 +254,50 @@ impl AppView {
                 .min_h(px(0.0))
                 .px_3()
                 .pb_3()
-                .child(self.render_sftp_remote_browser_panel(entity, tab_id, sftp_tab))
+                .child(sftp_controller.render_sftp_remote_browser_panel(
+                    controller.clone(),
+                    tab_id,
+                    &sftp_tab,
+                ))
                 .into_any_element();
         }
-
-        v_flex()
-            .id("session-sftp-panel-content")
-            .size_full()
-            .items_center()
-            .justify_center()
-            .gap_3()
-            .p_3()
-            .child(
-                div()
-                    .size(px(44.0))
-                    .rounded(px(12.0))
-                    .bg(rgb(roles.surface))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(rgb(roles.primary))
-                    .child(Icon::new(AppIcon::FolderSymlink).size(px(22.0))),
-            )
-            .child(
-                div()
-                    .max_w(px(280.0))
-                    .text_center()
-                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                    .text_color(rgb(text_muted))
-                    .child(i18n::string("sftp_browser.empty.remote")),
-            )
-            .child(editor_button(
-                i18n::string("workspace.menu.open_sftp_tab"),
-                false,
-                true,
-                move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
-                    });
-                },
-            ))
-            .into_any_element()
     }
+
+    v_flex()
+        .id("session-sftp-panel-content")
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .p_3()
+        .child(
+            div()
+                .size(px(44.0))
+                .rounded(px(12.0))
+                .bg(rgb(roles.surface))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(roles.primary))
+                .child(Icon::new(AppIcon::FolderSymlink).size(px(22.0))),
+        )
+        .child(
+            div()
+                .max_w(px(280.0))
+                .text_center()
+                .text_size(miaominal_settings::FontSize::Body.scaled())
+                .text_color(rgb(text_muted))
+                .child(i18n::string("sftp_browser.empty.remote")),
+        )
+        .child(editor_button(
+            i18n::string("workspace.menu.open_sftp_tab"),
+            false,
+            true,
+            move |_, cx| {
+                session_controller.update(cx, |controller, cx| {
+                    controller.emit(AppCommand::EnsureSessionSftpRequested(session_tab_id), cx);
+                });
+            },
+        ))
+        .into_any_element()
 }

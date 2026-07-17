@@ -42,13 +42,13 @@ fn footer_tooltip(
 }
 
 #[derive(Clone)]
-struct VisibleTopbarTab {
+pub(in crate::ui::shell) struct VisibleTopbarTab {
     tab_index: usize,
     snapshot: TopbarTabSnapshot,
 }
 
 #[derive(Clone)]
-struct ExitingTopbarTabRenderState {
+pub(in crate::ui::shell) struct ExitingTopbarTabRenderState {
     snapshot: TopbarTabSnapshot,
     visibility: f32,
     active_strength: f32,
@@ -93,52 +93,53 @@ fn topbar_tab_icon(kind: TopbarTabVisualKind) -> Option<AppIcon> {
     }
 }
 
-fn tab_is_error_status(tab: &TabState) -> bool {
-    match &tab.kind {
-        TabKind::Session(session) => matches!(
-            session.connection_state,
-            SessionConnectionState::Failed { .. } | SessionConnectionState::Disconnected
-        ),
-        TabKind::Sftp(_) => {
+fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabState>) -> bool {
+    match tab.kind {
+        TabKindTag::Session => session.is_some_and(|session| {
+            matches!(
+                session.connection_state,
+                SessionConnectionState::Failed { .. } | SessionConnectionState::Disconnected
+            )
+        }),
+        TabKindTag::Sftp => {
             let error = i18n::string("session.status.error");
             let closed = i18n::string("session.status.closed");
             tab.status == error || tab.status == closed
         }
-        TabKind::Hosts => false,
+        TabKindTag::Hosts => false,
     }
 }
 
-fn tab_needs_attention(tab: &TabState) -> bool {
-    tab.as_session()
-        .is_some_and(|session| session.pending_host_key.is_some())
+fn tab_needs_attention(session: Option<&SessionTabState>) -> bool {
+    session.is_some_and(|session| session.pending_host_key.is_some())
 }
 
-fn tab_is_connected_status(tab: &TabState) -> bool {
-    tab.as_session()
-        .is_some_and(|session| matches!(session.connection_state, SessionConnectionState::Ready))
+fn tab_is_connected_status(session: Option<&SessionTabState>) -> bool {
+    session.is_some_and(|session| matches!(session.connection_state, SessionConnectionState::Ready))
 }
 
 pub(in crate::ui::shell) fn tab_status_indicator_color(
-    tab: &TabState,
+    tab: &TabDescriptor,
+    session: Option<&SessionTabState>,
     has_activity: bool,
 ) -> Option<u32> {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    if tab_is_error_status(tab) {
+    if tab_is_error_status(tab, session) {
         Some(roles.error)
-    } else if has_activity || tab_needs_attention(tab) {
+    } else if has_activity || tab_needs_attention(session) {
         Some(roles.primary)
     } else {
         None
     }
 }
 
-pub(super) fn tab_status_color(tab: &TabState) -> u32 {
+pub(super) fn tab_status_color(tab: &TabDescriptor, session: Option<&SessionTabState>) -> u32 {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    if tab_is_error_status(tab) {
+    if tab_is_error_status(tab, session) {
         roles.error
-    } else if tab_needs_attention(tab) || tab_is_connected_status(tab) {
+    } else if tab_needs_attention(session) || tab_is_connected_status(session) {
         roles.primary
     } else {
         roles.on_surface_variant
@@ -190,7 +191,96 @@ fn scroll_topbar_tabs(scroll_handle: &ScrollHandle, event: &ScrollWheelEvent) ->
     true
 }
 
-fn topbar_add_button(entity: Entity<AppView>, scroll_handle: ScrollHandle) -> impl IntoElement {
+#[derive(Clone, Copy)]
+enum TopbarAction {
+    OpenHosts,
+    Activate(TabId),
+    Rename(TabId),
+    Duplicate(TabId),
+    OpenSftp(TabId),
+    CloseOthers(TabId),
+    Close(TabId),
+}
+
+fn topbar_action_index(tabs: &TabRegistry, tab_id: TabId) -> Option<usize> {
+    tabs.index_of(tab_id)
+}
+
+trait TopbarHost: Render + Sized + 'static {
+    fn handle_topbar_action(
+        &mut self,
+        action: TopbarAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
+}
+
+impl TopbarHost for AppView {
+    fn handle_topbar_action(
+        &mut self,
+        action: TopbarAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            TopbarAction::OpenHosts => self.open_hosts_tab(cx),
+            TopbarAction::Activate(tab_id) => {
+                if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
+                    self.activate_tab(index, window, cx);
+                }
+            }
+            TopbarAction::Rename(tab_id) => {
+                if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
+                    self.begin_rename_tab(index, window, cx);
+                }
+            }
+            TopbarAction::Duplicate(tab_id) => {
+                if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
+                    self.duplicate_profile_tab(index, window, cx);
+                }
+            }
+            TopbarAction::OpenSftp(tab_id) => {
+                if self.workspace.tabs.get(tab_id).is_some() {
+                    self.open_sftp_tab_for_session(Some(tab_id), window, cx);
+                }
+            }
+            TopbarAction::CloseOthers(tab_id) => {
+                if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
+                    self.close_other_tabs(index, window, cx);
+                }
+            }
+            TopbarAction::Close(tab_id) => {
+                if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
+                    self.close_tab(index, window, cx);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delayed_topbar_action_resolves_reordered_tab_by_id() {
+        let target = TabId::new(20);
+        let mut tabs = TabRegistry::from_tabs([
+            TabState::new_hosts(TabId::new(10)),
+            TabState::new_hosts(target),
+            TabState::new_hosts(TabId::new(30)),
+        ]);
+
+        tabs.move_to(2, 0);
+
+        assert_eq!(topbar_action_index(&tabs, target), Some(2));
+    }
+}
+
+fn topbar_add_button<V: TopbarHost>(
+    entity: Entity<V>,
+    scroll_handle: ScrollHandle,
+) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let scroll_entity = entity.clone();
 
@@ -218,8 +308,10 @@ fn topbar_add_button(entity: Entity<AppView>, scroll_handle: ScrollHandle) -> im
                     }
                 })
                 .child(Icon::from(AppIcon::Plus))
-                .on_click(move |_, _, cx| {
-                    entity.update(cx, |this, cx| this.open_hosts_tab(cx));
+                .on_click(move |_, window, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.handle_topbar_action(TopbarAction::OpenHosts, window, cx);
+                    });
                 }),
         )
 }
@@ -249,10 +341,10 @@ fn topbar_drag_region(id: &'static str) -> impl IntoElement {
         })
 }
 
-fn build_tab_context_menu(
+fn build_tab_context_menu<V: TopbarHost>(
     menu: PopupMenu,
-    entity: Entity<AppView>,
-    index: usize,
+    entity: Entity<V>,
+    tab_id: TabId,
     is_session: bool,
 ) -> PopupMenu {
     let rename_entity = entity.clone();
@@ -265,7 +357,9 @@ fn build_tab_context_menu(
         PopupMenuItem::new(i18n::string("chrome.menu.rename_tab")).on_click(
             move |_, window, cx| {
                 let entity = rename_entity.clone();
-                entity.update(cx, |this, cx| this.begin_rename_tab(index, window, cx));
+                entity.update(cx, |this, cx| {
+                    this.handle_topbar_action(TopbarAction::Rename(tab_id), window, cx)
+                });
             },
         ),
     );
@@ -275,7 +369,9 @@ fn build_tab_context_menu(
             PopupMenuItem::new(i18n::string("chrome.menu.duplicate_profile")).on_click(
                 move |_, window, cx| {
                     let entity = duplicate_entity.clone();
-                    entity.update(cx, |this, cx| this.duplicate_profile_tab(index, window, cx));
+                    entity.update(cx, |this, cx| {
+                        this.handle_topbar_action(TopbarAction::Duplicate(tab_id), window, cx)
+                    });
                 },
             ),
         )
@@ -284,7 +380,7 @@ fn build_tab_context_menu(
                 move |_, window, cx| {
                     let entity = sftp_entity.clone();
                     entity.update(cx, |this, cx| {
-                        this.open_sftp_tab_for_session(Some(index), window, cx)
+                        this.handle_topbar_action(TopbarAction::OpenSftp(tab_id), window, cx)
                     });
                 },
             ),
@@ -298,7 +394,9 @@ fn build_tab_context_menu(
             PopupMenuItem::new(i18n::string("chrome.menu.close_other_tabs")).on_click(
                 move |_, window, cx| {
                     let entity = close_others_entity.clone();
-                    entity.update(cx, |this, cx| this.close_other_tabs(index, window, cx));
+                    entity.update(cx, |this, cx| {
+                        this.handle_topbar_action(TopbarAction::CloseOthers(tab_id), window, cx)
+                    });
                 },
             ),
         )
@@ -306,14 +404,23 @@ fn build_tab_context_menu(
             PopupMenuItem::new(i18n::string("chrome.menu.close_tab")).on_click(
                 move |_, window, cx| {
                     let entity = close_entity.clone();
-                    entity.update(cx, |this, cx| this.close_tab(index, window, cx));
+                    entity.update(cx, |this, cx| {
+                        this.handle_topbar_action(TopbarAction::Close(tab_id), window, cx)
+                    });
                 },
             ),
         )
 }
 
-fn close_topbar_tab(entity: &Entity<AppView>, index: usize, window: &mut Window, cx: &mut App) {
-    entity.update(cx, |this, cx| this.close_tab(index, window, cx));
+fn close_topbar_tab<V: TopbarHost>(
+    entity: &Entity<V>,
+    tab_id: TabId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    entity.update(cx, |this, cx| {
+        this.handle_topbar_action(TopbarAction::Close(tab_id), window, cx)
+    });
 }
 
 fn topbar_pointer_up_should_be_ignored(cx: &mut App) -> bool {
@@ -442,26 +549,63 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
     }
 }
 
-impl AppView {
+pub(in crate::ui::shell) trait ChromeAppViewExt: Sized {
     fn collect_visible_topbar_tabs(
         &self,
-        current_active_tab_id: Option<usize>,
+        current_active_tab_id: Option<TabId>,
+        cx: &App,
+    ) -> Vec<VisibleTopbarTab>;
+
+    fn sync_topbar_tab_animation_state(
+        &mut self,
+        visible_tabs: &[VisibleTopbarTab],
+        current_active_tab_id: Option<TabId>,
+        window: &mut Window,
+    );
+
+    fn topbar_tab_visibility(&self, tab_id: TabId) -> f32;
+
+    fn topbar_active_strength(&self, tab_id: TabId, current_active_tab_id: Option<TabId>) -> f32;
+
+    fn topbar_exiting_tabs_render_state(
+        &self,
+        current_active_tab_id: Option<TabId>,
+    ) -> Vec<ExitingTopbarTabRenderState>;
+
+    fn render_top_bar(
+        &mut self,
+        entity: Entity<Self>,
+        window: &mut Window,
+        cx: &App,
+    ) -> impl IntoElement;
+
+    fn render_status_footer(&self, entity: Entity<Self>, cx: &App) -> impl IntoElement;
+
+    fn render_fab(&self, entity: Entity<Self>) -> impl IntoElement;
+}
+
+impl ChromeAppViewExt for AppView {
+    fn collect_visible_topbar_tabs(
+        &self,
+        current_active_tab_id: Option<TabId>,
+        cx: &App,
     ) -> Vec<VisibleTopbarTab> {
-        self.workspace_state
+        self.workspace
             .tabs
             .iter()
             .enumerate()
-            .filter(|(_, tab)| !tab.hidden_from_topbar)
+            .filter(|(_, tab)| tab.is_top_level())
             .enumerate()
             .map(|(visible_index, (tab_index, tab))| {
-                let has_activity = tab.as_session().is_some_and(|session| session.has_activity)
+                let session = self.session_tab(tab.id, cx);
+                let has_activity = session
+                    .as_deref()
+                    .is_some_and(|session| session.has_activity)
                     && current_active_tab_id != Some(tab.id);
-                let kind = if tab.as_sftp().is_some() {
-                    TopbarTabVisualKind::Sftp
-                } else if tab.as_session().is_some() {
-                    TopbarTabVisualKind::Session
-                } else {
-                    TopbarTabVisualKind::Hosts
+                let kind = match tab.kind {
+                    TabKindTag::Hosts => TopbarTabVisualKind::Hosts,
+                    TabKindTag::Session => TopbarTabVisualKind::Session,
+                    TabKindTag::Sftp => TopbarTabVisualKind::Sftp,
                 };
 
                 VisibleTopbarTab {
@@ -471,7 +615,11 @@ impl AppView {
                         visible_index,
                         title: tab.title.clone(),
                         kind,
-                        status_color: tab_status_indicator_color(tab, has_activity),
+                        status_color: tab_status_indicator_color(
+                            &tab,
+                            session.as_deref(),
+                            has_activity,
+                        ),
                     },
                 }
             })
@@ -481,7 +629,7 @@ impl AppView {
     fn sync_topbar_tab_animation_state(
         &mut self,
         visible_tabs: &[VisibleTopbarTab],
-        current_active_tab_id: Option<usize>,
+        current_active_tab_id: Option<TabId>,
         window: &mut Window,
     ) {
         let now = Instant::now();
@@ -490,17 +638,17 @@ impl AppView {
 
         for tab in visible_tabs {
             if !self
-                .workspace_state
+                .workspace
                 .topbar_previous_visible_tabs
                 .iter()
                 .any(|previous| previous.tab_id == tab.snapshot.tab_id)
                 && !self
-                    .workspace_state
+                    .workspace
                     .topbar_entering_tabs
                     .iter()
                     .any(|transition| transition.tab_id == tab.snapshot.tab_id)
             {
-                self.workspace_state
+                self.workspace
                     .topbar_entering_tabs
                     .push(TopbarTabEnterTransition {
                         tab_id: tab.snapshot.tab_id,
@@ -510,15 +658,15 @@ impl AppView {
             }
         }
 
-        for previous in &self.workspace_state.topbar_previous_visible_tabs {
+        for previous in &self.workspace.topbar_previous_visible_tabs {
             if !current_tab_ids.contains(&previous.tab_id)
                 && !self
-                    .workspace_state
+                    .workspace
                     .topbar_exiting_tabs
                     .iter()
                     .any(|transition| transition.snapshot.tab_id == previous.tab_id)
             {
-                self.workspace_state
+                self.workspace
                     .topbar_exiting_tabs
                     .push(TopbarTabExitTransition {
                         snapshot: previous.clone(),
@@ -528,50 +676,45 @@ impl AppView {
             }
         }
 
-        self.workspace_state.topbar_previous_visible_tabs = visible_tabs
+        self.workspace.topbar_previous_visible_tabs = visible_tabs
             .iter()
             .map(|tab| tab.snapshot.clone())
             .collect();
 
-        self.workspace_state
-            .topbar_entering_tabs
-            .retain(|transition| {
-                current_tab_ids.contains(&transition.tab_id)
-                    && topbar_transition_raw_progress(transition.started_at, transition.duration)
-                        < 1.0
-            });
-        self.workspace_state
-            .topbar_exiting_tabs
-            .retain(|transition| {
-                topbar_transition_raw_progress(transition.started_at, transition.duration) < 1.0
-            });
+        self.workspace.topbar_entering_tabs.retain(|transition| {
+            current_tab_ids.contains(&transition.tab_id)
+                && topbar_transition_raw_progress(transition.started_at, transition.duration) < 1.0
+        });
+        self.workspace.topbar_exiting_tabs.retain(|transition| {
+            topbar_transition_raw_progress(transition.started_at, transition.duration) < 1.0
+        });
 
-        if self.workspace_state.topbar_visible_active_tab_id != current_active_tab_id {
-            self.workspace_state.topbar_active_transition = Some(TopbarActiveTabTransition {
-                from_tab_id: self.workspace_state.topbar_visible_active_tab_id,
+        if self.workspace.topbar_visible_active_tab_id != current_active_tab_id {
+            self.workspace.topbar_active_transition = Some(TopbarActiveTabTransition {
+                from_tab_id: self.workspace.topbar_visible_active_tab_id,
                 to_tab_id: current_active_tab_id,
                 started_at: now,
                 duration,
             });
-            self.workspace_state.topbar_visible_active_tab_id = current_active_tab_id;
+            self.workspace.topbar_visible_active_tab_id = current_active_tab_id;
         }
 
-        if let Some(transition) = self.workspace_state.topbar_active_transition
+        if let Some(transition) = self.workspace.topbar_active_transition
             && topbar_transition_raw_progress(transition.started_at, transition.duration) >= 1.0
         {
-            self.workspace_state.topbar_active_transition = None;
+            self.workspace.topbar_active_transition = None;
         }
 
-        if !self.workspace_state.topbar_entering_tabs.is_empty()
-            || !self.workspace_state.topbar_exiting_tabs.is_empty()
-            || self.workspace_state.topbar_active_transition.is_some()
+        if !self.workspace.topbar_entering_tabs.is_empty()
+            || !self.workspace.topbar_exiting_tabs.is_empty()
+            || self.workspace.topbar_active_transition.is_some()
         {
             window.request_animation_frame();
         }
     }
 
-    fn topbar_tab_visibility(&self, tab_id: usize) -> f32 {
-        self.workspace_state
+    fn topbar_tab_visibility(&self, tab_id: TabId) -> f32 {
+        self.workspace
             .topbar_entering_tabs
             .iter()
             .find(|transition| transition.tab_id == tab_id)
@@ -581,8 +724,8 @@ impl AppView {
             .unwrap_or(1.0)
     }
 
-    fn topbar_active_strength(&self, tab_id: usize, current_active_tab_id: Option<usize>) -> f32 {
-        let Some(transition) = self.workspace_state.topbar_active_transition else {
+    fn topbar_active_strength(&self, tab_id: TabId, current_active_tab_id: Option<TabId>) -> f32 {
+        let Some(transition) = self.workspace.topbar_active_transition else {
             return if current_active_tab_id == Some(tab_id) {
                 1.0
             } else {
@@ -606,9 +749,9 @@ impl AppView {
 
     fn topbar_exiting_tabs_render_state(
         &self,
-        current_active_tab_id: Option<usize>,
+        current_active_tab_id: Option<TabId>,
     ) -> Vec<ExitingTopbarTabRenderState> {
-        self.workspace_state
+        self.workspace
             .topbar_exiting_tabs
             .iter()
             .map(|transition| ExitingTopbarTabRenderState {
@@ -621,21 +764,22 @@ impl AppView {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn render_top_bar(
+    fn render_top_bar(
         &mut self,
         entity: Entity<Self>,
         window: &mut Window,
+        cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let topbar_scroll_handle = self.workspace_state.topbar_tab_scroll_handle.clone();
+        let topbar_scroll_handle = self.workspace.topbar_tab_scroll_handle.clone();
         let topbar_scroll_handle_for_tabs = topbar_scroll_handle.clone();
         let current_active_tab_id = self
-            .workspace_state
+            .workspace
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .filter(|tab| !tab.hidden_from_topbar)
+            .and_then(|index| self.workspace.tabs.get(index))
+            .filter(|tab| tab.is_top_level())
             .map(|tab| tab.id);
-        let visible_tabs = self.collect_visible_topbar_tabs(current_active_tab_id);
+        let visible_tabs = self.collect_visible_topbar_tabs(current_active_tab_id, cx);
         self.sync_topbar_tab_animation_state(&visible_tabs, current_active_tab_id, window);
         let exiting_tabs = self.topbar_exiting_tabs_render_state(current_active_tab_id);
         let topbar_tab_count = visible_tabs.len();
@@ -763,7 +907,11 @@ impl AppView {
                                                 let topbar_scroll_handle = topbar_scroll_handle_for_tabs.clone();
                                                 move |visible_tab| {
                                                     let index = visible_tab.tab_index;
-                                                    let tab = &self.workspace_state.tabs[index];
+                                                    let tab = self
+                                                        .workspace
+                                                        .tabs
+                                                        .at(index)
+                                                        .expect("visible topbar tab remains registered");
                                                     let snapshot = &visible_tab.snapshot;
                                                     let activate_entity = entity.clone();
                                                     let middle_close_entity = entity.clone();
@@ -787,7 +935,7 @@ impl AppView {
                                                     let is_active = current_active_tab_id == Some(tab_id);
                                                     let is_session = snapshot.kind == TopbarTabVisualKind::Session;
                                                     let tab_kind_icon = topbar_tab_icon(snapshot.kind);
-                                                    let is_renaming = self.workspace_state.renaming_tab == Some(index);
+                                                    let is_renaming = self.workspace.renaming_tab == Some(tab_id);
                                                     let status_color = snapshot.status_color;
                                                     let tab_foreground_color = blend_rgb(
                                                         roles.on_surface_variant,
@@ -829,7 +977,7 @@ impl AppView {
                                                                 cx.stop_propagation();
                                                             })
                                                             .child(
-                                                                HintedInput::new(&self.workspace_forms.rename_input)
+                                                                HintedInput::new(&self.shell.workspace_forms.rename_input)
                                                                     .appearance(false)
                                                                     .border_1()
                                                                     .border_color(rgb(roles.primary))
@@ -895,7 +1043,7 @@ impl AppView {
                                                                 }
                                                                 close_topbar_tab(
                                                                     &middle_close_entity,
-                                                                    index,
+                                                                    tab_id,
                                                                     window,
                                                                     cx,
                                                                 );
@@ -936,7 +1084,7 @@ impl AppView {
                                                                 let source_id = payload.source_tab_id;
                                                                 entity.update(cx, |this, cx| {
                                                                     let from = match this
-                                                                        .workspace_state.tabs
+                                                                        .workspace.tabs
                                                                         .iter()
                                                                         .position(|t| t.id == source_id)
                                                                     {
@@ -944,10 +1092,11 @@ impl AppView {
                                                                         None => return,
                                                                     };
                                                                     let target = this
-                                                                        .workspace_state.tabs
-                                                                        .iter()
-                                                                        .position(|t| t.id == tab_id)
-                                                                        .unwrap_or(index);
+                                                                        .workspace.tabs
+                                                                        .index_of(tab_id);
+                                                                    let Some(target) = target else {
+                                                                        return;
+                                                                    };
                                                                     this.reorder_tab(from, target, cx);
                                                                 });
                                                             },
@@ -959,7 +1108,7 @@ impl AppView {
                                                             build_tab_context_menu(
                                                                 menu,
                                                                 menu_entity.clone(),
-                                                                index,
+                                                                tab_id,
                                                                 is_session,
                                                             )
                                                         })
@@ -987,7 +1136,11 @@ impl AppView {
                                                                             activate_entity.update(
                                                                                 cx,
                                                                                 |this, cx| {
-                                                                                    this.activate_tab(index, window, cx)
+                                                                                    this.handle_topbar_action(
+                                                                                        TopbarAction::Activate(tab_id),
+                                                                                        window,
+                                                                                        cx,
+                                                                                    )
                                                                                 },
                                                                             );
                                                                         })
@@ -1003,7 +1156,7 @@ impl AppView {
                                                                                     }
                                                                                     close_topbar_tab(
                                                                                         &content_middle_close_entity,
-                                                                                        index,
+                                                                                        tab_id,
                                                                                         window,
                                                                                         cx,
                                                                                     );
@@ -1057,7 +1210,7 @@ impl AppView {
                                                                             }
                                                                             close_topbar_tab(
                                                                                 &close_middle_entity,
-                                                                                index,
+                                                                                tab_id,
                                                                                 window,
                                                                                 cx,
                                                                             );
@@ -1069,7 +1222,7 @@ impl AppView {
                                                                             }
                                                                             close_topbar_tab(
                                                                                 &close_entity,
-                                                                                index,
+                                                                                tab_id,
                                                                                 window,
                                                                                 cx,
                                                                             );
@@ -1233,38 +1386,33 @@ impl AppView {
             )
     }
 
-    pub(in crate::ui::shell) fn render_status_footer(
-        &self,
-        entity: Entity<Self>,
-    ) -> impl IntoElement {
+    fn render_status_footer(&self, entity: Entity<Self>, cx: &App) -> impl IntoElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let active_session = self
-            .active_terminal_session_index()
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.as_session().map(|session| (tab, session)));
-        let panel_session = active_session;
+        let active_session_tab = self
+            .active_terminal_session_index(cx)
+            .and_then(|index| self.workspace.tabs.at(index));
+        let active_session = active_session_tab.and_then(|tab| self.session_tab(tab.id, cx));
+        let panel_session = active_session.is_some();
         let active_sftp = self
-            .workspace_state
+            .workspace
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)));
+            .and_then(|tab_id| self.sftp_tab(tab_id, cx).map(|sftp| (tab_id, sftp)));
 
-        let active_tab = active_session.map(|(tab, _)| tab).or_else(|| {
-            self.workspace_state
-                .active_topbar_tab
-                .and_then(|index| self.workspace_state.tabs.get(index))
-                .filter(|tab| tab.as_sftp().is_some())
-        });
-
-        let (connection_label, connection_color) = active_tab
+        let active_sftp_tab = self
+            .workspace
+            .active_topbar_tab
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .filter(|tab| tab.is_sftp());
+        let (connection_label, connection_color) = active_session_tab
             .map(|tab| {
+                let session = active_session.as_deref();
                 let status = tab.status.as_str();
-                let label = if tab_is_connected_status(tab) {
+                let label = if tab_is_connected_status(session) {
                     i18n::string("session.footer.connected")
                 } else {
                     if status.is_ascii() {
@@ -1273,7 +1421,18 @@ impl AppView {
                         status.to_string()
                     }
                 };
-                (label, tab_status_color(tab))
+                (label, tab_status_color(&tab, session))
+            })
+            .or_else(|| {
+                active_sftp_tab.map(|tab| {
+                    let status = tab.status.as_str();
+                    let label = if status.is_ascii() {
+                        status.to_ascii_uppercase()
+                    } else {
+                        status.to_string()
+                    };
+                    (label, tab_status_color(&tab, None))
+                })
             })
             .unwrap_or_else(|| (i18n::string("session.footer.offline"), text_muted));
         let connection_tooltip = i18n::string_args(
@@ -1281,10 +1440,10 @@ impl AppView {
             &[("status", &connection_label)],
         );
         let connection_target = self
-            .active_profile()
+            .active_profile(cx)
             .map(|profile| {
                 let username = if profile.username.trim().is_empty() {
-                    self.active_username()
+                    self.active_username(cx)
                 } else {
                     profile.username.clone()
                 };
@@ -1292,14 +1451,14 @@ impl AppView {
             })
             .unwrap_or_else(|| "--".into());
 
-        let pty_label = active_session.map(|(_, session)| {
+        let pty_label = active_session.as_deref().map(|session| {
             format!(
                 "{}x{}",
                 session.terminal.columns(),
                 session.terminal.screen_lines()
             )
         });
-        let traffic_label = active_session.map(|(_, session)| {
+        let traffic_label = active_session.as_deref().map(|session| {
             i18n::string_args(
                 "session.footer.traffic",
                 &[
@@ -1308,21 +1467,23 @@ impl AppView {
                 ],
             )
         });
-        let status_message_tooltip = if self.status_message.trim().is_empty() {
+        let status_message_tooltip = if self.shell.status_message.trim().is_empty() {
             i18n::string("session.footer.tooltips.status_message_empty")
         } else {
             i18n::string_args(
                 "session.footer.tooltips.status_message",
-                &[("message", &self.status_message)],
+                &[("message", &self.shell.status_message)],
             )
         };
         let monitor_toggle_entity = entity.clone();
         let agent_toggle_entity = entity.clone();
-        let progress_toggle_entity = entity.clone();
+        let progress_controller = self.controllers.sftp.clone();
+        let toggle_all_progress_centers = active_sftp.is_some();
         let progress_center_open = active_sftp
+            .as_ref()
             .map(|(_, sftp)| sftp.layout.progress_center_visible)
             .unwrap_or_else(|| {
-                panel_session.is_some() && self.panels.session_sftp_progress_center_visible
+                panel_session && self.controllers.sftp.read(cx).session_progress_visible()
             });
         let progress_center_tooltip = if progress_center_open {
             i18n::string("sftp.tooltips.hide_progress_center")
@@ -1361,7 +1522,7 @@ impl AppView {
                                     .child(connection_label),
                             ),
                     )
-                    .when(panel_session.is_some(), |this| {
+                    .when(panel_session, |this| {
                         this.child(
                             div().id("session-monitor-panel-toggle").child(
                                 icon_button_with_tooltip(
@@ -1374,7 +1535,7 @@ impl AppView {
                                     Some(roles.outline_variant),
                                     move |_window, cx| {
                                         monitor_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_session_side_panel();
+                                            this.toggle_session_side_panel(cx);
                                             cx.notify();
                                         });
                                     },
@@ -1397,7 +1558,7 @@ impl AppView {
                             .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(text_muted))
                             .tooltip(footer_tooltip(status_message_tooltip))
-                            .child(self.status_message.clone()),
+                            .child(self.shell.status_message.clone()),
                     )
                     .when_some(pty_label, |this, label| {
                         let tooltip = i18n::string_args(
@@ -1429,7 +1590,7 @@ impl AppView {
                                 .child(label),
                         )
                     })
-                    .when(panel_session.is_some(), |this| {
+                    .when(panel_session, |this| {
                         this.child(
                             div().id("session-agent-panel-toggle").child(
                                 icon_button_with_tooltip(
@@ -1455,7 +1616,7 @@ impl AppView {
                             ),
                         )
                     })
-                    .when(active_sftp.is_some() || panel_session.is_some(), |this| {
+                    .when(active_sftp.is_some() || panel_session, |this| {
                         this.child(
                             div().id("sftp-progress-center-toggle").child(
                                 icon_button_with_tooltip(
@@ -1479,8 +1640,21 @@ impl AppView {
                                         roles.outline_variant
                                     }),
                                     move |_window, cx| {
-                                        progress_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_active_sftp_progress_center(cx);
+                                        progress_controller.update(cx, |controller, cx| {
+                                            let changed = if toggle_all_progress_centers {
+                                                controller.apply_progress_visibility(
+                                                    !progress_center_open,
+                                                )
+                                            } else if panel_session {
+                                                controller.set_session_progress_visible(
+                                                    !progress_center_open,
+                                                )
+                                            } else {
+                                                false
+                                            };
+                                            if changed {
+                                                cx.notify();
+                                            }
                                         });
                                     },
                                 )
@@ -1506,9 +1680,12 @@ impl AppView {
             )
     }
 
-    pub(in crate::ui::shell) fn render_fab(&self, entity: Entity<Self>) -> impl IntoElement {
-        fab_button(move |window, cx| {
-            entity.update(cx, |this, cx| this.open_add_host_editor(window, cx));
+    fn render_fab(&self, _entity: Entity<Self>) -> impl IntoElement {
+        let controller = self.controllers.session.clone();
+        fab_button(move |_window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.request_new_profile_editor(cx);
+            });
         })
     }
 }

@@ -15,29 +15,33 @@ mod sections;
 use fields::{editor_environment_variable_row, editor_static_field};
 use sections::proxy_jump_stepper_item;
 
-impl AppView {
+impl SessionController {
     pub(in crate::ui::shell) fn render_hosts_editor_sidebar(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
+        on_test_connection: impl Fn(&mut Window, &mut App) + 'static,
+        on_save: impl Fn(&mut Window, &mut App) + 'static,
+        on_toggle_password: impl Fn(&mut Window, &mut App) + 'static,
         cx: &App,
     ) -> impl IntoElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
-        let host_editor = &self.host_editor_forms;
+        let host_editor = self.host_editor_forms();
         let available_groups = self.available_groups();
         let auth_method = host_editor.editing_auth_method;
+        let host_editor_is_new = self.editor_state().host_editor_is_new;
 
-        let title = if self.editors.host_editor_is_new {
+        let title = if host_editor_is_new {
             i18n::string("hosts.editor.titles.add")
         } else {
             i18n::string("hosts.editor.titles.edit")
         };
-        let show_delete = !self.editors.host_editor_is_new && self.data.selected_profile.is_some();
+        let show_delete = !host_editor_is_new && self.selected_profile().is_some();
 
-        let current_profile_id = self.current_host_editor_profile_id().unwrap_or("");
+        let current_profile_id = self.current_host_editor_profile_id().unwrap_or_default();
         let proxy_jump_chain_profiles = self.proxy_jump_chain_profiles();
         let available_proxy_jump_candidates =
-            self.available_proxy_jump_candidates(current_profile_id);
+            self.available_proxy_jump_candidates(&current_profile_id);
         let has_proxy_jump_candidates = !available_proxy_jump_candidates.is_empty();
         let selected_proxy_jump_step = host_editor
             .selected_proxy_jump_hop
@@ -67,7 +71,7 @@ impl AppView {
             .item(i18n::string("hosts.editor.auth_methods.ssh_agent"))
             .item(i18n::string("hosts.editor.auth_methods.interactive"))
             .on_click({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |index, _, cx| {
                     let auth_method = match index {
                         0 => AuthMethod::Password,
@@ -76,8 +80,8 @@ impl AppView {
                         3 => AuthMethod::KeyboardInteractive,
                         _ => return,
                     };
-                    entity.update(cx, |this, cx| {
-                        this.set_auth_method(auth_method, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.set_auth_method(auth_method, cx);
                     });
                 }
             });
@@ -93,10 +97,10 @@ impl AppView {
             .item(i18n::string("settings.values.off"))
             .item(i18n::string("settings.values.on"))
             .on_click({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |index, _, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.set_agent_forwarding_enabled(index == 1, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.set_agent_forwarding_enabled(index == 1, cx);
                     });
                 }
             });
@@ -117,7 +121,7 @@ impl AppView {
             .item(i18n::string("hosts.editor.shell_types.powershell"))
             .item(i18n::string("hosts.editor.shell_types.cmd"))
             .on_click({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |index, _, cx| {
                     let shell_type = match index {
                         0 => ShellType::Posix,
@@ -126,8 +130,8 @@ impl AppView {
                         3 => ShellType::Cmd,
                         _ => return,
                     };
-                    entity.update(cx, |this, cx| {
-                        this.set_shell_type(shell_type, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.set_shell_type(shell_type, cx);
                     });
                 }
             });
@@ -158,15 +162,15 @@ impl AppView {
         let can_remove_environment_variable = host_editor.environment_variable_rows.len() > 1;
         let mut environment_variables = v_flex().w_full().gap_3().items_center();
         for (index, variable) in host_editor.environment_variable_rows.iter().enumerate() {
-            let remove_entity = entity.clone();
+            let remove_controller = controller.clone();
             environment_variables = environment_variables.child(editor_environment_variable_row(
                 index,
                 variable.name_input.clone(),
                 variable.value_input.clone(),
                 can_remove_environment_variable,
                 move |window, cx| {
-                    remove_entity.update(cx, |this, cx| {
-                        this.remove_environment_variable_row(index, window, cx);
+                    remove_controller.update(cx, |controller, cx| {
+                        controller.remove_environment_variable_row(index, window, cx);
                     });
                 },
             ));
@@ -179,10 +183,10 @@ impl AppView {
             None,
             Some(roles.outline_variant),
             {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |window, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.add_environment_variable_row(window, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.add_environment_variable_row(window, cx);
                     });
                 }
             },
@@ -258,10 +262,10 @@ impl AppView {
                                     None,
                                     Some(roles.outline_variant),
                                     {
-                                        let entity = entity.clone();
+                                        let controller = controller.clone();
                                         move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.begin_new_group(window, cx);
+                                            controller.update(cx, |controller, cx| {
+                                                controller.begin_new_group(window, cx);
                                             });
                                         }
                                     },
@@ -318,20 +322,9 @@ impl AppView {
                             required: false,
                             disabled: false,
                             trailing: None,
-                            reveal_icon: self.secret_reveal_icon(SecretRevealTarget::HostPassword),
+                            reveal_icon: self.host_password_reveal_icon(),
                         },
-                        {
-                            let entity = entity.clone();
-                            move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.toggle_secret_visibility(
-                                        SecretRevealTarget::HostPassword,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }
-                        },
+                        on_toggle_password,
                     ))
                 })
                 .when(
@@ -424,7 +417,7 @@ impl AppView {
                                         .child(i18n::string("hosts.editor.proxy_jump.add_jump_host")),
                                 )
                                 .when(
-                                    proxy_jump_chain_profiles.len() == self.data.sessions.len()
+                                    proxy_jump_chain_profiles.len() == self.profiles().len()
                                         || !has_proxy_jump_candidates,
                                     |this| {
                                         this.child(editor_static_field(
@@ -483,10 +476,11 @@ impl AppView {
                                                 .selected_index(selected_proxy_jump_step)
                                                 .items(proxy_jump_items)
                                                 .on_click({
-                                                    let entity = entity.clone();
+                                                    let controller = controller.clone();
                                                     move |step, _, cx| {
-                                                        entity.update(cx, |this, cx| {
-                                                            this.select_proxy_jump_step(*step, cx);
+                                                        controller.update(cx, |controller, cx| {
+                                                            controller
+                                                                .select_proxy_jump_step(*step, cx);
                                                         });
                                                     }
                                                 }),
@@ -507,10 +501,10 @@ impl AppView {
                                                             Some(roles.on_surface),
                                                             Some(roles.outline_variant),
                                                             {
-                                                                let entity = entity.clone();
+                                                                let controller = controller.clone();
                                                                 move |_, cx| {
-                                                                    entity.update(cx, |this, cx| {
-                                                                        this.move_selected_proxy_jump_hop_up(cx);
+                                                                    controller.update(cx, |controller, cx| {
+                                                                        controller.move_selected_proxy_jump_hop_up(cx);
                                                                     });
                                                                 }
                                                             },
@@ -523,10 +517,10 @@ impl AppView {
                                                             Some(roles.on_surface),
                                                             Some(roles.outline_variant),
                                                             {
-                                                                let entity = entity.clone();
+                                                                let controller = controller.clone();
                                                                 move |_, cx| {
-                                                                    entity.update(cx, |this, cx| {
-                                                                        this.move_selected_proxy_jump_hop_down(cx);
+                                                                    controller.update(cx, |controller, cx| {
+                                                                        controller.move_selected_proxy_jump_hop_down(cx);
                                                                     });
                                                                 }
                                                             },
@@ -539,10 +533,10 @@ impl AppView {
                                                             Some(roles.on_surface),
                                                             Some(roles.outline_variant),
                                                             {
-                                                                let entity = entity.clone();
+                                                                let controller = controller.clone();
                                                                 move |_, cx| {
-                                                                    entity.update(cx, |this, cx| {
-                                                                        this.remove_selected_proxy_jump_hop(cx);
+                                                                    controller.update(cx, |controller, cx| {
+                                                                        controller.remove_selected_proxy_jump_hop(cx);
                                                                     });
                                                                 }
                                                             },
@@ -604,12 +598,7 @@ impl AppView {
                 i18n::string("hosts.editor.buttons.test_connection"),
                 false,
                 true,
-                {
-                    let entity = entity.clone();
-                    move |window, cx| {
-                        entity.update(cx, |this, cx| this.test_profile_connection(window, cx));
-                    }
-                },
+                on_test_connection,
             )
             .into_any_element(),
         ];
@@ -623,9 +612,11 @@ impl AppView {
                     Some(roles.on_error_container),
                     None,
                     {
-                        let entity = entity.clone();
-                        move |window, cx| {
-                            entity.update(cx, |this, cx| this.delete_selected_profile(window, cx));
+                        let controller = controller.clone();
+                        move |_, cx| {
+                            controller.update(cx, |controller, cx| {
+                                controller.request_selected_profile_delete(cx);
+                            });
                         }
                     },
                 )
@@ -641,9 +632,11 @@ impl AppView {
                 None,
                 None,
                 {
-                    let entity = entity.clone();
+                    let controller = controller.clone();
                     move |_, cx| {
-                        entity.update(cx, |this, cx| this.close_host_editor(cx));
+                        controller.update(cx, |controller, cx| {
+                            controller.close_host_editor(cx);
+                        });
                     }
                 },
             )
@@ -657,12 +650,7 @@ impl AppView {
                 Some(roles.primary),
                 Some(roles.on_primary),
                 None,
-                {
-                    let entity = entity.clone();
-                    move |window, cx| {
-                        entity.update(cx, |this, cx| this.save_profile(window, cx));
-                    }
-                },
+                on_save,
             )
             .into_any_element(),
         );

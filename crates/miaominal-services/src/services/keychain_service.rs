@@ -116,9 +116,7 @@ impl KeychainService {
         sessions: &mut [SessionProfile],
         key_id: &str,
     ) -> Option<DeleteManagedKeyOutcome> {
-        let index = managed_keys.iter().position(|key| key.id == key_id)?;
-        let removed = managed_keys.remove(index);
-        self.secrets.delete_managed_key(&removed.id);
+        let removed = self.delete_key_record(managed_keys, key_id)?;
 
         let mut cleared_profile_ids = Vec::new();
         for profile in sessions {
@@ -135,6 +133,17 @@ impl KeychainService {
             removed,
             cleared_profile_ids,
         })
+    }
+
+    pub fn delete_key_record(
+        &self,
+        managed_keys: &mut Vec<ManagedKeyRecord>,
+        key_id: &str,
+    ) -> Option<ManagedKeyRecord> {
+        let index = managed_keys.iter().position(|key| key.id == key_id)?;
+        let removed = managed_keys.remove(index);
+        self.secrets.delete_managed_key(&removed.id);
+        Some(removed)
     }
 
     pub fn profile_supports_deploy(profile: &SessionProfile) -> bool {

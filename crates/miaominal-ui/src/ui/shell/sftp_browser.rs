@@ -122,8 +122,8 @@ impl SftpBrowserTableRow {
 
 pub(in crate::ui::shell) struct SftpBrowserTableDelegate {
     side: SftpBrowserSide,
-    app_view: WeakEntity<AppView>,
-    tab_id: usize,
+    controller: Option<WeakEntity<SftpController>>,
+    tab_id: Option<TabId>,
     source_rows: Vec<SftpBrowserTableRow>,
     children_source: HashMap<String, Vec<SftpBrowserTableRow>>,
     expanded_paths: HashSet<String>,
@@ -144,7 +144,7 @@ pub(in crate::ui::shell) struct SftpBrowserTableDelegate {
 }
 
 impl SftpBrowserTableDelegate {
-    pub(in crate::ui::shell) fn new(side: SftpBrowserSide, app_view: WeakEntity<AppView>) -> Self {
+    pub(in crate::ui::shell) fn new(side: SftpBrowserSide) -> Self {
         let hidden_columns = HashSet::from([4usize, 5usize]);
         let visible_col_map = (0..6usize)
             .filter(|i| !hidden_columns.contains(i))
@@ -152,8 +152,8 @@ impl SftpBrowserTableDelegate {
 
         Self {
             side,
-            app_view,
-            tab_id: 0,
+            controller: None,
+            tab_id: None,
             source_rows: Vec::new(),
             children_source: HashMap::new(),
             expanded_paths: HashSet::new(),
@@ -174,16 +174,20 @@ impl SftpBrowserTableDelegate {
         }
     }
 
+    pub(in crate::ui::shell) fn set_controller(&mut self, controller: WeakEntity<SftpController>) {
+        self.controller = Some(controller);
+    }
+
     pub(in crate::ui::shell) fn set_rows(
         &mut self,
         rows: Vec<SftpBrowserTableRow>,
         loading: bool,
-        tab_id: usize,
+        tab_id: TabId,
     ) {
         self.source_rows = rows;
         self.loading = loading;
         self.empty_message = Self::localized_empty_message(self.side).into();
-        self.tab_id = tab_id;
+        self.tab_id = Some(tab_id);
         self.children_source.clear();
         self.expanded_paths.clear();
         self.loading_paths.clear();
@@ -218,8 +222,8 @@ impl SftpBrowserTableDelegate {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn tab_id(&self) -> Option<usize> {
-        (self.tab_id != 0).then_some(self.tab_id)
+    pub(in crate::ui::shell) fn tab_id(&self) -> Option<TabId> {
+        self.tab_id
     }
 
     pub(in crate::ui::shell) fn row_index_by_path(&self, path: &str) -> Option<usize> {
@@ -577,7 +581,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
         let col_name: SharedString = Self::column_label(orig_col_ix).into();
         let hidden_columns = self.hidden_columns.clone();
         let table = cx.entity().clone();
-        let app_view = self.app_view.clone();
+        let controller = self.controller.clone();
         let side = self.side;
 
         div()
@@ -595,7 +599,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 (0..6).fold(menu, |menu, i| {
                     let is_visible = !hidden_columns.contains(&i);
                     let table = table.clone();
-                    let app_view = app_view.clone();
+                    let controller = controller.clone();
                     let name = Self::column_label(i);
                     menu.item(PopupMenuItem::new(name).checked(is_visible).on_click(
                         move |_, _, cx| {
@@ -605,11 +609,15 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                     delegate.toggle_column_visibility(i);
                                     delegate.hidden_columns()
                                 };
-                                if let Some(app_view) = app_view.upgrade() {
-                                    app_view.update(cx, |view, cx| {
-                                        view.persist_sftp_browser_hidden_columns(
-                                            side,
-                                            hidden_columns,
+                                if let Some(controller) =
+                                    controller.as_ref().and_then(WeakEntity::upgrade)
+                                {
+                                    controller.update(cx, |controller, cx| {
+                                        controller.emit(
+                                            AppCommand::PersistSftpBrowserHiddenColumns {
+                                                side,
+                                                hidden_columns,
+                                            },
                                             cx,
                                         );
                                     });
@@ -784,13 +792,11 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 let is_renaming = self.inline_rename_path.as_deref() == Some(row.path.as_str());
 
                 if is_renaming
-                    && let Some(inline_rename_input) = self.app_view.upgrade().map(|view| {
-                        view.read(cx)
-                            .workspace_forms
-                            .sftp_browser
-                            .inline_rename_input
-                            .clone()
-                    })
+                    && let Some(inline_rename_input) = self
+                        .controller
+                        .as_ref()
+                        .and_then(WeakEntity::upgrade)
+                        .map(|controller| controller.read(cx).inline_rename_input())
                 {
                     return h_flex()
                         .w_full()
@@ -899,9 +905,11 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                             move |table, _event, _window, cx| {
                                                 cx.stop_propagation();
                                                 let delegate = table.delegate_mut();
-                                                let app_view = delegate.app_view.clone();
+                                                let controller = delegate.controller.clone();
                                                 let side = delegate.side;
-                                                let tab_id = delegate.tab_id;
+                                                let Some(tab_id) = delegate.tab_id else {
+                                                    return;
+                                                };
                                                 let path = expand_path.clone();
                                                 if delegate.children_source.contains_key(&path) {
                                                     delegate.expand_cached_directory(path);
@@ -913,11 +921,16 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                                     // attempts to update this same entity again.
                                                     cx.spawn(async move |_this, cx| {
                                                         cx.update(|app| {
-                                                            app_view
-                                                                .update(app, |view, cx| {
-                                                                    view.expand_sftp_directory(
-                                                                        tab_id, side, path, cx,
-                                                                    );
+                                                            let Some(controller) = controller
+                                                            else {
+                                                                return;
+                                                            };
+                                                            controller
+                                                                .update(app, |controller, cx| {
+                                                                    controller
+                                                                        .request_expand_directory(
+                                                                            tab_id, side, path, cx,
+                                                                        );
                                                                 })
                                                                 .ok();
                                                         });

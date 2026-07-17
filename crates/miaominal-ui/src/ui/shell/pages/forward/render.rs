@@ -8,7 +8,7 @@ use super::super::empty_state::shell_empty_page;
 use super::{
     components::{forwarding_empty_state, forwarding_section},
     render_helpers::{
-        build_forward_rule_context_menu, forward_rule_display_label,
+        ForwardRuleActions, build_forward_rule_context_menu, forward_rule_display_label,
         render_forward_endpoint_editor, route_direction_icon, truncate_with_ellipsis,
     },
 };
@@ -24,7 +24,7 @@ struct ForwardRuleConnectionUiState {
 }
 
 fn render_forward_rule_connection_control(
-    entity: Entity<AppView>,
+    actions: ForwardRuleActions,
     profile_id: String,
     rule_id: String,
     switch_id: String,
@@ -44,17 +44,13 @@ fn render_forward_rule_connection_control(
                 .child(md3_spinner(18.0))
                 .into_any_element()
         } else {
-            let switch_entity = entity;
             md3_switch(switch_id)
                 .checked(state.connected)
                 .tooltip(i18n::string("forwarding.tooltips.toggle_rule"))
                 .on_click(move |enabled, _window, cx| {
-                    let entity = switch_entity.clone();
                     let profile_id = profile_id.clone();
                     let rule_id = rule_id.clone();
-                    entity.update(cx, |this, cx| {
-                        this.set_port_forward_rule_enabled(&profile_id, &rule_id, *enabled, cx);
-                    });
+                    actions.set_enabled(profile_id, rule_id, *enabled, cx);
                 })
                 .into_any_element()
         })
@@ -62,7 +58,8 @@ fn render_forward_rule_connection_control(
 }
 
 fn render_forward_rule_card(
-    entity: Entity<AppView>,
+    controller: Entity<SessionController>,
+    actions: ForwardRuleActions,
     profile: &SessionProfile,
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
@@ -83,10 +80,10 @@ fn render_forward_rule_card(
         &forward_rule_display_label(rule),
         FORWARD_RULE_CARD_TITLE_MAX_CHARS,
     );
-    let click_entity = entity.clone();
-    let menu_entity = entity.clone();
+    let click_controller = controller.clone();
+    let menu_controller = controller;
     let control = render_forward_rule_connection_control(
-        entity,
+        actions.clone(),
         profile.id.clone(),
         rule.id.clone(),
         switch_id,
@@ -106,17 +103,18 @@ fn render_forward_rule_card(
         .cursor_pointer()
         .p_4()
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            let entity = click_entity.clone();
+            let controller = click_controller.clone();
             let profile_id = click_profile_id.clone();
             let rule_id = click_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                this.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
+            controller.update(cx, |controller, cx| {
+                controller.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
             });
         })
         .context_menu(move |menu, _window, _cx| {
             build_forward_rule_context_menu(
                 menu,
-                menu_entity.clone(),
+                menu_controller.clone(),
+                actions.clone(),
                 menu_profile_id.clone(),
                 menu_rule_id.clone(),
                 state.session_active,
@@ -166,7 +164,8 @@ fn render_forward_rule_card(
 }
 
 fn render_forward_rule_list_row(
-    entity: Entity<AppView>,
+    controller: Entity<SessionController>,
+    actions: ForwardRuleActions,
     profile: &SessionProfile,
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
@@ -184,10 +183,10 @@ fn render_forward_rule_list_row(
     let click_profile_id = profile.id.clone();
     let click_rule_id = rule.id.clone();
     let title = truncate_with_ellipsis(&forward_rule_display_label(rule), 42);
-    let click_entity = entity.clone();
-    let menu_entity = entity.clone();
+    let click_controller = controller.clone();
+    let menu_controller = controller;
     let control = render_forward_rule_connection_control(
-        entity,
+        actions.clone(),
         profile.id.clone(),
         rule.id.clone(),
         switch_id,
@@ -214,11 +213,11 @@ fn render_forward_rule_list_row(
                 .into_any_element(),
         ),
         move |window, cx| {
-            let entity = click_entity.clone();
+            let controller = click_controller.clone();
             let profile_id = click_profile_id.clone();
             let rule_id = click_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                this.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
+            controller.update(cx, |controller, cx| {
+                controller.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
             });
         },
     )
@@ -227,7 +226,8 @@ fn render_forward_rule_list_row(
     .context_menu(move |menu, _window, _cx| {
         build_forward_rule_context_menu(
             menu,
-            menu_entity.clone(),
+            menu_controller.clone(),
+            actions.clone(),
             menu_profile_id.clone(),
             menu_rule_id.clone(),
             state.session_active,
@@ -244,26 +244,27 @@ fn render_forward_rule_list_row(
     })
 }
 
-impl AppView {
+impl SessionController {
     fn render_port_forward_rule_composer(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
         selected_profile: Option<&SessionProfile>,
     ) -> gpui::AnyElement {
+        let forms = self.panel_forms().forwarding;
+        let editor_state = self.editor_state();
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let editing_rule = self
-            .editors
+        let profiles = self.profiles();
+        let editing_rule = editor_state
             .port_forward_editor_profile_id
             .as_deref()
-            .zip(self.editors.port_forward_editor_rule_id.as_deref())
+            .zip(editor_state.port_forward_editor_rule_id.as_deref())
             .and_then(|(profile_id, rule_id)| {
-                self.data
-                    .sessions
+                profiles
                     .iter()
                     .find(|profile| profile.id == profile_id)
                     .and_then(|profile| {
@@ -282,7 +283,7 @@ impl AppView {
                 self.online_session_count_for_profile(&profile.id)
             )
         });
-        let forward_kind_selected_index = match self.editors.port_forward_kind {
+        let forward_kind_selected_index = match editor_state.port_forward_kind {
             PortForwardKind::Local => 0,
             PortForwardKind::Remote => 1,
         };
@@ -294,27 +295,27 @@ impl AppView {
             _bottom_copy,
             bottom_host_input,
             bottom_port_input,
-        ) = match self.editors.port_forward_kind {
+        ) = match editor_state.port_forward_kind {
             PortForwardKind::Local => (
                 i18n::string("forwarding.editor.listen_locally"),
-                self.panel_forms.forwarding.listen_host_input.clone(),
-                self.panel_forms.forwarding.listen_port_input.clone(),
+                forms.listen_host_input.clone(),
+                forms.listen_port_input.clone(),
                 i18n::string("forwarding.editor.destination_behind_ssh_host"),
                 i18n::string("forwarding.editor.forward_connections_copy"),
-                self.panel_forms.forwarding.target_host_input.clone(),
-                self.panel_forms.forwarding.target_port_input.clone(),
+                forms.target_host_input.clone(),
+                forms.target_port_input.clone(),
             ),
             PortForwardKind::Remote => (
                 i18n::string("forwarding.editor.destination_on_this_machine"),
-                self.panel_forms.forwarding.target_host_input.clone(),
-                self.panel_forms.forwarding.target_port_input.clone(),
+                forms.target_host_input.clone(),
+                forms.target_port_input.clone(),
                 i18n::string("forwarding.editor.expose_on_ssh_host"),
                 i18n::string("forwarding.editor.ask_selected_host_copy"),
-                self.panel_forms.forwarding.listen_host_input.clone(),
-                self.panel_forms.forwarding.listen_port_input.clone(),
+                forms.listen_host_input.clone(),
+                forms.listen_port_input.clone(),
             ),
         };
-        let profile_select = md3_select(&self.panel_forms.forwarding.profile_select)
+        let profile_select = md3_select(&forms.profile_select)
             .large()
             .w_full()
             .rounded(px(14.0))
@@ -323,12 +324,12 @@ impl AppView {
             .icon(IconName::Search)
             .cleanable(!is_editing_rule)
             .search_placeholder(i18n::string("forwarding.editor.search_host_profiles"))
-            .placeholder(if self.data.sessions.is_empty() {
+            .placeholder(if profiles.is_empty() {
                 i18n::string("forwarding.editor.no_saved_host_profiles")
             } else {
                 i18n::string("forwarding.editor.select_host_profile")
             })
-            .disabled(self.data.sessions.is_empty() || is_editing_rule);
+            .disabled(profiles.is_empty() || is_editing_rule);
         let forward_kind_tabs = SegmentedSwitch::new("port-forward-editor-kind")
             .selected_index(forward_kind_selected_index)
             .width(260.0)
@@ -337,15 +338,15 @@ impl AppView {
             .item(i18n::string("forwarding.editor.local"))
             .item(i18n::string("forwarding.editor.remote"))
             .on_click({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |index, _, cx| {
                     let kind = match index {
                         0 => PortForwardKind::Local,
                         1 => PortForwardKind::Remote,
                         _ => return,
                     };
-                    entity.update(cx, |this, cx| {
-                        this.set_port_forward_kind(kind, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.set_port_forward_kind(kind, cx);
                     });
                 }
             });
@@ -383,7 +384,7 @@ impl AppView {
                 )
                 .child(surface_text_input_stack(
                     i18n::string("forwarding.fields.label"),
-                    self.panel_forms.forwarding.label_input.clone(),
+                    forms.label_input.clone(),
                     TextInputSurface::Low,
                     false,
                 ))
@@ -430,7 +431,7 @@ impl AppView {
                                                 .text_color(rgb(roles.on_surface_variant))
                                                 .child(
                                                     Icon::new(route_direction_icon(
-                                                        self.editors.port_forward_kind,
+                                                        editor_state.port_forward_kind,
                                                     ))
                                                     .small(),
                                                 ),
@@ -470,27 +471,30 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_forward_fab(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
     ) -> impl IntoElement {
         fab_button(move |window, cx| {
-            entity.update(cx, |this, cx| this.open_port_forward_panel(window, cx));
+            controller.update(cx, |controller, cx| {
+                controller.open_port_forward_panel(window, cx);
+            });
         })
     }
 
     pub(in crate::ui::shell) fn render_port_forward_editor_sidebar(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
+        on_save: impl Fn(&mut Window, &mut App) + 'static,
         _cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
-        let selected_rule_label = self
-            .editors
+        let editor_state = self.editor_state();
+        let profiles = self.profiles();
+        let selected_rule_label = editor_state
             .port_forward_editor_profile_id
             .as_deref()
-            .zip(self.editors.port_forward_editor_rule_id.as_deref())
+            .zip(editor_state.port_forward_editor_rule_id.as_deref())
             .and_then(|(profile_id, rule_id)| {
-                self.data
-                    .sessions
+                profiles
                     .iter()
                     .find(|profile| profile.id == profile_id)
                     .and_then(|profile| {
@@ -502,22 +506,15 @@ impl AppView {
             })
             .map(forward_rule_display_label);
         let is_editing_rule = selected_rule_label.is_some();
-        let selected_rule_target = self
-            .editors
+        let selected_rule_target = editor_state
             .port_forward_editor_profile_id
             .as_deref()
-            .zip(self.editors.port_forward_editor_rule_id.as_deref())
+            .zip(editor_state.port_forward_editor_rule_id.as_deref())
             .map(|(profile_id, rule_id)| (profile_id.to_string(), rule_id.to_string()));
-        let selected_profile = self
-            .editors
+        let selected_profile = editor_state
             .port_forward_editor_profile_id
             .as_deref()
-            .and_then(|profile_id| {
-                self.data
-                    .sessions
-                    .iter()
-                    .find(|profile| profile.id == profile_id)
-            });
+            .and_then(|profile_id| profiles.iter().find(|profile| profile.id == profile_id));
 
         let header = h_flex()
             .w_full()
@@ -556,12 +553,16 @@ impl AppView {
                     false,
                     true,
                     {
-                        let entity = entity.clone();
+                        let controller = controller.clone();
                         move |_, cx| {
                             let profile_id = profile_id.clone();
                             let rule_id = rule_id.clone();
-                            entity.update(cx, |this, cx| {
-                                this.request_port_forward_rule_removal(&profile_id, &rule_id, cx);
+                            controller.update(cx, |controller, cx| {
+                                controller.request_port_forward_rule_removal(
+                                    &profile_id,
+                                    &rule_id,
+                                    cx,
+                                );
                             })
                         }
                     },
@@ -571,10 +572,10 @@ impl AppView {
         }
         footer_actions.push(
             editor_button(i18n::string("forwarding.actions.cancel"), false, true, {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.close_port_forward_rule_editor(cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.close_port_forward_rule_editor(cx);
                     });
                 }
             })
@@ -589,14 +590,7 @@ impl AppView {
                 },
                 true,
                 true,
-                {
-                    let entity = entity.clone();
-                    move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.create_port_forward_rule(window, cx);
-                        });
-                    }
-                },
+                on_save,
             )
             .into_any_element(),
         );
@@ -620,14 +614,14 @@ impl AppView {
                                     .px_4()
                                     .pb_4()
                                     .gap_3()
-                                    .when(self.data.sessions.is_empty(), |this| {
+                                    .when(profiles.is_empty(), |this| {
                                         this.child(forwarding_empty_state(i18n::string(
                                             "forwarding.empty.no_hosts_available",
                                         )))
                                     })
-                                    .when(!self.data.sessions.is_empty(), |this| {
+                                    .when(!profiles.is_empty(), |this| {
                                         this.child(self.render_port_forward_rule_composer(
-                                            entity.clone(),
+                                            controller.clone(),
                                             selected_profile,
                                         ))
                                     }),
@@ -638,18 +632,16 @@ impl AppView {
             )
     }
 
-    fn render_port_forward_saved_rules(&self, entity: Entity<Self>, cx: &App) -> gpui::AnyElement {
-        let filter_text = self
-            .panel_forms
-            .forwarding
-            .filter_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_ascii_lowercase();
-        let rules_with_profiles: Vec<_> = self
-            .data
-            .sessions
+    fn render_port_forward_saved_rules(
+        &self,
+        controller: Entity<Self>,
+        actions: ForwardRuleActions,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        let filter_input = self.panel_forms().forwarding.filter_input;
+        let filter_text = filter_input.read(cx).value().trim().to_ascii_lowercase();
+        let profiles = self.profiles();
+        let rules_with_profiles: Vec<_> = profiles
             .iter()
             .enumerate()
             .flat_map(|(profile_index, profile)| {
@@ -675,7 +667,7 @@ impl AppView {
             .into_any_element();
         }
 
-        let is_list = self.panel_view.forward_view_mode == ProfileViewMode::List;
+        let is_list = self.catalog_view().forward_view_mode == ProfileViewMode::List;
         let mut rules = if is_list {
             v_flex().w_full().gap_2()
         } else {
@@ -691,14 +683,16 @@ impl AppView {
 
             if is_list {
                 rules = rules.child(render_forward_rule_list_row(
-                    entity.clone(),
+                    controller.clone(),
+                    actions.clone(),
                     profile,
                     rule,
                     state,
                 ));
             } else {
                 rules = rules.child(render_forward_rule_card(
-                    entity.clone(),
+                    controller.clone(),
+                    actions.clone(),
                     profile,
                     rule,
                     state,
@@ -719,17 +713,18 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_forward_page(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
         cx: &App,
     ) -> gpui::AnyElement {
-        let total_rules = self
-            .data
-            .sessions
+        let actions = ForwardRuleActions::new(controller.clone());
+        let filter_input = self.panel_forms().forwarding.filter_input;
+        let profiles = self.profiles();
+        let total_rules = profiles
             .iter()
             .map(|profile| profile.port_forwarding_rules.len())
             .sum::<usize>();
 
-        if self.data.sessions.is_empty() {
+        if profiles.is_empty() {
             return shell_empty_page(
                 AppIcon::Forward,
                 i18n::string("forwarding.empty.no_host_profiles"),
@@ -742,7 +737,7 @@ impl AppView {
                 .into_any_element();
         }
 
-        let is_list = self.panel_view.forward_view_mode == ProfileViewMode::List;
+        let is_list = self.catalog_view().forward_view_mode == ProfileViewMode::List;
 
         let header =
             v_flex()
@@ -755,7 +750,7 @@ impl AppView {
                             .w_full()
                             .max_w(px(576.0))
                             .child(search_filter_input(
-                                &self.panel_forms.forwarding.filter_input,
+                                &filter_input,
                                 SearchInputStyle::Pill,
                                 None,
                             )),
@@ -767,18 +762,18 @@ impl AppView {
                         .justify_end()
                         .gap_2()
                         .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
-                            let entity = entity.clone();
+                            let controller = controller.clone();
                             move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.handle_forward_view_mode_change(ProfileViewMode::Grid, cx);
+                                controller.update(cx, |controller, cx| {
+                                    controller.set_forward_view_mode(ProfileViewMode::Grid, cx);
                                 });
                             }
                         }))
                         .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
-                            let entity = entity.clone();
+                            let controller = controller.clone();
                             move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.handle_forward_view_mode_change(ProfileViewMode::List, cx);
+                                controller.update(cx, |controller, cx| {
+                                    controller.set_forward_view_mode(ProfileViewMode::List, cx);
                                 });
                             }
                         })),
@@ -794,16 +789,13 @@ impl AppView {
                     .min_h(px(0.0))
                     .gap_4()
                     .child(header)
-                    .child(
-                        div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
-                            div().size_full().overflow_y_scrollbar().child(
-                                v_flex()
-                                    .w_full()
-                                    .pb_8()
-                                    .child(self.render_port_forward_saved_rules(entity, cx)),
+                    .child(div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
+                        div().size_full().overflow_y_scrollbar().child(
+                            v_flex().w_full().pb_8().child(
+                                self.render_port_forward_saved_rules(controller, actions, cx),
                             ),
                         ),
-                    ),
+                    )),
             )
             .into_any_element()
     }

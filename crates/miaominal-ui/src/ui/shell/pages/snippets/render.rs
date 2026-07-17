@@ -244,28 +244,28 @@ fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
     shell_empty_state(AppIcon::Notebook, message)
 }
 
-impl AppView {
+impl SessionController {
     pub(in crate::ui::shell) fn render_snippets_page(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
+        on_open_existing: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
         cx: &App,
     ) -> gpui::AnyElement {
-        let filter_text = self
-            .panel_forms
-            .snippets
+        let snippets_forms = self.snippets_forms();
+        let catalog_view = self.catalog_view();
+        let snippets = self.snippets().clone();
+        let filter_text = snippets_forms
             .filter_input
             .read(cx)
             .value()
             .trim()
             .to_ascii_lowercase();
-        let search_matched_snippets: Vec<_> = self
-            .data
-            .snippets
+        let search_matched_snippets: Vec<_> = snippets
             .iter()
             .enumerate()
             .filter(|(_, snippet)| miaominal_core::snippet::matches_filter(snippet, &filter_text))
             .collect();
-        let selected_package_filter = self.panel_view.snippets_package_filter.as_deref();
+        let selected_package_filter = catalog_view.snippets_package_filter.as_deref();
         let mut package_summaries: Vec<_> = search_matched_snippets
             .iter()
             .filter_map(|(_, snippet)| {
@@ -301,7 +301,7 @@ impl AppView {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
-        if self.data.snippets.is_empty() {
+        if snippets.is_empty() {
             return shell_empty_page(
                 AppIcon::Notebook,
                 i18n::string("snippets.empty.no_snippets"),
@@ -309,49 +309,47 @@ impl AppView {
             .into_any_element();
         }
 
-        let is_list = self.panel_view.snippets_view_mode == ProfileViewMode::List;
-
-        let header = v_flex()
-            .w_full()
-            .min_w(px(0.0))
-            .gap_6()
-            .px_5()
-            .child(
-                h_flex().w_full().min_w(px(0.0)).justify_center().child(
+        let is_list = catalog_view.snippets_view_mode == ProfileViewMode::List;
+        let header =
+            v_flex()
+                .w_full()
+                .min_w(px(0.0))
+                .gap_6()
+                .px_5()
+                .child(
+                    h_flex().w_full().min_w(px(0.0)).justify_center().child(
+                        h_flex().w_full().min_w(px(0.0)).max_w(px(576.0)).child(
+                            search_filter_input(
+                                &snippets_forms.filter_input,
+                                SearchInputStyle::Pill,
+                                None,
+                            ),
+                        ),
+                    ),
+                )
+                .child(
                     h_flex()
                         .w_full()
                         .min_w(px(0.0))
-                        .max_w(px(576.0))
-                        .child(search_filter_input(
-                            &self.panel_forms.snippets.filter_input,
-                            SearchInputStyle::Pill,
-                            None,
-                        )),
-                ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .justify_end()
-                    .gap_2()
-                    .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
-                        let entity = entity.clone();
-                        move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.handle_snippets_view_mode_change(ProfileViewMode::Grid, cx);
-                            });
-                        }
-                    }))
-                    .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
-                        let entity = entity.clone();
-                        move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.handle_snippets_view_mode_change(ProfileViewMode::List, cx);
-                            });
-                        }
-                    })),
-            );
+                        .justify_end()
+                        .gap_2()
+                        .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
+                            let controller = controller.clone();
+                            move |_, cx| {
+                                controller.update(cx, |controller, cx| {
+                                    controller.set_snippets_view_mode(ProfileViewMode::Grid, cx);
+                                });
+                            }
+                        }))
+                        .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
+                            let controller = controller.clone();
+                            move |_, cx| {
+                                controller.update(cx, |controller, cx| {
+                                    controller.set_snippets_view_mode(ProfileViewMode::List, cx);
+                                });
+                            }
+                        })),
+                );
 
         let content = v_flex()
             .w_full()
@@ -381,11 +379,11 @@ impl AppView {
                                             selected.eq_ignore_ascii_case(package_name.as_str())
                                         });
                                     snippet_package_card(package, count, is_selected, {
-                                        let entity = entity.clone();
+                                        let controller = controller.clone();
                                         move |_, cx| {
                                             let package_name = package_name.clone();
-                                            entity.update(cx, |this, cx| {
-                                                this.handle_snippets_package_filter_toggle(
+                                            controller.update(cx, |controller, cx| {
+                                                controller.toggle_snippets_package_filter(
                                                     package_name.clone(),
                                                     cx,
                                                 );
@@ -415,17 +413,15 @@ impl AppView {
                     } else if visible_snippets.is_empty() {
                         snippets_empty_state(i18n::string("snippets.empty.no_package_matches"))
                             .into_any_element()
-                    } else if self.panel_view.snippets_view_mode == ProfileViewMode::List {
+                    } else if is_list {
                         v_flex()
                             .w_full()
                             .min_w(px(0.0))
                             .gap_2()
                             .children(visible_snippets.into_iter().map(|(index, snippet)| {
-                                let entity = entity.clone();
+                                let on_open_existing = on_open_existing.clone();
                                 snippet_list_row(snippet, move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.open_existing_snippet_editor(index, window, cx);
-                                    });
+                                    on_open_existing(index, window, cx);
                                 })
                                 .into_any_element()
                             }))
@@ -438,11 +434,9 @@ impl AppView {
                             .flex_wrap()
                             .gap_4()
                             .children(visible_snippets.into_iter().map(|(index, snippet)| {
-                                let entity = entity.clone();
+                                let on_open_existing = on_open_existing.clone();
                                 snippet_command_card(snippet, move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.open_existing_snippet_editor(index, window, cx);
-                                    });
+                                    on_open_existing(index, window, cx);
                                 })
                                 .into_any_element()
                             }))
@@ -473,25 +467,25 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_snippets_fab(
         &self,
-        entity: Entity<Self>,
+        on_open: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        fab_button(move |window, cx| {
-            entity.update(cx, |this, cx| this.open_snippets_editor(window, cx));
-        })
+        fab_button(on_open)
     }
 
     pub(in crate::ui::shell) fn render_snippets_editor_sidebar(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
+        on_save: impl Fn(&mut Window, &mut App) + 'static,
+        _cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
+        let snippets = self.snippets().clone();
         let is_editing = self
-            .data
-            .selected_snippet
-            .and_then(|index| self.data.snippets.get(index))
+            .selected_snippet()
+            .and_then(|index| snippets.get(index))
             .is_some();
-        let available_packages = Self::collect_available_snippet_packages(&self.data.snippets);
-        let forms = &self.panel_forms.snippets;
+        let available_packages = Self::collect_available_snippet_packages(&snippets);
+        let forms = self.snippets_forms();
         let editor_title = if is_editing {
             i18n::string("snippets.editor.edit_title")
         } else {
@@ -506,7 +500,6 @@ impl AppView {
             ),
         );
 
-        let save_entity = entity.clone();
         let mut footer_actions = Vec::new();
         if is_editing {
             footer_actions.push(
@@ -518,10 +511,10 @@ impl AppView {
                     Some(roles.on_error_container),
                     None,
                     {
-                        let entity = entity.clone();
+                        let controller = controller.clone();
                         move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.delete_selected_snippet(cx);
+                            controller.update(cx, |controller, cx| {
+                                controller.request_selected_snippet_delete(cx);
                             });
                         }
                     },
@@ -531,27 +524,18 @@ impl AppView {
         }
         footer_actions.push(
             editor_button(i18n::string("snippets.editor.cancel"), false, true, {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.close_snippets_editor(cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.close_snippets_editor(cx);
                     });
                 }
             })
             .into_any_element(),
         );
         footer_actions.push(
-            editor_button(
-                i18n::string("snippets.editor.save"),
-                true,
-                true,
-                move |window, cx| {
-                    save_entity.update(cx, |this, cx| {
-                        this.save_snippet(window, cx);
-                    });
-                },
-            )
-            .into_any_element(),
+            editor_button(i18n::string("snippets.editor.save"), true, true, on_save)
+                .into_any_element(),
         );
         let footer = editor_footer_actions(footer_actions);
 
@@ -640,10 +624,10 @@ impl AppView {
                                                                 None,
                                                                 Some(roles.outline_variant),
                                                                 {
-                                                                    let entity = entity.clone();
+                                                                    let controller = controller.clone();
                                                                     move |window, cx| {
-                                                                        entity.update(cx, |this, cx| {
-                                                                            this.begin_new_snippet_package(
+                                                                        controller.update(cx, |controller, cx| {
+                                                                            controller.begin_new_snippet_package(
                                                                                 window,
                                                                                 cx,
                                                                             );

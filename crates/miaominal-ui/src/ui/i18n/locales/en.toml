@@ -702,7 +702,6 @@ invalid_text_file = "File is not valid UTF-8: {filename}"
 
 [workspace.panel.agent.labels]
 message = "message"
-selection = "selection"
 tool_call = "tool call"
 
 [workspace.panel.agent.tool_titles]
@@ -1408,7 +1407,6 @@ saved_memory_only = "Saved {name} in memory only"
 save_failed = "Save failed: {message}"
 test_connection_failed = "Test connection failed: {message}"
 test_connection_failed_title = "Test connection failed"
-selected = "Selected {name}"
 
 [errors.profile.validation]
 profile_name_required = "Profile name is required."
@@ -1773,7 +1771,6 @@ font_set = "Font set to {font}"
 font_reset = "Font reset to {font}"
 font_size = "Font size {value}"
 line_height = "Line height {value}"
-invalid_seed_color = "Invalid seed color. Use #RRGGBB."
 theme_seed = "Theme seed: {value}"
 theme_seed_reset = "Theme seed reset to {value}"
 theme_changed = "Theme: {theme}"
@@ -1791,9 +1788,6 @@ last_tab_close_behavior_exit = "Closing the last tab will quit the application"
 last_tab_close_behavior_open_home = "Closing the last tab will open a new home tab"
 monitor_history_duration_changed = "Monitor history window updated"
 local_vault_auto_lock_duration_changed = "Local secrets vault auto-lock timeout updated"
-session_monitoring_started = "Remote monitoring started for this session"
-session_monitoring_pending = "Remote monitoring will start when this session becomes ready"
-session_monitoring_start_failed = "Couldn't start remote monitoring: {error}"
 
 [agent.mode]
 ask = "Ask"

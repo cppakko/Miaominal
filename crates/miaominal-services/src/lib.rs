@@ -26,5 +26,5 @@ pub use settings_service::{
     LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService,
 };
 pub use sftp_service::{PlannedSftpDownload, SftpService};
-pub use sync_service::{SyncService, SyncTaskResult};
+pub use sync_service::{SyncReloadResult, SyncService, SyncTaskResult};
 pub use terminal_service::TerminalService;

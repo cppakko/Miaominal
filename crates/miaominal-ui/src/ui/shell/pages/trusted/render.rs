@@ -125,7 +125,7 @@ fn trusted_filter_label(filter: TrustedHostFilter) -> String {
 }
 
 fn trusted_filter_button(
-    entity: Entity<AppView>,
+    controller: Entity<SessionController>,
     filter: TrustedHostFilter,
     active: bool,
 ) -> impl IntoElement {
@@ -153,8 +153,8 @@ fn trusted_filter_button(
         .text_color(rgb(foreground))
         .child(trusted_filter_label(filter))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            entity.update(cx, |this, cx| {
-                this.handle_trusted_host_filter_change(filter, cx);
+            controller.update(cx, |controller, cx| {
+                controller.set_trusted_host_filter(filter, cx);
             });
         })
 }
@@ -241,7 +241,10 @@ fn linked_profile_badges(view: &TrustedKnownHostView) -> Vec<gpui::AnyElement> {
     badges
 }
 
-fn trusted_host_card(entity: Entity<AppView>, view: TrustedKnownHostView) -> impl IntoElement {
+fn trusted_host_card(
+    controller: Entity<SessionController>,
+    view: TrustedKnownHostView,
+) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let address = view.address();
     let select_host = view.entry.host.clone();
@@ -279,12 +282,12 @@ fn trusted_host_card(entity: Entity<AppView>, view: TrustedKnownHostView) -> imp
         .p_4()
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, {
-            let entity = entity.clone();
+            let controller = controller.clone();
             move |_, _, cx| {
                 let host = select_host.clone();
                 let fingerprint = select_fingerprint.clone();
-                entity.update(cx, |this, cx| {
-                    this.select_trusted_known_host(host, port, fingerprint, cx);
+                controller.update(cx, |controller, cx| {
+                    controller.select_trusted_known_host(host, port, fingerprint, cx);
                 });
             }
         })
@@ -319,14 +322,14 @@ fn trusted_host_card(entity: Entity<AppView>, view: TrustedKnownHostView) -> imp
         )
         .on_mouse_up(MouseButton::Right, move |_, _, cx| {
             let host = copy_host.clone();
-            entity.update(cx, |this, cx| {
-                this.copy_known_host_address(host, port, cx);
+            controller.update(cx, |controller, cx| {
+                controller.copy_known_host_address(host, port, cx);
             });
         })
 }
 
 fn trusted_detail_panel(
-    entity: Entity<AppView>,
+    controller: Entity<SessionController>,
     view: &TrustedKnownHostView,
     path: String,
 ) -> impl IntoElement {
@@ -336,7 +339,7 @@ fn trusted_detail_panel(
     let copy_address_host = view.entry.host.clone();
     let remove_host = view.entry.host.clone();
     let port = view.entry.port;
-    let close_footer_entity = entity.clone();
+    let close_footer_controller = controller.clone();
 
     let mut linked_profiles = v_flex().gap_2();
     if view.linked_profiles.is_empty() {
@@ -388,12 +391,12 @@ fn trusted_detail_panel(
                                 Some(roles.on_surface_variant),
                                 None,
                                 {
-                                    let entity = entity.clone();
-                                    move |window, cx| {
+                                    let controller = controller.clone();
+                                    move |_window, cx| {
                                         let profile_id = open_id.clone();
-                                        entity.update(cx, |this, cx| {
-                                            this.open_linked_profile_from_known_host(
-                                                profile_id, window, cx,
+                                        controller.update(cx, |controller, cx| {
+                                            controller.open_linked_profile_from_known_host(
+                                                profile_id, cx,
                                             );
                                         });
                                     }
@@ -437,11 +440,11 @@ fn trusted_detail_panel(
             true,
             false,
             {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |_, cx| {
                     let fingerprint = copy_fingerprint.clone();
-                    entity.update(cx, |this, cx| {
-                        this.copy_known_host_fingerprint(fingerprint, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.copy_known_host_fingerprint(fingerprint, cx);
                     });
                 }
             },
@@ -454,11 +457,11 @@ fn trusted_detail_panel(
             true,
             false,
             {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |_, cx| {
                     let host = copy_address_host.clone();
-                    entity.update(cx, |this, cx| {
-                        this.copy_known_host_address(host, port, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.copy_known_host_address(host, port, cx);
                     });
                 }
             },
@@ -475,8 +478,8 @@ fn trusted_detail_panel(
                 Some(roles.error),
                 move |_, cx| {
                     let host = remove_host.clone();
-                    entity.update(cx, |this, cx| {
-                        this.request_trusted_known_host_removal(host, port, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.request_trusted_known_host_removal(host, port, cx);
                     });
                 },
             ))
@@ -491,8 +494,8 @@ fn trusted_detail_panel(
                 None,
                 Some(roles.outline_variant),
                 move |_, cx| {
-                    close_footer_entity.update(cx, |this, cx| {
-                        this.close_trusted_known_host_sidebar(cx);
+                    close_footer_controller.update(cx, |controller, cx| {
+                        controller.close_trusted_known_host_sidebar(cx);
                     });
                 },
             ))
@@ -575,10 +578,10 @@ fn trusted_detail_panel(
         )
 }
 
-impl AppView {
+impl SessionController {
     pub(in crate::ui::shell) fn render_trusted_known_host_delete_prompt(
         &self,
-        entity: Entity<AppView>,
+        controller: Entity<Self>,
         prompt: &PendingKnownHostDeleteState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -590,8 +593,8 @@ impl AppView {
             ],
         );
 
-        let entity_cancel = entity.clone();
-        let entity_confirm = entity.clone();
+        let controller_cancel = controller.clone();
+        let controller_confirm = controller;
 
         let actions = h_flex()
             .gap_2()
@@ -603,8 +606,8 @@ impl AppView {
                     BasicDialogActionTone::Default,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_cancel.update(cx, |this, cx| {
-                        this.cancel_trusted_known_host_removal(cx);
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_trusted_known_host_removal(cx);
                     });
                 }),
             )
@@ -615,8 +618,8 @@ impl AppView {
                     BasicDialogActionTone::Destructive,
                 )
                 .on_click(move |_, _, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_trusted_known_host_removal(cx);
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_trusted_known_host_removal(cx);
                     });
                 }),
             );
@@ -633,11 +636,13 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_trusted_page(
         &self,
-        entity: Entity<AppView>,
-        cx: &mut Context<Self>,
+        controller: Entity<Self>,
+        cx: &App,
     ) -> gpui::AnyElement {
-        let entries = self.data.known_hosts_entries.clone();
-        let views = derive_trusted_known_hosts(&entries, &self.data.sessions);
+        let trusted_filter_input = self.panel_forms().trusted.filter_input;
+        let entries = self.known_hosts_entries().clone();
+        let profiles = self.profiles();
+        let views = derive_trusted_known_hosts(&entries, &profiles);
         let total = views.len();
         let linked = views.iter().filter(|view| !view.is_orphaned()).count();
         let orphaned = views.iter().filter(|view| view.is_orphaned()).count();
@@ -659,14 +664,8 @@ impl AppView {
                 .into_any_element();
         }
 
-        let query = self
-            .panel_forms
-            .trusted
-            .filter_input
-            .read(cx)
-            .value()
-            .to_string();
-        let filter = self.panel_view.trusted_host_filter;
+        let query = trusted_filter_input.read(cx).value().to_string();
+        let filter = self.catalog_view().trusted_host_filter;
         let filtered: Vec<_> = views
             .iter()
             .filter(|view| trusted_host_matches_query(view, &query))
@@ -701,7 +700,7 @@ impl AppView {
                                         .w_full()
                                         .max_w(px(576.0))
                                         .child(search_filter_input(
-                                            &self.panel_forms.trusted.filter_input,
+                                            &trusted_filter_input,
                                             SearchInputStyle::Pill,
                                             None,
                                         )),
@@ -740,27 +739,27 @@ impl AppView {
                                     .gap_2()
                                     .flex_wrap()
                                     .child(trusted_filter_button(
-                                        entity.clone(),
+                                        controller.clone(),
                                         TrustedHostFilter::All,
                                         filter == TrustedHostFilter::All,
                                     ))
                                     .child(trusted_filter_button(
-                                        entity.clone(),
+                                        controller.clone(),
                                         TrustedHostFilter::Linked,
                                         filter == TrustedHostFilter::Linked,
                                     ))
                                     .child(trusted_filter_button(
-                                        entity.clone(),
+                                        controller.clone(),
                                         TrustedHostFilter::Orphaned,
                                         filter == TrustedHostFilter::Orphaned,
                                     ))
                                     .child(trusted_filter_button(
-                                        entity.clone(),
+                                        controller.clone(),
                                         TrustedHostFilter::DefaultPort,
                                         filter == TrustedHostFilter::DefaultPort,
                                     ))
                                     .child(trusted_filter_button(
-                                        entity.clone(),
+                                        controller.clone(),
                                         TrustedHostFilter::CustomPort,
                                         filter == TrustedHostFilter::CustomPort,
                                     )),
@@ -782,7 +781,7 @@ impl AppView {
                                         .gap_4()
                                         .pb_8()
                                         .children(filtered.into_iter().map(|view| {
-                                            trusted_host_card(entity.clone(), view)
+                                            trusted_host_card(controller.clone(), view)
                                                 .into_any_element()
                                         }))
                                         .into_any_element()
@@ -796,26 +795,27 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_known_hosts_refresh_fab(
         &self,
-        entity: Entity<AppView>,
+        controller: Entity<Self>,
     ) -> impl IntoElement {
         fab_icon_button(AppIcon::Rotate, move |_, cx| {
-            entity.update(cx, |this, cx| {
-                this.refresh_known_hosts();
-                this.status_message = i18n::string("trusted.messages.refreshed");
-                cx.notify();
+            controller.update(cx, |controller, cx| {
+                controller.refresh_known_hosts_with_feedback(cx);
             });
         })
     }
 
     pub(in crate::ui::shell) fn render_trusted_known_host_sidebar(
         &self,
-        entity: Entity<AppView>,
+        controller: Entity<Self>,
     ) -> impl IntoElement {
-        let views = derive_trusted_known_hosts(&self.data.known_hosts_entries, &self.data.sessions);
-        let path = self.services.known_hosts.path().display().to_string();
+        let entries = self.known_hosts_entries().clone();
+        let profiles = self.profiles();
+        let views = derive_trusted_known_hosts(&entries, &profiles);
+        let path = self.known_hosts().path().display().to_string();
 
-        selected_trusted_host(&views, self.panels.selected_known_host.as_ref())
-            .map(|view| trusted_detail_panel(entity.clone(), view, path).into_any_element())
+        let selected_known_host = self.selected_known_host();
+        selected_trusted_host(&views, selected_known_host.as_ref())
+            .map(|view| trusted_detail_panel(controller, view, path).into_any_element())
             .unwrap_or_else(|| {
                 shell_empty_page(
                     AppIcon::FingerPrint,
@@ -827,7 +827,7 @@ impl AppView {
 
     pub(in crate::ui::shell) fn render_trusted_host_key_prompt(
         &self,
-        entity: Entity<AppView>,
+        on_decision: impl Fn(HostKeyDecision, &mut App) + Clone + 'static,
         prompt: &HostKeyPrompt,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
@@ -904,9 +904,9 @@ impl AppView {
             ));
         }
 
-        let entity_once = entity.clone();
-        let entity_save = entity.clone();
-        let entity_reject = entity.clone();
+        let on_reject = on_decision.clone();
+        let on_once = on_decision.clone();
+        let on_save = on_decision;
 
         let actions = h_flex()
             .w_full()
@@ -920,9 +920,7 @@ impl AppView {
                 )
                 .large()
                 .on_click(move |_, _, cx| {
-                    entity_reject.update(cx, |this, cx| {
-                        this.handle_trusted_host_key_decision(HostKeyDecision::Reject, cx);
-                    });
+                    on_reject(HostKeyDecision::Reject, cx);
                 }),
             )
             .child(
@@ -933,9 +931,7 @@ impl AppView {
                 )
                 .large()
                 .on_click(move |_, _, cx| {
-                    entity_once.update(cx, |this, cx| {
-                        this.handle_trusted_host_key_decision(HostKeyDecision::AcceptOnce, cx);
-                    });
+                    on_once(HostKeyDecision::AcceptOnce, cx);
                 }),
             )
             .child(
@@ -946,9 +942,7 @@ impl AppView {
                 )
                 .large()
                 .on_click(move |_, _, cx| {
-                    entity_save.update(cx, |this, cx| {
-                        this.handle_trusted_host_key_decision(HostKeyDecision::AcceptAndSave, cx);
-                    });
+                    on_save(HostKeyDecision::AcceptAndSave, cx);
                 }),
             );
 

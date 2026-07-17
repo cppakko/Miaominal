@@ -3,12 +3,10 @@ use crate::ui::i18n;
 use gpui::AnimationExt as _;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_popup(
-    app: &AppView,
-    entity: Entity<AppView>,
+    controller: Entity<AgentController>,
+    candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
 ) -> gpui::AnyElement {
-    let candidates = app.session_agent_target_candidates();
-
     div()
         .id("agent-at-mention-popup")
         .w_full()
@@ -17,7 +15,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_popup(
         .overflow_y_scroll()
         .occlude()
         .child(render_session_agent_at_mention_menu(
-            entity, candidates, query,
+            controller, candidates, query,
         ))
         .with_animation(
             "session-agent-at-mention-popup",
@@ -28,7 +26,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_popup(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
-    entity: Entity<AppView>,
+    controller: Entity<AgentController>,
     candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
 ) -> gpui::AnyElement {
@@ -61,7 +59,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
         .children(filtered.into_iter().map(|candidate| {
             let name = candidate.name.clone();
             let id_name = candidate.name.clone();
-            let click_entity = entity.clone();
+            let click_controller = controller.clone();
             h_flex()
                 .id(SharedString::from(format!(
                     "agent-at-mention-row-{id_name}"
@@ -80,9 +78,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
                 })
                 .on_mouse_up(MouseButton::Left, move |_, window, cx| {
                     let name = name.clone();
-                    let entity = click_entity.clone();
-                    entity.update(cx, |this, cx| {
-                        this.insert_session_agent_at_mention(name, window, cx);
+                    let controller = click_controller.clone();
+                    controller.update(cx, |controller, cx| {
+                        controller.insert_at_mention(name, window, cx);
                     });
                     cx.stop_propagation();
                 })

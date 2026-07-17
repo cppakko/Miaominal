@@ -1,10 +1,13 @@
 use super::AppView;
-use super::workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
+use super::workspace::{
+    ClosePlan, PaneLayout, SplitAxis, SplitDirection, TabId, TabPlacement, TabRegistry,
+    TabWorkspaceState,
+};
 use crate::ui::i18n;
 use gpui::{Bounds, Context, FocusHandle, Pixels, Point};
 use miaominal_terminal::{terminal_cell_width_default, terminal_line_height_default};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -58,7 +61,7 @@ pub(in crate::ui::shell) enum PaneSplitAnimationKind {
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) struct PaneCloseAnimation {
     pub removed_pane_id: PaneId,
-    pub hidden_tab_id: Option<usize>,
+    pub hidden_tab_id: Option<TabId>,
 }
 
 #[derive(Clone, Debug)]
@@ -84,7 +87,7 @@ pub(in crate::ui::shell) struct TerminalScrollbarDrag {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) struct TerminalHoveredLink {
-    pub tab_id: usize,
+    pub tab_id: TabId,
     pub line: usize,
     pub start_column: usize,
     pub end_column: usize,
@@ -93,7 +96,7 @@ pub(in crate::ui::shell) struct TerminalHoveredLink {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) struct TerminalLinkQuery {
-    pub tab_id: usize,
+    pub tab_id: TabId,
     pub generation: u64,
     pub line: usize,
     pub column: usize,
@@ -152,7 +155,7 @@ impl PaneViewState {
 }
 
 pub(in crate::ui::shell) struct ParkedPane {
-    pub active_tab: Option<usize>,
+    pub active_tab: Option<TabId>,
     pub terminal_focus: FocusHandle,
     pub terminal_bounds: Option<Bounds<Pixels>>,
     pub terminal_cell_width: f32,
@@ -192,157 +195,133 @@ impl ParkedPane {
 
 impl AppView {
     pub(in crate::ui::shell) fn active_pane_id(&self) -> PaneId {
-        self.workspace_state.workspace.active_pane_id
+        self.workspace.workspace.active_pane_id
     }
 
     fn park_loaded_workspace(&mut self, cx: &mut Context<Self>) -> TabWorkspaceState {
         TabWorkspaceState {
-            active_tab: self.workspace_state.workspace.active_tab.take(),
-            active_pane_id: self.workspace_state.workspace.active_pane_id,
+            active_tab: self.workspace.workspace.active_tab.take(),
+            active_pane_id: self.workspace.workspace.active_pane_id,
             active_pane: PaneViewState {
                 terminal_focus: std::mem::replace(
-                    &mut self.workspace_state.workspace.active_pane.terminal_focus,
+                    &mut self.workspace.workspace.active_pane.terminal_focus,
                     cx.focus_handle(),
                 ),
-                terminal_bounds: self
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_bounds
-                    .take(),
-                terminal_cell_width: self
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_cell_width,
-                terminal_line_height: self
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_line_height,
+                terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
+                terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
+                terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
                 terminal_dragging: std::mem::take(
-                    &mut self.workspace_state.workspace.active_pane.terminal_dragging,
+                    &mut self.workspace.workspace.active_pane.terminal_dragging,
                 ),
                 terminal_mouse_reporting_active: std::mem::take(
                     &mut self
-                        .workspace_state
+                        .workspace
                         .workspace
                         .active_pane
                         .terminal_mouse_reporting_active,
                 ),
                 last_reported_mouse_cell: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .last_reported_mouse_cell
                     .take(),
                 terminal_pointer_position: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_pointer_position
                     .take(),
                 terminal_link_query: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_link_query
                     .take(),
                 terminal_hovered_link: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_hovered_link
                     .take(),
                 terminal_link_open_modifier: std::mem::take(
                     &mut self
-                        .workspace_state
+                        .workspace
                         .workspace
                         .active_pane
                         .terminal_link_open_modifier,
                 ),
                 terminal_scrollbar_drag: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_scrollbar_drag
                     .take(),
                 terminal_scrollbar_last_interaction_at: self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_scrollbar_last_interaction_at
                     .take(),
             },
-            parked_panes: std::mem::take(&mut self.workspace_state.workspace.parked_panes),
+            parked_panes: std::mem::take(&mut self.workspace.workspace.parked_panes),
             pane_layout: std::mem::replace(
-                &mut self.workspace_state.workspace.pane_layout,
+                &mut self.workspace.workspace.pane_layout,
                 PaneLayout::Leaf(PaneId(1)),
             ),
-            next_pane_id: std::mem::replace(&mut self.workspace_state.workspace.next_pane_id, 2),
-            pane_split_drag: self.workspace_state.workspace.pane_split_drag.take(),
-            pane_split_animation: self.workspace_state.workspace.pane_split_animation.take(),
-            pane_tab_drop_target: self.workspace_state.workspace.pane_tab_drop_target.take(),
+            next_pane_id: std::mem::replace(&mut self.workspace.workspace.next_pane_id, 2),
+            pane_split_drag: self.workspace.workspace.pane_split_drag.take(),
+            pane_split_animation: self.workspace.workspace.pane_split_animation.take(),
+            pane_tab_drop_target: self.workspace.workspace.pane_tab_drop_target.take(),
         }
     }
 
     fn restore_loaded_workspace(&mut self, workspace: TabWorkspaceState) {
-        self.workspace_state.workspace.active_tab = workspace.active_tab;
-        self.workspace_state.workspace.active_pane_id = workspace.active_pane_id;
-        self.workspace_state.workspace.active_pane.terminal_focus =
-            workspace.active_pane.terminal_focus;
-        self.workspace_state.workspace.active_pane.terminal_bounds =
+        self.workspace.workspace.active_tab = workspace.active_tab;
+        self.workspace.workspace.active_pane_id = workspace.active_pane_id;
+        self.workspace.workspace.active_pane.terminal_focus = workspace.active_pane.terminal_focus;
+        self.workspace.workspace.active_pane.terminal_bounds =
             workspace.active_pane.terminal_bounds;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_cell_width = workspace.active_pane.terminal_cell_width;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_line_height = workspace.active_pane.terminal_line_height;
-        self.workspace_state.workspace.active_pane.terminal_dragging =
+        self.workspace.workspace.active_pane.terminal_cell_width =
+            workspace.active_pane.terminal_cell_width;
+        self.workspace.workspace.active_pane.terminal_line_height =
+            workspace.active_pane.terminal_line_height;
+        self.workspace.workspace.active_pane.terminal_dragging =
             workspace.active_pane.terminal_dragging;
-        self.workspace_state
+        self.workspace
             .workspace
             .active_pane
             .terminal_mouse_reporting_active =
             workspace.active_pane.terminal_mouse_reporting_active;
-        self.workspace_state
+        self.workspace
             .workspace
             .active_pane
             .last_reported_mouse_cell = workspace.active_pane.last_reported_mouse_cell;
-        self.workspace_state
+        self.workspace
             .workspace
             .active_pane
             .terminal_pointer_position = workspace.active_pane.terminal_pointer_position;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_link_query = workspace.active_pane.terminal_link_query;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_hovered_link = workspace.active_pane.terminal_hovered_link;
-        self.workspace_state
+        self.workspace.workspace.active_pane.terminal_link_query =
+            workspace.active_pane.terminal_link_query;
+        self.workspace.workspace.active_pane.terminal_hovered_link =
+            workspace.active_pane.terminal_hovered_link;
+        self.workspace
             .workspace
             .active_pane
             .terminal_link_open_modifier = workspace.active_pane.terminal_link_open_modifier;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_scrollbar_drag = workspace.active_pane.terminal_scrollbar_drag;
-        self.workspace_state
+        self.workspace.workspace.active_pane.terminal_scrollbar_drag =
+            workspace.active_pane.terminal_scrollbar_drag;
+        self.workspace
             .workspace
             .active_pane
             .terminal_scrollbar_last_interaction_at =
             workspace.active_pane.terminal_scrollbar_last_interaction_at;
-        self.workspace_state.workspace.parked_panes = workspace.parked_panes;
-        self.workspace_state.workspace.pane_layout = workspace.pane_layout;
-        self.workspace_state.workspace.next_pane_id = workspace.next_pane_id;
-        self.workspace_state.workspace.pane_split_drag = workspace.pane_split_drag;
-        self.workspace_state.workspace.pane_split_animation = workspace.pane_split_animation;
-        self.workspace_state.workspace.pane_tab_drop_target = workspace.pane_tab_drop_target;
+        self.workspace.workspace.parked_panes = workspace.parked_panes;
+        self.workspace.workspace.pane_layout = workspace.pane_layout;
+        self.workspace.workspace.next_pane_id = workspace.next_pane_id;
+        self.workspace.workspace.pane_split_drag = workspace.pane_split_drag;
+        self.workspace.workspace.pane_split_animation = workspace.pane_split_animation;
+        self.workspace.workspace.pane_tab_drop_target = workspace.pane_tab_drop_target;
     }
 
     pub(in crate::ui::shell) fn reset_loaded_workspace(&mut self, cx: &mut Context<Self>) {
@@ -350,17 +329,15 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn unload_active_topbar_workspace(&mut self, cx: &mut Context<Self>) {
-        if let Some(index) = self.workspace_state.active_topbar_tab
+        if let Some(tab_id) = self.workspace.active_topbar_tab
             && self
-                .workspace_state
+                .workspace
                 .tabs
-                .get(index)
-                .is_some_and(|tab| !tab.hidden_from_topbar && tab.as_session().is_some())
+                .get(tab_id)
+                .is_some_and(|tab| tab.is_top_level() && tab.is_session())
         {
             let workspace = self.park_loaded_workspace(cx);
-            if let Some(tab) = self.workspace_state.tabs.get_mut(index) {
-                tab.workspace = Some(workspace);
-            }
+            self.workspace.parked_workspaces.insert(tab_id, workspace);
         } else {
             self.reset_loaded_workspace(cx);
         }
@@ -371,24 +348,28 @@ impl AppView {
         index: usize,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self
-            .workspace_state
-            .tabs
-            .get_mut(index)
-            .and_then(|tab| tab.workspace.take())
-            .unwrap_or_else(|| TabWorkspaceState::new(Some(index), cx.focus_handle()));
+        let tab_id = self.workspace.tabs.id_at(index);
+        let workspace = tab_id
+            .and_then(|tab_id| self.workspace.parked_workspaces.remove(&tab_id))
+            .unwrap_or_else(|| TabWorkspaceState::new(tab_id, cx.focus_handle()));
         self.restore_loaded_workspace(workspace);
     }
 
     fn workspace_tab_indices_from_parts(
-        active_tab: Option<usize>,
+        tabs: &TabRegistry,
+        active_tab: Option<TabId>,
         parked_panes: &HashMap<PaneId, ParkedPane>,
     ) -> Vec<usize> {
         let mut indices = Vec::new();
-        if let Some(index) = active_tab {
+        if let Some(index) = active_tab.and_then(|tab_id| tabs.index_of(tab_id)) {
             indices.push(index);
         }
-        indices.extend(parked_panes.values().filter_map(|parked| parked.active_tab));
+        indices.extend(
+            parked_panes
+                .values()
+                .filter_map(|parked| parked.active_tab)
+                .filter_map(|tab_id| tabs.index_of(tab_id)),
+        );
         indices.sort_unstable();
         indices.dedup();
         indices
@@ -396,36 +377,37 @@ impl AppView {
 
     fn current_workspace_tab_indices(&self) -> Vec<usize> {
         Self::workspace_tab_indices_from_parts(
-            self.workspace_state.workspace.active_tab,
-            &self.workspace_state.workspace.parked_panes,
+            &self.workspace.tabs,
+            self.workspace.workspace.active_tab,
+            &self.workspace.workspace.parked_panes,
         )
     }
 
     fn is_valid_pane_drop_source_index(&self, index: usize) -> bool {
-        let Some(tab) = self.workspace_state.tabs.get(index) else {
+        let Some(tab) = self.workspace.tabs.at(index) else {
             return false;
         };
 
-        !tab.hidden_from_topbar
-            && tab.as_session().is_some()
-            && self.workspace_state.active_topbar_tab != Some(index)
+        tab.is_top_level()
+            && tab.is_session()
+            && self.workspace.active_topbar_tab != self.workspace.tabs.id_at(index)
             && self.owned_tab_indices_for_topbar(index).as_slice() == [index]
     }
 
     pub(in crate::ui::shell) fn pane_drop_source_index(
         &self,
-        source_tab_id: usize,
+        source_tab_id: TabId,
     ) -> Option<usize> {
         let index = self
-            .workspace_state
+            .workspace
             .tabs
             .iter()
             .position(|tab| tab.id == source_tab_id)?;
         self.is_valid_pane_drop_source_index(index).then_some(index)
     }
 
-    pub(in crate::ui::shell) fn pane_drop_source_ids(&self) -> Vec<usize> {
-        self.workspace_state
+    pub(in crate::ui::shell) fn pane_drop_source_ids(&self) -> Vec<TabId> {
+        self.workspace
             .tabs
             .iter()
             .enumerate()
@@ -437,11 +419,12 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn pane_tab_index(&self, pane_id: PaneId) -> Option<usize> {
-        if pane_id == self.workspace_state.workspace.active_pane_id {
-            self.workspace_state.workspace.active_tab
+        let tab_id = if pane_id == self.workspace.workspace.active_pane_id {
+            self.workspace.workspace.active_tab
         } else {
             self.parked_pane(pane_id).and_then(|pane| pane.active_tab)
-        }
+        }?;
+        self.workspace.tabs.index_of(tab_id)
     }
 
     pub(in crate::ui::shell) fn set_pane_active_tab(
@@ -449,32 +432,30 @@ impl AppView {
         pane_id: PaneId,
         tab_index: Option<usize>,
     ) {
-        if pane_id == self.workspace_state.workspace.active_pane_id {
-            self.workspace_state.workspace.active_tab = tab_index;
-        } else if let Some(parked) = self
-            .workspace_state
-            .workspace
-            .parked_panes
-            .get_mut(&pane_id)
-        {
-            parked.active_tab = tab_index;
+        let tab_id = tab_index.and_then(|index| self.workspace.tabs.id_at(index));
+        if pane_id == self.workspace.workspace.active_pane_id {
+            self.workspace.workspace.active_tab = tab_id;
+        } else if let Some(parked) = self.workspace.workspace.parked_panes.get_mut(&pane_id) {
+            parked.active_tab = tab_id;
         }
     }
 
     pub(in crate::ui::shell) fn owned_tab_indices_for_topbar(&self, index: usize) -> Vec<usize> {
-        let Some(tab) = self.workspace_state.tabs.get(index) else {
+        let Some(tab) = self.workspace.tabs.at(index) else {
             return Vec::new();
         };
-        if tab.hidden_from_topbar || tab.as_session().is_none() {
+        if !tab.is_top_level() || !tab.is_session() {
             return vec![index];
         }
-        let mut owned = if self.workspace_state.active_topbar_tab == Some(index) {
+        let mut owned = if self.workspace.active_topbar_tab == self.workspace.tabs.id_at(index) {
             self.current_workspace_tab_indices()
         } else {
-            tab.workspace
-                .as_ref()
+            self.workspace
+                .parked_workspaces
+                .get(&tab.id)
                 .map(|workspace| {
                     Self::workspace_tab_indices_from_parts(
+                        &self.workspace.tabs,
                         workspace.active_tab,
                         &workspace.parked_panes,
                     )
@@ -483,11 +464,9 @@ impl AppView {
         };
         owned.push(index);
         let owner_tab_id = tab.id;
-        owned.extend(self.workspace_state.tabs.iter().enumerate().filter_map(
+        owned.extend(self.workspace.tabs.iter().enumerate().filter_map(
             |(candidate_index, candidate)| {
-                let sftp = candidate.as_sftp()?;
-                (candidate.hidden_from_topbar && sftp.owner_session_tab_id == Some(owner_tab_id))
-                    .then_some(candidate_index)
+                (candidate.owner() == Some(owner_tab_id)).then_some(candidate_index)
             },
         ));
         owned.sort_unstable();
@@ -495,141 +474,88 @@ impl AppView {
         owned
     }
 
+    pub(in crate::ui::shell) fn close_plan_for_index(&self, index: usize) -> Option<ClosePlan> {
+        let tab = self.workspace.tabs.at(index)?;
+        let root = tab.id;
+        let tabs = self
+            .workspace
+            .tabs
+            .ids()
+            .filter_map(|tab_id| self.workspace.tabs.state(tab_id))
+            .collect::<Vec<_>>();
+        ClosePlan::from_tabs(root, &tabs)
+    }
+
     pub(in crate::ui::shell) fn nearest_visible_tab(&self, preferred: usize) -> Option<usize> {
-        self.workspace_state
+        self.workspace
             .tabs
             .iter()
             .enumerate()
             .skip(preferred)
-            .find(|(_, tab)| !tab.hidden_from_topbar)
+            .find(|(_, tab)| tab.is_top_level())
             .map(|(index, _)| index)
             .or_else(|| {
-                self.workspace_state
+                self.workspace
                     .tabs
                     .iter()
                     .enumerate()
                     .take(preferred)
                     .rev()
-                    .find(|(_, tab)| !tab.hidden_from_topbar)
+                    .find(|(_, tab)| tab.is_top_level())
                     .map(|(index, _)| index)
             })
     }
 
-    fn remap_slot_after_removal(slot: &mut Option<usize>, removed: &[usize]) {
-        let Some(index) = *slot else {
-            return;
-        };
-        if removed.binary_search(&index).is_ok() {
+    fn retain_registered_tab(slot: &mut Option<TabId>, registered: &HashSet<TabId>) {
+        if slot.is_some_and(|tab_id| !registered.contains(&tab_id)) {
             *slot = None;
-            return;
-        }
-        let shift = removed
-            .iter()
-            .take_while(|&&removed_index| removed_index < index)
-            .count();
-        *slot = Some(index - shift);
-    }
-
-    fn remap_workspace_after_removal(workspace: &mut TabWorkspaceState, removed: &[usize]) {
-        Self::remap_slot_after_removal(&mut workspace.active_tab, removed);
-        for parked in workspace.parked_panes.values_mut() {
-            Self::remap_slot_after_removal(&mut parked.active_tab, removed);
         }
     }
 
-    pub(in crate::ui::shell) fn remap_all_tab_indices_after_removal(&mut self, removed: &[usize]) {
-        Self::remap_slot_after_removal(&mut self.workspace_state.active_topbar_tab, removed);
-        Self::remap_slot_after_removal(&mut self.workspace_state.workspace.active_tab, removed);
-        Self::remap_slot_after_removal(&mut self.workspace_state.renaming_tab, removed);
-        for parked in self.workspace_state.workspace.parked_panes.values_mut() {
-            Self::remap_slot_after_removal(&mut parked.active_tab, removed);
-        }
-        for tab in &mut self.workspace_state.tabs {
-            if let Some(workspace) = tab.workspace.as_mut() {
-                Self::remap_workspace_after_removal(workspace, removed);
-            }
-        }
-    }
-
-    fn remap_index_after_move(index: usize, from: usize, dest: usize) -> usize {
-        if index == from {
-            dest
-        } else {
-            let mut shifted = index;
-            if index > from {
-                shifted -= 1;
-            }
-            if shifted >= dest {
-                shifted += 1;
-            }
-            shifted
-        }
-    }
-
-    fn remap_slot_after_move(slot: &mut Option<usize>, from: usize, dest: usize) {
-        if let Some(index) = *slot {
-            *slot = Some(Self::remap_index_after_move(index, from, dest));
-        }
-    }
-
-    fn remap_workspace_after_move(workspace: &mut TabWorkspaceState, from: usize, dest: usize) {
-        Self::remap_slot_after_move(&mut workspace.active_tab, from, dest);
-        for parked in workspace.parked_panes.values_mut() {
-            Self::remap_slot_after_move(&mut parked.active_tab, from, dest);
-        }
-    }
-
-    pub(in crate::ui::shell) fn remap_all_tab_indices_after_move(
-        &mut self,
-        from: usize,
-        dest: usize,
+    fn prune_workspace_tab_references(
+        workspace: &mut TabWorkspaceState,
+        registered: &HashSet<TabId>,
     ) {
-        Self::remap_slot_after_move(&mut self.workspace_state.active_topbar_tab, from, dest);
-        Self::remap_slot_after_move(&mut self.workspace_state.workspace.active_tab, from, dest);
-        Self::remap_slot_after_move(&mut self.workspace_state.renaming_tab, from, dest);
-        for parked in self.workspace_state.workspace.parked_panes.values_mut() {
-            Self::remap_slot_after_move(&mut parked.active_tab, from, dest);
+        Self::retain_registered_tab(&mut workspace.active_tab, registered);
+        for parked in workspace.parked_panes.values_mut() {
+            Self::retain_registered_tab(&mut parked.active_tab, registered);
         }
-        for tab in &mut self.workspace_state.tabs {
-            if let Some(workspace) = tab.workspace.as_mut() {
-                Self::remap_workspace_after_move(workspace, from, dest);
-            }
+    }
+
+    pub(in crate::ui::shell) fn prune_closed_tab_references(&mut self) {
+        let registered = self.workspace.tabs.ids().collect::<HashSet<_>>();
+        Self::retain_registered_tab(&mut self.workspace.active_topbar_tab, &registered);
+        Self::retain_registered_tab(&mut self.workspace.workspace.active_tab, &registered);
+        Self::retain_registered_tab(&mut self.workspace.renaming_tab, &registered);
+        for parked in self.workspace.workspace.parked_panes.values_mut() {
+            Self::retain_registered_tab(&mut parked.active_tab, &registered);
+        }
+        self.workspace
+            .parked_workspaces
+            .retain(|tab_id, _| registered.contains(tab_id));
+        for workspace in self.workspace.parked_workspaces.values_mut() {
+            Self::prune_workspace_tab_references(workspace, &registered);
         }
     }
 
     pub(in crate::ui::shell) fn allocate_pane_id(&mut self) -> PaneId {
-        let id = PaneId(self.workspace_state.workspace.next_pane_id);
-        self.workspace_state.workspace.next_pane_id = self
-            .workspace_state
-            .workspace
-            .next_pane_id
-            .saturating_add(1);
+        let id = PaneId(self.workspace.workspace.next_pane_id);
+        self.workspace.workspace.next_pane_id =
+            self.workspace.workspace.next_pane_id.saturating_add(1);
         id
     }
 
     pub(in crate::ui::shell) fn parked_pane(&self, id: PaneId) -> Option<&ParkedPane> {
-        self.workspace_state.workspace.parked_panes.get(&id)
+        self.workspace.workspace.parked_panes.get(&id)
     }
 
     #[allow(dead_code)]
-    pub(in crate::ui::shell) fn pane_of_tab(&self, tab_id: usize) -> Option<PaneId> {
-        if self
-            .workspace_state
-            .workspace
-            .active_tab
-            .and_then(|i| self.workspace_state.tabs.get(i))
-            .map(|t| t.id)
-            == Some(tab_id)
-        {
-            return Some(self.workspace_state.workspace.active_pane_id);
+    pub(in crate::ui::shell) fn pane_of_tab(&self, tab_id: TabId) -> Option<PaneId> {
+        if self.workspace.workspace.active_tab == Some(tab_id) {
+            return Some(self.workspace.workspace.active_pane_id);
         }
-        for (pane_id, parked) in &self.workspace_state.workspace.parked_panes {
-            if parked
-                .active_tab
-                .and_then(|i| self.workspace_state.tabs.get(i))
-                .map(|t| t.id)
-                == Some(tab_id)
-            {
+        for (pane_id, parked) in &self.workspace.workspace.parked_panes {
+            if parked.active_tab == Some(tab_id) {
                 return Some(*pane_id);
             }
         }
@@ -638,7 +564,7 @@ impl AppView {
 
     pub(in crate::ui::shell) fn handle_pane_tab_drop(
         &mut self,
-        source_tab_id: usize,
+        source_tab_id: TabId,
         target_pane_id: PaneId,
         zone: PaneTabDropZone,
         window: &mut gpui::Window,
@@ -677,12 +603,12 @@ impl AppView {
                 cx,
             ),
         }
-        self.workspace_state.workspace.pane_tab_drop_target = None;
+        self.workspace.workspace.pane_tab_drop_target = None;
     }
 
     fn move_topbar_tab_to_pane_edge(
         &mut self,
-        source_tab_id: usize,
+        source_tab_id: TabId,
         target_pane_id: PaneId,
         direction: SplitDirection,
         window: &mut gpui::Window,
@@ -692,7 +618,7 @@ impl AppView {
             return;
         };
         if !self
-            .workspace_state
+            .workspace
             .workspace
             .pane_layout
             .contains(target_pane_id)
@@ -700,25 +626,30 @@ impl AppView {
             return;
         }
 
-        let mut moved_tab = self.workspace_state.tabs.remove(source_index);
-        self.remap_all_tab_indices_after_removal(&[source_index]);
-
-        moved_tab.hidden_from_topbar = true;
-        moved_tab.workspace = None;
+        let mut moved_tab = self.workspace.tabs.remove(source_index);
+        let Some(owner) = self.workspace.active_topbar_tab else {
+            self.workspace.tabs.push(moved_tab);
+            return;
+        };
+        let new_pane_id = self.allocate_pane_id();
+        moved_tab.placement = TabPlacement::WorkspacePane {
+            owner,
+            pane: new_pane_id,
+        };
+        self.workspace.parked_workspaces.remove(&source_tab_id);
         let moved_title = moved_tab.title.clone();
-        if let Some(session) = moved_tab.as_session_mut() {
+        if let Some(mut session) = self.session_tab_mut(source_tab_id, cx) {
             session.has_activity = false;
         }
 
-        let moved_index = self.workspace_state.tabs.len();
-        self.workspace_state.tabs.push(moved_tab);
+        let moved_index = self.workspace.tabs.len();
+        self.workspace.tabs.push(moved_tab);
 
-        let new_pane_id = self.allocate_pane_id();
-        let split_animation = self.workspace_state.workspace.pane_layout.split(
-            target_pane_id,
-            direction,
-            new_pane_id,
-        );
+        let split_animation =
+            self.workspace
+                .workspace
+                .pane_layout
+                .split(target_pane_id, direction, new_pane_id);
         if split_animation.is_none() {
             return;
         }
@@ -729,7 +660,7 @@ impl AppView {
                 animation.from_flex_a,
                 animation.from_flex_b,
             );
-            self.workspace_state.workspace.pane_split_animation = Some(PaneSplitAnimation {
+            self.workspace.workspace.pane_split_animation = Some(PaneSplitAnimation {
                 kind: PaneSplitAnimationKind::Opening,
                 path: animation.path,
                 child_index: animation.child_index,
@@ -746,13 +677,13 @@ impl AppView {
         }
 
         let new_pane = ParkedPane::empty(cx.focus_handle());
-        self.workspace_state
+        self.workspace
             .workspace
             .parked_panes
             .insert(new_pane_id, new_pane);
         self.set_pane_active_tab(new_pane_id, Some(moved_index));
         self.set_active_pane(new_pane_id, window, cx);
-        self.status_message = i18n::string_args(
+        self.shell.status_message = i18n::string_args(
             "status.workspace.moved_into_split",
             &[("title", moved_title.as_str())],
         );
@@ -761,7 +692,7 @@ impl AppView {
 
     fn swap_topbar_tab_with_pane(
         &mut self,
-        source_tab_id: usize,
+        source_tab_id: TabId,
         target_pane_id: PaneId,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
@@ -776,34 +707,50 @@ impl AppView {
             return;
         }
         if self
-            .workspace_state
+            .workspace
             .tabs
-            .get(target_index)
-            .and_then(crate::ui::shell::state::TabState::as_session)
-            .is_none()
+            .at(target_index)
+            .is_none_or(|tab| !tab.is_session())
         {
             return;
         }
 
-        let source_title = self.workspace_state.tabs[source_index].title.clone();
-        let target_was_hidden = self.workspace_state.tabs[target_index].hidden_from_topbar;
+        let source_title = self
+            .workspace
+            .tabs
+            .at(source_index)
+            .expect("pane drop source remains registered")
+            .title
+            .clone();
+        let Some(owner) = self.workspace.active_topbar_tab else {
+            return;
+        };
 
-        self.workspace_state.tabs.swap(source_index, target_index);
+        let Some(target_tab_id) = self.workspace.tabs.id_at(target_index) else {
+            return;
+        };
+        let Some(swap) = self.workspace.swap_top_level_tab_with_pane(
+            source_tab_id,
+            target_tab_id,
+            owner,
+            target_pane_id,
+        ) else {
+            return;
+        };
 
-        self.workspace_state.tabs[source_index].hidden_from_topbar = false;
-        self.workspace_state.tabs[source_index].workspace = Some(TabWorkspaceState::new(
-            Some(source_index),
-            cx.focus_handle(),
-        ));
-
-        self.workspace_state.tabs[target_index].hidden_from_topbar = target_was_hidden;
-        self.workspace_state.tabs[target_index].workspace = None;
-        if let Some(session) = self.workspace_state.tabs[target_index].as_session_mut() {
+        self.workspace.parked_workspaces.insert(
+            swap.promoted_tab_id,
+            TabWorkspaceState::new(Some(swap.promoted_tab_id), cx.focus_handle()),
+        );
+        self.workspace.parked_workspaces.remove(&swap.moved_tab_id);
+        if let Some(mut session) = self.session_tab_mut(swap.moved_tab_id, cx) {
             session.has_activity = false;
         }
 
+        self.set_pane_active_tab(target_pane_id, Some(swap.moved_order_index));
+
         self.set_active_pane(target_pane_id, window, cx);
-        self.status_message = i18n::string_args(
+        self.shell.status_message = i18n::string_args(
             "status.workspace.moved_into_pane",
             &[("title", source_title.as_str())],
         );

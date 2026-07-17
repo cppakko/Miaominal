@@ -45,40 +45,64 @@ struct ManagedKeyImportAfterUnlockResult {
     updated_keys: Vec<ManagedKeyRecord>,
 }
 
-impl AppView {
+impl KeychainController {
     fn persist_managed_keys_after_user_change(
         &mut self,
         service: &KeychainService,
         _cx: &mut Context<Self>,
     ) -> Result<()> {
-        service.persist_keys(&self.data.managed_keys)?;
-        Ok(())
-    }
-
-    fn persist_keychain_changes_after_user_change(
-        &mut self,
-        service: &KeychainService,
-        sessions_changed: bool,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        service.persist_keys(&self.data.managed_keys)?;
-
-        if sessions_changed && self.services.session_store.is_some() {
-            self.persist_sessions_after_user_change(cx)?;
-        }
-
+        service.persist_keys(&self.managed_keys)?;
         Ok(())
     }
 
     fn keychain_service(&self) -> Option<KeychainService> {
-        self.services.keychain_store.clone().map(|store| {
+        self.keychain_store.clone().map(|store| {
             KeychainService::new(
-                self.services.runtime.clone(),
+                self.runtime.clone(),
                 store,
-                self.services.secrets.clone(),
-                self.services.known_hosts.clone(),
+                self.secrets.clone(),
+                self.known_hosts.clone(),
             )
         })
+    }
+
+    fn profile_requires_local_vault_unlock(&self, profile: &SessionProfile) -> bool {
+        if self.local_vault_status != LocalVaultStatus::Locked {
+            return false;
+        }
+
+        match profile.effective_auth_method() {
+            AuthMethod::Password => profile.password.is_empty() && profile.has_stored_password,
+            AuthMethod::KeyFile => profile.passphrase.is_empty() && profile.has_stored_passphrase,
+            AuthMethod::ManagedKey => !profile.managed_key_id.trim().is_empty(),
+            AuthMethod::Agent | AuthMethod::KeyboardInteractive => false,
+        }
+    }
+
+    fn notify_validation_failure_in_window(
+        &mut self,
+        window: &mut Window,
+        kind: ValidationNotificationKind,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let message = message.into();
+        self.status_message = message.clone();
+        window.push_notification(validation_notification(kind, message), cx);
+        cx.notify();
+    }
+
+    fn with_active_window(
+        &mut self,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let Some(window_handle) = cx.active_window() else {
+            return;
+        };
+        let _ = window_handle.update(cx, move |_, window, cx| {
+            update(window, cx);
+        });
     }
 
     fn keychain_deploy_profile_items(sessions: &[SessionProfile]) -> Vec<ForwardProfileSelectItem> {
@@ -114,10 +138,10 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let items = Self::keychain_deploy_profile_items(&self.data.sessions);
+        let profiles = self.session_query.profiles();
+        let items = Self::keychain_deploy_profile_items(&profiles);
         let selected_profile_id = selected_profile_id.map(str::to_string).or_else(|| {
-            self.panel_forms
-                .keychain
+            self.forms
                 .deploy_profile_select
                 .read(cx)
                 .selected_value()
@@ -131,25 +155,21 @@ impl AppView {
                 });
         let options = SearchableVec::new(items);
 
-        self.panel_forms
-            .keychain
-            .deploy_profile_select
-            .update(cx, |select, cx| {
-                select.set_items(options, window, cx);
-                if has_selected_profile {
-                    if let Some(selected_profile_id) = selected_profile_id.as_ref() {
-                        select.set_selected_value(selected_profile_id, window, cx);
-                    }
-                } else {
-                    select.set_selected_index(None, window, cx);
+        self.forms.deploy_profile_select.update(cx, |select, cx| {
+            select.set_items(options, window, cx);
+            if has_selected_profile {
+                if let Some(selected_profile_id) = selected_profile_id.as_ref() {
+                    select.set_selected_value(selected_profile_id, window, cx);
                 }
-            });
+            } else {
+                select.set_selected_index(None, window, cx);
+            }
+        });
     }
 
     pub(in crate::ui::shell) fn keychain_selected_deploy_key(&self) -> Option<&ManagedKeyRecord> {
-        self.keychain_deploy_key_id.as_deref().and_then(|key_id| {
-            self.data
-                .managed_keys
+        self.deploy_key_id.as_deref().and_then(|key_id| {
+            self.managed_keys
                 .iter()
                 .find(|key| key.id.as_str() == key_id)
         })
@@ -161,8 +181,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.clear_keychain_inputs(window, cx);
-        self.keychain_editor_mode = KeychainEditorMode::Import;
-        self.editors.keychain_editor_open = true;
+        self.editor_mode = KeychainEditorMode::Import;
+        self.editor_open = true;
         self.status_message = i18n::string("keychain.messages.preparing_new_managed_key");
         cx.notify();
     }
@@ -174,7 +194,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let Some((target_key_id, summary)) = self
-            .data
             .managed_keys
             .iter()
             .find(|candidate| candidate.id == key_id)
@@ -186,9 +205,9 @@ impl AppView {
         };
 
         self.clear_keychain_inputs(window, cx);
-        self.keychain_editor_mode = KeychainEditorMode::Deploy;
-        self.keychain_deploy_key_id = Some(target_key_id);
-        self.editors.keychain_editor_open = true;
+        self.editor_mode = KeychainEditorMode::Deploy;
+        self.deploy_key_id = Some(target_key_id);
+        self.editor_open = true;
         self.status_message = i18n::string_args(
             "keychain.messages.preparing_deploy",
             &[("summary", &summary)],
@@ -197,13 +216,13 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn close_keychain_editor(&mut self, cx: &mut Context<Self>) {
-        if !self.editors.keychain_editor_open {
+        if !self.editor_open {
             return;
         }
 
-        self.editors.keychain_editor_open = false;
-        self.keychain_editor_mode = KeychainEditorMode::Import;
-        self.keychain_deploy_key_id = None;
+        self.editor_open = false;
+        self.editor_mode = KeychainEditorMode::Import;
+        self.deploy_key_id = None;
         self.status_message = i18n::string("keychain.messages.closed_sidebar");
         cx.notify();
     }
@@ -213,43 +232,28 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.keychain_editor_draft_source = None;
-        self.keychain_editor_mode = KeychainEditorMode::Import;
-        self.keychain_deploy_key_id = None;
-        set_input_value(&self.panel_forms.keychain.name_input, "", window, cx);
-        set_input_value(&self.panel_forms.keychain.import_path_input, "", window, cx);
+        self.editor_draft_source = None;
+        self.editor_mode = KeychainEditorMode::Import;
+        self.deploy_key_id = None;
+        set_input_value(&self.forms.name_input, "", window, cx);
+        set_input_value(&self.forms.import_path_input, "", window, cx);
+        set_input_value(&self.forms.import_private_key_input, "", window, cx);
+        set_input_value(&self.forms.import_public_key_input, "", window, cx);
+        set_input_value(&self.forms.import_passphrase_input, "", window, cx);
         set_input_value(
-            &self.panel_forms.keychain.import_private_key_input,
-            "",
-            window,
-            cx,
-        );
-        set_input_value(
-            &self.panel_forms.keychain.import_public_key_input,
-            "",
-            window,
-            cx,
-        );
-        set_input_value(
-            &self.panel_forms.keychain.import_passphrase_input,
-            "",
-            window,
-            cx,
-        );
-        set_input_value(
-            &self.panel_forms.keychain.deploy_location_input,
+            &self.forms.deploy_location_input,
             KEYCHAIN_DEPLOY_DEFAULT_LOCATION,
             window,
             cx,
         );
         set_input_value(
-            &self.panel_forms.keychain.deploy_filename_input,
+            &self.forms.deploy_filename_input,
             KEYCHAIN_DEPLOY_DEFAULT_FILENAME,
             window,
             cx,
         );
         set_input_value(
-            &self.panel_forms.keychain.deploy_command_input,
+            &self.forms.deploy_command_input,
             KEYCHAIN_DEPLOY_DEFAULT_COMMAND,
             window,
             cx,
@@ -263,19 +267,14 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.keychain_editor_draft_source = Some(ManagedKeySource::Imported);
+        self.editor_draft_source = Some(ManagedKeySource::Imported);
         set_input_value(
-            &self.panel_forms.keychain.import_path_input,
+            &self.forms.import_path_input,
             path.display().to_string(),
             window,
             cx,
         );
-        set_input_value(
-            &self.panel_forms.keychain.import_private_key_input,
-            "",
-            window,
-            cx,
-        );
+        set_input_value(&self.forms.import_private_key_input, "", window, cx);
         let path = path.display().to_string();
         self.status_message =
             i18n::string_args("keychain.messages.selected_import_file", &[("path", &path)]);
@@ -283,21 +282,14 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn refresh_keychain_data(&mut self, cx: &mut Context<Self>) {
-        let selected_managed_key_id = self
-            .host_editor_forms
-            .managed_key_select
-            .read(cx)
-            .selected_value()
-            .cloned();
         if let Some(service) = self.keychain_service() {
             match service.refresh_data() {
                 Ok(snapshot) => {
-                    self.data.managed_keys = snapshot.managed_keys;
-                    self.data.agent_identities = snapshot.agent_identities;
+                    self.managed_keys = snapshot.managed_keys;
+                    self.agent_identities = snapshot.agent_identities;
                     if let Some(error) = snapshot.agent_scan_error {
-                        let managed_count = self.data.managed_keys.len().to_string();
-                        let managed_keys_label =
-                            keychain_managed_key_noun(self.data.managed_keys.len());
+                        let managed_count = self.managed_keys.len().to_string();
+                        let managed_keys_label = keychain_managed_key_noun(self.managed_keys.len());
                         self.status_message = i18n::string_args(
                             "keychain.messages.loaded_agent_scan_failed",
                             &[
@@ -307,12 +299,11 @@ impl AppView {
                             ],
                         );
                     } else {
-                        let managed_count = self.data.managed_keys.len().to_string();
-                        let managed_keys_label =
-                            keychain_managed_key_noun(self.data.managed_keys.len());
-                        let agent_count = self.data.agent_identities.len().to_string();
+                        let managed_count = self.managed_keys.len().to_string();
+                        let managed_keys_label = keychain_managed_key_noun(self.managed_keys.len());
+                        let agent_count = self.agent_identities.len().to_string();
                         let agent_identities_label =
-                            keychain_agent_identity_noun(self.data.agent_identities.len());
+                            keychain_agent_identity_noun(self.agent_identities.len());
                         self.status_message = i18n::string_args(
                             "keychain.messages.loaded",
                             &[
@@ -325,27 +316,27 @@ impl AppView {
                     }
                 }
                 Err(error) => {
-                    self.data.managed_keys.clear();
-                    self.data.agent_identities.clear();
+                    self.managed_keys.clear();
+                    self.agent_identities.clear();
                     let error = error.to_string();
                     self.status_message =
                         i18n::string_args("keychain.messages.load_failed", &[("error", &error)]);
+                    cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
                     cx.notify();
                     return;
                 }
             }
         } else {
-            self.data.managed_keys.clear();
+            self.managed_keys.clear();
             match self
-                .services
                 .runtime
                 .block_on(miaominal_ssh::list_local_agent_identities())
             {
                 Ok(identities) => {
-                    self.data.agent_identities = identities;
-                    let agent_count = self.data.agent_identities.len().to_string();
+                    self.agent_identities = identities;
+                    let agent_count = self.agent_identities.len().to_string();
                     let agent_identities_label =
-                        keychain_agent_identity_noun(self.data.agent_identities.len());
+                        keychain_agent_identity_noun(self.agent_identities.len());
                     self.status_message = i18n::string_args(
                         "keychain.messages.loaded",
                         &[
@@ -357,7 +348,7 @@ impl AppView {
                     );
                 }
                 Err(error) => {
-                    self.data.agent_identities.clear();
+                    self.agent_identities.clear();
                     self.status_message = i18n::string_args(
                         "keychain.messages.loaded_agent_scan_failed",
                         &[
@@ -370,8 +361,7 @@ impl AppView {
             }
         }
 
-        self.sync_managed_key_select_in_active_window(selected_managed_key_id.as_deref(), cx);
-
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
         cx.notify();
     }
 
@@ -380,37 +370,17 @@ impl AppView {
         key_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let Some(key) = self.data.managed_keys.iter().find(|key| key.id == key_id) else {
+        let Some(key) = self.managed_keys.iter().find(|key| key.id == key_id) else {
             self.status_message = i18n::string("keychain.messages.not_found");
             cx.notify();
             return;
         };
 
-        self.dialogs.pending_managed_key_delete = Some(PendingManagedKeyDeleteState {
+        self.pending_managed_key_delete = Some(PendingManagedKeyDeleteState {
             key_id: key.id.clone(),
             key_name: key.name.clone(),
         });
         cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn confirm_managed_key_delete(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pending) = self.dialogs.pending_managed_key_delete.take() else {
-            return;
-        };
-
-        self.start_dialog_exit(DialogOverlaySnapshot::ManagedKeyDelete(pending.clone()), cx);
-
-        self.delete_managed_key(&pending.key_id, window, cx);
-    }
-
-    pub(in crate::ui::shell) fn cancel_managed_key_delete(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.dialogs.pending_managed_key_delete.take() {
-            self.start_dialog_exit(DialogOverlaySnapshot::ManagedKeyDelete(pending), cx);
-        }
     }
 
     pub(in crate::ui::shell) fn generate_managed_key(
@@ -426,26 +396,21 @@ impl AppView {
 
         match generated_material {
             Ok((private_key_material, public_key_material)) => {
-                self.keychain_editor_draft_source = Some(ManagedKeySource::Generated);
-                set_input_value(&self.panel_forms.keychain.import_path_input, "", window, cx);
+                self.editor_draft_source = Some(ManagedKeySource::Generated);
+                set_input_value(&self.forms.import_path_input, "", window, cx);
                 set_input_value(
-                    &self.panel_forms.keychain.import_private_key_input,
+                    &self.forms.import_private_key_input,
                     &private_key_material,
                     window,
                     cx,
                 );
                 set_input_value(
-                    &self.panel_forms.keychain.import_public_key_input,
+                    &self.forms.import_public_key_input,
                     &public_key_material,
                     window,
                     cx,
                 );
-                set_input_value(
-                    &self.panel_forms.keychain.import_passphrase_input,
-                    "",
-                    window,
-                    cx,
-                );
+                set_input_value(&self.forms.import_passphrase_input, "", window, cx);
                 self.status_message = i18n::string("keychain.messages.generated");
             }
             Err(error) => {
@@ -469,30 +434,21 @@ impl AppView {
             return;
         };
 
-        let import_path = self
-            .panel_forms
-            .keychain
-            .import_path_input
-            .read(cx)
-            .value()
-            .to_string();
+        let import_path = self.forms.import_path_input.read(cx).value().to_string();
         let import_private_key = self
-            .panel_forms
-            .keychain
+            .forms
             .import_private_key_input
             .read(cx)
             .value()
             .to_string();
         let import_public_key = self
-            .panel_forms
-            .keychain
+            .forms
             .import_public_key_input
             .read(cx)
             .value()
             .to_string();
         let passphrase = self
-            .panel_forms
-            .keychain
+            .forms
             .import_passphrase_input
             .read(cx)
             .value()
@@ -509,13 +465,7 @@ impl AppView {
             return;
         }
 
-        let import_name = self
-            .panel_forms
-            .keychain
-            .name_input
-            .read(cx)
-            .value()
-            .to_string();
+        let import_name = self.forms.name_input.read(cx).value().to_string();
         let default_import_name = i18n::string("keychain.messages.imported_key_default_name");
         let import_name = if import_name.trim().is_empty() {
             if has_pasted_private_key {
@@ -555,20 +505,18 @@ impl AppView {
         let public_key_material =
             (!import_public_key.trim().is_empty()).then_some(import_public_key.trim());
         let source = self
-            .keychain_editor_draft_source
+            .editor_draft_source
             .unwrap_or(ManagedKeySource::Imported);
 
         if self.local_vault_status == LocalVaultStatus::Locked {
-            self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::ImportManagedKey,
-                window,
-                cx,
-            );
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::ImportManagedKey,
+            )));
             return;
         }
 
         match service.import_key(
-            &self.data.managed_keys,
+            &self.managed_keys,
             import_name,
             source,
             &private_key_material,
@@ -576,14 +524,10 @@ impl AppView {
             passphrase,
         ) {
             Ok(imported) => {
-                self.data.managed_keys.push(imported.record.clone());
+                self.managed_keys.push(imported.record.clone());
                 if let Err(error) = self.persist_managed_keys_after_user_change(&service, cx) {
-                    self.data
-                        .managed_keys
-                        .retain(|key| key.id != imported.record.id);
-                    self.services
-                        .secrets
-                        .delete_managed_key(&imported.record.id);
+                    self.managed_keys.retain(|key| key.id != imported.record.id);
+                    self.secrets.delete_managed_key(&imported.record.id);
                     let error = error.to_string();
                     let message =
                         i18n::string_args("keychain.messages.import_failed", &[("error", &error)]);
@@ -596,11 +540,11 @@ impl AppView {
                     return;
                 } else {
                     self.clear_keychain_inputs(window, cx);
-                    self.sync_managed_key_select(None, window, cx);
-                    self.editors.keychain_editor_open = false;
+                    self.editor_open = false;
                     let summary = imported.record.summary();
                     self.status_message =
                         i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
+                    cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Added));
                 }
             }
             Err(error) => {
@@ -625,30 +569,21 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<ManagedKeyImportAfterUnlockRequest> {
-        let import_path = self
-            .panel_forms
-            .keychain
-            .import_path_input
-            .read(cx)
-            .value()
-            .to_string();
+        let import_path = self.forms.import_path_input.read(cx).value().to_string();
         let import_private_key = self
-            .panel_forms
-            .keychain
+            .forms
             .import_private_key_input
             .read(cx)
             .value()
             .to_string();
         let import_public_key = self
-            .panel_forms
-            .keychain
+            .forms
             .import_public_key_input
             .read(cx)
             .value()
             .to_string();
         let passphrase = self
-            .panel_forms
-            .keychain
+            .forms
             .import_passphrase_input
             .read(cx)
             .value()
@@ -665,13 +600,7 @@ impl AppView {
             return None;
         }
 
-        let import_name = self
-            .panel_forms
-            .keychain
-            .name_input
-            .read(cx)
-            .value()
-            .to_string();
+        let import_name = self.forms.name_input.read(cx).value().to_string();
         let default_import_name = i18n::string("keychain.messages.imported_key_default_name");
         let import_name = if import_name.trim().is_empty() {
             if has_pasted_private_key {
@@ -688,7 +617,7 @@ impl AppView {
         };
 
         let source = self
-            .keychain_editor_draft_source
+            .editor_draft_source
             .unwrap_or(ManagedKeySource::Imported);
 
         Some(ManagedKeyImportAfterUnlockRequest {
@@ -717,8 +646,8 @@ impl AppView {
             return;
         };
 
-        let existing_keys = self.data.managed_keys.clone();
-        let secrets = self.services.secrets.clone();
+        let existing_keys = self.managed_keys.clone();
+        let secrets = self.secrets.clone();
         let notification_window = cx.active_window();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
@@ -774,7 +703,7 @@ impl AppView {
             return;
         }
 
-        cx.spawn(async move |this, cx| {
+        self.import_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -795,13 +724,13 @@ impl AppView {
 
                     if let Err(error) = this_for_window.update(cx, move |this, cx| match result {
                         Ok(result) => {
-                            this.data.managed_keys = result.updated_keys;
+                            this.managed_keys = result.updated_keys;
                             this.clear_keychain_inputs(window, cx);
-                            this.sync_managed_key_select(None, window, cx);
-                            this.editors.keychain_editor_open = false;
+                            this.editor_open = false;
                             let summary = result.record.summary();
                             this.status_message =
                                 i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
+                            cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Added));
                             cx.notify();
                         }
                         Err(error) => {
@@ -829,8 +758,7 @@ impl AppView {
                     );
                 }
             }
-        })
-        .detach();
+        }));
     }
 
     pub(in crate::ui::shell) fn deploy_managed_key(
@@ -862,8 +790,7 @@ impl AppView {
         }
 
         let Some(selected_profile_id) = self
-            .panel_forms
-            .keychain
+            .forms
             .deploy_profile_select
             .read(cx)
             .selected_value()
@@ -879,8 +806,7 @@ impl AppView {
         };
 
         let location = self
-            .panel_forms
-            .keychain
+            .forms
             .deploy_location_input
             .read(cx)
             .value()
@@ -897,8 +823,7 @@ impl AppView {
         }
 
         let filename = self
-            .panel_forms
-            .keychain
+            .forms
             .deploy_filename_input
             .read(cx)
             .value()
@@ -915,8 +840,7 @@ impl AppView {
         }
 
         let command_template = self
-            .panel_forms
-            .keychain
+            .forms
             .deploy_command_input
             .read(cx)
             .value()
@@ -928,9 +852,8 @@ impl AppView {
             command_template
         };
 
-        let Some(profile) = self
-            .data
-            .sessions
+        let profiles = self.session_query.profiles();
+        let Some(profile) = profiles
             .iter()
             .find(|profile| profile.id == selected_profile_id)
             .cloned()
@@ -955,19 +878,17 @@ impl AppView {
         }
 
         if self.profile_requires_local_vault_unlock(&profile) {
-            self.prompt_local_vault_unlock_for_action(
-                PendingLocalVaultUnlockAction::DeployManagedKey,
-                window,
-                cx,
-            );
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::DeployManagedKey,
+            )));
             return;
         }
 
         let profile_label = profile.connection_label();
         let command =
             keychain_deploy_exec_command(&command_template, &location, &filename, &key_public_key);
-        let all_profiles = self.data.sessions.clone();
-        let runtime = self.services.runtime.clone();
+        let all_profiles = profiles;
+        let runtime = self.runtime.clone();
         let Some(service) = self.keychain_service() else {
             self.status_message = i18n::string("keychain.messages.storage_unavailable");
             cx.notify();
@@ -975,7 +896,7 @@ impl AppView {
         };
         let start_summary = key_summary.clone();
         let start_profile = profile_label.clone();
-        self.keychain_deploy_in_progress = true;
+        self.deploy_in_progress = true;
         self.status_message = i18n::string_args(
             "keychain.messages.deploy_started",
             &[("summary", &start_summary), ("profile", &start_profile)],
@@ -994,7 +915,7 @@ impl AppView {
 
         let success_summary = key_summary.clone();
         let success_profile = profile_label.clone();
-        cx.spawn(async move |this, cx| {
+        self.deploy_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -1004,14 +925,14 @@ impl AppView {
                 .await;
 
             this.update(cx, |this, cx| {
-                this.keychain_deploy_in_progress = false;
+                this.deploy_in_progress = false;
                 match result {
                     Ok(_) => {
                         let message = i18n::string_args(
                             "keychain.messages.deployed",
                             &[("summary", &success_summary), ("profile", &success_profile)],
                         );
-                        let notification = Self::success_notification(
+                        let notification = success_notification(
                             i18n::string("keychain.notifications.deploy_succeeded_title"),
                             message.clone(),
                         );
@@ -1030,7 +951,7 @@ impl AppView {
                                 ("error", &error),
                             ],
                         );
-                        let notification = Self::error_notification(
+                        let notification = error_notification(
                             i18n::string("keychain.notifications.deploy_failed_title"),
                             message.clone(),
                         );
@@ -1043,14 +964,13 @@ impl AppView {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     pub(in crate::ui::shell) fn delete_managed_key(
         &mut self,
         key_id: &str,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(service) = self.keychain_service() else {
@@ -1059,61 +979,38 @@ impl AppView {
             return;
         };
 
-        let Some(outcome) =
-            service.delete_key(&mut self.data.managed_keys, &mut self.data.sessions, key_id)
-        else {
+        let Some(removed) = service.delete_key_record(&mut self.managed_keys, key_id) else {
             self.status_message = i18n::string("keychain.messages.not_found");
             cx.notify();
             return;
         };
+        let removed_id = removed.id.clone();
 
-        if self.keychain_deploy_key_id.as_deref() == Some(outcome.removed.id.as_str()) {
-            self.keychain_deploy_key_id = None;
-            self.keychain_editor_mode = KeychainEditorMode::Import;
-            self.editors.keychain_editor_open = false;
+        if self.deploy_key_id.as_deref() == Some(removed.id.as_str()) {
+            self.deploy_key_id = None;
+            self.editor_mode = KeychainEditorMode::Import;
+            self.editor_open = false;
         }
 
-        if let Err(error) = self.persist_keychain_changes_after_user_change(
-            &service,
-            !outcome.cleared_profile_ids.is_empty(),
-            cx,
-        ) {
+        if let Err(error) = self.persist_managed_keys_after_user_change(&service, cx) {
             let error = error.to_string();
-            self.status_message = if !outcome.cleared_profile_ids.is_empty()
-                && self.services.session_store.is_some()
-            {
-                i18n::string_args(
-                    "keychain.messages.removed_locally_session_save_failed",
-                    &[("error", &error)],
-                )
-            } else {
-                i18n::string_args(
-                    "keychain.messages.removed_locally_save_failed",
-                    &[("error", &error)],
-                )
-            };
+            self.status_message = i18n::string_args(
+                "keychain.messages.removed_locally_save_failed",
+                &[("error", &error)],
+            );
+            cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Removed {
+                key_id: removed_id,
+            }));
             cx.notify();
             return;
         }
 
-        if self
-            .host_editor_forms
-            .managed_key_select
-            .read(cx)
-            .selected_value()
-            .is_some_and(|selected| selected == &outcome.removed.id)
-        {
-            self.sync_managed_key_select(None, window, cx);
-            if self.host_editor_forms.editing_auth_method == AuthMethod::ManagedKey {
-                self.host_editor_forms.editing_auth_method = AuthMethod::Password;
-            }
-        } else {
-            self.sync_managed_key_select(None, window, cx);
-        }
-
-        let summary = outcome.removed.summary();
+        let summary = removed.summary();
         self.status_message =
             i18n::string_args("keychain.messages.removed", &[("summary", &summary)]);
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Removed {
+            key_id: removed_id,
+        }));
         cx.notify();
     }
 }

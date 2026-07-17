@@ -63,7 +63,7 @@ pub(in crate::ui::shell::layout) fn tool_arguments_value(
 }
 
 pub(in crate::ui::shell::layout) fn tool_response_value(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> Option<serde_json::Value> {
     if !tool_has_result_status(tool_call) {
         return None;
@@ -74,7 +74,7 @@ pub(in crate::ui::shell::layout) fn tool_response_value(
 }
 
 pub(in crate::ui::shell::layout) fn tool_output_value(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> Option<serde_json::Value> {
     let response = tool_response_value(tool_call)?;
     let output = response.get("output")?;
@@ -122,13 +122,13 @@ pub(in crate::ui::shell::layout) fn list_entries_text(
 }
 
 pub(in crate::ui::shell::layout) fn pending_or_note(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> String {
     tool_display_result(tool_call).unwrap_or_else(|| pending_result_text(tool_call))
 }
 
 pub(in crate::ui::shell::layout) fn tool_has_result_status(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> bool {
     matches!(
         tool_call.status,
@@ -139,7 +139,7 @@ pub(in crate::ui::shell::layout) fn tool_has_result_status(
 }
 
 pub(in crate::ui::shell::layout) fn pending_result_text(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> String {
     match tool_call.status {
         SessionAgentToolStatus::Pending => {
@@ -168,7 +168,7 @@ pub(in crate::ui::shell::layout) fn pending_result_text(
 }
 
 pub(in crate::ui::shell::layout) fn arguments_are_streaming(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> bool {
     matches!(
         tool_call.status,
@@ -214,7 +214,7 @@ pub(in crate::ui::shell::layout) struct AskUserPromptDisplay {
 }
 
 pub(in crate::ui::shell::layout) fn parse_ask_user_prompt(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> AskUserPromptDisplay {
     let args = tool_arguments_value(&tool_call.arguments);
     let message = (tool_call.status == SessionAgentToolStatus::WaitingForConfirmation)
@@ -266,7 +266,7 @@ pub(in crate::ui::shell::layout) fn parse_ask_user_prompt(
 }
 
 pub(in crate::ui::shell::layout) fn tool_display_result(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> Option<String> {
     if !tool_has_result_status(tool_call) {
         return None;
@@ -397,7 +397,7 @@ pub(in crate::ui::shell::layout) fn patch_paths(patch: &str) -> Vec<String> {
 }
 
 pub(in crate::ui::shell::layout) fn format_tool_call_copy_text(
-    tool_call: &crate::ui::shell::state::SessionAgentToolCall,
+    tool_call: &crate::ui::shell::SessionAgentToolCall,
 ) -> String {
     let arguments = if tool_call.arguments.trim() == "No arguments" {
         i18n::string("workspace.panel.agent.tool_placeholders.no_arguments")

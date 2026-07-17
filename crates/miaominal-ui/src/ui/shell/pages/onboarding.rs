@@ -24,234 +24,247 @@ fn show_onboarding_macos_traffic_light_space(window: &Window) -> bool {
     cfg!(target_os = "macos") && !window.is_fullscreen()
 }
 
-impl AppView {
-    pub(in crate::ui::shell) fn render_onboarding_page(
-        &mut self,
-        entity: Entity<AppView>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
-        let entity_finish = entity.clone();
-        let entity_theme = entity.clone();
-        let entity_font_family = entity.clone();
-        let entity_font_fallbacks = entity.clone();
-        let entity_font_size = entity.clone();
-        let entity_line_height = entity.clone();
-        let entity_shift_right_click = entity.clone();
-        let step_render_state = self.onboarding_step_render_state(window);
-        let current_step = step_render_state.step;
-        let font_family_select = self.panel_forms.settings.font_family_select.clone();
-        let font_fallbacks_input = self.panel_forms.settings.font_fallbacks_input.clone();
-        let seed_color_picker = self.panel_forms.settings.seed_color_picker.clone();
-        let terminal_right_click_behavior_select = self
-            .panel_forms
-            .settings
-            .terminal_right_click_behavior_select
-            .clone();
-        let current_font_size = format!("{:.1}", self.settings_store.settings().font_size);
-        let current_line_height = format!("{:.1}", self.settings_store.settings().line_height);
-        let current_seed_color = self.settings_store.settings().seed_color.clone();
-        let current_shift_right_click_context_menu = self
-            .settings_store
-            .settings()
-            .terminal_shift_right_click_context_menu;
-        let language_select = self.panel_forms.settings.language_select.clone();
-        let current_theme = self.settings_store.settings().theme_id;
-        let current_material =
-            miaominal_settings::Theme::from_settings(self.settings_store.settings()).material;
-        let desired_seed_color = rgb(current_material.source);
+pub(in crate::ui::shell) fn render_onboarding_page(
+    settings_entity: Entity<SettingsController>,
+    notification_layer: Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let settings_navigation = settings_entity.clone();
+    let step_render_state = onboarding_step_render_state(&settings_entity, window, cx);
+    let current_step = step_render_state.step;
+    let (
+        font_family_select,
+        font_fallbacks_input,
+        seed_color_picker,
+        terminal_right_click_behavior_select,
+        current_font_size,
+        current_line_height,
+        current_seed_color,
+        current_shift_right_click_context_menu,
+        language_select,
+        current_theme,
+        current_material,
+    ) = {
+        let settings_controller = settings_entity.read(cx);
+        let settings = settings_controller.settings();
+        (
+            settings_controller.forms.font_family_select.clone(),
+            settings_controller.forms.font_fallbacks_input.clone(),
+            settings_controller.forms.seed_color_picker.clone(),
+            settings_controller
+                .forms
+                .terminal_right_click_behavior_select
+                .clone(),
+            format!("{:.1}", settings.font_size),
+            format!("{:.1}", settings.line_height),
+            settings.seed_color.clone(),
+            settings.terminal_shift_right_click_context_menu,
+            settings_controller.forms.language_select.clone(),
+            settings.theme_id,
+            miaominal_settings::Theme::from_settings(settings).material,
+        )
+    };
+    let desired_seed_color = rgb(current_material.source);
 
-        if seed_color_picker.read(cx).value() != Some(desired_seed_color.into()) {
-            seed_color_picker.update(cx, |picker, cx| {
-                picker.set_value(desired_seed_color, window, cx);
-            });
-        }
-
-        let step_content = match current_step {
-            OnboardingStep::Welcome => {
-                render_onboarding_welcome_step(entity.clone(), language_select.clone())
-            }
-            OnboardingStep::Preferences => render_onboarding_preferences_step(
-                current_theme,
-                current_seed_color,
-                current_material,
-                font_family_select,
-                font_fallbacks_input,
-                seed_color_picker,
-                terminal_right_click_behavior_select,
-                current_font_size,
-                current_line_height,
-                current_shift_right_click_context_menu,
-                entity_theme,
-                entity.clone(),
-                entity_font_family,
-                entity_font_fallbacks,
-                entity_font_size,
-                entity_line_height,
-                entity_shift_right_click,
-            ),
-            OnboardingStep::Import => render_onboarding_import_step(self, entity.clone()),
-            OnboardingStep::Finish => render_onboarding_finish_step(),
-        };
-
-        div()
-            .size_full()
-            .relative()
-            .bg(rgb(roles.surface_container_low))
-            .child(
-                v_flex()
-                    .size_full()
-                    .min_w(px(0.0))
-                    .min_h(px(0.0))
-                    .overflow_hidden()
-                    .child(render_onboarding_title_bar(
-                        current_step,
-                        entity.clone(),
-                        window,
-                    ))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .w_full()
-                            .min_h(px(0.0))
-                            .max_w(px(1040.0))
-                            .mx_auto()
-                            .px_4()
-                            .pt_4()
-                            .pb(px(112.0))
-                            .gap_4()
-                            .child(
-                                v_flex()
-                                    .relative()
-                                    .items_center()
-                                    .justify_center()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .gap_6()
-                                    .p_6()
-                                    .rounded(px(28.0))
-                                    .opacity(step_render_state.visibility)
-                                    .top(px((1.0 - step_render_state.visibility)
-                                        * ONBOARDING_STEP_TRANSITION_OFFSET))
-                                    .child(render_onboarding_step_header(current_step))
-                                    .when(current_step == OnboardingStep::Welcome, |this| {
-                                        this.child(
-                                            div()
-                                                .w_full()
-                                                .flex()
-                                                .justify_center()
-                                                .text_color(rgb(roles.primary))
-                                                .child(
-                                                    Icon::new(AppIcon::Miaominal).size(px(220.0)),
-                                                ),
-                                        )
-                                    })
-                                    .child(step_content),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .right(px(0.0))
-                    .bottom(px(32.0))
-                    .left(px(0.0))
-                    .child(render_onboarding_navigation(current_step, entity_finish)),
-            )
-            .when_some(
-                Root::render_notification_layer(window, cx),
-                |this, layer| this.child(layer),
-            )
-            .into_any_element()
+    if seed_color_picker.read(cx).value() != Some(desired_seed_color.into()) {
+        seed_color_picker.update(cx, |picker, cx| {
+            picker.set_value(desired_seed_color, window, cx);
+        });
     }
 
-    fn onboarding_step_render_state(&mut self, window: &mut Window) -> OnboardingStepRenderState {
-        let now = Instant::now();
-        let desired_step = self.onboarding.onboarding_step;
-        let duration = super::super::support::CONTAINER_TRANSITION_DURATION;
+    let step_content = match current_step {
+        OnboardingStep::Welcome => render_onboarding_welcome_step(language_select.clone()),
+        OnboardingStep::Preferences => render_onboarding_preferences_step(
+            current_theme,
+            current_seed_color,
+            current_material,
+            font_family_select,
+            font_fallbacks_input,
+            seed_color_picker,
+            terminal_right_click_behavior_select,
+            current_font_size,
+            current_line_height,
+            current_shift_right_click_context_menu,
+            settings_entity.clone(),
+        ),
+        OnboardingStep::Import => {
+            render_onboarding_import_step(settings_entity.read(cx).forms(), settings_entity.clone())
+        }
+        OnboardingStep::Finish => render_onboarding_finish_step(),
+    };
 
-        if self.onboarding.visible_onboarding_step != desired_step {
-            match self.onboarding.onboarding_step_transition {
-                Some(transition) if transition.phase == OnboardingStepTransitionPhase::Exiting => {}
-                _ => {
-                    self.onboarding.onboarding_step_transition = Some(OnboardingStepTransition {
-                        phase: OnboardingStepTransitionPhase::Exiting,
-                        started_at: now,
-                        duration,
-                    });
-                }
+    div()
+        .size_full()
+        .relative()
+        .bg(rgb(roles.surface_container_low))
+        .child(
+            v_flex()
+                .size_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .child(render_onboarding_title_bar(
+                    current_step,
+                    settings_entity.clone(),
+                    window,
+                ))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.0))
+                        .max_w(px(1040.0))
+                        .mx_auto()
+                        .px_4()
+                        .pt_4()
+                        .pb(px(112.0))
+                        .gap_4()
+                        .child(
+                            v_flex()
+                                .relative()
+                                .items_center()
+                                .justify_center()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .gap_6()
+                                .p_6()
+                                .rounded(px(28.0))
+                                .opacity(step_render_state.visibility)
+                                .top(px((1.0 - step_render_state.visibility)
+                                    * ONBOARDING_STEP_TRANSITION_OFFSET))
+                                .child(render_onboarding_step_header(current_step))
+                                .when(current_step == OnboardingStep::Welcome, |this| {
+                                    this.child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .justify_center()
+                                            .text_color(rgb(roles.primary))
+                                            .child(Icon::new(AppIcon::Miaominal).size(px(220.0))),
+                                    )
+                                })
+                                .child(step_content),
+                        ),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .right(px(0.0))
+                .bottom(px(32.0))
+                .left(px(0.0))
+                .child(render_onboarding_navigation(
+                    current_step,
+                    settings_navigation,
+                )),
+        )
+        .when_some(notification_layer, |this, layer| this.child(layer))
+        .into_any_element()
+}
+
+fn onboarding_step_render_state(
+    settings: &Entity<SettingsController>,
+    window: &mut Window,
+    cx: &mut App,
+) -> OnboardingStepRenderState {
+    let mut onboarding = settings.read(cx).onboarding_state();
+    let render_state = resolve_onboarding_step_render_state(&mut onboarding, window);
+    settings.update(cx, |controller, cx| {
+        controller.replace_onboarding_state(onboarding);
+        cx.notify();
+    });
+    render_state
+}
+
+fn resolve_onboarding_step_render_state(
+    onboarding: &mut OnboardingState,
+    window: &mut Window,
+) -> OnboardingStepRenderState {
+    let now = Instant::now();
+    let desired_step = onboarding.onboarding_step;
+    let duration = super::super::support::CONTAINER_TRANSITION_DURATION;
+
+    if onboarding.visible_onboarding_step != desired_step {
+        match onboarding.onboarding_step_transition {
+            Some(transition) if transition.phase == OnboardingStepTransitionPhase::Exiting => {}
+            _ => {
+                onboarding.onboarding_step_transition = Some(OnboardingStepTransition {
+                    phase: OnboardingStepTransitionPhase::Exiting,
+                    started_at: now,
+                    duration,
+                });
             }
         }
+    }
 
-        if let Some(transition) = self.onboarding.onboarding_step_transition {
-            let duration_seconds = transition.duration.as_secs_f32();
-            if duration_seconds <= f32::EPSILON {
-                self.onboarding.visible_onboarding_step = desired_step;
-                self.onboarding.onboarding_step_transition = None;
-
-                return OnboardingStepRenderState {
-                    step: self.onboarding.visible_onboarding_step,
-                    visibility: 1.0,
-                };
-            }
-
-            let elapsed = now.saturating_duration_since(transition.started_at);
-            let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-            let eased = progress * progress * (3.0 - 2.0 * progress);
-
-            if progress >= 1.0 {
-                match transition.phase {
-                    OnboardingStepTransitionPhase::Exiting => {
-                        self.onboarding.visible_onboarding_step = desired_step;
-                        self.onboarding.onboarding_step_transition =
-                            Some(OnboardingStepTransition {
-                                phase: OnboardingStepTransitionPhase::Entering,
-                                started_at: now,
-                                duration: transition.duration,
-                            });
-                        window.request_animation_frame();
-
-                        return OnboardingStepRenderState {
-                            step: self.onboarding.visible_onboarding_step,
-                            visibility: 0.0,
-                        };
-                    }
-                    OnboardingStepTransitionPhase::Entering => {
-                        self.onboarding.visible_onboarding_step = desired_step;
-                        self.onboarding.onboarding_step_transition = None;
-
-                        return OnboardingStepRenderState {
-                            step: self.onboarding.visible_onboarding_step,
-                            visibility: 1.0,
-                        };
-                    }
-                }
-            }
-
-            window.request_animation_frame();
+    if let Some(transition) = onboarding.onboarding_step_transition {
+        let duration_seconds = transition.duration.as_secs_f32();
+        if duration_seconds <= f32::EPSILON {
+            onboarding.visible_onboarding_step = desired_step;
+            onboarding.onboarding_step_transition = None;
 
             return OnboardingStepRenderState {
-                step: self.onboarding.visible_onboarding_step,
-                visibility: match transition.phase {
-                    OnboardingStepTransitionPhase::Exiting => 1.0 - eased,
-                    OnboardingStepTransitionPhase::Entering => eased,
-                },
+                step: onboarding.visible_onboarding_step,
+                visibility: 1.0,
             };
         }
 
-        self.onboarding.visible_onboarding_step = desired_step;
+        let elapsed = now.saturating_duration_since(transition.started_at);
+        let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
+        let eased = progress * progress * (3.0 - 2.0 * progress);
 
-        OnboardingStepRenderState {
-            step: self.onboarding.visible_onboarding_step,
-            visibility: 1.0,
+        if progress >= 1.0 {
+            match transition.phase {
+                OnboardingStepTransitionPhase::Exiting => {
+                    onboarding.visible_onboarding_step = desired_step;
+                    onboarding.onboarding_step_transition = Some(OnboardingStepTransition {
+                        phase: OnboardingStepTransitionPhase::Entering,
+                        started_at: now,
+                        duration: transition.duration,
+                    });
+                    window.request_animation_frame();
+
+                    return OnboardingStepRenderState {
+                        step: onboarding.visible_onboarding_step,
+                        visibility: 0.0,
+                    };
+                }
+                OnboardingStepTransitionPhase::Entering => {
+                    onboarding.visible_onboarding_step = desired_step;
+                    onboarding.onboarding_step_transition = None;
+
+                    return OnboardingStepRenderState {
+                        step: onboarding.visible_onboarding_step,
+                        visibility: 1.0,
+                    };
+                }
+            }
         }
+
+        window.request_animation_frame();
+
+        return OnboardingStepRenderState {
+            step: onboarding.visible_onboarding_step,
+            visibility: match transition.phase {
+                OnboardingStepTransitionPhase::Exiting => 1.0 - eased,
+                OnboardingStepTransitionPhase::Entering => eased,
+            },
+        };
+    }
+
+    onboarding.visible_onboarding_step = desired_step;
+
+    OnboardingStepRenderState {
+        step: onboarding.visible_onboarding_step,
+        visibility: 1.0,
     }
 }
 
 fn render_onboarding_title_bar(
     step: OnboardingStep,
-    entity: Entity<AppView>,
+    settings: Entity<SettingsController>,
     window: &Window,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -319,7 +332,7 @@ fn render_onboarding_title_bar(
                             div()
                                 .min_w(px(0.0))
                                 .overflow_hidden()
-                                .child(render_onboarding_step_breadcrumb(step, entity)),
+                                .child(render_onboarding_step_breadcrumb(step, settings)),
                         ),
                 ),
         )
@@ -450,7 +463,7 @@ fn onboarding_window_control_button(
 
 fn render_onboarding_step_breadcrumb(
     current_step: OnboardingStep,
-    entity: Entity<AppView>,
+    settings: Entity<SettingsController>,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let breadcrumb = OnboardingStep::ALL
@@ -469,13 +482,13 @@ fn render_onboarding_step_breadcrumb(
                     .text_color(rgb(foreground))
                     .font_weight(FontWeight::MEDIUM)
             } else {
-                let entity = entity.clone();
+                let settings = settings.clone();
                 BreadcrumbItem::new(i18n::string(step_label_key(step)))
                     .text_color(rgb(foreground))
                     .font_weight(FontWeight::NORMAL)
                     .on_click(move |_, _, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.set_onboarding_step(step, cx);
+                        settings.update(cx, |controller, cx| {
+                            controller.set_onboarding_step(step, cx);
                         });
                     })
             };
@@ -528,11 +541,8 @@ fn render_onboarding_step_header(step: OnboardingStep) -> AnyElement {
 }
 
 fn render_onboarding_welcome_step(
-    entity: Entity<AppView>,
     language_select: Entity<SelectState<Vec<SelectOption<AppLanguage>>>>,
 ) -> AnyElement {
-    let _entity = entity;
-
     v_flex()
         .w_full()
         .items_center()
@@ -550,8 +560,11 @@ fn render_onboarding_welcome_step(
         .into_any_element()
 }
 
-fn render_onboarding_import_step(app: &AppView, entity: Entity<AppView>) -> AnyElement {
-    let entity_import = entity.clone();
+fn render_onboarding_import_step(
+    settings_forms: SettingsForms,
+    settings: Entity<SettingsController>,
+) -> AnyElement {
+    let settings_import = settings.clone();
 
     h_flex()
         .w_full()
@@ -569,7 +582,7 @@ fn render_onboarding_import_step(app: &AppView, entity: Entity<AppView>) -> AnyE
                             i18n::string("settings.connections.import_action.description"),
                         ))
                         .child(
-                            md3_select(&app.panel_forms.settings.profile_import_source_select)
+                            md3_select(&settings_forms.profile_import_source_select)
                                 .with_size(gpui_component::Size::Medium)
                                 .w_full(),
                         )
@@ -579,9 +592,9 @@ fn render_onboarding_import_step(app: &AppView, entity: Entity<AppView>) -> AnyE
                             false,
                             true,
                             false,
-                            move |window, cx| {
-                                entity_import.update(cx, |this, cx| {
-                                    this.import_profiles_from_selected_source(window, cx);
+                            move |_window, cx| {
+                                settings_import.update(cx, |controller, cx| {
+                                    controller.request_profile_import(cx);
                                 });
                             },
                         ))
@@ -617,13 +630,7 @@ fn render_onboarding_preferences_step(
     current_font_size: String,
     current_line_height: String,
     current_shift_right_click_context_menu: bool,
-    entity_theme: Entity<AppView>,
-    entity_seed_color: Entity<AppView>,
-    entity_font_family: Entity<AppView>,
-    entity_font_fallbacks: Entity<AppView>,
-    entity_font_size: Entity<AppView>,
-    entity_line_height: Entity<AppView>,
-    entity_shift_right_click: Entity<AppView>,
+    settings: Entity<SettingsController>,
 ) -> AnyElement {
     let section_background = current_material.roles.surface_container;
     let section_foreground = current_material.roles.on_surface;
@@ -655,7 +662,7 @@ fn render_onboarding_preferences_step(
                                         i18n::string("settings.appearance.font_family.label"),
                                         onboarding_font_family_control(
                                             font_family_select,
-                                            entity_font_family,
+                                            settings.clone(),
                                         ),
                                     ))
                                     .child(onboarding_field_with_description(
@@ -665,7 +672,7 @@ fn render_onboarding_preferences_step(
                                         ),
                                         onboarding_font_fallbacks_control(
                                             font_fallbacks_input,
-                                            entity_font_fallbacks,
+                                            settings.clone(),
                                         ),
                                     )),
                             )
@@ -678,14 +685,14 @@ fn render_onboarding_preferences_step(
                                         i18n::string("settings.appearance.font_size.label"),
                                         onboarding_font_size_stepper(
                                             current_font_size,
-                                            entity_font_size,
+                                            settings.clone(),
                                         ),
                                     ))
                                     .child(onboarding_field(
                                         i18n::string("settings.appearance.line_height.label"),
                                         onboarding_line_height_stepper(
                                             current_line_height,
-                                            entity_line_height,
+                                            settings.clone(),
                                         ),
                                     )),
                             )
@@ -708,7 +715,7 @@ fn render_onboarding_preferences_step(
                             .gap_5()
                             .child(onboarding_field(
                                 i18n::string("settings.appearance.dark_mode.label"),
-                                onboarding_theme_control(current_theme, entity_theme.clone()),
+                                onboarding_theme_control(current_theme, settings.clone()),
                             ))
                             .child(onboarding_field(
                                 i18n::string("settings.appearance.seed_color.label"),
@@ -716,7 +723,7 @@ fn render_onboarding_preferences_step(
                                     current_seed_color,
                                     current_material,
                                     seed_color_picker,
-                                    entity_seed_color,
+                                    settings.clone(),
                                 ),
                             ))
                             .into_any_element(),
@@ -741,7 +748,7 @@ fn render_onboarding_preferences_step(
                                 i18n::string("settings.key_bindings.shift_right_click.description"),
                                 onboarding_shift_right_click_control(
                                     current_shift_right_click_context_menu,
-                                    entity_shift_right_click,
+                                    settings,
                                 ),
                             ))
                             .into_any_element(),
@@ -793,7 +800,7 @@ fn render_onboarding_finish_step() -> AnyElement {
 
 fn render_onboarding_navigation(
     step: OnboardingStep,
-    entity_finish: Entity<AppView>,
+    settings: Entity<SettingsController>,
 ) -> AnyElement {
     h_flex()
         .w_full()
@@ -806,15 +813,16 @@ fn render_onboarding_navigation(
                 "onboarding-finish-enter-app",
                 AppIcon::Forward,
                 move |_, cx| {
-                    entity_finish.update(cx, |this, cx| {
-                        this.finish_onboarding(cx);
+                    settings.update(cx, |controller, cx| {
+                        controller.finish_onboarding(cx);
                     });
                 },
             )
         } else {
+            let settings = settings.clone();
             onboarding_navigation_button("onboarding-next", AppIcon::Next, move |_, cx| {
-                entity_finish.update(cx, |this, cx| {
-                    this.advance_onboarding_step(cx);
+                settings.update(cx, |controller, cx| {
+                    controller.advance_onboarding_step(cx);
                 });
             })
             .into_any_element()
@@ -1051,7 +1059,7 @@ fn step_title_key(step: OnboardingStep) -> &'static str {
 
 fn onboarding_font_family_control(
     select_state: Entity<SelectState<SearchableVec<String>>>,
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 ) -> AnyElement {
     setting_field_with_reset_action(
         md3_select(&select_state)
@@ -1068,7 +1076,10 @@ fn onboarding_font_family_control(
     .into_any_element()
 }
 
-fn onboarding_theme_control(current_theme: ThemeId, entity: Entity<AppView>) -> AnyElement {
+fn onboarding_theme_control(
+    current_theme: ThemeId,
+    entity: Entity<SettingsController>,
+) -> AnyElement {
     md3_switch("onboarding-theme-mode")
         .checked(current_theme == ThemeId::Dark)
         .on_click(move |enabled, _, cx| {
@@ -1086,7 +1097,7 @@ fn onboarding_theme_control(current_theme: ThemeId, entity: Entity<AppView>) -> 
 
 fn onboarding_font_fallbacks_control(
     input: Entity<InputState>,
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
 
@@ -1116,7 +1127,10 @@ fn onboarding_right_click_behavior_control(
         .into_any_element()
 }
 
-fn onboarding_shift_right_click_control(enabled: bool, entity: Entity<AppView>) -> AnyElement {
+fn onboarding_shift_right_click_control(
+    enabled: bool,
+    entity: Entity<SettingsController>,
+) -> AnyElement {
     md3_switch("onboarding-shift-right-click-menu")
         .checked(enabled)
         .on_click(move |enabled, _, cx| {
@@ -1131,7 +1145,7 @@ fn onboarding_seed_color_control(
     current_seed_color: String,
     material: crate::ui::theme::MaterialTheme,
     picker: Entity<ColorPickerState>,
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 ) -> AnyElement {
     let featured_colors = vec![
         rgb(material.source).into(),
@@ -1184,7 +1198,7 @@ fn onboarding_seed_color_control(
         .into_any_element()
 }
 
-fn onboarding_font_size_stepper(value: String, entity: Entity<AppView>) -> AnyElement {
+fn onboarding_font_size_stepper(value: String, entity: Entity<SettingsController>) -> AnyElement {
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 
@@ -1204,7 +1218,7 @@ fn onboarding_font_size_stepper(value: String, entity: Entity<AppView>) -> AnyEl
     )
 }
 
-fn onboarding_line_height_stepper(value: String, entity: Entity<AppView>) -> AnyElement {
+fn onboarding_line_height_stepper(value: String, entity: Entity<SettingsController>) -> AnyElement {
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 

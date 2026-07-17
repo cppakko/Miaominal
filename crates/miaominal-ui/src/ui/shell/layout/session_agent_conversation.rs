@@ -45,11 +45,12 @@ where
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_messages(
-    app: &mut AppView,
+    agent: &mut AgentController,
     message_column_width: f32,
-    entity: Entity<AppView>,
+    terminal_originated_selection_drag_active: bool,
+    entity: Entity<AgentController>,
     _window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<AgentController>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -57,7 +58,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
         if material.dark { 65 } else { 50 },
     );
 
-    if app.session_agent.messages.is_empty() && !app.session_agent.is_busy() {
+    if agent.session_agent().messages.is_empty() && !agent.session_agent().is_busy() {
         return div()
             .size_full()
             .w_full()
@@ -71,7 +72,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
             .into_any_element();
     }
 
-    let conversation = app.ensure_session_agent_conversation_view(cx);
+    let conversation = agent.ensure_panel_conversation_view(cx);
     let (generating_view, list_state) = {
         let conversation = conversation.read(cx);
         (conversation.generating_view(), conversation.list_state())
@@ -79,20 +80,20 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
 
     // Search is intentionally projected only into visible rows. Normal streaming rows never
     // split their full Markdown source into blocks.
-    let search_match_set: std::collections::HashSet<(usize, usize)> = app
-        .session_agent
+    let search_match_set: std::collections::HashSet<(usize, usize)> = agent
+        .session_agent()
         .search_match_indices
         .iter()
         .copied()
         .collect();
-    let current_match_block = app
-        .session_agent
+    let current_match_block = agent
+        .session_agent()
         .search_current_match
-        .and_then(|c| app.session_agent.search_match_indices.get(c).copied());
+        .and_then(|c| agent.session_agent().search_match_indices.get(c).copied());
 
     gpui::list(
         list_state,
-        cx.processor(move |app, index: usize, window, cx| {
+        cx.processor(move |agent, index: usize, window, cx| {
             let (message_view, generating, message_count) = {
                 let conversation = conversation.read(cx);
                 (
@@ -115,7 +116,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
             let row_focus_handle = message_view.focus_handle(cx);
 
             let selectable =
-                session_agent_text_selectable(app.terminal_originated_selection_drag_active());
+                session_agent_text_selectable(terminal_originated_selection_drag_active);
             let (role, expanded, content_empty) = {
                 let view = message_view.read(cx);
                 (
@@ -127,8 +128,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
                     view.content().trim().is_empty(),
                 )
             };
-            let search_active = app
-                .session_agent
+            let search_active = agent
+                .session_agent()
                 .search_query
                 .as_ref()
                 .is_some_and(|query| !query.trim().is_empty());
@@ -153,8 +154,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
                     (message, view.estimated_tokens(), view.elapsed_thinking_ms())
                 });
             let rendered = render_session_agent_message(
-                app,
+                agent,
                 message_column_width,
+                terminal_originated_selection_drag_active,
                 index,
                 &message,
                 content_empty,
@@ -187,14 +189,14 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
-    app: &AppView,
+    terminal_originated_selection_drag_active: bool,
     id: impl Into<ElementId>,
     message: &SessionAgentMessage,
     markdown_state: Option<Entity<TextViewState>>,
     _color: u32,
-    _entity: Entity<AppView>,
+    _entity: Entity<AgentController>,
     _window: &mut Window,
-    _cx: &mut Context<AppView>,
+    _cx: &mut Context<AgentController>,
 ) -> gpui::AnyElement {
     if markdown_state.is_none() && message.content.trim().is_empty() {
         return div().into_any_element();
@@ -205,7 +207,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let on_surface_variant = roles.on_surface_variant;
-    let selectable = session_agent_text_selectable(app.terminal_originated_selection_drag_active());
+    let selectable = session_agent_text_selectable(terminal_originated_selection_drag_active);
 
     let text_view = if let Some(state) = markdown_state {
         TextView::new(&state)
@@ -248,17 +250,17 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
 
 #[allow(clippy::too_many_arguments)]
 fn render_session_agent_markdown_block(
-    app: &AppView,
+    terminal_originated_selection_drag_active: bool,
     id: SharedString,
     message: &SessionAgentMessage,
     block: String,
     fg: u32,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
     window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<AgentController>,
 ) -> gpui::AnyElement {
     render_session_agent_markdown(
-        app,
+        terminal_originated_selection_drag_active,
         id,
         &SessionAgentMessage {
             role: message.role,
@@ -278,30 +280,28 @@ fn render_session_agent_markdown_block(
 
 #[allow(clippy::too_many_arguments)]
 fn render_session_agent_search_block(
-    app: &AppView,
+    agent: &AgentController,
     message_column_width: f32,
+    terminal_originated_selection_drag_active: bool,
     index: usize,
     block_idx: usize,
     message: &SessionAgentMessage,
     block: String,
     fg: u32,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
     window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<AgentController>,
     search_match_set: &std::collections::HashSet<(usize, usize)>,
     current_match_block: Option<(usize, usize)>,
 ) -> gpui::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let is_match = search_match_set.contains(&(index, block_idx));
     let is_current = current_match_block == Some((index, block_idx));
-    let should_scroll = app.session_agent.search_scroll_target == Some((index, block_idx))
-        && app.panels.session_agent_panel_open
-        && app.session_agent.panel_view == ChatPanelView::Conversation
-        && app
-            .workspace_state
-            .session_agent_text_drag_conversation
-            .is_none();
-    let scroll_entity = entity.clone();
+    let should_scroll = agent.session_agent().search_scroll_target == Some((index, block_idx))
+        && agent.panel_open()
+        && agent.session_agent().panel_view == ChatPanelView::Conversation
+        && agent.text_drag_conversation().is_none();
+    let scroll_controller = entity.clone();
 
     let block = div()
         .id(SharedString::from(format!(
@@ -325,7 +325,7 @@ fn render_session_agent_search_block(
                 .w_full()
                 .min_w_0()
                 .child(render_session_agent_markdown_block(
-                    app,
+                    terminal_originated_selection_drag_active,
                     SharedString::from(format!("session-agent-message-{index}-block-{block_idx}")),
                     message,
                     block,
@@ -342,16 +342,18 @@ fn render_session_agent_search_block(
         .when(should_scroll, move |this| {
             this.on_prepaint(move |bounds, _window, cx| {
                 let block_top = bounds.top();
-                let scroll_entity = scroll_entity.clone();
+                let scroll_controller = scroll_controller.clone();
                 cx.defer(move |cx| {
-                    scroll_entity.update(cx, |app, cx| {
+                    scroll_controller.update(cx, |controller, cx| {
                         let target = (index, block_idx);
-                        if app.session_agent.search_scroll_target != Some(target) {
-                            return;
-                        }
-                        let Some(conversation) =
-                            app.session_agent.conversation_view.as_ref().cloned()
-                        else {
+                        let conversation = {
+                            let state = controller.session_agent();
+                            if state.search_scroll_target != Some(target) {
+                                return;
+                            }
+                            state.conversation_view.as_ref().cloned()
+                        };
+                        let Some(conversation) = conversation else {
                             return;
                         };
                         let list_state = conversation.read(cx).list_state();
@@ -360,8 +362,7 @@ fn render_session_agent_search_block(
                         };
                         let offset = block_top - item_bounds.top();
                         conversation.read(cx).scroll_to(index, offset.max(px(0.0)));
-                        app.session_agent.search_scroll_target = None;
-                        cx.notify();
+                        controller.clear_conversation_search_scroll_target(target, cx);
                     });
                 });
             })
@@ -387,8 +388,9 @@ fn render_session_agent_search_block(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::ui::shell::layout) fn render_session_agent_message(
-    app: &AppView,
+    agent: &AgentController,
     message_column_width: f32,
+    terminal_originated_selection_drag_active: bool,
     index: usize,
     message: &SessionAgentMessage,
     content_empty: bool,
@@ -396,9 +398,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     markdown_state: Option<Entity<TextViewState>>,
     estimated_tokens: usize,
     elapsed_thinking_ms: Option<u128>,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
     window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<AgentController>,
     search_match_set: &std::collections::HashSet<(usize, usize)>,
     current_match_block: Option<(usize, usize)>,
 ) -> gpui::AnyElement {
@@ -406,8 +408,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     let roles = material.roles;
     let is_user = message.role == SessionAgentMessageRole::User;
     let is_error = message.role == SessionAgentMessageRole::Error;
-    let search_active = app
-        .session_agent
+    let search_active = agent
+        .session_agent()
         .search_query
         .as_ref()
         .is_some_and(|query| !query.trim().is_empty());
@@ -418,7 +420,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
             return div().into_any_element();
         }
         return render_session_agent_thinking(
-            app,
+            terminal_originated_selection_drag_active,
             message_column_width,
             index,
             message,
@@ -437,8 +439,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     }
     if message.role == SessionAgentMessageRole::ToolCall {
         return render_session_agent_tool_call(
-            app,
+            agent,
             message_column_width,
+            terminal_originated_selection_drag_active,
             index,
             message,
             message_view,
@@ -467,7 +470,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                 .py_1()
                 .when(!search_active, |this| {
                     this.child(render_session_agent_markdown(
-                        app,
+                        terminal_originated_selection_drag_active,
                         SharedString::from(format!("session-agent-message-{index}-assistant")),
                         message,
                         markdown_state.clone(),
@@ -487,8 +490,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                                 .enumerate()
                                 .map(|(block_idx, block)| {
                                     render_session_agent_search_block(
-                                        app,
+                                        agent,
                                         message_column_width,
+                                        terminal_originated_selection_drag_active,
                                         index,
                                         block_idx,
                                         message,
@@ -513,12 +517,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                         PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                             move |_, _window, cx| {
                                 let text = message_view.read(cx).content().to_string();
-                                let selected_text = selected_text.clone();
-                                entity.update(cx, |this, cx| {
-                                    this.copy_session_agent_message_or_selection(
+                                let text = selected_text.clone().unwrap_or(text);
+                                entity.update(cx, |controller, cx| {
+                                    controller.copy_text(
                                         i18n::string("workspace.panel.agent.labels.message"),
                                         text,
-                                        selected_text,
                                         cx,
                                     );
                                 });
@@ -586,7 +589,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                     })
                     .when(!search_active, |this| {
                         this.child(render_session_agent_markdown(
-                            app,
+                            terminal_originated_selection_drag_active,
                             SharedString::from(format!("session-agent-message-{index}-plain")),
                             message,
                             markdown_state,
@@ -603,9 +606,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                                 .enumerate()
                                 .map(|(block_idx, block)| {
                                     render_session_agent_search_block(
-                                        app,
+                                        agent,
                                         message_column_width
                                             .min(SESSION_AGENT_USER_BUBBLE_MAX_WIDTH),
+                                        terminal_originated_selection_drag_active,
                                         index,
                                         block_idx,
                                         message,
@@ -636,12 +640,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                     PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
                         move |_, _window, cx| {
                             let text = message_view.read(cx).content().to_string();
-                            let selected_text = selected_text.clone();
-                            entity.update(cx, |this, cx| {
-                                this.copy_session_agent_message_or_selection(
+                            let text = selected_text.clone().unwrap_or(text);
+                            entity.update(cx, |controller, cx| {
+                                controller.copy_text(
                                     i18n::string("workspace.panel.agent.labels.message"),
                                     text,
-                                    selected_text,
                                     cx,
                                 );
                             });
@@ -654,7 +657,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
-    app: &AppView,
+    terminal_originated_selection_drag_active: bool,
     message_column_width: f32,
     index: usize,
     message: &SessionAgentMessage,
@@ -662,9 +665,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
     markdown_state: Option<Entity<TextViewState>>,
     token_count: usize,
     elapsed_thinking_ms: Option<u128>,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
     window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<AgentController>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -680,7 +683,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
         .thinking
         .as_ref()
         .is_some_and(|t| t.elapsed_ms.is_none());
-    let toggle_entity = entity.clone();
+    let toggle_controller = entity.clone();
     let toggle_message_view = message_view;
 
     render_session_agent_message_with_enter_motion(
@@ -704,16 +707,13 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
                             .text_color(rgb(text_muted))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 cx.stop_propagation();
-                                toggle_entity.update(cx, |this, cx| {
-                                    this.session_agent.toggle_thinking_expanded(index);
-                                    if let Some(snapshot) =
-                                        this.session_agent.messages.get(index).cloned()
-                                    {
+                                toggle_controller.update(cx, |controller, cx| {
+                                    let snapshot = controller.toggle_thinking_expanded(index, cx);
+                                    if let Some(snapshot) = snapshot {
                                         toggle_message_view.update(cx, |view, cx| {
                                             view.set_message_snapshot(snapshot, cx);
                                         });
                                     }
-                                    cx.notify();
                                 });
                             })
                             .child(
@@ -747,7 +747,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
                     )
                     .when(expanded, |this| {
                         this.child(render_session_agent_markdown(
-                            app,
+                            terminal_originated_selection_drag_active,
                             SharedString::from(format!("session-agent-message-{index}-thinking")),
                             message,
                             markdown_state,
@@ -907,13 +907,14 @@ fn render_session_agent_text_action_button(
 
 fn render_session_agent_approval_actions(
     tool_id: &str,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
+    agent: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
 ) -> gpui::AnyElement {
     let allow_tool_id = tool_id.to_string();
     let deny_tool_id = tool_id.to_string();
     let allow_entity = entity.clone();
-    let deny_entity = entity;
+    let deny_agent = agent;
 
     h_flex()
         .w_full()
@@ -928,8 +929,8 @@ fn render_session_agent_approval_actions(
             roles,
             move |_window, cx| {
                 let tool_id = allow_tool_id.clone();
-                allow_entity.update(cx, |this, cx| {
-                    this.approve_session_agent_tool_call(tool_id, cx);
+                allow_entity.update(cx, |controller, cx| {
+                    controller.approve_session_agent_tool_call(tool_id, cx);
                 });
             },
         ))
@@ -941,8 +942,8 @@ fn render_session_agent_approval_actions(
             roles,
             move |_window, cx| {
                 let tool_id = deny_tool_id.clone();
-                deny_entity.update(cx, |this, cx| {
-                    this.deny_session_agent_tool_call(tool_id, cx);
+                deny_agent.update(cx, |controller, cx| {
+                    controller.deny_tool_call(tool_id, cx);
                 });
             },
         ))
@@ -950,13 +951,13 @@ fn render_session_agent_approval_actions(
 }
 
 fn render_session_agent_ask_user_actions(
-    app: &AppView,
+    agent: &AgentController,
     tool_call: &SessionAgentToolCall,
-    entity: Entity<AppView>,
+    entity: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
 ) -> gpui::AnyElement {
     let prompt = parse_ask_user_prompt(tool_call);
-    let input = app.workspace_forms.agent.ask_user_input.clone();
+    let input = agent.ask_user_input();
     let submit_entity = entity.clone();
 
     v_flex()
@@ -989,8 +990,8 @@ fn render_session_agent_ask_user_actions(
                                 move |window, cx| {
                                     let tool_id = tool_id.clone();
                                     let answer = answer.clone();
-                                    choice_entity.update(cx, |this, cx| {
-                                        this.submit_session_agent_user_answer(
+                                    choice_entity.update(cx, |controller, cx| {
+                                        controller.submit_session_agent_user_answer(
                                             tool_id,
                                             answer,
                                             Some(index),
@@ -1031,8 +1032,8 @@ fn render_session_agent_ask_user_actions(
                         None,
                         move |window, cx| {
                             let entity = submit_entity.clone();
-                            entity.update(cx, |this, cx| {
-                                this.submit_active_session_agent_user_answer(window, cx);
+                            entity.update(cx, |controller, cx| {
+                                controller.submit_active_session_agent_user_answer(window, cx);
                             });
                         },
                     )),
@@ -1042,13 +1043,14 @@ fn render_session_agent_ask_user_actions(
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
-    app: &AppView,
+    agent: &AgentController,
     message_column_width: f32,
+    terminal_originated_selection_drag_active: bool,
     index: usize,
     message: &SessionAgentMessage,
     message_view: Entity<SessionAgentMessageView>,
-    entity: Entity<AppView>,
-    cx: &mut Context<AppView>,
+    entity: Entity<AgentController>,
+    cx: &mut Context<AgentController>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
@@ -1074,7 +1076,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
         "session-agent-tool-call-header-{}",
         tool_call.id.as_str()
     ));
-    let toggle_entity = entity.clone();
+    let toggle_controller = entity.clone();
     let toggle_message_view = message_view;
     let copy_all_entity = entity.clone();
     let copy_all_text = format_tool_call_copy_text(tool_call);
@@ -1084,7 +1086,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
         on_surface: roles.on_surface,
         error: roles.error,
         text_muted,
-        selectable: session_agent_text_selectable(app.terminal_originated_selection_drag_active()),
+        selectable: session_agent_text_selectable(terminal_originated_selection_drag_active),
     };
     let syntax_theme = cx.theme().syntax().clone();
 
@@ -1118,15 +1120,14 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
-                        toggle_entity.update(cx, |this, cx| {
-                            this.session_agent.toggle_tool_call_expanded(&tool_id);
-                            if let Some(snapshot) = this.session_agent.messages.get(index).cloned()
-                            {
+                        toggle_controller.update(cx, |controller, cx| {
+                            let snapshot =
+                                controller.toggle_tool_call_expanded(&tool_id, index, cx);
+                            if let Some(snapshot) = snapshot {
                                 toggle_message_view.update(cx, |view, cx| {
                                     view.set_message_snapshot(snapshot, cx);
                                 });
                             }
-                            cx.notify();
                         });
                     })
                     .child(render_session_agent_tool_header_leading(
@@ -1160,8 +1161,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                                 None,
                                 move |_window, cx| {
                                     let text = copy_all_text.clone();
-                                    copy_all_entity.update(cx, |this, cx| {
-                                        this.copy_session_agent_text(
+                                    copy_all_entity.update(cx, |controller, cx| {
+                                        controller.copy_text(
                                             i18n::string("workspace.panel.agent.labels.tool_call"),
                                             text,
                                             cx,
@@ -1189,7 +1190,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
             .when(needs_confirmation && expanded, |this| {
                 if is_ask_user {
                     this.child(render_session_agent_ask_user_actions(
-                        app,
+                        agent,
                         tool_call,
                         entity.clone(),
                         roles,
@@ -1197,6 +1198,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
                 } else {
                     this.child(render_session_agent_approval_actions(
                         &tool_call.id,
+                        entity.clone(),
                         entity.clone(),
                         roles,
                     ))

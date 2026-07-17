@@ -2,10 +2,44 @@ use super::super::super::*;
 use super::utils::rule_summary;
 use crate::ui::i18n;
 
+#[derive(Clone)]
+pub(super) struct ForwardRuleActions {
+    controller: Entity<SessionController>,
+}
+
+impl ForwardRuleActions {
+    pub(super) fn new(controller: Entity<SessionController>) -> Self {
+        Self { controller }
+    }
+
+    fn set_connected(&self, profile_id: String, rule_id: String, connected: bool, cx: &mut App) {
+        self.controller.update(cx, |controller, cx| {
+            if connected {
+                controller.connect_port_forward_rule(&profile_id, &rule_id, cx);
+            } else {
+                controller.disconnect_port_forward_rule(&profile_id, &rule_id, cx);
+            }
+        });
+    }
+
+    pub(super) fn set_enabled(
+        &self,
+        profile_id: String,
+        rule_id: String,
+        enabled: bool,
+        cx: &mut App,
+    ) {
+        self.controller.update(cx, |controller, cx| {
+            controller.set_port_forward_rule_enabled(&profile_id, &rule_id, enabled, cx);
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_forward_rule_context_menu(
     menu: PopupMenu,
-    entity: Entity<AppView>,
+    controller: Entity<SessionController>,
+    actions: ForwardRuleActions,
     profile_id: String,
     rule_id: String,
     connected: bool,
@@ -13,10 +47,10 @@ pub(super) fn build_forward_rule_context_menu(
     listen_port: u16,
     kind: miaominal_core::profile::PortForwardKind,
 ) -> PopupMenu {
-    let connect_entity = entity.clone();
-    let edit_entity = entity.clone();
-    let duplicate_entity = entity.clone();
-    let remove_entity = entity;
+    let edit_controller = controller.clone();
+    let duplicate_controller = controller.clone();
+    let remove_controller = controller;
+    let connect_actions = actions.clone();
     let connect_profile_id = profile_id.clone();
     let connect_rule_id = rule_id.clone();
     let edit_profile_id = profile_id.clone();
@@ -33,35 +67,28 @@ pub(super) fn build_forward_rule_context_menu(
             i18n::string("forwarding.menu.connect")
         })
         .on_click(move |_, _window, cx| {
-            let entity = connect_entity.clone();
             let profile_id = connect_profile_id.clone();
             let rule_id = connect_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                if connected {
-                    this.disconnect_port_forward_rule(&profile_id, &rule_id, cx);
-                } else {
-                    this.connect_port_forward_rule(&profile_id, &rule_id, cx);
-                }
-            });
+            connect_actions.set_connected(profile_id, rule_id, !connected, cx);
         }),
     )
     .item(
         PopupMenuItem::new(i18n::string("forwarding.menu.edit")).on_click(move |_, window, cx| {
-            let entity = edit_entity.clone();
+            let controller = edit_controller.clone();
             let profile_id = edit_profile_id.clone();
             let rule_id = edit_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                this.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
+            controller.update(cx, |controller, cx| {
+                controller.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
             });
         }),
     )
     .item(
         PopupMenuItem::new(i18n::string("forwarding.menu.duplicate")).on_click(move |_, _, cx| {
-            let entity = duplicate_entity.clone();
+            let controller = duplicate_controller.clone();
             let profile_id = duplicate_profile_id.clone();
             let rule_id = duplicate_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                this.duplicate_port_forward_rule(&profile_id, &rule_id, cx);
+            controller.update(cx, |controller, cx| {
+                controller.duplicate_port_forward_rule(&profile_id, &rule_id, cx);
             });
         }),
     )
@@ -86,11 +113,11 @@ pub(super) fn build_forward_rule_context_menu(
     .item(PopupMenuItem::separator())
     .item(
         PopupMenuItem::new(i18n::string("forwarding.menu.remove")).on_click(move |_, _, cx| {
-            let entity = remove_entity.clone();
+            let controller = remove_controller.clone();
             let profile_id = remove_profile_id.clone();
             let rule_id = remove_rule_id.clone();
-            entity.update(cx, |this, cx| {
-                this.request_port_forward_rule_removal(&profile_id, &rule_id, cx);
+            controller.update(cx, |controller, cx| {
+                controller.request_port_forward_rule_removal(&profile_id, &rule_id, cx);
             });
         }),
     )

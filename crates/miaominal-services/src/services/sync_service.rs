@@ -14,6 +14,24 @@ use tokio::runtime::Handle as TokioHandle;
 pub struct SyncTaskResult {
     pub status: SyncStatus,
     pub updated_config: SyncConfig,
+    pub reload: Option<SyncReloadResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncReloadResult {
+    pub settings: Result<SettingsStore, String>,
+    pub sessions: Result<Vec<SessionProfile>, String>,
+    pub snippets: Result<Vec<SnippetRecord>, String>,
+    pub managed_keys: Result<Vec<ManagedKeyRecord>, String>,
+}
+
+impl SyncReloadResult {
+    pub fn any_failed(&self) -> bool {
+        self.settings.is_err()
+            || self.sessions.is_err()
+            || self.snippets.is_err()
+            || self.managed_keys.is_err()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +111,7 @@ impl SyncService {
         Ok(SyncTaskResult {
             status,
             updated_config: engine.config_store.config.clone(),
+            reload: None,
         })
     }
 
@@ -110,10 +129,23 @@ impl SyncService {
                 &mut settings_store,
             )
             .await?;
+        let reload = matches!(status, SyncStatus::Pulled { .. }).then(|| self.reload_all());
         Ok(SyncTaskResult {
             status,
             updated_config: engine.config_store.config.clone(),
+            reload,
         })
+    }
+
+    pub fn reload_all(&self) -> SyncReloadResult {
+        SyncReloadResult {
+            settings: SettingsStore::load().map_err(|error| error.to_string()),
+            sessions: self.reload_sessions().map_err(|error| error.to_string()),
+            snippets: self.reload_snippets().map_err(|error| error.to_string()),
+            managed_keys: self
+                .reload_managed_keys()
+                .map_err(|error| error.to_string()),
+        }
     }
 
     pub fn reload_sessions(&self) -> Result<Vec<SessionProfile>> {

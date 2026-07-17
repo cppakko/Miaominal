@@ -1,86 +1,329 @@
-use super::state::{
-    PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
-    PendingLocalDataResetConfirmationPopupState, PendingSyncPassphraseClearConfirmPopupState,
-    PendingSyncProviderConfigPopupState, PendingWebSearchConfigPopupState,
-};
-use miaominal_core::keychain::ManagedKeySource;
+use std::cell::{Ref, RefMut};
 
 use super::*;
 
-pub struct AppView {
-    pub(in crate::ui::shell) services: AppServices,
-    pub(in crate::ui::shell) data: AppDataState,
-    pub(in crate::ui::shell) host_editor_forms: HostEditorForms,
-    pub(in crate::ui::shell) workspace_forms: WorkspaceForms,
-    pub(in crate::ui::shell) panel_forms: PanelForms,
-    pub(in crate::ui::shell) keychain_page_view: KeychainPageView,
-    pub(in crate::ui::shell) keychain_editor_mode: KeychainEditorMode,
-    pub(in crate::ui::shell) keychain_deploy_in_progress: bool,
-    pub(in crate::ui::shell) keychain_editor_draft_source: Option<ManagedKeySource>,
-    pub(in crate::ui::shell) keychain_deploy_key_id: Option<String>,
-    pub(in crate::ui::shell) workspace_state: WorkspaceState,
-    pub(in crate::ui::shell) session_agent_focus: FocusHandle,
-    pub(in crate::ui::shell) panel_view: PanelViewState,
-    pub(in crate::ui::shell) editors: EditorOverlayState,
-    pub(in crate::ui::shell) shell_state: ShellState,
-    pub(in crate::ui::shell) panels: PanelState,
-    pub(in crate::ui::shell) session_agent: SessionAgentState,
-    pub(in crate::ui::shell) session_agent_sessions: HashMap<String, SessionAgentState>,
-    pub(in crate::ui::shell) kbi_inputs: Vec<Entity<InputState>>,
-    pub(in crate::ui::shell) dialogs: DialogState,
-    pub(in crate::ui::shell) onboarding: OnboardingState,
-    pub(in crate::ui::shell) status_message: String,
-    pub(in crate::ui::shell) settings_store: SettingsStore,
-    pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
-    pub(in crate::ui::shell) sync_passphrase_popup: Option<PendingSyncPassphrasePopupState>,
-    pub(in crate::ui::shell) ai_provider_popup: Option<PendingAiProviderPopupState>,
-    pub(in crate::ui::shell) web_search_config_popup: Option<PendingWebSearchConfigPopupState>,
-    pub(in crate::ui::shell) sync_provider_config_popup:
-        Option<PendingSyncProviderConfigPopupState>,
-    pub(in crate::ui::shell) local_vault_passphrase_popup: Option<LocalVaultPassphrasePopupMode>,
-    pub(in crate::ui::shell) pending_local_vault_unlock_action:
-        Option<PendingLocalVaultUnlockAction>,
-    pub(in crate::ui::shell) local_vault_unlock_in_progress: bool,
-    pub(in crate::ui::shell) local_vault_disable_in_progress: bool,
-    pub(in crate::ui::shell) local_data_reset_in_progress: bool,
-    pub(in crate::ui::shell) ai_provider_save_in_progress: bool,
-    pub(in crate::ui::shell) web_search_save_in_progress: bool,
-    pub(in crate::ui::shell) ai_provider_api_key_load_in_progress: Option<String>,
-    pub(in crate::ui::shell) local_vault_session_passphrase: Option<String>,
-    pub(in crate::ui::shell) local_vault_auto_lock_task: Option<gpui::Task<()>>,
-    pub(in crate::ui::shell) sync: SyncUiState,
-    pub(in crate::ui::shell) secret_visibility: SecretVisibilityState,
-    #[allow(dead_code)]
-    pub(in crate::ui::shell) controllers: ControllerSet,
-    pub(in crate::ui::shell) _subscriptions: AppViewSubscriptions,
+fn should_prompt_terminal_sftp_download(
+    active_sftp_tab_id: Option<TabId>,
+    session_sftp_tab_id: Option<TabId>,
+    target_tab_id: TabId,
+) -> bool {
+    active_sftp_tab_id != Some(target_tab_id) && session_sftp_tab_id == Some(target_tab_id)
 }
 
-fn try_replace_session_pty_tap(
-    slot: &mut Option<miaominal_agent::TerminalOutputTap>,
-    tap: miaominal_agent::TerminalOutputTap,
-) -> bool {
-    if slot
-        .as_ref()
-        .is_some_and(|current| !current.can_release_lease())
-    {
-        return false;
-    }
-    if let Some(current) = slot.take() {
-        current.close();
-    }
-    *slot = Some(tap);
-    true
+pub struct AppView {
+    pub(in crate::ui::shell) controllers: ControllerSet,
+    pub(in crate::ui::shell) workspace: WorkspaceModel,
+    pub(in crate::ui::shell) shell: ShellUiState,
+    pub(in crate::ui::shell) _subscriptions: RootSubscriptions,
+}
+
+pub(in crate::ui::shell) struct ShellUiState {
+    pub(in crate::ui::shell) workspace_forms: WorkspaceForms,
+    pub(in crate::ui::shell) shell_state: ShellState,
+    pub(in crate::ui::shell) exiting_dialogs: Vec<ExitingDialogState>,
+    pub(in crate::ui::shell) status_message: String,
+    pub(in crate::ui::shell) deferred_app_command: Option<DeferredAppCommand>,
 }
 
 impl AppView {
+    pub(in crate::ui::shell) fn session_tab<'a>(
+        &self,
+        tab_id: TabId,
+        cx: &'a App,
+    ) -> Option<Ref<'a, SessionTabState>> {
+        self.workspace.tabs.get(tab_id)?;
+        self.controllers.session.read(cx).tab(tab_id)
+    }
+
+    pub(in crate::ui::shell) fn session_tab_mut<'a>(
+        &self,
+        tab_id: TabId,
+        cx: &'a App,
+    ) -> Option<RefMut<'a, SessionTabState>> {
+        self.workspace.tabs.get(tab_id)?;
+        self.controllers.session.read(cx).tab_mut(tab_id)
+    }
+
+    pub(in crate::ui::shell) fn insert_session_tab(
+        &mut self,
+        tab: TabState,
+        session: SessionTabState,
+        cx: &App,
+    ) {
+        let tab_id = tab.id;
+        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        assert!(
+            self.workspace.tabs.get(tab_id).is_none(),
+            "duplicate session tab metadata for {tab_id}"
+        );
+        self.controllers
+            .session
+            .read(cx)
+            .insert_tab(tab_id, session);
+        self.register_session_tab_metadata(tab, cx);
+    }
+
+    pub(in crate::ui::shell) fn register_session_tab_metadata(&mut self, tab: TabState, cx: &App) {
+        let tab_id = tab.id;
+        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        assert!(
+            self.workspace.tabs.get(tab_id).is_none(),
+            "duplicate session tab metadata for {tab_id}"
+        );
+        assert!(
+            self.controllers.session.read(cx).tab(tab_id).is_some(),
+            "missing session tab payload for {tab_id}"
+        );
+        self.workspace.tabs.push(tab);
+        self.sync_session_port_snapshot(cx);
+    }
+
+    pub(in crate::ui::shell) fn remove_tab_metadata_after_controller_close(
+        &mut self,
+        tab_id: TabId,
+        cx: &App,
+    ) -> Option<TabState> {
+        let tab = self.workspace.tabs.remove_id(tab_id)?;
+        self.workspace.parked_workspaces.remove(&tab_id);
+        self.sync_session_port_snapshot(cx);
+        Some(tab)
+    }
+
+    pub(in crate::ui::shell) fn replace_with_session_tab(
+        &mut self,
+        index: usize,
+        tab: TabState,
+        session: SessionTabState,
+        cx: &App,
+    ) {
+        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        let next_id = tab.id;
+        let previous = self.workspace.tabs.replace(index, tab);
+        self.workspace.parked_workspaces.remove(&previous.id);
+        if previous.is_session() {
+            self.controllers
+                .session
+                .read(cx)
+                .remove_tab(previous.id)
+                .expect("session tab metadata must have payload");
+        }
+        self.controllers
+            .session
+            .read(cx)
+            .insert_tab(next_id, session);
+        self.sync_session_port_snapshot(cx);
+    }
+
+    pub(in crate::ui::shell) fn remove_tab_payload_and_metadata(
+        &mut self,
+        tab_id: TabId,
+        cx: &App,
+    ) -> Option<TabState> {
+        self.workspace.tabs.get(tab_id)?;
+        let tab = self.workspace.tabs.remove_id(tab_id)?;
+        self.workspace.parked_workspaces.remove(&tab_id);
+        if tab.is_session() {
+            self.controllers
+                .session
+                .read(cx)
+                .remove_tab(tab_id)
+                .expect("session tab metadata must have payload");
+        }
+        self.sync_session_port_snapshot(cx);
+        Some(tab)
+    }
+
+    pub(in crate::ui::shell) fn finish_any_active_sftp_drag_selection(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.finish_any_active_drag_selection(cx)
+        })
+    }
+
+    pub(in crate::ui::shell) fn should_sync_sftp_browser_for_tab(
+        &self,
+        tab_id: TabId,
+        cx: &App,
+    ) -> bool {
+        let active_tab_matches = self
+            .workspace
+            .active_topbar_tab
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .is_some_and(|tab| tab.id == tab_id && tab.is_sftp());
+        if active_tab_matches {
+            return true;
+        }
+
+        self.controllers.session.read(cx).side_panel_open()
+            && self.controllers.session.read(cx).side_panel_view() == SessionSidePanelView::Sftp
+            && self.session_side_panel_sftp_tab_id(cx) == Some(tab_id)
+    }
+
+    pub(in crate::ui::shell) fn sync_sftp_path_inputs_for_tab(
+        &mut self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.should_sync_sftp_browser_for_tab(tab_id, cx) {
+            return;
+        }
+        let controller = self.controllers.sftp.clone();
+        self.with_active_window(cx, move |window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.sync_path_inputs_for_tab(tab_id, window, cx);
+            });
+        });
+    }
+
+    pub(in crate::ui::shell) fn sync_active_sftp_path_inputs(&mut self, cx: &mut Context<Self>) {
+        let Some(tab_id) = self.workspace.active_topbar_tab else {
+            return;
+        };
+        self.sync_sftp_path_inputs_for_tab(tab_id, cx);
+    }
+
+    pub(in crate::ui::shell) fn sync_sftp_tables_for_tab(
+        &mut self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.should_sync_sftp_browser_for_tab(tab_id, cx) {
+            return;
+        }
+        let prompt_download_destination = self.should_prompt_sftp_download_destination(tab_id, cx);
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.set_download_destination_prompt_tab(tab_id, prompt_download_destination);
+            controller.sync_tables_for_tab(tab_id, cx);
+        });
+    }
+
+    pub(in crate::ui::shell) fn sync_active_sftp_tables(&mut self, cx: &mut Context<Self>) {
+        let Some(tab_id) = self.workspace.active_topbar_tab else {
+            return;
+        };
+        self.sync_sftp_tables_for_tab(tab_id, cx);
+    }
+
+    pub(in crate::ui::shell) fn active_sftp_tab_id(&self) -> Option<TabId> {
+        self.workspace.active_topbar_tab.filter(|tab_id| {
+            self.workspace
+                .tabs
+                .get(*tab_id)
+                .is_some_and(|tab| tab.is_sftp())
+        })
+    }
+
+    pub(in crate::ui::shell) fn should_prompt_sftp_download_destination(
+        &self,
+        tab_id: TabId,
+        cx: &App,
+    ) -> bool {
+        should_prompt_terminal_sftp_download(
+            self.active_sftp_tab_id(),
+            self.session_side_panel_sftp_tab_id(cx),
+            tab_id,
+        )
+    }
+
+    pub(in crate::ui::shell) fn sftp_tab<'a>(
+        &self,
+        tab_id: TabId,
+        cx: &'a App,
+    ) -> Option<Ref<'a, SftpTabState>> {
+        self.workspace.tabs.get(tab_id)?;
+        self.controllers.sftp.read(cx).tab(tab_id)
+    }
+
+    pub(in crate::ui::shell) fn insert_sftp_tab(&mut self, tab: TabState, cx: &App) {
+        let tab_id = tab.id;
+        debug_assert_eq!(tab.kind, TabKindTag::Sftp);
+        assert!(
+            self.workspace.tabs.get(tab_id).is_none(),
+            "duplicate SFTP tab metadata for {tab_id}"
+        );
+        assert!(
+            self.controllers.sftp.read(cx).tab(tab_id).is_some(),
+            "missing SFTP tab payload for {tab_id}"
+        );
+        self.workspace.push_sftp_tab(tab);
+    }
+
+    pub(in crate::ui::shell) fn sftp_prompt_state(
+        &self,
+        tab_id: TabId,
+        cx: &App,
+    ) -> Option<SftpPromptState> {
+        self.controllers.sftp.read(cx).prompt(tab_id)
+    }
+
+    fn session_port_snapshot(&self, cx: &App) -> SessionPortSnapshot {
+        let sessions = self
+            .workspace
+            .tabs
+            .iter()
+            .filter_map(|tab| {
+                let session = self.session_tab(tab.id, cx)?;
+                Some(SessionPortSession::new(
+                    tab.id,
+                    tab.title.clone(),
+                    session.profile_id.clone(),
+                    session.pending_profile.clone(),
+                    session.purpose,
+                    session.commands.clone(),
+                ))
+            })
+            .collect();
+        let active_profile_id = self
+            .workspace
+            .workspace
+            .active_tab
+            .and_then(|tab_id| self.session_tab(tab_id, cx))
+            .map(|session| session.profile_id.clone())
+            .or_else(|| {
+                self.workspace
+                    .active_topbar_tab
+                    .and_then(|tab_id| self.sftp_tab(tab_id, cx))
+                    .map(|sftp| sftp.profile_id.clone())
+            });
+        let active_terminal_tab_id = self
+            .workspace
+            .workspace
+            .active_tab
+            .filter(|&tab_id| {
+                self.session_tab(tab_id, cx)
+                    .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+            })
+            .or_else(|| {
+                self.workspace.active_topbar_tab.filter(|&tab_id| {
+                    self.session_tab(tab_id, cx)
+                        .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
+                })
+            });
+        SessionPortSnapshot::new(
+            self.controllers.session.read(cx).profiles().clone(),
+            sessions,
+            active_profile_id,
+            active_terminal_tab_id,
+        )
+    }
+
+    pub(in crate::ui::shell) fn sync_session_port_snapshot(&self, cx: &App) {
+        self.controllers
+            .session
+            .read(cx)
+            .sync_port_snapshot(self.session_port_snapshot(cx));
+    }
+
     pub(in crate::ui::shell) fn set_active_pane(
         &mut self,
         new_id: PaneId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if new_id == self.workspace_state.workspace.active_pane_id {
-            self.workspace_state
+        if new_id == self.workspace.workspace.active_pane_id {
+            self.workspace
                 .workspace
                 .active_pane
                 .terminal_focus
@@ -90,153 +333,128 @@ impl AppView {
         }
         self.clear_terminal_originated_selection_drag(cx);
         // Tabs are global; only per-pane state is parked.
-        let outgoing = self.workspace_state.workspace.active_pane_id;
+        let outgoing = self.workspace.workspace.active_pane_id;
         let parked = ParkedPane {
-            active_tab: self.workspace_state.workspace.active_tab.take(),
+            active_tab: self.workspace.workspace.active_tab.take(),
             terminal_focus: std::mem::replace(
-                &mut self.workspace_state.workspace.active_pane.terminal_focus,
+                &mut self.workspace.workspace.active_pane.terminal_focus,
                 cx.focus_handle(),
             ),
-            terminal_bounds: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_bounds
-                .take(),
-            terminal_cell_width: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_cell_width,
-            terminal_line_height: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_line_height,
+            terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
+            terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
+            terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
             terminal_dragging: std::mem::take(
-                &mut self.workspace_state.workspace.active_pane.terminal_dragging,
+                &mut self.workspace.workspace.active_pane.terminal_dragging,
             ),
             terminal_mouse_reporting_active: std::mem::take(
                 &mut self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_mouse_reporting_active,
             ),
             last_reported_mouse_cell: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .last_reported_mouse_cell
                 .take(),
             terminal_pointer_position: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_pointer_position
                 .take(),
             terminal_link_query: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_link_query
                 .take(),
             terminal_hovered_link: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_hovered_link
                 .take(),
             terminal_link_open_modifier: std::mem::take(
                 &mut self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_link_open_modifier,
             ),
             terminal_scrollbar_drag: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_scrollbar_drag
                 .take(),
             terminal_scrollbar_last_interaction_at: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_scrollbar_last_interaction_at
                 .take(),
         };
-        self.workspace_state
+        self.workspace
             .workspace
             .parked_panes
             .insert(outgoing, parked);
 
-        if let Some(incoming) = self.workspace_state.workspace.parked_panes.remove(&new_id) {
-            self.workspace_state.workspace.active_tab = incoming.active_tab;
-            self.workspace_state.workspace.active_pane.terminal_focus = incoming.terminal_focus;
-            self.workspace_state.workspace.active_pane.terminal_bounds = incoming.terminal_bounds;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_cell_width = incoming.terminal_cell_width;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_line_height = incoming.terminal_line_height;
-            self.workspace_state.workspace.active_pane.terminal_dragging =
-                incoming.terminal_dragging;
-            self.workspace_state
+        if let Some(incoming) = self.workspace.workspace.parked_panes.remove(&new_id) {
+            self.workspace.workspace.active_tab = incoming.active_tab;
+            self.workspace.workspace.active_pane.terminal_focus = incoming.terminal_focus;
+            self.workspace.workspace.active_pane.terminal_bounds = incoming.terminal_bounds;
+            self.workspace.workspace.active_pane.terminal_cell_width = incoming.terminal_cell_width;
+            self.workspace.workspace.active_pane.terminal_line_height =
+                incoming.terminal_line_height;
+            self.workspace.workspace.active_pane.terminal_dragging = incoming.terminal_dragging;
+            self.workspace
                 .workspace
                 .active_pane
                 .terminal_mouse_reporting_active = incoming.terminal_mouse_reporting_active;
-            self.workspace_state
+            self.workspace
                 .workspace
                 .active_pane
                 .last_reported_mouse_cell = incoming.last_reported_mouse_cell;
-            self.workspace_state
+            self.workspace
                 .workspace
                 .active_pane
                 .terminal_pointer_position = incoming.terminal_pointer_position;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_link_query = incoming.terminal_link_query;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_hovered_link = incoming.terminal_hovered_link;
-            self.workspace_state
+            self.workspace.workspace.active_pane.terminal_link_query = incoming.terminal_link_query;
+            self.workspace.workspace.active_pane.terminal_hovered_link =
+                incoming.terminal_hovered_link;
+            self.workspace
                 .workspace
                 .active_pane
                 .terminal_link_open_modifier = incoming.terminal_link_open_modifier;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_scrollbar_drag = incoming.terminal_scrollbar_drag;
-            self.workspace_state
+            self.workspace.workspace.active_pane.terminal_scrollbar_drag =
+                incoming.terminal_scrollbar_drag;
+            self.workspace
                 .workspace
                 .active_pane
                 .terminal_scrollbar_last_interaction_at =
                 incoming.terminal_scrollbar_last_interaction_at;
         }
-        self.workspace_state.workspace.active_pane_id = new_id;
-        if self.panels.session_side_panel_open
-            && self.panels.session_side_panel_view == SessionSidePanelView::Sftp
+        self.workspace.workspace.active_pane_id = new_id;
+        if self.controllers.session.read(cx).side_panel_open()
+            && self.controllers.session.read(cx).side_panel_view() == SessionSidePanelView::Sftp
             && let Some(session_tab_id) = self
-                .active_terminal_session_index()
-                .and_then(|index| self.workspace_state.tabs.get(index))
+                .active_terminal_session_index(cx)
+                .and_then(|index| self.workspace.tabs.at(index))
                 .map(|tab| tab.id)
         {
             self.ensure_session_side_panel_sftp_tab(session_tab_id, cx);
         }
         self.rebind_terminal_focus_reporting(window, cx);
-        self.workspace_state
+        self.workspace
             .workspace
             .active_pane
             .terminal_focus
             .focus(window, cx);
         self.sync_terminal_focus_reporting(window, cx);
+        self.sync_session_port_snapshot(cx);
         cx.notify();
     }
 
@@ -246,110 +464,91 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let outgoing_id = self.workspace_state.workspace.active_pane_id;
+        let outgoing_id = self.workspace.workspace.active_pane_id;
         let new_pane_id = self.allocate_pane_id();
-        let active_profile = self.active_profile().cloned();
+        let active_profile = self.active_profile(cx);
 
         // Tabs are global; only per-pane state is parked.
         let parked = ParkedPane {
-            active_tab: self.workspace_state.workspace.active_tab.take(),
+            active_tab: self.workspace.workspace.active_tab.take(),
             terminal_focus: std::mem::replace(
-                &mut self.workspace_state.workspace.active_pane.terminal_focus,
+                &mut self.workspace.workspace.active_pane.terminal_focus,
                 cx.focus_handle(),
             ),
-            terminal_bounds: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_bounds
-                .take(),
-            terminal_cell_width: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_cell_width,
-            terminal_line_height: self
-                .workspace_state
-                .workspace
-                .active_pane
-                .terminal_line_height,
+            terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
+            terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
+            terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
             terminal_dragging: std::mem::take(
-                &mut self.workspace_state.workspace.active_pane.terminal_dragging,
+                &mut self.workspace.workspace.active_pane.terminal_dragging,
             ),
             terminal_mouse_reporting_active: std::mem::take(
                 &mut self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_mouse_reporting_active,
             ),
             last_reported_mouse_cell: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .last_reported_mouse_cell
                 .take(),
             terminal_pointer_position: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_pointer_position
                 .take(),
             terminal_link_query: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_link_query
                 .take(),
             terminal_hovered_link: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_hovered_link
                 .take(),
             terminal_link_open_modifier: std::mem::take(
                 &mut self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_link_open_modifier,
             ),
             terminal_scrollbar_drag: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_scrollbar_drag
                 .take(),
             terminal_scrollbar_last_interaction_at: self
-                .workspace_state
+                .workspace
                 .workspace
                 .active_pane
                 .terminal_scrollbar_last_interaction_at
                 .take(),
         };
-        self.workspace_state
+        self.workspace
             .workspace
             .parked_panes
             .insert(outgoing_id, parked);
-        self.workspace_state.workspace.active_pane.terminal_bounds = None;
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_cell_width = terminal_cell_width_default();
-        self.workspace_state
-            .workspace
-            .active_pane
-            .terminal_line_height = terminal_line_height_default();
-        self.workspace_state.workspace.pane_split_drag = None;
+        self.workspace.workspace.active_pane.terminal_bounds = None;
+        self.workspace.workspace.active_pane.terminal_cell_width = terminal_cell_width_default();
+        self.workspace.workspace.active_pane.terminal_line_height = terminal_line_height_default();
+        self.workspace.workspace.pane_split_drag = None;
 
         let split_animation =
-            self.workspace_state
+            self.workspace
                 .workspace
                 .pane_layout
                 .split(outgoing_id, direction, new_pane_id);
         if split_animation.is_none() {
-            self.workspace_state.workspace.pane_layout = PaneLayout::Leaf(new_pane_id);
-            self.workspace_state.workspace.pane_split_animation = None;
+            self.workspace.workspace.pane_layout = PaneLayout::Leaf(new_pane_id);
+            self.workspace.workspace.pane_split_animation = None;
         } else if let Some(animation) = split_animation {
             let _ = self.set_split_flex_pair(
                 &animation.path,
@@ -357,7 +556,7 @@ impl AppView {
                 animation.from_flex_a,
                 animation.from_flex_b,
             );
-            self.workspace_state.workspace.pane_split_animation = Some(PaneSplitAnimation {
+            self.workspace.workspace.pane_split_animation = Some(PaneSplitAnimation {
                 kind: PaneSplitAnimationKind::Opening,
                 path: animation.path,
                 child_index: animation.child_index,
@@ -372,21 +571,30 @@ impl AppView {
                 pending_close: None,
             });
         }
-        self.workspace_state.workspace.active_pane_id = new_pane_id;
+        self.workspace.workspace.active_pane_id = new_pane_id;
         self.rebind_terminal_focus_reporting(window, cx);
 
         if let Some(profile) = active_profile {
-            let mut tab = self.build_session_tab(profile);
-            tab.hidden_from_topbar = true;
-            self.workspace_state.tabs.push(tab);
-            self.workspace_state.workspace.active_tab = Some(self.workspace_state.tabs.len() - 1);
+            let (mut tab, session) = self.build_session_tab(profile, cx);
+            tab.placement = self
+                .workspace
+                .active_topbar_tab
+                .map(|owner| TabPlacement::WorkspacePane {
+                    owner,
+                    pane: new_pane_id,
+                })
+                .unwrap_or(TabPlacement::Background);
+            self.insert_session_tab(tab, session, cx);
+            self.workspace.workspace.active_tab =
+                self.workspace.tabs.id_at(self.workspace.tabs.len() - 1);
         }
-        self.workspace_state
+        self.workspace
             .workspace
             .active_pane
             .terminal_focus
             .focus(window, cx);
         self.sync_terminal_focus_reporting(window, cx);
+        self.sync_session_port_snapshot(cx);
         cx.notify();
     }
 
@@ -396,37 +604,39 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.workspace_state.workspace.pane_layout, PaneLayout::Leaf(id) if id == self.workspace_state.workspace.active_pane_id)
-            && self.workspace_state.workspace.parked_panes.is_empty()
+        if matches!(self.workspace.workspace.pane_layout, PaneLayout::Leaf(id) if id == self.workspace.workspace.active_pane_id)
+            && self.workspace.workspace.parked_panes.is_empty()
         {
-            if let Some(active) = self.workspace_state.workspace.active_tab {
-                self.close_tab(active, window, cx);
+            if let Some(active) = self.workspace.workspace.active_tab
+                && let Some(index) = self.workspace.tabs.index_of(active)
+            {
+                self.close_tab(index, window, cx);
             }
             return;
         }
 
-        let removed_id = self.workspace_state.workspace.active_pane_id;
+        let removed_id = self.workspace.workspace.active_pane_id;
         let hidden_tab_id = self
-            .workspace_state
+            .workspace
             .workspace
             .active_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.hidden_from_topbar.then_some(tab.id));
+            .and_then(|index| self.workspace.tabs.get(index))
+            .and_then(|tab| (!tab.is_top_level()).then_some(tab.id));
 
         if let Some(animation) = self
-            .workspace_state
+            .workspace
             .workspace
             .pane_layout
             .close_animation_target(removed_id)
         {
-            self.workspace_state.workspace.pane_split_drag = None;
+            self.workspace.workspace.pane_split_drag = None;
             let _ = self.set_split_flex_pair(
                 &animation.path,
                 animation.child_index,
                 animation.from_flex_a,
                 animation.from_flex_b,
             );
-            self.workspace_state.workspace.pane_split_animation = Some(PaneSplitAnimation {
+            self.workspace.workspace.pane_split_animation = Some(PaneSplitAnimation {
                 kind: PaneSplitAnimationKind::Closing,
                 path: animation.path,
                 child_index: animation.child_index,
@@ -449,104 +659,27 @@ impl AppView {
 
         // Tabs created only for split panes are hidden from the top bar and
         // should be torn down with that pane.
-        if let Some(active_idx) = self.workspace_state.workspace.active_tab.take()
-            && let Some(tab) = self.workspace_state.tabs.get(active_idx)
-            && tab.hidden_from_topbar
+        if let Some(active_idx) = self.workspace.workspace.active_tab.take()
+            && let Some(tab) = self.workspace.tabs.get(active_idx)
+            && !tab.is_top_level()
+            && let Some(index) = self.workspace.tabs.index_of(active_idx)
         {
-            self.close_tab(active_idx, window, cx);
+            self.close_tab(index, window, cx);
         }
 
-        let removed_id = self.workspace_state.workspace.active_pane_id;
-        self.workspace_state
-            .workspace
-            .pane_layout
-            .remove(removed_id);
+        let removed_id = self.workspace.workspace.active_pane_id;
+        self.workspace.workspace.pane_layout.remove(removed_id);
 
-        let next_id = self.workspace_state.workspace.pane_layout.first_leaf();
+        let next_id = self.workspace.workspace.pane_layout.first_leaf();
         // set_active_pane swaps the current AppView fields through parked_panes,
         // so it needs a temporary entry here.
-        self.workspace_state.workspace.parked_panes.insert(
+        self.workspace.workspace.parked_panes.insert(
             removed_id,
-            ParkedPane::empty(
-                self.workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_focus
-                    .clone(),
-            ),
+            ParkedPane::empty(self.workspace.workspace.active_pane.terminal_focus.clone()),
         );
         self.set_active_pane(next_id, window, cx);
-        self.workspace_state
-            .workspace
-            .parked_panes
-            .remove(&removed_id);
+        self.workspace.workspace.parked_panes.remove(&removed_id);
         cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn write_pane_terminal_metrics(
-        &mut self,
-        pane_id: PaneId,
-        bounds: Bounds<Pixels>,
-        cell_width: f32,
-        line_height: f32,
-        cx: &mut Context<Self>,
-    ) {
-        if pane_id == self.workspace_state.workspace.active_pane_id {
-            let changed = self.workspace_state.workspace.active_pane.terminal_bounds
-                != Some(bounds)
-                || self
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_cell_width
-                    != cell_width
-                || self
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_line_height
-                    != line_height;
-            self.workspace_state.workspace.active_pane.terminal_bounds = Some(bounds);
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_cell_width = cell_width;
-            self.workspace_state
-                .workspace
-                .active_pane
-                .terminal_line_height = line_height;
-            if changed {
-                cx.notify();
-            }
-        } else if let Some(parked) = self
-            .workspace_state
-            .workspace
-            .parked_panes
-            .get_mut(&pane_id)
-        {
-            let changed = parked.terminal_bounds != Some(bounds)
-                || parked.terminal_cell_width != cell_width
-                || parked.terminal_line_height != line_height;
-            let tab_index = parked.active_tab;
-            parked.terminal_bounds = Some(bounds);
-            parked.terminal_cell_width = cell_width;
-            parked.terminal_line_height = line_height;
-
-            let resized = tab_index.is_some_and(|index| {
-                self.sync_session_terminal_size_from_metrics(
-                    index,
-                    bounds,
-                    cell_width,
-                    line_height,
-                    !changed,
-                    cx,
-                )
-            });
-
-            if changed || resized {
-                cx.notify();
-            }
-        }
     }
 
     pub(in crate::ui::shell) fn set_split_flex_pair(
@@ -556,7 +689,7 @@ impl AppView {
         flex_a: f32,
         flex_b: f32,
     ) -> bool {
-        let mut node = &mut self.workspace_state.workspace.pane_layout;
+        let mut node = &mut self.workspace.workspace.pane_layout;
         for &i in path {
             match node {
                 PaneLayout::Split { children, .. } => {
@@ -605,7 +738,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if !self
-            .workspace_state
+            .workspace
             .workspace
             .pane_layout
             .remove(close.removed_pane_id)
@@ -613,29 +746,19 @@ impl AppView {
             return;
         }
 
-        let next_id = self.workspace_state.workspace.pane_layout.first_leaf();
-        self.workspace_state.workspace.parked_panes.insert(
+        let next_id = self.workspace.workspace.pane_layout.first_leaf();
+        self.workspace.workspace.parked_panes.insert(
             close.removed_pane_id,
-            ParkedPane::empty(
-                self.workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_focus
-                    .clone(),
-            ),
+            ParkedPane::empty(self.workspace.workspace.active_pane.terminal_focus.clone()),
         );
         self.set_active_pane(next_id, window, cx);
-        self.workspace_state
+        self.workspace
             .workspace
             .parked_panes
             .remove(&close.removed_pane_id);
 
         if let Some(hidden_tab_id) = close.hidden_tab_id
-            && let Some(index) = self
-                .workspace_state
-                .tabs
-                .iter()
-                .position(|tab| tab.id == hidden_tab_id)
+            && let Some(index) = self.workspace.tabs.index_of(hidden_tab_id)
         {
             self.close_tab(index, window, cx);
         }
@@ -646,18 +769,18 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace_state.workspace.pane_split_drag.is_some() {
-            self.workspace_state.workspace.pane_split_animation = None;
+        if self.workspace.workspace.pane_split_drag.is_some() {
+            self.workspace.workspace.pane_split_animation = None;
             return;
         }
 
-        let Some(animation) = self.workspace_state.workspace.pane_split_animation.clone() else {
+        let Some(animation) = self.workspace.workspace.pane_split_animation.clone() else {
             return;
         };
 
         let duration_seconds = animation.duration.as_secs_f32();
         if duration_seconds <= f32::EPSILON {
-            self.workspace_state.workspace.pane_split_animation = None;
+            self.workspace.workspace.pane_split_animation = None;
             if let Some(close) = animation.pending_close {
                 self.finish_pane_close_animation(close, window, cx);
             } else {
@@ -685,12 +808,12 @@ impl AppView {
             current_flex_a,
             current_flex_b,
         ) {
-            self.workspace_state.workspace.pane_split_animation = None;
+            self.workspace.workspace.pane_split_animation = None;
             return;
         }
 
         if progress >= 1.0 {
-            self.workspace_state.workspace.pane_split_animation = None;
+            self.workspace.workspace.pane_split_animation = None;
             if let Some(close) = animation.pending_close {
                 self.finish_pane_close_animation(close, window, cx);
             } else {
@@ -722,7 +845,7 @@ impl AppView {
         }
         .max(1.0);
 
-        let mut node = &self.workspace_state.workspace.pane_layout;
+        let mut node = &self.workspace.workspace.pane_layout;
         for &i in path {
             match node {
                 PaneLayout::Split {
@@ -746,288 +869,252 @@ impl AppView {
         available
     }
 
-    pub(in crate::ui::shell) fn active_profile(&self) -> Option<&SessionProfile> {
+    pub(in crate::ui::shell) fn active_profile(&self, cx: &App) -> Option<SessionProfile> {
         let profile_id = self
-            .workspace_state
+            .workspace
             .workspace
             .active_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .map(|session| session.profile_id.as_str())
+            .and_then(|tab_id| self.session_tab(tab_id, cx))
+            .map(|session| session.profile_id.clone())
             .or_else(|| {
-                self.workspace_state
+                self.workspace
                     .active_topbar_tab
-                    .and_then(|index| self.workspace_state.tabs.get(index))
-                    .and_then(TabState::as_sftp)
-                    .map(|sftp| sftp.profile_id.as_str())
+                    .and_then(|tab_id| self.sftp_tab(tab_id, cx))
+                    .map(|sftp| sftp.profile_id.clone())
             })?;
-        self.data
-            .sessions
+        self.controllers
+            .session
+            .read(cx)
+            .profiles()
             .iter()
             .find(|profile| profile.id == profile_id)
+            .cloned()
     }
 
     pub(in crate::ui::shell) fn has_active_session(&self) -> bool {
-        self.workspace_state
+        self.workspace
             .workspace
             .active_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .is_some()
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .is_some_and(|tab| tab.is_session())
     }
 
-    pub(in crate::ui::shell) fn active_terminal_session_index(&self) -> Option<usize> {
-        self.workspace_state
+    pub(in crate::ui::shell) fn active_terminal_session_index(&self, cx: &App) -> Option<usize> {
+        let tab_id = self
+            .workspace
             .workspace
             .active_tab
-            .filter(|&index| {
-                self.workspace_state
-                    .tabs
-                    .get(index)
-                    .and_then(TabState::as_session)
+            .filter(|&tab_id| {
+                self.session_tab(tab_id, cx)
                     .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
             })
             .or_else(|| {
-                self.workspace_state.active_topbar_tab.filter(|&index| {
-                    self.workspace_state
-                        .tabs
-                        .get(index)
-                        .and_then(TabState::as_session)
+                self.workspace.active_topbar_tab.filter(|&tab_id| {
+                    self.session_tab(tab_id, cx)
                         .is_some_and(|session| session.purpose == SessionPurpose::Terminal)
                 })
-            })
+            })?;
+        self.workspace.tabs.index_of(tab_id)
     }
 
-    pub(in crate::ui::shell) fn try_set_session_pty_tap_by_tab_id(
-        &mut self,
-        tab_id: usize,
-        tap: miaominal_agent::TerminalOutputTap,
-    ) -> bool {
-        let Some(session) = self
-            .workspace_state
-            .tabs
-            .iter_mut()
-            .find(|tab| tab.id == tab_id)
-            .and_then(TabState::as_session_mut)
-        else {
-            return false;
-        };
-        try_replace_session_pty_tap(&mut session.pty_output_tap, tap)
-    }
-
-    pub(in crate::ui::shell) fn clear_session_pty_taps_if_same(
-        &mut self,
-        taps: &[(usize, miaominal_agent::TerminalOutputTap)],
-    ) {
-        for (tab_id, tap) in taps {
-            let Some(session) = self
-                .workspace_state
-                .tabs
-                .iter_mut()
-                .find(|tab| tab.id == *tab_id)
-                .and_then(TabState::as_session_mut)
-            else {
-                continue;
-            };
-            let can_release = session.pty_output_tap.as_ref().is_some_and(|current| {
-                if !current.same_channel(tap) {
-                    return false;
-                }
-                current.retire_lease();
-                current.can_release_lease()
-            });
-            if can_release {
-                if let Some(current) = session.pty_output_tap.take() {
-                    current.close();
-                }
-            }
-        }
-    }
-
-    pub(in crate::ui::shell) fn toggle_session_side_panel(&mut self) {
-        self.panels.session_side_panel_open = !self.panels.session_side_panel_open;
+    pub(in crate::ui::shell) fn toggle_session_side_panel(&mut self, cx: &App) {
+        self.controllers.session.read(cx).toggle_side_panel();
     }
 
     pub(in crate::ui::shell) fn toggle_session_agent_panel(&mut self, cx: &mut Context<Self>) {
-        if self.panels.session_agent_panel_open {
-            self.finish_session_agent_text_drag(cx);
-        }
-        self.panels.session_agent_panel_open = !self.panels.session_agent_panel_open;
-    }
-
-    pub(in crate::ui::shell) fn pending_host_key_session_index(&self) -> Option<usize> {
-        self.workspace_state
-            .workspace
-            .active_tab
-            .filter(|&index| {
-                self.workspace_state
-                    .tabs
-                    .get(index)
-                    .and_then(TabState::as_session)
-                    .is_some_and(|session| session.pending_host_key.is_some())
-            })
-            .or_else(|| {
-                self.workspace_state
-                    .tabs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, tab)| {
-                        tab.as_session()
-                            .and_then(|session| session.pending_host_key.as_ref().map(|_| index))
-                    })
-            })
-    }
-
-    pub(in crate::ui::shell) fn pending_host_key_prompt(&self) -> Option<HostKeyPrompt> {
-        self.pending_host_key_session_index()
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .and_then(|session| session.pending_host_key.clone())
-    }
-
-    pub(in crate::ui::shell) fn pending_keyboard_interactive_prompt(&self) -> Option<KbiChallenge> {
-        self.workspace_state
-            .workspace
-            .active_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .and_then(|session| session.pending_keyboard_interactive.clone())
-            .or_else(|| {
-                self.workspace_state.tabs.iter().find_map(|tab| {
-                    tab.as_session()
-                        .and_then(|session| session.pending_keyboard_interactive.clone())
-                })
-            })
+        self.controllers.agent.update(cx, |controller, cx| {
+            if controller.panel_open() {
+                controller.finish_text_drag(cx);
+            }
+            controller.toggle_panel();
+            cx.notify();
+        });
     }
 
     pub(in crate::ui::shell) fn pending_profile_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingProfileDeleteState> {
-        self.dialogs.pending_profile_delete.clone()
+        self.controllers.session.read(cx).pending_profile_delete()
     }
 
     pub(in crate::ui::shell) fn pending_managed_key_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingManagedKeyDeleteState> {
-        self.dialogs.pending_managed_key_delete.clone()
+        self.controllers
+            .keychain
+            .read(cx)
+            .pending_managed_key_delete()
     }
 
     pub(in crate::ui::shell) fn pending_known_host_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingKnownHostDeleteState> {
-        self.dialogs.pending_known_host_delete.clone()
+        self.controllers
+            .session
+            .read(cx)
+            .pending_known_host_delete()
     }
 
     pub(in crate::ui::shell) fn pending_snippet_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingSnippetDeleteState> {
-        self.dialogs.pending_snippet_delete.clone()
+        self.controllers.session.read(cx).pending_snippet_delete()
     }
 
     pub(in crate::ui::shell) fn pending_port_forward_rule_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingPortForwardRuleDeleteState> {
-        self.dialogs.pending_port_forward_rule_delete.clone()
+        self.controllers
+            .session
+            .read(cx)
+            .pending_port_forward_rule_delete()
     }
 
     pub(in crate::ui::shell) fn pending_chat_session_delete_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingChatSessionDeleteState> {
-        self.dialogs.pending_chat_session_delete.clone()
+        self.controllers
+            .agent
+            .read(cx)
+            .pending_chat_session_delete()
     }
 
     pub(in crate::ui::shell) fn pending_chat_session_rename_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingChatSessionRenameState> {
-        self.dialogs.pending_chat_session_rename.clone()
+        self.controllers
+            .agent
+            .read(cx)
+            .pending_chat_session_rename()
     }
 
     pub(in crate::ui::shell) fn pending_sync_direction_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingSyncDirectionState> {
-        self.dialogs.pending_sync_direction
+        self.controllers.settings.read(cx).sync_direction()
     }
 
     pub(in crate::ui::shell) fn pending_sync_pull_confirm_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingSyncPullConfirmState> {
-        self.dialogs.pending_sync_pull_confirm
+        self.controllers.settings.read(cx).sync_pull_confirm()
     }
 
     pub(in crate::ui::shell) fn pending_local_vault_disable_confirm_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingLocalVaultDisableConfirmState> {
-        self.dialogs.pending_local_vault_disable_confirm
+        self.controllers
+            .settings
+            .read(cx)
+            .local_vault_disable_confirm()
     }
 
     pub(in crate::ui::shell) fn pending_local_data_reset_confirm_prompt(
         &self,
+        cx: &App,
     ) -> Option<PendingLocalDataResetConfirmState> {
-        self.dialogs.pending_local_data_reset_confirm
+        self.controllers
+            .settings
+            .read(cx)
+            .local_data_reset_confirm()
     }
 
     pub(in crate::ui::shell) fn pending_local_data_reset_confirmation_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingLocalDataResetConfirmationPopupState> {
-        self.dialogs.pending_local_data_reset_confirmation_popup
+        self.controllers
+            .settings
+            .read(cx)
+            .local_data_reset_confirmation_popup()
     }
 
     pub(in crate::ui::shell) fn pending_sync_passphrase_clear_confirm_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingSyncPassphraseClearConfirmPopupState> {
-        self.dialogs.pending_sync_passphrase_clear_confirm_popup
+        self.controllers
+            .settings
+            .read(cx)
+            .sync_passphrase_clear_confirm_popup()
     }
 
     pub(in crate::ui::shell) fn pending_sync_passphrase_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingSyncPassphrasePopupState> {
-        self.sync_passphrase_popup
+        self.controllers.settings.read(cx).sync_passphrase_popup()
     }
 
     pub(in crate::ui::shell) fn pending_ai_provider_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingAiProviderPopupState> {
-        self.ai_provider_popup
+        self.controllers.settings.read(cx).ai_provider_popup()
     }
 
     pub(in crate::ui::shell) fn pending_web_search_config_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingWebSearchConfigPopupState> {
-        self.web_search_config_popup
+        self.controllers.settings.read(cx).web_search_config_popup()
     }
 
     pub(in crate::ui::shell) fn pending_sync_provider_config_popup(
         &self,
+        cx: &App,
     ) -> Option<PendingSyncProviderConfigPopupState> {
-        self.sync_provider_config_popup
+        self.controllers
+            .settings
+            .read(cx)
+            .sync_provider_config_popup()
     }
 
     pub(in crate::ui::shell) fn pending_local_vault_passphrase_popup(
         &self,
+        cx: &App,
     ) -> Option<LocalVaultPassphrasePopupMode> {
-        self.local_vault_passphrase_popup
+        self.controllers
+            .settings
+            .read(cx)
+            .local_vault_passphrase_popup()
     }
 
-    pub(in crate::ui::shell) fn pending_sftp_prompt(&self) -> Option<(usize, SftpPromptState)> {
+    pub(in crate::ui::shell) fn pending_sftp_prompt(
+        &self,
+        cx: &App,
+    ) -> Option<(TabId, SftpPromptState)> {
         let active_prompt = self
-            .workspace_state
+            .workspace
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .filter(|tab| !tab.hidden_from_topbar)
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .filter(|tab| tab.is_top_level())
+            .filter(|tab| tab.is_sftp())
             .and_then(|tab| {
-                tab.as_sftp()
-                    .and_then(|sftp| sftp.prompt.clone().map(|prompt| (tab.id, prompt)))
+                self.sftp_prompt_state(tab.id, cx)
+                    .map(|prompt| (tab.id, prompt))
             });
 
         active_prompt.or_else(|| {
-            self.session_side_panel_sftp_tab_id().and_then(|tab_id| {
-                self.workspace_state
+            self.session_side_panel_sftp_tab_id(cx).and_then(|tab_id| {
+                self.workspace
                     .tabs
                     .iter()
                     .find(|tab| tab.id == tab_id)
+                    .filter(|tab| tab.is_sftp())
                     .and_then(|tab| {
-                        tab.as_sftp()
-                            .and_then(|sftp| sftp.prompt.clone().map(|prompt| (tab.id, prompt)))
+                        self.sftp_prompt_state(tab.id, cx)
+                            .map(|prompt| (tab.id, prompt))
                     })
             })
         })
@@ -1039,10 +1126,10 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let stable_key = snapshot.stable_key();
-        self.dialogs
+        self.shell
             .exiting_dialogs
             .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
-        self.dialogs.exiting_dialogs.push(ExitingDialogState {
+        self.shell.exiting_dialogs.push(ExitingDialogState {
             snapshot,
             started_at: Instant::now(),
         });
@@ -1057,7 +1144,7 @@ impl AppView {
         let duration = support::OVERLAY_ENTER_DURATION;
         let mut render_states = Vec::new();
 
-        self.dialogs.exiting_dialogs.retain(|dialog| {
+        self.shell.exiting_dialogs.retain(|dialog| {
             let elapsed = now.saturating_duration_since(dialog.started_at);
             if elapsed >= duration {
                 return false;
@@ -1076,14 +1163,14 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn active_tab_is_hosts(&self) -> bool {
-        self.workspace_state
+        self.workspace
             .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .is_some_and(TabState::is_hosts)
+            .and_then(|index| self.workspace.tabs.get(index))
+            .is_some_and(|tab| tab.is_hosts())
     }
 
-    pub(in crate::ui::shell) fn active_username(&self) -> String {
-        if let Some(profile) = self.active_profile()
+    pub(in crate::ui::shell) fn active_username(&self, cx: &App) -> String {
+        if let Some(profile) = self.active_profile(cx)
             && !profile.username.trim().is_empty()
         {
             return profile.username.clone();
@@ -1094,18 +1181,18 @@ impl AppView {
             .unwrap_or_else(|_| "admin".into())
     }
 
-    pub(in crate::ui::shell) fn window_title(&self) -> String {
+    pub(in crate::ui::shell) fn window_title(&self, cx: &App) -> String {
         let active_index = self
-            .workspace_state
+            .workspace
             .workspace
             .active_tab
-            .or(self.workspace_state.active_topbar_tab);
+            .or(self.workspace.active_topbar_tab);
 
         let Some(active_index) = active_index else {
             return APP_TITLE.to_string();
         };
 
-        let Some(tab) = self.workspace_state.tabs.get(active_index) else {
+        let Some(tab) = self.workspace.tabs.get(active_index) else {
             return APP_TITLE.to_string();
         };
 
@@ -1118,7 +1205,7 @@ impl AppView {
             return format!("{title} - {APP_TITLE}");
         }
 
-        self.active_profile()
+        self.active_profile(cx)
             .map(|profile| format!("{} - {APP_TITLE}", profile.summary()))
             .unwrap_or_else(|| APP_TITLE.to_string())
     }
@@ -1129,28 +1216,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retired_pty_tap_can_be_replaced_by_the_next_continuation() {
-        let (current, _current_receiver) = miaominal_agent::TerminalOutputTap::channel();
-        let current_clone = current.clone();
-        let (next, _next_receiver) = miaominal_agent::TerminalOutputTap::channel();
-        let next_clone = next.clone();
-        let mut slot = Some(current);
-
-        assert!(!try_replace_session_pty_tap(&mut slot, next.clone()));
-        assert!(
-            slot.as_ref()
-                .is_some_and(|tap| tap.same_channel(&current_clone))
-        );
-
-        current_clone.retire_lease();
-        assert!(try_replace_session_pty_tap(&mut slot, next));
-        assert!(
-            slot.as_ref()
-                .is_some_and(|tap| tap.same_channel(&next_clone))
-        );
-        assert_eq!(
-            current_clone.try_send(vec![1]),
-            Err(miaominal_agent::TerminalOutputTapError::Closed)
-        );
+    fn terminal_download_prompts_only_when_target_is_the_session_sftp_tab() {
+        let target = TabId::new(4);
+        assert!(should_prompt_terminal_sftp_download(
+            Some(TabId::new(2)),
+            Some(target),
+            target,
+        ));
+        assert!(!should_prompt_terminal_sftp_download(
+            Some(target),
+            Some(target),
+            target,
+        ));
+        assert!(!should_prompt_terminal_sftp_download(
+            Some(TabId::new(2)),
+            Some(TabId::new(3)),
+            target,
+        ));
     }
 }

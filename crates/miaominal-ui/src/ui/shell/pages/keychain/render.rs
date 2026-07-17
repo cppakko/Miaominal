@@ -67,7 +67,10 @@ fn managed_key_source_label(source: ManagedKeySource) -> String {
     }
 }
 
-fn managed_key_card(key: &ManagedKeyRecord, entity: Entity<AppView>) -> impl IntoElement {
+fn managed_key_card(
+    key: &ManagedKeyRecord,
+    entity: Entity<KeychainController>,
+) -> impl IntoElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -253,22 +256,15 @@ fn agent_identity_card(identity: &miaominal_ssh::AgentIdentitySummary) -> impl I
     )
 }
 
-impl AppView {
+impl KeychainController {
     pub(in crate::ui::shell) fn render_keychain_page(
         &self,
         entity: Entity<Self>,
         cx: &App,
     ) -> gpui::AnyElement {
-        let raw_filter_text = self
-            .panel_forms
-            .keychain
-            .filter_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
+        let raw_filter_text = self.forms.filter_input.read(cx).value().trim().to_string();
         let filter_text = raw_filter_text.to_ascii_lowercase();
-        let keychain_page_view = self.keychain_page_view;
+        let keychain_page_view = self.page_view;
         let selected_keychain_page_view_index = match keychain_page_view {
             KeychainPageView::ManagedKeys => 0,
             KeychainPageView::AgentIdentities => 1,
@@ -277,7 +273,6 @@ impl AppView {
         let show_agent_identities = keychain_page_view == KeychainPageView::AgentIdentities;
 
         let mut visible_managed_keys: Vec<_> = self
-            .data
             .managed_keys
             .iter()
             .filter(|key| managed_key_matches_filter(key, &filter_text))
@@ -290,7 +285,6 @@ impl AppView {
         });
 
         let mut visible_agent_identities: Vec<_> = self
-            .data
             .agent_identities
             .iter()
             .filter(|identity| agent_identity_matches_filter(identity, &filter_text))
@@ -313,7 +307,7 @@ impl AppView {
                             .w_full()
                             .max_w(px(576.0))
                             .child(search_filter_input(
-                                &self.panel_forms.keychain.filter_input,
+                                &self.forms.filter_input,
                                 SearchInputStyle::Pill,
                                 None,
                             )),
@@ -332,7 +326,7 @@ impl AppView {
                                 let entity = entity.clone();
                                 move |index, _, cx| {
                                     entity.update(cx, |this, cx| {
-                                        this.keychain_page_view = match index {
+                                        this.page_view = match index {
                                             0 => KeychainPageView::ManagedKeys,
                                             _ => KeychainPageView::AgentIdentities,
                                         };
@@ -364,7 +358,7 @@ impl AppView {
                                 ))),
                         )
                         .child(if visible_managed_keys.is_empty() {
-                            if self.data.managed_keys.is_empty() {
+                            if self.managed_keys.is_empty() {
                                 keychain_empty_state(
                                     i18n::string("keychain.empty.no_managed_keys_title"),
                                     i18n::string("keychain.empty.no_managed_keys_copy"),
@@ -405,7 +399,7 @@ impl AppView {
                                 ))),
                         )
                         .child(if visible_agent_identities.is_empty() {
-                            if self.data.agent_identities.is_empty() {
+                            if self.agent_identities.is_empty() {
                                 keychain_empty_state(
                                     i18n::string("keychain.empty.no_agent_identities_title"),
                                     i18n::string("keychain.empty.no_agent_identities_copy"),
@@ -478,14 +472,14 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let store_available = self.services.keychain_store.is_some();
-        let forms = &self.panel_forms.keychain;
-        let is_deploy_mode = self.keychain_editor_mode == KeychainEditorMode::Deploy;
-        let deploy_in_progress = self.keychain_deploy_in_progress;
+        let store_available = self.keychain_store.is_some();
+        let forms = &self.forms;
+        let is_deploy_mode = self.editor_mode == KeychainEditorMode::Deploy;
+        let deploy_in_progress = self.deploy_in_progress;
         let selected_deploy_key = self.keychain_selected_deploy_key();
         let deployable_profile_count = self
-            .data
-            .sessions
+            .session_query
+            .profiles()
             .iter()
             .filter(|profile| Self::keychain_profile_supports_deploy(profile))
             .count();

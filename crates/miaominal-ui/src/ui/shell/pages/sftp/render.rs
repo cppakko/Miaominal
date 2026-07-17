@@ -75,55 +75,37 @@ mod tests {
     }
 
     #[test]
-    fn progress_center_state_can_open_without_an_sftp_tab() {
-        let mut visible = false;
-        let mut transition = None;
-
-        assert!(update_sftp_progress_center_state(
-            &mut visible,
-            &mut transition,
-            true,
-            Instant::now(),
-        ));
-        assert!(visible);
-        assert!(matches!(
-            transition,
-            Some(SftpProgressCenterTransition {
-                phase: SftpProgressCenterTransitionPhase::Entering,
-                ..
-            })
-        ));
-    }
-
-    #[test]
     fn transfer_order_stably_prioritizes_current_tab() {
         let mut transfers = vec![
-            (2, "first"),
-            (1, "current-a"),
-            (2, "second"),
-            (1, "current-b"),
+            (TabId::new(2), "first"),
+            (TabId::new(1), "current-a"),
+            (TabId::new(2), "second"),
+            (TabId::new(1), "current-b"),
         ];
 
-        prioritize_sftp_transfer_tab(&mut transfers, Some(1));
+        prioritize_sftp_transfer_tab(&mut transfers, Some(TabId::new(1)));
 
         assert_eq!(
             transfers,
             vec![
-                (1, "current-a"),
-                (1, "current-b"),
-                (2, "first"),
-                (2, "second")
+                (TabId::new(1), "current-a"),
+                (TabId::new(1), "current-b"),
+                (TabId::new(2), "first"),
+                (TabId::new(2), "second")
             ]
         );
     }
 
     #[test]
     fn transfer_order_is_unchanged_without_a_current_tab() {
-        let mut transfers = vec![(2, "first"), (1, "second")];
+        let mut transfers = vec![(TabId::new(2), "first"), (TabId::new(1), "second")];
 
         prioritize_sftp_transfer_tab(&mut transfers, None);
 
-        assert_eq!(transfers, vec![(2, "first"), (1, "second")]);
+        assert_eq!(
+            transfers,
+            vec![(TabId::new(2), "first"), (TabId::new(1), "second")]
+        );
     }
 
     #[test]
@@ -184,10 +166,10 @@ mod tests {
 
     #[test]
     fn transfer_action_ids_are_unique_by_tab_transfer_and_action() {
-        let pause = sftp_transfer_action_id(1, TransferId(7), "pause");
-        let resume = sftp_transfer_action_id(1, TransferId(7), "resume");
-        let other_tab = sftp_transfer_action_id(2, TransferId(7), "pause");
-        let other_transfer = sftp_transfer_action_id(1, TransferId(8), "pause");
+        let pause = sftp_transfer_action_id(TabId::new(1), TransferId(7), "pause");
+        let resume = sftp_transfer_action_id(TabId::new(1), TransferId(7), "resume");
+        let other_tab = sftp_transfer_action_id(TabId::new(2), TransferId(7), "pause");
+        let other_transfer = sftp_transfer_action_id(TabId::new(1), TransferId(8), "pause");
 
         assert_ne!(pause, resume);
         assert_ne!(pause, other_tab);
@@ -410,10 +392,14 @@ fn sftp_breadcrumb_item(label: SharedString, is_current: bool) -> BreadcrumbItem
 fn local_sftp_breadcrumb_label(path: &Path) -> SharedString {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned().into())
-        .unwrap_or_else(|| AppView::display_sftp_local_path(path))
+        .unwrap_or_else(|| SftpController::display_local_path(path))
 }
 
-fn build_local_sftp_breadcrumb(path: &Path, entity: Entity<AppView>, tab_id: usize) -> Breadcrumb {
+fn build_local_sftp_breadcrumb(
+    path: &Path,
+    controller: Entity<SftpController>,
+    tab_id: TabId,
+) -> Breadcrumb {
     let mut breadcrumb = Breadcrumb::new().w_full().min_w(px(0.0)).overflow_hidden();
     let mut ancestors: Vec<PathBuf> = path
         .ancestors()
@@ -444,12 +430,12 @@ fn build_local_sftp_breadcrumb(path: &Path, entity: Entity<AppView>, tab_id: usi
         let item = if is_current {
             item.disabled(true)
         } else {
-            let click_entity = entity.clone();
+            let click_controller = controller.clone();
             let target = ancestor.clone();
             item.on_click(move |_, _, cx| {
                 let target = target.clone();
-                click_entity.update(cx, |this, cx| {
-                    this.navigate_sftp_local_to_path(tab_id, target.clone(), cx);
+                click_controller.update(cx, |controller, cx| {
+                    controller.navigate_local_to_path(tab_id, target.clone(), cx);
                 });
             })
         };
@@ -459,7 +445,11 @@ fn build_local_sftp_breadcrumb(path: &Path, entity: Entity<AppView>, tab_id: usi
     breadcrumb
 }
 
-fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usize) -> Breadcrumb {
+fn build_remote_sftp_breadcrumb(
+    path: &str,
+    controller: Entity<SftpController>,
+    tab_id: TabId,
+) -> Breadcrumb {
     let trimmed = path.trim();
     let current_path = if trimmed.is_empty() { "." } else { trimmed };
     let mut segments: Vec<(String, SharedString)> = Vec::new();
@@ -476,7 +466,7 @@ fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usi
             .split('/')
             .filter(|segment| !segment.is_empty())
         {
-            accumulated = AppView::join_remote_path(&accumulated, segment);
+            accumulated = SftpController::join_remote_path(&accumulated, segment);
             segments.push((accumulated.clone(), segment.to_string().into()));
         }
     } else {
@@ -486,7 +476,7 @@ fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usi
             .split('/')
             .filter(|segment| !segment.is_empty() && *segment != ".")
         {
-            accumulated = AppView::join_remote_path(&accumulated, segment);
+            accumulated = SftpController::join_remote_path(&accumulated, segment);
             segments.push((accumulated.clone(), segment.to_string().into()));
         }
     }
@@ -515,12 +505,12 @@ fn build_remote_sftp_breadcrumb(path: &str, entity: Entity<AppView>, tab_id: usi
         let item = if is_current {
             item.disabled(true)
         } else {
-            let click_entity = entity.clone();
+            let click_controller = controller.clone();
             let target = target_path.clone();
             item.on_click(move |_, _, cx| {
                 let target = target.clone();
-                click_entity.update(cx, |this, cx| {
-                    this.request_sftp_remote_directory(tab_id, target.clone(), cx);
+                click_controller.update(cx, |controller, cx| {
+                    controller.request_remote_directory(tab_id, target.clone(), cx);
                 });
             })
         };
@@ -612,10 +602,10 @@ fn sftp_panel_meta_label(item_count: usize, selected_count: usize) -> impl IntoE
 }
 
 fn sftp_split_bar(
-    tab_id: usize,
+    controller: Entity<SftpController>,
+    tab_id: TabId,
     divider: SftpSplitDivider,
     is_dragging: bool,
-    cx: &mut Context<AppView>,
 ) -> gpui::AnyElement {
     let bar_id = SharedString::from(format!(
         "sftp-split-bar-{tab_id}-{}",
@@ -635,13 +625,15 @@ fn sftp_split_bar(
 
     bar.on_mouse_down(
         MouseButton::Left,
-        cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+        move |event: &MouseDownEvent, _window, cx| {
             let pointer = match divider {
                 SftpSplitDivider::BrowserPanels => f32::from(event.position.x),
                 SftpSplitDivider::ProgressCenter => f32::from(event.position.y),
             };
-            this.start_sftp_split_drag(tab_id, divider, pointer, cx);
-        }),
+            controller.update(cx, |controller, cx| {
+                controller.start_sftp_split_drag(tab_id, divider, pointer, cx);
+            });
+        },
     )
     .hover(move |this| {
         if is_dragging {
@@ -913,13 +905,13 @@ fn sftp_transfer_display_name(transfer: &SftpTransferRow) -> String {
         .unwrap_or_else(|| transfer.source.display().to_string())
 }
 
-fn prioritize_sftp_transfer_tab<T>(items: &mut [(usize, T)], preferred_tab_id: Option<usize>) {
+fn prioritize_sftp_transfer_tab<T>(items: &mut [(TabId, T)], preferred_tab_id: Option<TabId>) {
     if let Some(preferred_tab_id) = preferred_tab_id {
         items.sort_by_key(|(tab_id, _)| *tab_id != preferred_tab_id);
     }
 }
 
-fn sftp_transfer_action_id(tab_id: usize, transfer_id: TransferId, action: &str) -> SharedString {
+fn sftp_transfer_action_id(tab_id: TabId, transfer_id: TransferId, action: &str) -> SharedString {
     SharedString::from(format!("sftp-transfer-{action}-{tab_id}-{}", transfer_id.0))
 }
 
@@ -988,117 +980,106 @@ fn sftp_empty_transfer_summary() -> impl IntoElement {
 }
 
 fn context_menu_local_sftp_entry(
-    entity: &Entity<AppView>,
-    tab_id: usize,
+    controller: &Entity<SftpController>,
+    tab_id: TabId,
     cx: &App,
 ) -> Option<LocalSftpEntry> {
-    let shell = entity.read(cx);
-    let row_ix = shell
-        .workspace_forms
-        .sftp_browser
-        .local_table
+    let row_ix = controller
+        .read(cx)
+        .local_table()
         .read(cx)
         .right_clicked_row()?;
-    let path = shell
-        .workspace_forms
-        .sftp_browser
-        .local_table
+    let path = controller
+        .read(cx)
+        .local_table()
         .read(cx)
         .delegate()
         .row(row_ix)
         .map(|row| PathBuf::from(row.path.as_str()))?;
 
-    shell
-        .workspace_state
-        .tabs
-        .iter()
-        .find(|tab| tab.id == tab_id)
-        .and_then(TabState::as_sftp)
-        .and_then(|sftp| {
-            sftp.local_entries
-                .iter()
-                .find(|entry| entry.path == path)
-                .cloned()
-        })
+    controller.read(cx).tab(tab_id).and_then(|tab| {
+        tab.local_entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .cloned()
+    })
 }
 
 fn context_menu_remote_sftp_entry(
-    entity: &Entity<AppView>,
-    tab_id: usize,
+    controller: &Entity<SftpController>,
+    tab_id: TabId,
     cx: &App,
 ) -> Option<SftpEntry> {
-    let shell = entity.read(cx);
-    let table = shell.workspace_forms.sftp_browser.remote_table.read(cx);
+    let remote_table = controller.read(cx).remote_table();
+    let table = remote_table.read(cx);
     let row_ix = table.right_clicked_row()?;
     let path = table.delegate().row(row_ix).map(|row| row.path.clone())?;
-    shell.resolve_remote_sftp_entry(tab_id, &path, cx)
+    controller.read(cx).resolve_remote_entry(tab_id, &path, cx)
 }
 
 fn build_local_sftp_context_menu(
     menu: PopupMenu,
-    entity: Entity<AppView>,
-    tab_id: usize,
+    controller: Entity<SftpController>,
+    tab_id: TabId,
     cx: &App,
 ) -> PopupMenu {
     let mut menu = menu;
 
-    if let Some(entry) = context_menu_local_sftp_entry(&entity, tab_id, cx) {
+    if let Some(entry) = context_menu_local_sftp_entry(&controller, tab_id, cx) {
         if entry.is_directory {
-            let open_entity = entity.clone();
+            let open_controller = controller.clone();
             let open_path = entry.path.clone();
             menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
                 move |_, _, cx| {
-                    let entity = open_entity.clone();
+                    let controller = open_controller.clone();
                     let path = open_path.clone();
-                    entity.update(cx, |this, cx| {
-                        this.select_sftp_local_path(tab_id, path.clone(), cx);
-                        this.navigate_sftp_local_into_selected(tab_id, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.select_local_path(tab_id, path.clone(), cx);
+                        controller.navigate_local_into_selected(tab_id, cx);
                     });
                 },
             ));
         }
 
-        let upload_entity = entity.clone();
+        let upload_controller = controller.clone();
         let upload_path = entry.path.clone();
         menu = menu
             .item(
                 PopupMenuItem::new(i18n::string("sftp.menu.upload")).on_click(move |_, _, cx| {
-                    let entity = upload_entity.clone();
+                    let controller = upload_controller.clone();
                     let path = upload_path.clone();
-                    entity.update(cx, |this, cx| {
-                        let already_selected = this
-                            .workspace_state
-                            .tabs
-                            .iter()
-                            .find(|tab| tab.id == tab_id)
-                            .and_then(TabState::as_sftp)
-                            .map(|sftp| sftp.selected_local_paths.iter().any(|p| p == &path))
-                            .unwrap_or(false);
-                        if !already_selected {
-                            this.select_sftp_local_path(tab_id, path.clone(), cx);
-                        }
-                        this.queue_sftp_upload_selected(tab_id, cx);
+                    let already_selected = controller
+                        .read(cx)
+                        .tab(tab_id)
+                        .is_some_and(|tab| tab.selected_local_paths.iter().any(|p| p == &path));
+                    if !already_selected {
+                        controller.update(cx, |controller, cx| {
+                            controller.select_local_path(tab_id, path.clone(), cx);
+                        });
+                    }
+                    controller.update(cx, |controller, cx| {
+                        controller.queue_upload_selected(tab_id, cx);
                     });
                 }),
             )
             .item(PopupMenuItem::separator());
     }
 
-    let up_entity = entity.clone();
-    let refresh_entity = entity;
+    let up_controller = controller;
+    let refresh_controller = up_controller.clone();
     menu.item(
         PopupMenuItem::new(i18n::string("sftp.menu.go_up")).on_click(move |_, _, cx| {
-            let entity = up_entity.clone();
-            entity.update(cx, |this, cx| {
-                this.navigate_sftp_local_up(tab_id, cx);
+            let controller = up_controller.clone();
+            controller.update(cx, |controller, cx| {
+                controller.navigate_local_up(tab_id, cx);
             });
         }),
     )
     .item(
         PopupMenuItem::new(i18n::string("sftp.menu.refresh")).on_click(move |_, _, cx| {
-            let entity = refresh_entity.clone();
-            entity.update(cx, |this, cx| {
-                this.refresh_sftp_local_directory(tab_id, cx);
+            let controller = refresh_controller.clone();
+            controller.update(cx, |controller, cx| {
+                controller.refresh_local_directory(tab_id, cx);
             });
         }),
     )
@@ -1106,63 +1087,63 @@ fn build_local_sftp_context_menu(
 
 fn build_remote_sftp_context_menu(
     menu: PopupMenu,
-    entity: Entity<AppView>,
-    tab_id: usize,
+    controller: Entity<SftpController>,
+    tab_id: TabId,
+    prompt_for_destination: bool,
     cx: &App,
 ) -> PopupMenu {
     let mut menu = menu;
 
-    if let Some(entry) = context_menu_remote_sftp_entry(&entity, tab_id, cx) {
-        let is_single_selection = entity
+    if let Some(entry) = context_menu_remote_sftp_entry(&controller, tab_id, cx) {
+        let is_single_selection = controller
             .read(cx)
-            .workspace_state
-            .tabs
-            .iter()
-            .find(|tab| tab.id == tab_id)
-            .and_then(TabState::as_sftp)
-            .map(|sftp| sftp.selected_remote_paths.len() == 1)
+            .tab(tab_id)
+            .map(|tab| tab.selected_remote_paths.len() == 1)
             .unwrap_or(false);
 
         if entry.kind == miaominal_sftp::SftpEntryKind::Directory {
-            let open_entity = entity.clone();
+            let open_controller = controller.clone();
             let open_path = entry.path.clone();
             menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
                 move |_, _, cx| {
-                    let entity = open_entity.clone();
+                    let controller = open_controller.clone();
                     let path = open_path.clone();
-                    entity.update(cx, |this, cx| {
-                        this.select_sftp_remote_path(tab_id, path.clone(), cx);
-                        this.navigate_sftp_remote_into_selected(tab_id, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.select_remote_path(tab_id, path.clone(), cx);
+                        controller.navigate_remote_into_selected(tab_id, cx);
                     });
                 },
             ));
         }
 
-        let download_entity = entity.clone();
+        let download_controller = controller.clone();
         let download_path = entry.path.clone();
-        let edit_entity = entity.clone();
+        let edit_controller = controller.clone();
         let edit_path = entry.path.clone();
         let is_file = entry.kind != miaominal_sftp::SftpEntryKind::Directory;
-        let rename_entity = entity.clone();
-        let delete_entity = entity.clone();
+        let rename_controller = controller.clone();
+        let delete_controller = controller.clone();
         menu = menu.item(
             PopupMenuItem::new(i18n::string("sftp.menu.download")).on_click(
                 move |_, window, cx| {
-                    let entity = download_entity.clone();
+                    let controller = download_controller.clone();
                     let path = download_path.clone();
-                    entity.update(cx, |this, cx| {
-                        let already_selected = this
-                            .workspace_state
-                            .tabs
-                            .iter()
-                            .find(|tab| tab.id == tab_id)
-                            .and_then(TabState::as_sftp)
-                            .map(|sftp| sftp.selected_remote_paths.iter().any(|p| p == &path))
-                            .unwrap_or(false);
-                        if !already_selected {
-                            this.select_sftp_remote_path(tab_id, path.clone(), cx);
-                        }
-                        this.queue_sftp_download_selected(tab_id, window, cx);
+                    let already_selected = controller
+                        .read(cx)
+                        .tab(tab_id)
+                        .is_some_and(|tab| tab.selected_remote_paths.iter().any(|p| p == &path));
+                    if !already_selected {
+                        controller.update(cx, |controller, cx| {
+                            controller.select_remote_path(tab_id, path.clone(), cx);
+                        });
+                    }
+                    controller.update(cx, |controller, cx| {
+                        controller.queue_download_selected(
+                            tab_id,
+                            prompt_for_destination,
+                            window,
+                            cx,
+                        );
                     });
                 },
             ),
@@ -1170,10 +1151,10 @@ fn build_remote_sftp_context_menu(
         if is_single_selection && is_file {
             menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.edit")).on_click(
                 move |_, _, cx| {
-                    let entity = edit_entity.clone();
+                    let controller = edit_controller.clone();
                     let path = edit_path.clone();
-                    entity.update(cx, |this, cx| {
-                        this.open_remote_file_for_editing(tab_id, path, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.open_remote_file_for_editing(tab_id, path, cx);
                     });
                 },
             ));
@@ -1182,9 +1163,9 @@ fn build_remote_sftp_context_menu(
             menu = menu.item(
                 PopupMenuItem::new(i18n::string("sftp.menu.rename")).on_click(
                     move |_, window, cx| {
-                        let entity = rename_entity.clone();
-                        entity.update(cx, |this, cx| {
-                            this.begin_sftp_rename_selected(tab_id, window, cx);
+                        let controller = rename_controller.clone();
+                        controller.update(cx, |controller, cx| {
+                            controller.begin_inline_rename(tab_id, window, cx);
                         });
                     },
                 ),
@@ -1193,39 +1174,36 @@ fn build_remote_sftp_context_menu(
         menu = menu
             .item(
                 PopupMenuItem::new(i18n::string("sftp.menu.delete")).on_click(move |_, _, cx| {
-                    let entity = delete_entity.clone();
-                    entity.update(cx, |this, cx| {
-                        this.delete_sftp_remote_selected(tab_id, cx);
+                    let controller = delete_controller.clone();
+                    controller.update(cx, |controller, cx| {
+                        controller.delete_remote_selected(tab_id, cx);
                     });
                 }),
             )
             .item(PopupMenuItem::separator());
     }
 
-    let up_entity = entity.clone();
-    let refresh_entity = entity.clone();
-    let create_entity = entity;
+    let up_controller = controller;
+    let refresh_controller = up_controller.clone();
+    let create_controller = up_controller.clone();
     menu.item(
         PopupMenuItem::new(i18n::string("sftp.menu.go_up")).on_click(move |_, _, cx| {
-            let entity = up_entity.clone();
-            entity.update(cx, |this, cx| {
-                this.navigate_sftp_remote_up(tab_id, cx);
+            let controller = up_controller.clone();
+            controller.update(cx, |controller, cx| {
+                controller.navigate_remote_up(tab_id, cx);
             });
         }),
     )
     .item(
         PopupMenuItem::new(i18n::string("sftp.menu.refresh")).on_click(move |_, _, cx| {
-            let entity = refresh_entity.clone();
-            entity.update(cx, |this, cx| {
-                let path = this
-                    .workspace_state
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.id == tab_id)
-                    .and_then(TabState::as_sftp)
-                    .map(|sftp| sftp.remote_path.clone())
-                    .unwrap_or_else(|| ".".into());
-                this.request_sftp_remote_directory(tab_id, path, cx);
+            let controller = refresh_controller.clone();
+            let path = controller
+                .read(cx)
+                .tab(tab_id)
+                .map(|tab| tab.remote_path.clone())
+                .unwrap_or_else(|| ".".into());
+            controller.update(cx, |controller, cx| {
+                controller.request_remote_directory(tab_id, path, cx);
             });
         }),
     )
@@ -1233,209 +1211,28 @@ fn build_remote_sftp_context_menu(
     .item(
         PopupMenuItem::new(i18n::string("sftp.menu.create_directory")).on_click(
             move |_, window, cx| {
-                let entity = create_entity.clone();
-                entity.update(cx, |this, cx| {
-                    this.begin_sftp_create_directory(tab_id, window, cx);
+                let controller = create_controller.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.begin_create_directory(tab_id, window, cx);
                 });
             },
         ),
     )
 }
 
-fn update_sftp_progress_center_state(
-    current_visible: &mut bool,
-    transition: &mut Option<SftpProgressCenterTransition>,
-    visible: bool,
-    started_at: Instant,
-) -> bool {
-    let phase = if visible {
-        SftpProgressCenterTransitionPhase::Entering
-    } else {
-        SftpProgressCenterTransitionPhase::Exiting
-    };
-    if *current_visible == visible
-        && transition
-            .as_ref()
-            .is_none_or(|transition| transition.phase == phase)
-    {
-        return false;
-    }
-
-    *current_visible = visible;
-    *transition = Some(SftpProgressCenterTransition {
-        phase,
-        started_at,
-        duration: CONTAINER_TRANSITION_DURATION,
-    });
-    true
-}
-
-fn sftp_progress_center_render_visibility(
-    visible: bool,
-    transition: &mut Option<SftpProgressCenterTransition>,
-    window: &mut Window,
-) -> Option<f32> {
-    let Some(current_transition) = *transition else {
-        return visible.then_some(1.0);
-    };
-
-    let duration_seconds = current_transition.duration.as_secs_f32();
-    if duration_seconds <= f32::EPSILON {
-        *transition = None;
-        return visible.then_some(1.0);
-    }
-
-    let elapsed = Instant::now().saturating_duration_since(current_transition.started_at);
-    let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-    let eased = progress * progress * (3.0 - 2.0 * progress);
-
-    if progress >= 1.0 {
-        *transition = None;
-        return visible.then_some(1.0);
-    }
-
-    window.request_animation_frame();
-
-    Some(match current_transition.phase {
-        SftpProgressCenterTransitionPhase::Entering => eased,
-        SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
-    })
-}
-
-impl AppView {
-    fn sftp_tab_mut(&mut self, tab_id: usize) -> Option<&mut SftpTabState> {
-        self.workspace_state
-            .tabs
-            .iter_mut()
-            .find(|tab| tab.id == tab_id)
-            .and_then(TabState::as_sftp_mut)
-    }
-
-    pub(in crate::ui::shell) fn toggle_active_sftp_progress_center(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        let active_sftp_visible = self
-            .workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_sftp)
-            .map(|sftp| sftp.layout.progress_center_visible);
-        if let Some(visible) = active_sftp_visible {
-            self.set_sftp_progress_center_visible(!visible, cx);
-            return;
-        }
-
-        if self.active_terminal_session_index().is_some() {
-            self.set_session_sftp_progress_center_visible(
-                !self.panels.session_sftp_progress_center_visible,
-                cx,
-            );
-        }
-    }
-
-    pub(in crate::ui::shell) fn set_session_sftp_progress_center_visible(
-        &mut self,
-        visible: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let started_at = Instant::now();
-        if update_sftp_progress_center_state(
-            &mut self.panels.session_sftp_progress_center_visible,
-            &mut self.panels.session_sftp_progress_center_transition,
-            visible,
-            started_at,
-        ) {
-            cx.notify();
-        }
-    }
-
-    pub(in crate::ui::shell) fn set_sftp_progress_center_visible(
-        &mut self,
-        visible: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if self.apply_sftp_progress_center_visibility(visible) {
-            cx.notify();
-        }
-    }
-
-    pub(in crate::ui::shell) fn apply_sftp_progress_center_visibility(
-        &mut self,
-        visible: bool,
-    ) -> bool {
-        let started_at = Instant::now();
-        let mut changed = update_sftp_progress_center_state(
-            &mut self.panels.session_sftp_progress_center_visible,
-            &mut self.panels.session_sftp_progress_center_transition,
-            visible,
-            started_at,
-        );
-
-        for tab in &mut self.workspace_state.tabs {
-            let Some(sftp) = tab.as_sftp_mut() else {
-                continue;
-            };
-
-            if !update_sftp_progress_center_state(
-                &mut sftp.layout.progress_center_visible,
-                &mut sftp.layout.progress_center_transition,
-                visible,
-                started_at,
-            ) {
-                continue;
-            }
-
-            if !visible
-                && matches!(
-                    sftp.layout.drag.as_ref(),
-                    Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
-                )
-            {
-                sftp.layout.drag = None;
-            }
-            changed = true;
-        }
-
-        changed
-    }
-
-    pub(in crate::ui::shell) fn sftp_progress_center_render_visibility(
-        &mut self,
-        tab_id: usize,
-        window: &mut Window,
-    ) -> Option<f32> {
-        let tab = self.sftp_tab_mut(tab_id)?;
-        sftp_progress_center_render_visibility(
-            tab.layout.progress_center_visible,
-            &mut tab.layout.progress_center_transition,
-            window,
-        )
-    }
-
-    pub(in crate::ui::shell) fn session_sftp_progress_center_render_visibility(
-        &mut self,
-        window: &mut Window,
-    ) -> Option<f32> {
-        sftp_progress_center_render_visibility(
-            self.panels.session_sftp_progress_center_visible,
-            &mut self.panels.session_sftp_progress_center_transition,
-            window,
-        )
-    }
-
+impl SftpController {
     pub(in crate::ui::shell) fn render_sftp_progress_center(
         &self,
-        entity: Entity<Self>,
+        controller: Entity<Self>,
         section_id: impl Into<ElementId>,
+        ordered_tab_ids: &[TabId],
+        preferred_tab_id: Option<TabId>,
     ) -> gpui::AnyElement {
         let section_id = section_id.into();
-        let preferred_tab_id = self.preferred_sftp_progress_tab_id();
-        let mut transfers: Vec<(usize, (&SftpTabState, &SftpTransferRow))> = self
-            .workspace_state
-            .tabs
-            .iter()
-            .filter_map(|tab| tab.as_sftp().map(|sftp| (tab.id, sftp)))
+        let sftp_tabs = self.tabs();
+        let mut transfers: Vec<(TabId, (&SftpTabState, &SftpTransferRow))> = self
+            .ordered_sftp_tab_ids(ordered_tab_ids)
+            .filter_map(|tab_id| sftp_tabs.get(&tab_id).map(|sftp| (tab_id, sftp)))
             .flat_map(|(tab_id, sftp)| {
                 sftp.transfers
                     .iter()
@@ -1462,10 +1259,7 @@ impl AppView {
             .count();
         let header =
             self.render_sftp_progress_center_header(transfer_count, active_count, failed_count);
-        let scroll_handle = self
-            .workspace_state
-            .sftp_progress_center_scroll_handle
-            .clone();
+        let scroll_handle = self.progress_scroll_handle();
 
         let content = if transfers.is_empty() {
             div()
@@ -1475,12 +1269,14 @@ impl AppView {
                 .into_any_element()
         } else {
             let mut rows = v_flex().w_full().gap_2().flex_shrink_0();
+            let profiles = self.session_profiles();
             for (tab_id, (sftp_tab, transfer)) in transfers {
                 rows = rows.child(self.render_sftp_transfer_card(
-                    entity.clone(),
+                    controller.clone(),
                     tab_id,
                     sftp_tab,
                     transfer,
+                    &profiles,
                 ));
             }
 
@@ -1505,12 +1301,11 @@ impl AppView {
         sftp_progress_center_card(section_id, header, content).into_any_element()
     }
 
-    fn preferred_sftp_progress_tab_id(&self) -> Option<usize> {
-        self.workspace_state
-            .active_topbar_tab
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(|tab| tab.as_sftp().map(|_| tab.id))
-            .or_else(|| self.session_side_panel_sftp_tab_id())
+    fn ordered_sftp_tab_ids<'a>(
+        &'a self,
+        ordered_tab_ids: &'a [TabId],
+    ) -> impl Iterator<Item = TabId> + 'a {
+        ordered_tab_ids.iter().copied()
     }
 
     fn render_sftp_progress_center_header(
@@ -1582,17 +1377,16 @@ impl AppView {
 
     fn render_sftp_transfer_card(
         &self,
-        entity: Entity<Self>,
-        tab_id: usize,
+        controller: Entity<Self>,
+        tab_id: TabId,
         sftp_tab: &SftpTabState,
         transfer: &SftpTransferRow,
+        profiles: &[SessionProfile],
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let transfer_id = transfer.transfer_id;
-        let profile_label = self
-            .data
-            .sessions
+        let profile_label = profiles
             .iter()
             .find(|profile| profile.id == sftp_tab.profile_id)
             .map(|profile| profile.name.clone())
@@ -1646,7 +1440,7 @@ impl AppView {
         let expanded = transfer.expanded && has_children;
 
         let expand_control = if has_children {
-            let expand_entity = entity.clone();
+            let expand_controller = controller.clone();
             sftp_transfer_action_button(
                 sftp_transfer_action_id(tab_id, transfer_id, "expand"),
                 if expanded {
@@ -1661,8 +1455,8 @@ impl AppView {
                 }),
                 false,
                 move |_window, cx| {
-                    expand_entity.update(cx, |this, cx| {
-                        this.toggle_sftp_transfer_expanded(tab_id, transfer_id, cx);
+                    expand_controller.update(cx, |controller, cx| {
+                        controller.toggle_transfer_expanded(tab_id, transfer_id, cx);
                     });
                 },
             )
@@ -1673,8 +1467,8 @@ impl AppView {
 
         let transfer_actions = match &transfer.status {
             SftpTransferStatus::Queued | SftpTransferStatus::Running => {
-                let pause_entity = entity.clone();
-                let cancel_entity = entity.clone();
+                let pause_controller = controller.clone();
+                let cancel_controller = controller.clone();
                 h_flex()
                     .items_center()
                     .gap_1()
@@ -1685,8 +1479,8 @@ impl AppView {
                         i18n::string("sftp.tooltips.pause_transfer"),
                         false,
                         move |_window, cx| {
-                            pause_entity.update(cx, |this, cx| {
-                                this.pause_sftp_transfer(tab_id, transfer_id, cx);
+                            pause_controller.update(cx, |controller, cx| {
+                                controller.pause_transfer(tab_id, transfer_id, cx);
                             });
                         },
                     ))
@@ -1696,16 +1490,16 @@ impl AppView {
                         i18n::string("sftp.tooltips.cancel_transfer"),
                         true,
                         move |_window, cx| {
-                            cancel_entity.update(cx, |this, cx| {
-                                this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                            cancel_controller.update(cx, |controller, cx| {
+                                controller.cancel_transfer(tab_id, transfer_id, cx);
                             });
                         },
                     ))
                     .into_any_element()
             }
             SftpTransferStatus::Paused => {
-                let resume_entity = entity.clone();
-                let cancel_entity = entity.clone();
+                let resume_controller = controller.clone();
+                let cancel_controller = controller.clone();
                 h_flex()
                     .items_center()
                     .gap_1()
@@ -1716,8 +1510,8 @@ impl AppView {
                         i18n::string("sftp.tooltips.resume_transfer"),
                         false,
                         move |_window, cx| {
-                            resume_entity.update(cx, |this, cx| {
-                                this.resume_sftp_transfer(tab_id, transfer_id, cx);
+                            resume_controller.update(cx, |controller, cx| {
+                                controller.resume_transfer(tab_id, transfer_id, cx);
                             });
                         },
                     ))
@@ -1727,8 +1521,8 @@ impl AppView {
                         i18n::string("sftp.tooltips.cancel_transfer"),
                         true,
                         move |_window, cx| {
-                            cancel_entity.update(cx, |this, cx| {
-                                this.cancel_sftp_transfer(tab_id, transfer_id, cx);
+                            cancel_controller.update(cx, |controller, cx| {
+                                controller.cancel_transfer(tab_id, transfer_id, cx);
                             });
                         },
                     ))
@@ -1737,7 +1531,7 @@ impl AppView {
             SftpTransferStatus::Done
             | SftpTransferStatus::Cancelled
             | SftpTransferStatus::Failed(_) => {
-                let delete_entity = entity.clone();
+                let delete_controller = controller;
                 h_flex()
                     .items_center()
                     .gap_1()
@@ -1748,8 +1542,8 @@ impl AppView {
                         i18n::string("sftp.tooltips.remove_transfer"),
                         false,
                         move |_window, cx| {
-                            delete_entity.update(cx, |this, cx| {
-                                this.remove_sftp_transfer_record(tab_id, transfer_id, cx);
+                            delete_controller.update(cx, |controller, cx| {
+                                controller.remove_transfer_record(tab_id, transfer_id, cx);
                             });
                         },
                     ))
@@ -1879,7 +1673,7 @@ impl AppView {
 
     fn render_sftp_transfer_children(
         &self,
-        tab_id: usize,
+        tab_id: TabId,
         transfer: &SftpTransferRow,
     ) -> gpui::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
@@ -2013,57 +1807,59 @@ impl AppView {
 
     fn cache_sftp_browser_container_width(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         width: Pixels,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
 
         if tab.layout.browser_container_width != width {
             tab.layout.browser_container_width = width;
+            drop(tab);
             cx.notify();
         }
     }
 
     fn cache_sftp_page_container_height(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         height: Pixels,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
 
         if tab.layout.page_container_height != height {
             tab.layout.page_container_height = height;
+            drop(tab);
             cx.notify();
         }
     }
 
     fn start_sftp_split_drag(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         divider: SftpSplitDivider,
         initial_pointer: f32,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
 
         let (initial_flex_a, container_size) = match divider {
             SftpSplitDivider::BrowserPanels => {
-                let flex_a = sftp_local_panel_flex(tab);
+                let flex_a = sftp_local_panel_flex(&tab);
                 (
                     flex_a,
                     sftp_usable_container_size(tab.layout.browser_container_width),
                 )
             }
             SftpSplitDivider::ProgressCenter => {
-                let flex_a = sftp_browser_area_flex(tab);
+                let flex_a = sftp_browser_area_flex(&tab);
                 (
                     flex_a,
                     sftp_usable_container_size(tab.layout.page_container_height),
@@ -2077,11 +1873,12 @@ impl AppView {
             initial_flex_a,
             container_size,
         });
+        drop(tab);
         cx.notify();
     }
 
-    fn update_sftp_split_drag(&mut self, tab_id: usize, pointer: f32, cx: &mut Context<Self>) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+    fn update_sftp_split_drag(&mut self, tab_id: TabId, pointer: f32, cx: &mut Context<Self>) {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
         let Some(drag) = tab.layout.drag.clone() else {
@@ -2102,6 +1899,7 @@ impl AppView {
                 );
                 if tab.layout.local_panel_flex != Some(next_flex) {
                     tab.layout.local_panel_flex = Some(next_flex);
+                    drop(tab);
                     cx.notify();
                 }
             }
@@ -2112,34 +1910,32 @@ impl AppView {
                 );
                 if tab.layout.browser_area_flex != Some(next_flex) {
                     tab.layout.browser_area_flex = Some(next_flex);
+                    drop(tab);
                     cx.notify();
                 }
             }
         }
     }
 
-    fn finish_sftp_split_drag(&mut self, tab_id: usize, cx: &mut Context<Self>) {
-        let Some(tab) = self.sftp_tab_mut(tab_id) else {
+    fn finish_sftp_split_drag(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
 
         if tab.layout.drag.take().is_some() {
+            drop(tab);
             cx.notify();
         }
     }
 
     fn finish_sftp_page_pointer_drag(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
         let is_split_dragging = self
-            .workspace_state
-            .tabs
-            .iter()
-            .find(|tab| tab.id == tab_id)
-            .and_then(TabState::as_sftp)
+            .tab(tab_id)
             .is_some_and(|tab| tab.layout.drag.is_some());
 
         if is_split_dragging {
@@ -2147,61 +1943,76 @@ impl AppView {
             return true;
         }
 
-        self.finish_active_sftp_drag_selection(tab_id, position, cx)
+        self.finish_active_drag_selection(tab_id, position, cx)
     }
 
     pub(in crate::ui::shell) fn render_sftp_page_for_tab(
         &mut self,
         entity: Entity<Self>,
-        tab_id: usize,
+        tab_id: TabId,
+        ordered_tab_ids: &[TabId],
+        preferred_tab_id: Option<TabId>,
+        fallback_section: SidebarSection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        self.render_sftp_page_content(entity, tab_id, window, cx)
+        self.render_sftp_page_content(
+            entity,
+            tab_id,
+            ordered_tab_ids,
+            preferred_tab_id,
+            fallback_section,
+            window,
+            cx,
+        )
     }
 
     pub(in crate::ui::shell) fn render_sftp_remote_browser_panel(
         &self,
-        entity: Entity<Self>,
-        tab_id: usize,
+        controller: Entity<Self>,
+        tab_id: TabId,
         sftp_tab: &SftpTabState,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
 
-        let remote_path_bar = if self.workspace_forms.sftp_browser.remote_path_editing {
-            let up_entity = entity.clone();
+        let remote_path_bar = if self.remote_path_editing() {
+            let up_controller = controller.clone();
             sftp_path_bar(
-                sftp_path_input_shell(&self.workspace_forms.sftp_browser.remote_path_input),
+                sftp_path_input_shell(&self.remote_path_input()),
                 false,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_remote_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_remote_up(tab_id, cx);
                     });
                 },
                 |_window, _cx| {},
             )
             .into_any_element()
         } else {
-            let breadcrumb_entity = entity.clone();
-            let up_entity = entity.clone();
-            let edit_entity = entity.clone();
+            let breadcrumb_controller = controller.clone();
+            let up_controller = controller.clone();
+            let edit_controller = controller.clone();
             sftp_path_bar(
                 sftp_path_breadcrumb_shell(
                     SharedString::from(format!("session-remote-sftp-path-{tab_id}")),
-                    build_remote_sftp_breadcrumb(&sftp_tab.remote_path, breadcrumb_entity, tab_id),
+                    build_remote_sftp_breadcrumb(
+                        &sftp_tab.remote_path,
+                        breadcrumb_controller,
+                        tab_id,
+                    ),
                     sftp_tab.remote_path.clone(),
                 ),
                 true,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_remote_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_remote_up(tab_id, cx);
                     });
                 },
                 move |_window, cx| {
-                    edit_entity.update(cx, |this, cx| {
-                        this.set_sftp_remote_path_editing(true, cx);
+                    edit_controller.update(cx, |controller, cx| {
+                        controller.set_path_editing(SftpBrowserSide::Remote, true, cx);
                     });
                 },
             )
@@ -2215,18 +2026,15 @@ impl AppView {
                 AppIcon::Rotate,
                 i18n::string("sftp.tooltips.refresh_remote"),
                 {
-                    let entity = entity.clone();
+                    let controller = controller.clone();
                     move |_window, cx| {
-                        entity.update(cx, |this, cx| {
-                            let path = this
-                                .workspace_state
-                                .tabs
-                                .iter()
-                                .find(|tab| tab.id == tab_id)
-                                .and_then(TabState::as_sftp)
-                                .map(|sftp| sftp.remote_path.clone())
-                                .unwrap_or_else(|| ".".into());
-                            this.request_sftp_remote_directory(tab_id, path, cx);
+                        let path = controller
+                            .read(cx)
+                            .tab(tab_id)
+                            .map(|tab| tab.remote_path.clone())
+                            .unwrap_or_else(|| ".".into());
+                        controller.update(cx, |controller, cx| {
+                            controller.request_remote_directory(tab_id, path, cx);
                         });
                     }
                 },
@@ -2235,10 +2043,10 @@ impl AppView {
                 AppIcon::Plus,
                 i18n::string("sftp.tooltips.create_directory"),
                 {
-                    let entity = entity.clone();
+                    let controller = controller.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.begin_sftp_create_directory(tab_id, window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.begin_create_directory(tab_id, window, cx);
                         });
                     }
                 },
@@ -2247,10 +2055,10 @@ impl AppView {
                 AppIcon::Download,
                 i18n::string("sftp.tooltips.download_selected"),
                 {
-                    let entity = entity.clone();
+                    let controller = controller.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.queue_sftp_download_selected(tab_id, window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.queue_download_selected(tab_id, true, window, cx);
                         });
                     }
                 },
@@ -2259,12 +2067,12 @@ impl AppView {
 
         let table_row_height = gpui_component::Size::Small.table_row_height();
         let remote_table_bounds = Rc::new(RefCell::new(None));
-        let remote_sftp_table = self.workspace_forms.sftp_browser.remote_table.clone();
-        let remote_table_for_menu = self.workspace_forms.sftp_browser.remote_table.clone();
+        let remote_sftp_table = self.remote_table();
+        let remote_table_for_menu = self.remote_table();
         let remote_selected_count = sftp_tab.selected_remote_paths.len();
 
         let remote_list = div()
-            .id(("sftp-remote-table-wrap", tab_id))
+            .id(("sftp-remote-table-wrap", tab_id.raw()))
             .group("sftp-remote-drop")
             .relative()
             .flex_1()
@@ -2273,7 +2081,7 @@ impl AppView {
             .overflow_hidden()
             .on_prepaint({
                 let remote_table_bounds = remote_table_bounds.clone();
-                let table = self.workspace_forms.sftp_browser.remote_table.clone();
+                let table = self.remote_table();
                 move |bounds, _, cx| {
                     *remote_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
@@ -2284,7 +2092,7 @@ impl AppView {
                 }
             })
             .on_mouse_down(MouseButton::Left, {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseDownEvent, _window, cx| {
                     if cx.has_active_drag() {
@@ -2294,20 +2102,20 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, _cx| {
-                        this.begin_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        controller.begin_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
                             bounds,
                             table_row_height,
-                            _cx,
+                            cx,
                         );
                     });
                 }
             })
             .on_mouse_move({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseMoveEvent, _window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {
@@ -2320,8 +2128,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.update_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.update_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
@@ -2335,7 +2143,7 @@ impl AppView {
                 }
             })
             .capture_any_mouse_up({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseUpEvent, _window, cx| {
                     if event.button != MouseButton::Left {
@@ -2345,8 +2153,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.finish_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.finish_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
@@ -2360,15 +2168,15 @@ impl AppView {
                 }
             })
             .on_click({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event, _window, cx| {
                     let Some(bounds) = *remote_table_bounds.borrow() else {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        this.handle_sftp_blank_click(
+                    controller.update(cx, |controller, cx| {
+                        controller.handle_blank_click(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position(),
@@ -2380,7 +2188,7 @@ impl AppView {
                 }
             })
             .child(
-                DataTable::new(&self.workspace_forms.sftp_browser.remote_table)
+                DataTable::new(&self.remote_table())
                     .with_size(gpui_component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
@@ -2416,11 +2224,11 @@ impl AppView {
                 )
             })
             .on_drop::<ExternalPaths>({
-                let entity = entity.clone();
+                let controller = controller.clone();
                 move |paths: &ExternalPaths, _window, cx| {
                     let local_paths: Vec<PathBuf> = paths.paths().to_vec();
-                    entity.update(cx, |this, cx| {
-                        this.queue_sftp_upload_paths(tab_id, local_paths, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.queue_upload_paths(tab_id, local_paths, cx);
                     });
                 }
             })
@@ -2456,7 +2264,7 @@ impl AppView {
             toolbar: remote_toolbar,
             content: remote_list,
             menu_builder: {
-                let entity = entity.clone();
+                let controller = controller.clone();
                 let remote_table_for_menu = remote_table_for_menu.clone();
                 move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                     let is_header = remote_table_for_menu.update(cx, |state, _| {
@@ -2465,112 +2273,160 @@ impl AppView {
                     if is_header {
                         return menu;
                     }
-                    build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                    build_remote_sftp_context_menu(menu, controller.clone(), tab_id, true, cx)
                 }
             },
         })
         .into_any_element()
     }
 
+    fn render_missing_sftp_page_content(section: SidebarSection) -> gpui::AnyElement {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let text_muted = crate::ui::theme::palette_tone_rgb(
+            material.palettes.neutral_variant,
+            if material.dark { 65 } else { 50 },
+        );
+
+        div()
+            .size_full()
+            .rounded(px(24.0))
+            .bg(rgb(roles.surface_container_highest))
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        v_flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::DisplayLarge.scaled())
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(section.title()),
+                            )
+                            .child(
+                                div()
+                                    .max_w(px(420.0))
+                                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                                    .line_height(miaominal_settings::scaled_line_height(18.0))
+                                    .text_color(rgb(text_muted))
+                                    .child(section.subtitle()),
+                            )
+                            .child(badge(
+                                crate::ui::i18n::string("navigation.placeholder_panel"),
+                                roles.surface_container_high,
+                                roles.on_surface_variant,
+                            )),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(in crate::ui::shell) fn render_sftp_page_content(
         &mut self,
         entity: Entity<Self>,
-        tab_id: usize,
+        tab_id: TabId,
+        ordered_tab_ids: &[TabId],
+        preferred_tab_id: Option<TabId>,
+        fallback_section: SidebarSection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
-        let progress_center_visibility =
-            self.sftp_progress_center_render_visibility(tab_id, window);
-        let Some(tab) = self
-            .workspace_state
-            .tabs
-            .iter()
-            .find(|tab| tab.id == tab_id)
-        else {
-            return self.render_snippets_page_content();
-        };
-        let Some(sftp_tab) = tab.as_sftp() else {
-            return self.render_snippets_page_content();
+        let progress_center_visibility = self.tab_progress_render_visibility(tab_id, window);
+        let Some(sftp_tab) = self.tab(tab_id).map(|tab| tab.clone()) else {
+            return Self::render_missing_sftp_page_content(fallback_section);
         };
 
-        let local_panel_flex = sftp_local_panel_flex(sftp_tab);
-        let browser_area_flex = sftp_browser_area_flex(sftp_tab);
+        let local_panel_flex = sftp_local_panel_flex(&sftp_tab);
+        let browser_area_flex = sftp_browser_area_flex(&sftp_tab);
         let progress_center_visibility = progress_center_visibility.unwrap_or(0.0);
         let progress_center_visible = progress_center_visibility > 0.0;
         let progress_center_footer_flex = (1.0 - browser_area_flex) * progress_center_visibility;
         let browser_panel_flex = 1.0 - progress_center_footer_flex;
-        let local_path_bar = if self.workspace_forms.sftp_browser.local_path_editing {
-            let up_entity = entity.clone();
+        let local_path_bar = if self.local_path_editing() {
+            let up_controller = entity.clone();
             sftp_path_bar(
-                sftp_path_input_shell(&self.workspace_forms.sftp_browser.local_path_input),
+                sftp_path_input_shell(&self.local_path_input()),
                 false,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_local_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_local_up(tab_id, cx);
                     });
                 },
                 |_window, _cx| {},
             )
             .into_any_element()
         } else {
-            let breadcrumb_entity = entity.clone();
-            let up_entity = entity.clone();
-            let edit_entity = entity.clone();
+            let breadcrumb_controller = entity.clone();
+            let up_controller = entity.clone();
+            let edit_controller = entity.clone();
             sftp_path_bar(
                 sftp_path_breadcrumb_shell(
                     SharedString::from(format!("local-sftp-path-{tab_id}")),
-                    build_local_sftp_breadcrumb(&sftp_tab.local_path, breadcrumb_entity, tab_id),
-                    AppView::display_sftp_local_path(&sftp_tab.local_path),
+                    build_local_sftp_breadcrumb(
+                        &sftp_tab.local_path,
+                        breadcrumb_controller,
+                        tab_id,
+                    ),
+                    SftpController::display_local_path(&sftp_tab.local_path),
                 ),
                 true,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_local_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_local_up(tab_id, cx);
                     });
                 },
                 move |_window, cx| {
-                    edit_entity.update(cx, |this, cx| {
-                        this.set_sftp_local_path_editing(true, cx);
+                    edit_controller.update(cx, |controller, cx| {
+                        controller.set_path_editing(SftpBrowserSide::Local, true, cx);
                     });
                 },
             )
             .into_any_element()
         };
-        let remote_path_bar = if self.workspace_forms.sftp_browser.remote_path_editing {
-            let up_entity = entity.clone();
+        let remote_path_bar = if self.remote_path_editing() {
+            let up_controller = entity.clone();
             sftp_path_bar(
-                sftp_path_input_shell(&self.workspace_forms.sftp_browser.remote_path_input),
+                sftp_path_input_shell(&self.remote_path_input()),
                 false,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_remote_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_remote_up(tab_id, cx);
                     });
                 },
                 |_window, _cx| {},
             )
             .into_any_element()
         } else {
-            let breadcrumb_entity = entity.clone();
-            let up_entity = entity.clone();
-            let edit_entity = entity.clone();
+            let breadcrumb_controller = entity.clone();
+            let up_controller = entity.clone();
+            let edit_controller = entity.clone();
             sftp_path_bar(
                 sftp_path_breadcrumb_shell(
                     SharedString::from(format!("remote-sftp-path-{tab_id}")),
-                    build_remote_sftp_breadcrumb(&sftp_tab.remote_path, breadcrumb_entity, tab_id),
+                    build_remote_sftp_breadcrumb(
+                        &sftp_tab.remote_path,
+                        breadcrumb_controller,
+                        tab_id,
+                    ),
                     sftp_tab.remote_path.clone(),
                 ),
                 true,
                 move |_window, cx| {
-                    up_entity.update(cx, |this, cx| {
-                        this.navigate_sftp_remote_up(tab_id, cx);
+                    up_controller.update(cx, |controller, cx| {
+                        controller.navigate_remote_up(tab_id, cx);
                     });
                 },
                 move |_window, cx| {
-                    edit_entity.update(cx, |this, cx| {
-                        this.set_sftp_remote_path_editing(true, cx);
+                    edit_controller.update(cx, |controller, cx| {
+                        controller.set_path_editing(SftpBrowserSide::Remote, true, cx);
                     });
                 },
             )
@@ -2580,10 +2436,10 @@ impl AppView {
         let table_row_height = gpui_component::Size::Small.table_row_height();
         let local_table_bounds = Rc::new(RefCell::new(None));
         let remote_table_bounds = Rc::new(RefCell::new(None));
-        let local_sftp_table = self.workspace_forms.sftp_browser.local_table.clone();
-        let remote_sftp_table = self.workspace_forms.sftp_browser.remote_table.clone();
-        let local_table_for_menu = self.workspace_forms.sftp_browser.local_table.clone();
-        let remote_table_for_menu = self.workspace_forms.sftp_browser.remote_table.clone();
+        let local_sftp_table = self.local_table();
+        let remote_sftp_table = self.remote_table();
+        let local_table_for_menu = self.local_table();
+        let remote_table_for_menu = self.remote_table();
         let local_selected_count = sftp_tab.selected_local_paths.len();
         let remote_selected_count = sftp_tab.selected_remote_paths.len();
 
@@ -2594,10 +2450,10 @@ impl AppView {
                 AppIcon::Rotate,
                 i18n::string("sftp.tooltips.refresh_local"),
                 {
-                    let entity = entity.clone();
+                    let controller = entity.clone();
                     move |_window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.refresh_sftp_local_directory(tab_id, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.refresh_local_directory(tab_id, cx);
                         });
                     }
                 },
@@ -2606,10 +2462,10 @@ impl AppView {
                 AppIcon::Upload,
                 i18n::string("sftp.tooltips.upload_selected"),
                 {
-                    let entity = entity.clone();
+                    let controller = entity.clone();
                     move |_window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.queue_sftp_upload_selected(tab_id, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.queue_upload_selected(tab_id, cx);
                         });
                     }
                 },
@@ -2623,18 +2479,15 @@ impl AppView {
                 AppIcon::Rotate,
                 i18n::string("sftp.tooltips.refresh_remote"),
                 {
-                    let entity = entity.clone();
+                    let controller = entity.clone();
                     move |_window, cx| {
-                        entity.update(cx, |this, cx| {
-                            let path = this
-                                .workspace_state
-                                .tabs
-                                .iter()
-                                .find(|tab| tab.id == tab_id)
-                                .and_then(TabState::as_sftp)
-                                .map(|sftp| sftp.remote_path.clone())
-                                .unwrap_or_else(|| ".".into());
-                            this.request_sftp_remote_directory(tab_id, path, cx);
+                        let path = controller
+                            .read(cx)
+                            .tab(tab_id)
+                            .map(|tab| tab.remote_path.clone())
+                            .unwrap_or_else(|| ".".into());
+                        controller.update(cx, |controller, cx| {
+                            controller.request_remote_directory(tab_id, path, cx);
                         });
                     }
                 },
@@ -2643,10 +2496,10 @@ impl AppView {
                 AppIcon::Plus,
                 i18n::string("sftp.tooltips.create_directory"),
                 {
-                    let entity = entity.clone();
+                    let controller = entity.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.begin_sftp_create_directory(tab_id, window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.begin_create_directory(tab_id, window, cx);
                         });
                     }
                 },
@@ -2655,10 +2508,10 @@ impl AppView {
                 AppIcon::Download,
                 i18n::string("sftp.tooltips.download_selected"),
                 {
-                    let entity = entity.clone();
+                    let controller = entity.clone();
                     move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.queue_sftp_download_selected(tab_id, window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.queue_download_selected(tab_id, false, window, cx);
                         });
                     }
                 },
@@ -2666,7 +2519,7 @@ impl AppView {
             .into_any_element();
 
         let local_list = div()
-            .id(("sftp-local-table-wrap", tab_id))
+            .id(("sftp-local-table-wrap", tab_id.raw()))
             .relative()
             .flex_1()
             .min_w(px(0.0))
@@ -2674,7 +2527,7 @@ impl AppView {
             .overflow_hidden()
             .on_prepaint({
                 let local_table_bounds = local_table_bounds.clone();
-                let table = self.workspace_forms.sftp_browser.local_table.clone();
+                let table = self.local_table();
                 move |bounds, _, cx| {
                     *local_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
@@ -2685,7 +2538,7 @@ impl AppView {
                 }
             })
             .on_mouse_down(MouseButton::Left, {
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let local_table_bounds = local_table_bounds.clone();
                 move |event: &MouseDownEvent, _window, cx| {
                     if cx.has_active_drag() {
@@ -2695,20 +2548,20 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, _cx| {
-                        this.begin_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        controller.begin_drag_selection(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position,
                             bounds,
                             table_row_height,
-                            _cx,
+                            cx,
                         );
                     });
                 }
             })
             .on_mouse_move({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let local_table_bounds = local_table_bounds.clone();
                 move |event: &MouseMoveEvent, _window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {
@@ -2721,8 +2574,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.update_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.update_drag_selection(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position,
@@ -2736,7 +2589,7 @@ impl AppView {
                 }
             })
             .capture_any_mouse_up({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let local_table_bounds = local_table_bounds.clone();
                 move |event: &MouseUpEvent, _window, cx| {
                     if event.button != MouseButton::Left {
@@ -2746,8 +2599,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.finish_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.finish_drag_selection(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position,
@@ -2761,15 +2614,15 @@ impl AppView {
                 }
             })
             .on_click({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let local_table_bounds = local_table_bounds.clone();
                 move |event, _window, cx| {
                     let Some(bounds) = *local_table_bounds.borrow() else {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        this.handle_sftp_blank_click(
+                    controller.update(cx, |controller, cx| {
+                        controller.handle_blank_click(
                             tab_id,
                             SftpBrowserSide::Local,
                             event.position(),
@@ -2781,7 +2634,7 @@ impl AppView {
                 }
             })
             .child(
-                DataTable::new(&self.workspace_forms.sftp_browser.local_table)
+                DataTable::new(&self.local_table())
                     .with_size(gpui_component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
@@ -2819,7 +2672,7 @@ impl AppView {
             .into_any_element();
 
         let remote_list = div()
-            .id(("sftp-remote-table-wrap", tab_id))
+            .id(("sftp-remote-table-wrap", tab_id.raw()))
             .group("sftp-remote-drop")
             .relative()
             .flex_1()
@@ -2828,7 +2681,7 @@ impl AppView {
             .overflow_hidden()
             .on_prepaint({
                 let remote_table_bounds = remote_table_bounds.clone();
-                let table = self.workspace_forms.sftp_browser.remote_table.clone();
+                let table = self.remote_table();
                 move |bounds, _, cx| {
                     *remote_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
@@ -2839,7 +2692,7 @@ impl AppView {
                 }
             })
             .on_mouse_down(MouseButton::Left, {
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseDownEvent, _window, cx| {
                     if cx.has_active_drag() {
@@ -2849,20 +2702,20 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, _cx| {
-                        this.begin_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        controller.begin_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
                             bounds,
                             table_row_height,
-                            _cx,
+                            cx,
                         );
                     });
                 }
             })
             .on_mouse_move({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseMoveEvent, _window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {
@@ -2875,8 +2728,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.update_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.update_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
@@ -2890,7 +2743,7 @@ impl AppView {
                 }
             })
             .capture_any_mouse_up({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event: &MouseUpEvent, _window, cx| {
                     if event.button != MouseButton::Left {
@@ -2900,8 +2753,8 @@ impl AppView {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        if this.finish_sftp_drag_selection(
+                    controller.update(cx, |controller, cx| {
+                        if controller.finish_drag_selection(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position,
@@ -2915,15 +2768,15 @@ impl AppView {
                 }
             })
             .on_click({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 let remote_table_bounds = remote_table_bounds.clone();
                 move |event, _window, cx| {
                     let Some(bounds) = *remote_table_bounds.borrow() else {
                         return;
                     };
 
-                    entity.update(cx, |this, cx| {
-                        this.handle_sftp_blank_click(
+                    controller.update(cx, |controller, cx| {
+                        controller.handle_blank_click(
                             tab_id,
                             SftpBrowserSide::Remote,
                             event.position(),
@@ -2935,7 +2788,7 @@ impl AppView {
                 }
             })
             .child(
-                DataTable::new(&self.workspace_forms.sftp_browser.remote_table)
+                DataTable::new(&self.remote_table())
                     .with_size(gpui_component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
@@ -2971,11 +2824,11 @@ impl AppView {
                 )
             })
             .on_drop::<ExternalPaths>({
-                let entity = entity.clone();
+                let controller = entity.clone();
                 move |paths: &ExternalPaths, _window, cx| {
                     let local_paths: Vec<PathBuf> = paths.paths().to_vec();
-                    entity.update(cx, |this, cx| {
-                        this.queue_sftp_upload_paths(tab_id, local_paths, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.queue_upload_paths(tab_id, local_paths, cx);
                     });
                 }
             })
@@ -3000,8 +2853,12 @@ impl AppView {
             )
             .into_any_element();
 
-        let footer = self
-            .render_sftp_progress_center(entity.clone(), format!("sftp-progress-center-{tab_id}"));
+        let footer = self.render_sftp_progress_center(
+            entity.clone(),
+            format!("sftp-progress-center-{tab_id}"),
+            ordered_tab_ids,
+            preferred_tab_id,
+        );
 
         let browser_panels = div()
             .flex()
@@ -3038,7 +2895,7 @@ impl AppView {
                         toolbar: local_toolbar,
                         content: local_list,
                         menu_builder: {
-                            let entity = entity.clone();
+                            let controller = entity.clone();
                             let local_table_for_menu = local_table_for_menu.clone();
                             move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                                 let is_header = local_table_for_menu.update(cx, |state, _| {
@@ -3047,19 +2904,19 @@ impl AppView {
                                 if is_header {
                                     return menu;
                                 }
-                                build_local_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                                build_local_sftp_context_menu(menu, controller.clone(), tab_id, cx)
                             }
                         },
                     })),
             )
             .child(sftp_split_bar(
+                entity.clone(),
                 tab_id,
                 SftpSplitDivider::BrowserPanels,
                 matches!(
                     sftp_tab.layout.drag.as_ref(),
                     Some(drag) if drag.divider == SftpSplitDivider::BrowserPanels
                 ),
-                cx,
             ))
             .child(
                 div()
@@ -3081,7 +2938,7 @@ impl AppView {
                         toolbar: remote_toolbar,
                         content: remote_list,
                         menu_builder: {
-                            let entity = entity.clone();
+                            let controller = entity.clone();
                             let remote_table_for_menu = remote_table_for_menu.clone();
                             move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
                                 let is_header = remote_table_for_menu.update(cx, |state, _| {
@@ -3090,7 +2947,13 @@ impl AppView {
                                 if is_header {
                                     return menu;
                                 }
-                                build_remote_sftp_context_menu(menu, entity.clone(), tab_id, cx)
+                                build_remote_sftp_context_menu(
+                                    menu,
+                                    controller.clone(),
+                                    tab_id,
+                                    false,
+                                    cx,
+                                )
                             }
                         },
                     })),
@@ -3103,25 +2966,21 @@ impl AppView {
             .capture_any_mouse_down(cx.listener(
                 move |this, event: &MouseDownEvent, _window, cx| {
                     if event.button == MouseButton::Left {
-                        let _ = this.finish_active_sftp_drag_selection(tab_id, event.position, cx);
+                        let _ = this.finish_active_drag_selection(tab_id, event.position, cx);
                     }
                 },
             ))
             .on_mouse_move(
                 cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {
-                        if this.finish_active_sftp_drag_selection(tab_id, event.position, cx) {
+                        if this.finish_active_drag_selection(tab_id, event.position, cx) {
                             cx.stop_propagation();
                         }
                         return;
                     }
 
                     if let Some(divider) = this
-                        .workspace_state
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id)
-                        .and_then(TabState::as_sftp)
+                        .tab(tab_id)
                         .and_then(|tab| tab.layout.drag.as_ref().map(|drag| drag.divider))
                     {
                         let pointer = match divider {
@@ -3134,7 +2993,7 @@ impl AppView {
                         return;
                     }
 
-                    if this.update_active_sftp_drag_selection(tab_id, event.position, cx) {
+                    if this.update_active_drag_selection(tab_id, event.position, cx) {
                         cx.stop_propagation();
                     }
                 }),
@@ -3197,13 +3056,13 @@ impl AppView {
                                         .overflow_hidden()
                                         .opacity(progress_center_visibility)
                                         .child(sftp_split_bar(
+                                            entity.clone(),
                                             tab_id,
                                             SftpSplitDivider::ProgressCenter,
                                             matches!(
                                                 sftp_tab.layout.drag.as_ref(),
                                                 Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
                                             ),
-                                            cx,
                                         )),
                                 )
                                 .child(
@@ -3235,7 +3094,7 @@ impl AppView {
     pub(in crate::ui::shell) fn render_sftp_prompt_overlay(
         &self,
         entity: Entity<Self>,
-        tab_id: usize,
+        tab_id: TabId,
         prompt: &SftpPromptState,
         exit_progress: Option<f32>,
     ) -> gpui::AnyElement {
@@ -3310,7 +3169,7 @@ impl AppView {
 
         let body = match &prompt.kind {
             SftpPromptKind::CreateRemoteDirectory { .. } => Some(
-                HintedInput::new(&self.workspace_forms.sftp_browser.prompt_input)
+                HintedInput::new(&self.prompt_input())
                     .large()
                     .w_full()
                     .rounded(px(12.0))
@@ -3325,10 +3184,10 @@ impl AppView {
             BasicDialogActionTone::Default,
         )
         .on_click({
-            let entity = entity.clone();
+            let controller = entity.clone();
             move |_, _, cx| {
-                entity.update(cx, |this, cx| {
-                    this.cancel_sftp_prompt(cx);
+                controller.update(cx, |controller, cx| {
+                    controller.cancel_prompt(tab_id, cx);
                 });
             }
         });
@@ -3347,10 +3206,10 @@ impl AppView {
             )
         }
         .on_click({
-            let entity = entity.clone();
+            let controller = entity.clone();
             move |_, _, cx| {
-                entity.update(cx, |this, cx| {
-                    this.commit_sftp_prompt(cx);
+                controller.update(cx, |controller, cx| {
+                    controller.commit_prompt(tab_id, cx);
                 });
             }
         });
@@ -3373,10 +3232,10 @@ impl AppView {
                                 BasicDialogActionTone::Default,
                             )
                             .on_click({
-                                let entity = entity.clone();
+                                let controller = entity.clone();
                                 move |_, _, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.skip_sftp_overwrite_prompt(cx);
+                                    controller.update(cx, |controller, cx| {
+                                        controller.skip_overwrite_prompt(tab_id, cx);
                                     });
                                 }
                             }),

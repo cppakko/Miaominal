@@ -51,6 +51,10 @@ impl SftpService {
         )
     }
 
+    pub fn replace_secrets(&mut self, secrets: SecretStore) {
+        self.secrets = secrets;
+    }
+
     pub fn display_local_path(path: &Path) -> String {
         let path = path.display().to_string();
 

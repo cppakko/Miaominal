@@ -1,12 +1,23 @@
 use super::super::*;
 use crate::ui::components::{register_code_editor_input_hint, register_input_hint};
 
-pub(in crate::ui::shell) fn new_input_state(
+pub(in crate::ui::shell) fn localized_secret_placeholder(
+    has_saved: bool,
+    fallback_key: &'static str,
+) -> String {
+    if has_saved {
+        crate::ui::i18n::string("placeholders.saved.keep_existing")
+    } else {
+        crate::ui::i18n::string(fallback_key)
+    }
+}
+
+pub(in crate::ui::shell) fn new_input_state<T: 'static>(
     placeholder: impl Into<SharedString>,
     default_value: impl Into<SharedString>,
     masked: bool,
     window: &mut Window,
-    cx: &mut Context<AppView>,
+    cx: &mut Context<T>,
 ) -> Entity<InputState> {
     let placeholder = placeholder.into();
     let default_value = default_value.into();

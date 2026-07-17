@@ -64,17 +64,20 @@ fn render_session_sftp_progress_resize_handle(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
                 let container_height = *container_height.borrow();
-                let initial_flex = clamp_session_sftp_progress_flex(
-                    container_height,
-                    this.workspace_state.session_sftp_progress_center_flex,
-                );
-                this.workspace_state.session_sftp_progress_center_flex = initial_flex;
-                this.workspace_state.session_sftp_progress_center_drag =
-                    Some(SessionSftpProgressCenterDragState {
+                let stored_flex = this.controllers.sftp.read(cx).session_progress_flex();
+                let initial_flex = clamp_session_sftp_progress_flex(container_height, stored_flex);
+                this.controllers
+                    .sftp
+                    .read(cx)
+                    .set_session_progress_flex(initial_flex);
+                this.controllers
+                    .sftp
+                    .read(cx)
+                    .set_session_progress_drag(Some(SessionSftpProgressCenterDragState {
                         initial_pointer: f32::from(event.position.y),
                         initial_flex,
                         container_height,
-                    });
+                    }));
                 cx.stop_propagation();
                 cx.notify();
             }),
@@ -93,260 +96,295 @@ fn render_session_sftp_progress_resize_handle(
         .into_any_element()
 }
 
-impl AppView {
-    pub(in crate::ui::shell) fn render_workspace_surface(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        self.advance_pane_split_animation(window, cx);
-        let workspace_height = Rc::new(RefCell::new(px(0.0)));
+pub(in crate::ui::shell) fn render_workspace_surface(
+    app: &mut AppView,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> gpui::AnyElement {
+    app.advance_pane_split_animation(window, cx);
+    let workspace_height = Rc::new(RefCell::new(px(0.0)));
 
-        // Snapshot the layout so we can borrow self mutably while walking it.
-        let layout = std::mem::replace(
-            &mut self.workspace_state.workspace.pane_layout,
-            PaneLayout::Leaf(self.workspace_state.workspace.active_pane_id),
-        );
-        let valid_source_ids = self.pane_drop_source_ids();
-        let workspace_body = self.render_pane_layout(&layout, &[], &valid_source_ids, window, cx);
-        self.workspace_state.workspace.pane_layout = layout;
+    // Snapshot the layout so the renderer can borrow the app mutably while walking it.
+    let layout = std::mem::replace(
+        &mut app.workspace.workspace.pane_layout,
+        PaneLayout::Leaf(app.workspace.workspace.active_pane_id),
+    );
+    let valid_source_ids = app.pane_drop_source_ids();
+    let workspace_body = app.render_pane_layout(&layout, &[], &valid_source_ids, window, cx);
+    app.workspace.workspace.pane_layout = layout;
 
-        let session_index = self.active_terminal_session_index();
+    let session_index = app.active_terminal_session_index(cx);
 
-        let show_side_panel = workspace_side_panel_render_state(
-            self.panels.session_side_panel_open && session_index.is_some(),
-            &mut self.panels.visible_session_side_panel,
-            &mut self.panels.session_side_panel_transition,
-            window,
-        );
-        let desired_agent_panel_visible =
-            self.panels.session_agent_panel_open && session_index.is_some();
-        if !desired_agent_panel_visible {
-            self.finish_session_agent_text_drag(cx);
-        }
-        let show_agent_panel = workspace_side_panel_render_state(
-            desired_agent_panel_visible,
-            &mut self.panels.visible_session_agent_panel,
-            &mut self.panels.session_agent_panel_transition,
-            window,
-        );
-        if !desired_agent_panel_visible && show_agent_panel.is_none() {
-            self.release_session_agent_conversation_view(cx);
-        }
-        self.workspace_state.session_agent_panel_width =
-            super::session_agent_panel::clamp_session_agent_panel_width(
-                self.workspace_state.session_agent_panel_width,
-            );
-        let agent_panel_width = self.workspace_state.session_agent_panel_width;
-        let entity = cx.entity();
-        let side_panel = show_side_panel.and_then(|visibility| {
-            session_index
-                .and_then(|index| self.workspace_state.tabs.get(index))
-                .and_then(|tab| tab.as_session().map(|session| (tab.id, session)))
-                .map(|(session_tab_id, session)| {
-                    render_workspace_side_panel(
-                        self.render_session_workspace_side_panel(
-                            entity.clone(),
-                            session_tab_id,
-                            session,
-                            cx,
-                        ),
-                        SESSION_MONITOR_PANEL_WIDTH,
-                        visibility,
-                        WorkspaceSidePanelDock::Left,
-                    )
-                })
+    let session_panel = app.controllers.session.read(cx);
+    let desired_side_panel_visible = session_panel.side_panel_open() && session_index.is_some();
+    let (mut side_panel_visible, mut side_panel_transition) =
+        session_panel.side_panel_transition_state();
+    let show_side_panel = workspace_side_panel_render_state(
+        desired_side_panel_visible,
+        &mut side_panel_visible,
+        &mut side_panel_transition,
+        window,
+    );
+    session_panel.set_side_panel_transition_state(side_panel_visible, side_panel_transition);
+
+    let (desired_agent_panel_visible, mut agent_panel_visible, mut agent_panel_transition) = {
+        let agent_controller = app.controllers.agent.read(cx);
+        let (visible, transition) = agent_controller.panel_transition_state();
+        (
+            agent_controller.panel_open() && session_index.is_some(),
+            visible,
+            transition,
+        )
+    };
+    if !desired_agent_panel_visible {
+        app.controllers.agent.update(cx, |controller, cx| {
+            controller.finish_text_drag(cx);
         });
-        let has_agent_session = session_index
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .is_some();
-        let agent_panel = show_agent_panel
-            .filter(|_| has_agent_session)
-            .map(|visibility| {
-                render_workspace_side_panel(
-                    self.render_session_agent_sidebar(entity.clone(), window, cx),
-                    agent_panel_width,
-                    visibility,
-                    WorkspaceSidePanelDock::Right,
+    }
+    let show_agent_panel = workspace_side_panel_render_state(
+        desired_agent_panel_visible,
+        &mut agent_panel_visible,
+        &mut agent_panel_transition,
+        window,
+    );
+    app.controllers
+        .agent
+        .read(cx)
+        .set_panel_transition_state(agent_panel_visible, agent_panel_transition);
+    if !desired_agent_panel_visible && show_agent_panel.is_none() {
+        app.controllers.agent.update(cx, |controller, cx| {
+            controller.finish_text_drag(cx);
+            controller.release_conversation_view(cx);
+        });
+    }
+    let agent_panel_width = super::session_agent_panel::clamp_session_agent_panel_width(
+        app.controllers.agent.read(cx).panel_width(),
+    );
+    app.controllers
+        .agent
+        .read(cx)
+        .set_panel_width(agent_panel_width);
+    let side_panel = show_side_panel.and_then(|visibility| {
+        let session_tab_id = session_index.and_then(|index| app.workspace.tabs.id_at(index))?;
+        let session = app.session_tab(session_tab_id, cx)?;
+        Some(render_workspace_side_panel(
+            super::workspace_side_panel::render_session_workspace_side_panel(
+                app,
+                app.controllers.session.clone(),
+                session_tab_id,
+                &session,
+                cx,
+            ),
+            SESSION_MONITOR_PANEL_WIDTH,
+            visibility,
+            WorkspaceSidePanelDock::Left,
+        ))
+    });
+    let has_agent_session = session_index
+        .and_then(|index| app.workspace.tabs.id_at(index))
+        .and_then(|tab_id| app.session_tab(tab_id, cx))
+        .is_some();
+    let agent_panel = show_agent_panel
+        .filter(|_| has_agent_session)
+        .map(|visibility| {
+            let controller = app.controllers.agent.clone();
+            let render_controller = controller.clone();
+            let settings = app.controllers.settings.clone();
+            let terminal_selection_drag_active = app.terminal_originated_selection_drag_active();
+            let panel = controller.update(cx, |controller, cx| {
+                controller.render_session_agent_sidebar(
+                    render_controller,
+                    settings,
+                    terminal_selection_drag_active,
+                    window,
+                    cx,
                 )
             });
-        let sftp_progress_panel =
-            self.render_session_workspace_sftp_progress_panel(entity.clone(), window);
-        let sftp_progress_visibility = sftp_progress_panel
-            .as_ref()
-            .map(|(_, visibility)| *visibility)
-            .unwrap_or(0.0);
-        let stored_sftp_progress_flex = self.workspace_state.session_sftp_progress_center_flex;
-        let sftp_progress_flex = if stored_sftp_progress_flex.is_finite() {
-            stored_sftp_progress_flex.clamp(SESSION_SFTP_MIN_SPLIT_FLEX, 0.95)
-        } else {
-            SESSION_SFTP_PROGRESS_DEFAULT_FLEX
-        };
-        let workspace_row_flex = 1.0 - sftp_progress_flex * sftp_progress_visibility;
-        let is_sftp_progress_dragging = self
-            .workspace_state
-            .session_sftp_progress_center_drag
-            .is_some();
-
-        let workspace_row = h_flex()
-            .w_full()
-            .flex_grow(1.0)
-            .flex_shrink(1.0)
-            .flex_basis(gpui::relative(workspace_row_flex))
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .on_mouse_move(
-                cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                    if event.pressed_button != Some(MouseButton::Left) {
-                        return;
-                    }
-                    let Some(drag) = this.workspace_state.session_agent_panel_drag.clone() else {
-                        return;
-                    };
-
-                    let pointer = f32::from(event.position.x);
-                    let delta = pointer - drag.initial_pointer;
-                    let next_width = super::session_agent_panel::clamp_session_agent_panel_width(
-                        drag.initial_width - delta,
-                    );
-                    if (this.workspace_state.session_agent_panel_width - next_width).abs()
-                        > f32::EPSILON
-                    {
-                        this.workspace_state.session_agent_panel_width = next_width;
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }),
+            render_workspace_side_panel(
+                panel,
+                agent_panel_width,
+                visibility,
+                WorkspaceSidePanelDock::Right,
             )
-            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
-                if event.button != MouseButton::Left {
+        });
+    let sftp_progress_panel = render_session_workspace_sftp_progress_panel(app, window, cx);
+    let sftp_progress_visibility = sftp_progress_panel
+        .as_ref()
+        .map(|(_, visibility)| *visibility)
+        .unwrap_or(0.0);
+    let stored_sftp_progress_flex = app.controllers.sftp.read(cx).session_progress_flex();
+    let sftp_progress_flex = if stored_sftp_progress_flex.is_finite() {
+        stored_sftp_progress_flex.clamp(SESSION_SFTP_MIN_SPLIT_FLEX, 0.95)
+    } else {
+        SESSION_SFTP_PROGRESS_DEFAULT_FLEX
+    };
+    let workspace_row_flex = 1.0 - sftp_progress_flex * sftp_progress_visibility;
+    let is_sftp_progress_dragging = app
+        .controllers
+        .sftp
+        .read(cx)
+        .session_progress_drag()
+        .is_some();
+
+    let workspace_row = h_flex()
+        .w_full()
+        .flex_grow(1.0)
+        .flex_shrink(1.0)
+        .flex_basis(gpui::relative(workspace_row_flex))
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .on_mouse_move(
+            cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                if event.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
-                if this
-                    .workspace_state
-                    .session_agent_panel_drag
-                    .take()
-                    .is_some()
+                let Some(drag) = this.controllers.agent.read(cx).panel_drag() else {
+                    return;
+                };
+
+                let pointer = f32::from(event.position.x);
+                let delta = pointer - drag.initial_pointer;
+                let next_width = super::session_agent_panel::clamp_session_agent_panel_width(
+                    drag.initial_width - delta,
+                );
+                if (this.controllers.agent.read(cx).panel_width() - next_width).abs() > f32::EPSILON
                 {
-                    cx.stop_propagation();
+                    this.controllers.agent.read(cx).set_panel_width(next_width);
                     cx.notify();
                 }
-            }))
-            .when_some(side_panel, |this, panel| this.child(panel))
+                cx.stop_propagation();
+            }),
+        )
+        .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+            if event.button != MouseButton::Left {
+                return;
+            }
+            if this.controllers.agent.read(cx).take_panel_drag().is_some() {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
+        .when_some(side_panel, |this, panel| this.child(panel))
+        .child(
+            div()
+                .id("terminal-workspace-center")
+                .flex_1()
+                .size_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .child(workspace_body),
+        )
+        .when_some(agent_panel, |this, panel| this.child(panel))
+        .into_any_element();
+
+    v_flex()
+        .size_full()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .on_prepaint({
+            let workspace_height = workspace_height.clone();
+            move |bounds, _window, _cx| {
+                *workspace_height.borrow_mut() = bounds.size.height;
+            }
+        })
+        .on_mouse_move(
+            cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                if event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+                let Some(drag) = this.controllers.sftp.read(cx).session_progress_drag() else {
+                    return;
+                };
+
+                let pointer_delta = f32::from(event.position.y) - drag.initial_pointer;
+                let next_flex = resized_session_sftp_progress_flex(
+                    drag.container_height,
+                    drag.initial_flex,
+                    pointer_delta,
+                );
+                let current_flex = this.controllers.sftp.read(cx).session_progress_flex();
+                if (current_flex - next_flex).abs() > f32::EPSILON {
+                    this.controllers
+                        .sftp
+                        .read(cx)
+                        .set_session_progress_flex(next_flex);
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }),
+        )
+        .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+            if event.button != MouseButton::Left {
+                return;
+            }
+            if this
+                .controllers
+                .sftp
+                .read(cx)
+                .take_session_progress_drag()
+                .is_some()
+            {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
+        .child(workspace_row)
+        .when_some(sftp_progress_panel, |this, (panel, visibility)| {
+            this.child(
+                div()
+                    .w_full()
+                    .h(px(SESSION_SFTP_BOTTOM_PROGRESS_GAP * visibility))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .opacity(visibility)
+                    .child(render_session_sftp_progress_resize_handle(
+                        is_sftp_progress_dragging,
+                        workspace_height.clone(),
+                        cx,
+                    )),
+            )
             .child(
                 div()
-                    .id("terminal-workspace-center")
-                    .flex_1()
-                    .size_full()
+                    .flex_grow(visibility)
+                    .flex_shrink(1.0)
+                    .flex_basis(gpui::relative(sftp_progress_flex * visibility))
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .child(workspace_body),
+                    .overflow_hidden()
+                    .px_3()
+                    .pb_3()
+                    .opacity(visibility)
+                    .child(panel),
             )
-            .when_some(agent_panel, |this, panel| this.child(panel))
-            .into_any_element();
+        })
+        .into_any_element()
+}
 
-        v_flex()
-            .size_full()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .overflow_hidden()
-            .on_prepaint({
-                let workspace_height = workspace_height.clone();
-                move |bounds, _window, _cx| {
-                    *workspace_height.borrow_mut() = bounds.size.height;
-                }
-            })
-            .on_mouse_move(
-                cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                    if event.pressed_button != Some(MouseButton::Left) {
-                        return;
-                    }
-                    let Some(drag) = this
-                        .workspace_state
-                        .session_sftp_progress_center_drag
-                        .clone()
-                    else {
-                        return;
-                    };
-
-                    let pointer_delta = f32::from(event.position.y) - drag.initial_pointer;
-                    let next_flex = resized_session_sftp_progress_flex(
-                        drag.container_height,
-                        drag.initial_flex,
-                        pointer_delta,
-                    );
-                    if (this.workspace_state.session_sftp_progress_center_flex - next_flex).abs()
-                        > f32::EPSILON
-                    {
-                        this.workspace_state.session_sftp_progress_center_flex = next_flex;
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }),
-            )
-            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
-                if event.button != MouseButton::Left {
-                    return;
-                }
-                if this
-                    .workspace_state
-                    .session_sftp_progress_center_drag
-                    .take()
-                    .is_some()
-                {
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .child(workspace_row)
-            .when_some(sftp_progress_panel, |this, (panel, visibility)| {
-                this.child(
-                    div()
-                        .w_full()
-                        .h(px(SESSION_SFTP_BOTTOM_PROGRESS_GAP * visibility))
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .opacity(visibility)
-                        .child(render_session_sftp_progress_resize_handle(
-                            is_sftp_progress_dragging,
-                            workspace_height.clone(),
-                            cx,
-                        )),
-                )
-                .child(
-                    div()
-                        .flex_grow(visibility)
-                        .flex_shrink(1.0)
-                        .flex_basis(gpui::relative(sftp_progress_flex * visibility))
-                        .min_w(px(0.0))
-                        .min_h(px(0.0))
-                        .overflow_hidden()
-                        .px_3()
-                        .pb_3()
-                        .opacity(visibility)
-                        .child(panel),
-                )
-            })
-            .into_any_element()
+fn render_session_workspace_sftp_progress_panel(
+    app: &mut AppView,
+    window: &mut Window,
+    cx: &App,
+) -> Option<(gpui::AnyElement, f32)> {
+    let controller = app.controllers.sftp.clone();
+    let visibility = controller
+        .read(cx)
+        .session_progress_render_visibility(window)
+        .unwrap_or(0.0);
+    if visibility <= 0.0 {
+        return None;
     }
 
-    fn render_session_workspace_sftp_progress_panel(
-        &mut self,
-        entity: Entity<Self>,
-        window: &mut Window,
-    ) -> Option<(gpui::AnyElement, f32)> {
-        let visibility = self
-            .session_sftp_progress_center_render_visibility(window)
-            .unwrap_or(0.0);
-        if visibility <= 0.0 {
-            return None;
-        }
+    let ordered_tab_ids = app.workspace.tabs.ids().collect::<Vec<_>>();
+    let preferred_tab_id = app.session_side_panel_sftp_tab_id(cx);
+    let panel = controller.read(cx).render_sftp_progress_center(
+        controller.clone(),
+        "session-sftp-progress-center",
+        &ordered_tab_ids,
+        preferred_tab_id,
+    );
 
-        let panel = self.render_sftp_progress_center(entity, "session-sftp-progress-center");
-
-        Some((panel, visibility))
-    }
+    Some((panel, visibility))
 }
 
 #[cfg(test)]

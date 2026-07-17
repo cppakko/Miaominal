@@ -369,11 +369,15 @@ fn monitor_health_accent(health: MonitorHealth) -> u32 {
     }
 }
 
-impl AppView {
+impl SessionController {
     pub(in crate::ui::shell::layout) fn render_session_monitor_panel(
         &self,
-        entity: Entity<Self>,
+        entity: Entity<SessionController>,
         session: &SessionTabState,
+        history_duration: miaominal_settings::MonitorHistoryDuration,
+        history_select: Entity<
+            SelectState<Vec<SelectOption<miaominal_settings::MonitorHistoryDuration>>>,
+        >,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -382,10 +386,11 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
         let monitoring =
-            self.shared_monitoring_state_for_profile(&session.profile_id, &session.monitoring);
-        let monitor_scroll_handle = self.workspace_state.session_monitor_scroll_handle.clone();
+            self.monitoring_state_for_profile(&session.profile_id, &session.monitoring);
+        let monitor_scroll_handle = self.monitor_scroll_handle();
 
         if !monitoring.auto_collect_enabled {
+            let profile_id = session.profile_id.clone();
             return v_flex()
                 .id("session-monitor-panel-content")
                 .size_full()
@@ -413,8 +418,9 @@ impl AppView {
                     false,
                     true,
                     move |_, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.enable_active_session_monitoring(cx);
+                        let profile_id = profile_id.clone();
+                        entity.update(cx, |controller, cx| {
+                            controller.enable_profile_monitoring(&profile_id, cx);
                         });
                     },
                 ))
@@ -423,7 +429,12 @@ impl AppView {
 
         let Some(snapshot) = monitoring.last_snapshot.as_ref() else {
             if let Some(error) = monitoring.last_error.as_ref() {
-                return self.render_monitor_error_state(entity, error, text_muted);
+                return self.render_monitor_error_state(
+                    entity,
+                    session.profile_id.clone(),
+                    error,
+                    text_muted,
+                );
             }
 
             return v_flex()
@@ -444,11 +455,7 @@ impl AppView {
                 .into_any_element();
         };
 
-        let limit = self
-            .settings_store
-            .settings()
-            .monitor_history_duration
-            .history_limit();
+        let limit = history_duration.history_limit();
         let cpu_history = tail_history(&monitoring.cpu_history, limit);
         let memory_history = tail_history(&monitoring.memory_history, limit);
         let network_rx_history = tail_history(&monitoring.network_rx_history, limit);
@@ -466,9 +473,8 @@ impl AppView {
         let cpu_sample_ready = monitoring.cpu_sample_ready;
         let network_sample_ready = monitoring.network_sample_ready;
         let overall_health = monitor_health(snapshot, cpu_sample_ready);
-        let profile = self
-            .data
-            .sessions
+        let profiles = self.profiles();
+        let profile = profiles
             .iter()
             .find(|profile| profile.id == session.profile_id)
             .or(session.pending_profile.as_ref());
@@ -589,8 +595,6 @@ impl AppView {
         let chart_secondary = roles.tertiary;
         let chart_download = material.extended.info.color;
         let chart_upload = material.extended.warning.color;
-        let history_select = self.panel_forms.settings.monitor_history_select.clone();
-
         let header = v_flex()
             .w_full()
             .flex_shrink_0()
@@ -679,7 +683,11 @@ impl AppView {
             .w_full()
             .gap_3()
             .when_some(monitoring.last_error.as_ref(), |this, error| {
-                this.child(self.render_monitor_stale_banner(entity.clone(), error))
+                this.child(self.render_monitor_stale_banner(
+                    entity.clone(),
+                    session.profile_id.clone(),
+                    error,
+                ))
             })
             .child(
                 v_flex()
@@ -937,7 +945,12 @@ impl AppView {
             .into_any_element()
     }
 
-    fn render_monitor_stale_banner(&self, entity: Entity<Self>, error: &str) -> gpui::AnyElement {
+    fn render_monitor_stale_banner(
+        &self,
+        entity: Entity<SessionController>,
+        profile_id: String,
+        error: &str,
+    ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let warning = material.extended.warning;
         let error_preview = truncate_with_ellipsis(error, 140);
@@ -964,8 +977,9 @@ impl AppView {
                         false,
                         true,
                         move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.enable_active_session_monitoring(cx);
+                            let profile_id = profile_id.clone();
+                            entity.update(cx, |controller, cx| {
+                                controller.enable_profile_monitoring(&profile_id, cx);
                             });
                         },
                     )),
@@ -985,7 +999,8 @@ impl AppView {
 
     fn render_monitor_error_state(
         &self,
-        entity: Entity<Self>,
+        entity: Entity<SessionController>,
+        profile_id: String,
         error: &str,
         text_muted: u32,
     ) -> gpui::AnyElement {
@@ -1022,8 +1037,9 @@ impl AppView {
                 false,
                 true,
                 move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.enable_active_session_monitoring(cx);
+                    let profile_id = profile_id.clone();
+                    entity.update(cx, |controller, cx| {
+                        controller.enable_profile_monitoring(&profile_id, cx);
                     });
                 },
             ))

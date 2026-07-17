@@ -14,33 +14,30 @@ use gpui_component::{
 use miaominal_settings::{self, KeyBinding, ThemeId};
 use miaominal_sync::SyncProvider;
 
-impl AppView {
-    pub(in crate::ui::shell) fn render_settings_page(
-        &self,
-        entity: Entity<AppView>,
-    ) -> gpui::AnyElement {
-        Settings::new("app-settings")
-            .with_size(Size::Large)
-            .with_group_variant(GroupBoxVariant::Outline)
-            .sidebar_width(px(220.0))
-            .pages(setting_pages(entity))
-            .into_any_element()
-    }
+pub(in crate::ui::shell) fn render_settings_page(
+    settings: Entity<SettingsController>,
+) -> gpui::AnyElement {
+    Settings::new("app-settings")
+        .with_size(Size::Large)
+        .with_group_variant(GroupBoxVariant::Outline)
+        .sidebar_width(px(220.0))
+        .pages(setting_pages(settings))
+        .into_any_element()
 }
 
-fn setting_pages(entity: Entity<AppView>) -> Vec<SettingPage> {
+fn setting_pages(settings: Entity<SettingsController>) -> Vec<SettingPage> {
     vec![
-        appearance_page(entity.clone()),
-        connections_page(entity.clone()),
-        key_bindings_page(entity.clone()),
-        ai_providers_page(entity.clone()),
-        sync_page(entity.clone()),
-        vault_page(entity.clone()),
-        about_page(entity),
+        appearance_page(settings.clone()),
+        connections_page(settings.clone()),
+        key_bindings_page(settings.clone()),
+        ai_providers_page(settings.clone()),
+        sync_page(settings.clone()),
+        vault_page(settings.clone()),
+        about_page(settings),
     ]
 }
 
-fn appearance_page(entity: Entity<AppView>) -> SettingPage {
+fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
     let default_font_family = miaominal_settings::default_font_family();
     let font_size_min = format!("{:.1}", miaominal_settings::FONT_SIZE_MIN);
     let font_size_max = format!("{:.1}", miaominal_settings::FONT_SIZE_MAX);
@@ -133,10 +130,7 @@ fn appearance_page(entity: Entity<AppView>) -> SettingPage {
                         SettingField::switch(
                             {
                                 let entity = entity.clone();
-                                move |cx: &App| {
-                                    entity.read(cx).settings_store.settings().theme_id
-                                        == ThemeId::Dark
-                                }
+                                move |cx: &App| entity.read(cx).settings().theme_id == ThemeId::Dark
                             },
                             {
                                 let entity = entity.clone();
@@ -164,7 +158,7 @@ fn appearance_page(entity: Entity<AppView>) -> SettingPage {
         ])
 }
 
-fn connections_page(entity: Entity<AppView>) -> SettingPage {
+fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.connections.title"))
         .description(i18n::string("settings.pages.connections.description"))
         .resettable(false)
@@ -178,7 +172,7 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
                     SettingItem::new(
                         i18n::string("settings.connections.recent_count.label"),
                         SettingField::render({
-                            let entity = entity.clone();
+                            let entity = settings.clone();
                             move |options, _, cx| {
                                 let size = options.size;
                                 let id_prefix = SharedString::from(format!(
@@ -212,20 +206,19 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
                         i18n::string("settings.connections.auto_collect_monitoring.label"),
                         SettingField::switch(
                             {
-                                let entity = entity.clone();
+                                let entity = settings.clone();
                                 move |cx: &App| {
-                                    entity
-                                        .read(cx)
-                                        .settings_store
-                                        .settings()
-                                        .auto_collect_session_monitoring
+                                    entity.read(cx).settings().auto_collect_session_monitoring
                                 }
                             },
                             {
-                                let entity = entity.clone();
+                                let entity = settings.clone();
                                 move |enabled: bool, cx: &mut App| {
-                                    entity.update(cx, |this, cx| {
-                                        this.set_auto_collect_session_monitoring(enabled, cx);
+                                    entity.update(cx, |controller, cx| {
+                                        controller.emit(
+                                            AppCommand::SessionMonitoringPreferenceChanged(enabled),
+                                            cx,
+                                        );
                                     });
                                 }
                             },
@@ -236,7 +229,7 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
                     )),
                     SettingItem::new(
                         i18n::string("settings.connections.monitor_history.label"),
-                        SettingField::element(MonitorHistoryDurationField::new(entity.clone())),
+                        SettingField::element(MonitorHistoryDurationField::new(settings.clone())),
                     )
                     .description(i18n::string(
                         "settings.connections.monitor_history.description",
@@ -248,7 +241,7 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
                 .items(vec![
                     SettingItem::new(
                         i18n::string("settings.connections.last_tab_close_behavior.label"),
-                        SettingField::element(LastTabCloseBehaviorField::new(entity.clone())),
+                        SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
                     )
                     .description(i18n::string(
                         "settings.connections.last_tab_close_behavior.description",
@@ -262,14 +255,14 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
                 .items(vec![
                     SettingItem::new(
                         i18n::string("settings.connections.import_source.label"),
-                        SettingField::element(ProfileImportSourceField::new(entity.clone())),
+                        SettingField::element(ProfileImportSourceField::new(settings.clone())),
                     )
                     .description(i18n::string(
                         "settings.connections.import_source.description",
                     )),
                     SettingItem::new(
                         i18n::string("settings.connections.import_action.label"),
-                        SettingField::element(ProfileImportActionField::new(entity.clone())),
+                        SettingField::element(ProfileImportActionField::new(settings.clone())),
                     )
                     .description(i18n::string(
                         "settings.connections.import_action.description",
@@ -278,8 +271,8 @@ fn connections_page(entity: Entity<AppView>) -> SettingPage {
         ])
 }
 
-fn about_page(entity: Entity<AppView>) -> SettingPage {
-    let entity_reset_local = entity.clone();
+fn about_page(settings: Entity<SettingsController>) -> SettingPage {
+    let settings_reset_local = settings.clone();
 
     SettingPage::new(i18n::string("settings.pages.about.title"))
         .description(i18n::string("settings.pages.about.description"))
@@ -334,7 +327,7 @@ fn about_page(entity: Entity<AppView>) -> SettingPage {
                 .item(
                     SettingItem::new(
                         i18n::string("settings.about.onboarding.label"),
-                        SettingField::element(OnboardingActionField::new(entity)),
+                        SettingField::element(OnboardingActionField::new(settings)),
                     )
                     .description(i18n::string("settings.about.onboarding.description")),
                 ),
@@ -343,7 +336,7 @@ fn about_page(entity: Entity<AppView>) -> SettingPage {
                 .item(
                     SettingItem::new(
                         i18n::string("settings.about.reset_local.label"),
-                        SettingField::element(ResetLocalDataActionField::new(entity_reset_local)),
+                        SettingField::element(ResetLocalDataActionField::new(settings_reset_local)),
                     )
                     .description(i18n::string("settings.about.reset_local.description")),
                 ),
@@ -352,12 +345,12 @@ fn about_page(entity: Entity<AppView>) -> SettingPage {
 
 #[derive(Clone)]
 struct AppLanguageField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl AppLanguageField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -370,13 +363,7 @@ impl SettingFieldElement for AppLanguageField {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let select_state = self
-            .app_view
-            .read(cx)
-            .panel_forms
-            .settings
-            .language_select
-            .clone();
+        let select_state = self.controller.read(cx).forms.language_select.clone();
 
         md3_select(&select_state)
             .with_size(options.size)
@@ -387,12 +374,12 @@ impl SettingFieldElement for AppLanguageField {
 
 #[derive(Clone)]
 struct MonitorHistoryDurationField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl MonitorHistoryDurationField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -406,10 +393,9 @@ impl SettingFieldElement for MonitorHistoryDurationField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self
-            .app_view
+            .controller
             .read(cx)
-            .panel_forms
-            .settings
+            .forms
             .monitor_history_select
             .clone();
 
@@ -422,12 +408,12 @@ impl SettingFieldElement for MonitorHistoryDurationField {
 
 #[derive(Clone)]
 struct LocalVaultAutoLockDurationField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl LocalVaultAutoLockDurationField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -441,10 +427,9 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self
-            .app_view
+            .controller
             .read(cx)
-            .panel_forms
-            .settings
+            .forms
             .local_vault_auto_lock_duration_select
             .clone();
 
@@ -457,12 +442,12 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
 
 #[derive(Clone)]
 struct LastTabCloseBehaviorField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl LastTabCloseBehaviorField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -476,10 +461,9 @@ impl SettingFieldElement for LastTabCloseBehaviorField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self
-            .app_view
+            .controller
             .read(cx)
-            .panel_forms
-            .settings
+            .forms
             .last_tab_close_behavior_select
             .clone();
 
@@ -492,12 +476,12 @@ impl SettingFieldElement for LastTabCloseBehaviorField {
 
 #[derive(Clone)]
 struct ProfileImportSourceField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl ProfileImportSourceField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -511,10 +495,9 @@ impl SettingFieldElement for ProfileImportSourceField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self
-            .app_view
+            .controller
             .read(cx)
-            .panel_forms
-            .settings
+            .forms
             .profile_import_source_select
             .clone();
 
@@ -527,12 +510,12 @@ impl SettingFieldElement for ProfileImportSourceField {
 
 #[derive(Clone)]
 struct ProfileImportActionField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl ProfileImportActionField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -545,7 +528,7 @@ impl SettingFieldElement for ProfileImportActionField {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Self::Element {
-        let app_view = self.app_view.clone();
+        let controller = self.controller.clone();
 
         editor_button_with_id(
             "settings-import-profiles",
@@ -553,9 +536,9 @@ impl SettingFieldElement for ProfileImportActionField {
             false,
             true,
             false,
-            move |window, cx| {
-                app_view.update(cx, |this, cx| {
-                    this.import_profiles_from_selected_source(window, cx);
+            move |_window, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.request_profile_import(cx);
                 });
             },
         )
@@ -564,11 +547,11 @@ impl SettingFieldElement for ProfileImportActionField {
 
 #[derive(Clone)]
 struct FontFamilyField {
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 }
 
 impl FontFamilyField {
-    fn new(entity: Entity<AppView>) -> Self {
+    fn new(entity: Entity<SettingsController>) -> Self {
         Self { entity }
     }
 }
@@ -577,13 +560,7 @@ impl SettingFieldElement for FontFamilyField {
     type Element = AnyElement;
 
     fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
-        let select_state = self
-            .entity
-            .read(cx)
-            .panel_forms
-            .settings
-            .font_family_select
-            .clone();
+        let select_state = self.entity.read(cx).forms.font_family_select.clone();
         let entity = self.entity.clone();
 
         setting_field_with_reset_action(
@@ -604,11 +581,11 @@ impl SettingFieldElement for FontFamilyField {
 
 #[derive(Clone)]
 struct FontFallbacksField {
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 }
 
 impl FontFallbacksField {
-    fn new(entity: Entity<AppView>) -> Self {
+    fn new(entity: Entity<SettingsController>) -> Self {
         Self { entity }
     }
 }
@@ -618,13 +595,7 @@ impl SettingFieldElement for FontFallbacksField {
 
     fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
         let roles = miaominal_settings::current_theme().material.roles;
-        let input = self
-            .entity
-            .read(cx)
-            .panel_forms
-            .settings
-            .font_fallbacks_input
-            .clone();
+        let input = self.entity.read(cx).forms.font_fallbacks_input.clone();
         let entity = self.entity.clone();
 
         setting_field_with_reset_action(
@@ -647,11 +618,11 @@ impl SettingFieldElement for FontFallbacksField {
 
 #[derive(Clone)]
 struct SeedColorField {
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
 }
 
 impl SeedColorField {
-    fn new(entity: Entity<AppView>) -> Self {
+    fn new(entity: Entity<SettingsController>) -> Self {
         Self { entity }
     }
 }
@@ -665,14 +636,8 @@ impl SettingFieldElement for SeedColorField {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let current = self.entity.read(cx).settings_store.settings().clone();
-        let picker = self
-            .entity
-            .read(cx)
-            .panel_forms
-            .settings
-            .seed_color_picker
-            .clone();
+        let current = self.entity.read(cx).settings().clone();
+        let picker = self.entity.read(cx).forms.seed_color_picker.clone();
         let entity = self.entity.clone();
         let material = miaominal_settings::Theme::from_settings(&current).material;
         let desired_color = rgb(material.source);
@@ -737,12 +702,12 @@ impl SettingFieldElement for SeedColorField {
 
 #[derive(Clone)]
 struct OnboardingActionField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl OnboardingActionField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -750,15 +715,15 @@ impl SettingFieldElement for OnboardingActionField {
     type Element = Button;
 
     fn render_field(&self, _options: &RenderOptions, _: &mut Window, _: &mut App) -> Self::Element {
-        let app_view = self.app_view.clone();
+        let controller = self.controller.clone();
 
         settings_action_button(
             "settings-show-onboarding",
             i18n::string("settings.about.onboarding.action"),
             false,
             move |_, cx| {
-                app_view.update(cx, |this, cx| {
-                    this.open_onboarding(cx);
+                controller.update(cx, |controller, cx| {
+                    controller.open_onboarding(cx);
                 });
             },
         )
@@ -767,12 +732,12 @@ impl SettingFieldElement for OnboardingActionField {
 
 #[derive(Clone)]
 struct ResetLocalDataActionField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl ResetLocalDataActionField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -785,8 +750,8 @@ impl SettingFieldElement for ResetLocalDataActionField {
         _: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let app_view = self.app_view.clone();
-        let disabled = app_view.read(cx).local_data_reset_in_progress;
+        let controller = self.controller.clone();
+        let disabled = controller.read(cx).local_data_reset_in_progress();
 
         editor_button_with_id(
             "settings-reset-local-data",
@@ -795,8 +760,12 @@ impl SettingFieldElement for ResetLocalDataActionField {
             true,
             disabled,
             move |_, cx| {
-                app_view.update(cx, |this, cx| {
-                    this.open_local_data_reset_confirm(cx);
+                controller.update(cx, |controller, cx| {
+                    if !controller.local_data_reset_in_progress() {
+                        controller
+                            .set_local_data_reset_confirm(Some(PendingLocalDataResetConfirmState));
+                        cx.notify();
+                    }
                 });
             },
         )
@@ -821,16 +790,12 @@ fn settings_compact_button(
 }
 
 fn render_recent_connections_stepper(
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
     id_prefix: SharedString,
     size: Size,
     cx: &App,
 ) -> AnyElement {
-    let count = entity
-        .read(cx)
-        .settings_store
-        .settings()
-        .recent_connections_count;
+    let count = entity.read(cx).settings().recent_connections_count;
     let value = if count == 0 {
         i18n::string("settings.values.off")
     } else {
@@ -860,12 +825,12 @@ fn render_recent_connections_stepper(
 }
 
 fn render_font_size_stepper(
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
     id_prefix: SharedString,
     size: Size,
     cx: &App,
 ) -> AnyElement {
-    let value = format!("{:.1}", entity.read(cx).settings_store.settings().font_size);
+    let value = format!("{:.1}", entity.read(cx).settings().font_size);
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 
@@ -890,15 +855,12 @@ fn render_font_size_stepper(
 }
 
 fn render_line_height_stepper(
-    entity: Entity<AppView>,
+    entity: Entity<SettingsController>,
     id_prefix: SharedString,
     size: Size,
     cx: &App,
 ) -> AnyElement {
-    let value = format!(
-        "{:.1}",
-        entity.read(cx).settings_store.settings().line_height
-    );
+    let value = format!("{:.1}", entity.read(cx).settings().line_height);
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 
@@ -973,7 +935,7 @@ fn theme_swatch(label_key: &'static str, color: u32) -> impl IntoElement {
         )
 }
 
-fn ai_providers_page(entity: Entity<AppView>) -> SettingPage {
+fn ai_providers_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.ai_providers.title"))
         .description(i18n::string("settings.pages.ai_providers.description"))
         .resettable(false)
@@ -987,20 +949,20 @@ fn ai_providers_page(entity: Entity<AppView>) -> SettingPage {
                     SettingItem::new(
                         i18n::string("settings.ai_providers.saved.label"),
                         SettingField::render({
-                            let entity = entity.clone();
+                            let settings = settings.clone();
                             move |options, _, cx| {
-                                render_ai_provider_selector(entity.clone(), options.size, cx)
+                                render_ai_provider_selector(settings.clone(), options.size, cx)
                             }
                         }),
                     )
                     .layout(Axis::Vertical)
                     .description(i18n::string("settings.ai_providers.saved.description")),
                 ),
-            web_search_settings_group(entity),
+            web_search_settings_group(settings),
         ])
 }
 
-fn web_search_settings_group(entity: Entity<AppView>) -> SettingGroup {
+fn web_search_settings_group(settings: Entity<SettingsController>) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.web_search.group.title"))
         .description(i18n::string("settings.web_search.group.description"))
@@ -1009,24 +971,14 @@ fn web_search_settings_group(entity: Entity<AppView>) -> SettingGroup {
                 i18n::string("settings.web_search.enabled.label"),
                 SettingField::switch(
                     {
-                        let entity = entity.clone();
-                        move |cx: &App| entity.read(cx).settings_store.settings().web_search.enabled
+                        let settings = settings.clone();
+                        move |cx: &App| settings.read(cx).settings().web_search.enabled
                     },
                     {
-                        let entity = entity.clone();
+                        let settings = settings.clone();
                         move |enabled: bool, cx: &mut App| {
-                            entity.update(cx, |this, cx| {
-                                let changed = this
-                                    .settings_store
-                                    .update(|settings| settings.web_search.enabled = enabled);
-                                if changed {
-                                    this.status_message = if enabled {
-                                        i18n::string("settings.web_search.status.enabled")
-                                    } else {
-                                        i18n::string("settings.web_search.status.disabled")
-                                    };
-                                    cx.notify();
-                                }
+                            settings.update(cx, |controller, cx| {
+                                controller.set_web_search_enabled(enabled, cx);
                             });
                         }
                     },
@@ -1036,20 +988,20 @@ fn web_search_settings_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.web_search.kind.label"),
                 SettingField::render({
-                    let entity = entity.clone();
-                    move |_, _, cx| render_web_search_config_field(entity.clone(), cx)
+                    let settings = settings.clone();
+                    move |_, _, cx| render_web_search_config_field(settings.clone(), cx)
                 }),
             )
             .description(i18n::string("settings.web_search.kind.description")),
         ])
 }
 
-fn render_web_search_config_field(entity: Entity<AppView>, cx: &App) -> AnyElement {
+fn render_web_search_config_field(settings: Entity<SettingsController>, cx: &App) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
-    let web_search = entity.read(cx).settings_store.settings().web_search.clone();
+    let web_search = settings.read(cx).settings().web_search.clone();
     let provider_label = i18n::string(web_search_provider_kind_label_key(web_search.kind));
-    let save_in_progress = entity.read(cx).web_search_save_in_progress();
-    let entity_edit = entity.clone();
+    let save_in_progress = settings.read(cx).web_search_save_in_progress();
+    let settings_edit = settings.clone();
 
     h_flex()
         .w_full()
@@ -1086,8 +1038,8 @@ fn render_web_search_config_field(entity: Entity<AppView>, cx: &App) -> AnyEleme
                 None,
                 Some(roles.outline_variant),
                 move |window, cx| {
-                    entity_edit.update(cx, |this, cx| {
-                        this.open_web_search_config_popup(window, cx);
+                    settings_edit.update(cx, |controller, cx| {
+                        controller.open_web_search_config_popup(window, cx);
                     });
                 },
             )
@@ -1096,17 +1048,16 @@ fn render_web_search_config_field(entity: Entity<AppView>, cx: &App) -> AnyEleme
         .into_any_element()
 }
 
-fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) -> AnyElement {
+fn render_ai_provider_selector(
+    settings: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
-    let select = entity
-        .read(cx)
-        .panel_forms
-        .settings
-        .ai_provider_select
-        .clone();
-    let selected_provider_id = entity.read(cx).selected_ai_provider_id(cx);
-    let entity_new = entity.clone();
-    let entity_edit = entity.clone();
+    let select = settings.read(cx).forms().ai_provider_select;
+    let selected_provider_id = settings.read(cx).selected_ai_provider_id(cx);
+    let settings_new = settings.clone();
+    let settings_edit = settings.clone();
 
     v_flex()
         .w_full()
@@ -1130,8 +1081,8 @@ fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) ->
                     None,
                     Some(roles.outline_variant),
                     move |window, cx| {
-                        entity_new.update(cx, |this, cx| {
-                            this.start_new_ai_provider(window, cx);
+                        settings_new.update(cx, |controller, cx| {
+                            controller.start_new_ai_provider(window, cx);
                         });
                     },
                 ))
@@ -1144,8 +1095,10 @@ fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) ->
                         None,
                         Some(roles.outline_variant),
                         move |window, cx| {
-                            entity_edit.update(cx, |this, cx| {
-                                this.open_selected_ai_provider_popup(window, cx);
+                            settings_edit.update(cx, |controller, cx| {
+                                if let Some(provider_id) = controller.selected_ai_provider_id(cx) {
+                                    controller.edit_ai_provider(provider_id, window, cx);
+                                }
                             });
                         },
                     )
@@ -1168,7 +1121,7 @@ fn render_ai_provider_selector(entity: Entity<AppView>, size: Size, cx: &App) ->
         .into_any_element()
 }
 
-fn key_bindings_page(entity: Entity<AppView>) -> SettingPage {
+fn key_bindings_page(entity: Entity<SettingsController>) -> SettingPage {
     let workspace_slots = [
         KeyBindingSlot::NextTab,
         KeyBindingSlot::CloseTab,
@@ -1224,7 +1177,6 @@ fn key_bindings_page(entity: Entity<AppView>) -> SettingPage {
                                 move |cx: &App| {
                                     entity
                                         .read(cx)
-                                        .settings_store
                                         .settings()
                                         .terminal_shift_right_click_context_menu
                                 }
@@ -1248,7 +1200,10 @@ fn key_bindings_page(entity: Entity<AppView>) -> SettingPage {
         ])
 }
 
-fn key_binding_items(entity: Entity<AppView>, slots: &[KeyBindingSlot]) -> Vec<SettingItem> {
+fn key_binding_items(
+    entity: Entity<SettingsController>,
+    slots: &[KeyBindingSlot],
+) -> Vec<SettingItem> {
     slots
         .iter()
         .copied()
@@ -1264,12 +1219,12 @@ fn key_binding_items(entity: Entity<AppView>, slots: &[KeyBindingSlot]) -> Vec<S
 
 #[derive(Clone)]
 struct TerminalRightClickBehaviorField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl TerminalRightClickBehaviorField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -1283,10 +1238,9 @@ impl SettingFieldElement for TerminalRightClickBehaviorField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self
-            .app_view
+            .controller
             .read(cx)
-            .panel_forms
-            .settings
+            .forms
             .terminal_right_click_behavior_select
             .clone();
 
@@ -1299,12 +1253,12 @@ impl SettingFieldElement for TerminalRightClickBehaviorField {
 
 #[derive(Clone)]
 struct SyncProviderField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
 }
 
 impl SyncProviderField {
-    fn new(app_view: Entity<AppView>) -> Self {
-        Self { app_view }
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
@@ -1317,24 +1271,14 @@ impl SettingFieldElement for SyncProviderField {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let select_state = self
-            .app_view
+        let select_state = self.controller.read(cx).forms().sync_provider_select;
+        let selected_provider = select_state
             .read(cx)
-            .panel_forms
-            .settings
-            .sync_provider_select
-            .clone();
-        let selected_provider = select_state.read(cx).selected_value().copied().unwrap_or(
-            self.app_view
-                .read(cx)
-                .sync
-                .sync_engine
-                .config_store
-                .config
-                .provider,
-        );
+            .selected_value()
+            .copied()
+            .unwrap_or(self.controller.read(cx).sync_config().provider);
         let roles = miaominal_settings::current_theme().material.roles;
-        let app_view = self.app_view.clone();
+        let controller = self.controller.clone();
 
         h_flex()
             .w_full()
@@ -1368,8 +1312,8 @@ impl SettingFieldElement for SyncProviderField {
                     None,
                     Some(roles.outline_variant),
                     move |window, cx| {
-                        app_view.update(cx, |this, cx| {
-                            this.open_selected_sync_provider_config_popup(window, cx);
+                        controller.update(cx, |controller, cx| {
+                            controller.open_selected_sync_provider_config_popup(window, cx);
                         });
                     },
                 )
@@ -1381,13 +1325,13 @@ impl SettingFieldElement for SyncProviderField {
 
 #[derive(Clone)]
 struct KeyBindingCaptureField {
-    app_view: Entity<AppView>,
+    controller: Entity<SettingsController>,
     slot: KeyBindingSlot,
 }
 
 impl KeyBindingCaptureField {
-    fn new(app_view: Entity<AppView>, slot: KeyBindingSlot) -> Self {
-        Self { app_view, slot }
+    fn new(controller: Entity<SettingsController>, slot: KeyBindingSlot) -> Self {
+        Self { controller, slot }
     }
 }
 
@@ -1400,12 +1344,12 @@ impl SettingFieldElement for KeyBindingCaptureField {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let settings = self.app_view.read(cx).settings_store.settings().clone();
-        let forms = &self.app_view.read(cx).panel_forms.settings;
-        let is_recording = forms.recording_binding == Some(self.slot);
-        let capture_focus = forms.key_capture_focus.clone();
-        let pending_preview = forms.pending_preview.clone();
-        let has_pending_binding = forms.pending_binding.is_some();
+        let settings_controller = self.controller.read(cx);
+        let settings = settings_controller.settings().clone();
+        let is_recording = settings_controller.recording_binding() == Some(self.slot);
+        let capture_focus = settings_controller.forms.key_capture_focus.clone();
+        let pending_preview = settings_controller.pending_preview().map(str::to_owned);
+        let has_pending_binding = settings_controller.pending_binding().is_some();
         let roles = miaominal_settings::current_theme().material.roles;
 
         let current_binding = match self.slot {
@@ -1421,17 +1365,17 @@ impl SettingFieldElement for KeyBindingCaptureField {
             KeyBindingSlot::ClosePane => settings.key_bindings.close_pane.display(),
         };
 
-        let app_view = self.app_view.clone();
+        let controller = self.controller.clone();
         let slot = self.slot;
-        let app_view_for_change = self.app_view.clone();
-        let app_view_for_reset = self.app_view.clone();
+        let controller_for_change = self.controller.clone();
+        let controller_for_reset = self.controller.clone();
 
         h_flex()
             .w_full()
             .gap_3()
             .items_center()
             .when(is_recording, |this| {
-                let app_view_capture = app_view.clone();
+                let controller_capture = controller.clone();
                 let preview_text: SharedString = match &pending_preview {
                     Some(p) => SharedString::from(p.clone()),
                     None => i18n::string("settings.key_bindings.capture.press_combo").into(),
@@ -1447,8 +1391,8 @@ impl SettingFieldElement for KeyBindingCaptureField {
                 } else {
                     roles.on_primary_container
                 };
-                let app_view_save = app_view.clone();
-                let app_view_cancel = app_view.clone();
+                let controller_save = controller.clone();
+                let controller_cancel = controller.clone();
                 let roles_save = roles;
                 this.child(
                     v_flex()
@@ -1490,7 +1434,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                                         None
                                     };
                                     let preview = format_keystroke_preview(ks);
-                                    app_view_capture.update(cx, |this, cx| {
+                                    controller_capture.update(cx, |this, cx| {
                                         this.update_key_preview(preview, binding, cx);
                                     });
                                 }),
@@ -1513,7 +1457,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                         Some(roles_save.on_secondary_container),
                         None,
                         move |_window, cx| {
-                            app_view_save.update(cx, |this, cx| {
+                            controller_save.update(cx, |this, cx| {
                                 this.accept_pending_key_binding(cx);
                             });
                         },
@@ -1527,7 +1471,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                     None,
                     None,
                     move |_window, cx| {
-                        app_view_cancel.update(cx, |this, cx| {
+                        controller_cancel.update(cx, |this, cx| {
                             this.cancel_recording_key_binding(cx);
                         });
                     },
@@ -1555,7 +1499,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                     None,
                     None,
                     move |window, cx| {
-                        app_view_for_change.update(cx, |this, cx| {
+                        controller_for_change.update(cx, |this, cx| {
                             this.begin_recording_key_binding(slot, window, cx);
                         });
                     },
@@ -1570,7 +1514,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                     None,
                     None,
                     move |_window, cx| {
-                        app_view_for_reset.update(cx, |this, cx| {
+                        controller_for_reset.update(cx, |this, cx| {
                             this.reset_key_binding(slot, cx);
                         });
                     },
@@ -1605,25 +1549,25 @@ fn format_keystroke_preview(ks: &gpui::Keystroke) -> String {
     parts
 }
 
-fn sync_page(entity: Entity<AppView>) -> SettingPage {
+fn sync_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.sync.title"))
         .description(i18n::string("settings.pages.sync.description"))
         .resettable(false)
         .groups(vec![
-            sync_status_group(entity.clone()),
-            sync_encryption_group(entity.clone()),
-            sync_provider_group(entity.clone()),
+            sync_status_group(settings.clone()),
+            sync_encryption_group(settings.clone()),
+            sync_provider_group(settings),
         ])
 }
 
-fn vault_page(entity: Entity<AppView>) -> SettingPage {
+fn vault_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.vault.title"))
         .description(i18n::string("settings.pages.vault.description"))
         .resettable(false)
-        .groups(vec![sync_vault_group(entity)])
+        .groups(vec![sync_vault_group(settings)])
 }
 
-fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
+fn sync_vault_group(settings: Entity<SettingsController>) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.sync.vault_group.title"))
         .description(i18n::string("settings.sync.vault_group.description"))
@@ -1631,23 +1575,27 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.vault.status.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let disable_in_progress = entity.read(cx).local_vault_disable_in_progress;
-                        let status_text = entity.read(cx).local_vault_status_label();
-                        let show_lock = matches!(
-                            entity.read(cx).local_vault_status,
-                            LocalVaultStatus::Unlocked
-                        );
+                        let controller = settings.read(cx);
+                        let disable_in_progress = controller.local_vault_disable_in_progress();
+                        let status_text = controller.local_vault_status_label();
+                        let show_lock =
+                            controller.local_vault_status() == LocalVaultStatus::Unlocked;
                         let action = show_lock.then(|| {
-                            let entity = entity.clone();
+                            let settings = settings.clone();
                             settings_action_button(
                                 "local-vault-lock",
                                 i18n::string("settings.sync.vault.actions.lock"),
                                 false,
-                                move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.submit_local_vault_lock_action(window, cx);
+                                move |_window, cx| {
+                                    settings.update(cx, |controller, cx| {
+                                        controller.emit(
+                                            AppCommand::VaultActionRequested(
+                                                LocalVaultActionRequest::Lock,
+                                            ),
+                                            cx,
+                                        );
                                     });
                                 },
                             )
@@ -1661,30 +1609,29 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.vault.passphrase.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let disable_in_progress = entity.read(cx).local_vault_disable_in_progress;
-                        let needs_passphrase = entity.read(cx).local_vault_requires_passphrase();
-                        let can_change_passphrase =
-                            entity.read(cx).local_vault_can_change_passphrase();
+                        let controller = settings.read(cx);
+                        let disable_in_progress = controller.local_vault_disable_in_progress();
+                        let needs_passphrase = controller.local_vault_requires_passphrase();
+                        let can_change_passphrase = controller.local_vault_can_change_passphrase();
                         if needs_passphrase || can_change_passphrase {
                             let popup_mode = if needs_passphrase {
                                 LocalVaultPassphrasePopupMode::PrimaryAction
                             } else {
                                 LocalVaultPassphrasePopupMode::ChangePassphrase
                             };
-                            let action_label = entity
-                                .read(cx)
-                                .local_vault_passphrase_popup_title(popup_mode);
-                            let entity = entity.clone();
+                            let action_label =
+                                controller.local_vault_passphrase_popup_title(popup_mode);
+                            let settings = settings.clone();
                             render_supporting_action_field(
                                 settings_action_button(
                                     "local-vault-passphrase-sheet",
                                     action_label,
                                     false,
                                     move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.open_local_vault_passphrase_popup(
+                                        settings.update(cx, |controller, cx| {
+                                            controller.open_local_vault_passphrase_popup(
                                                 popup_mode, window, cx,
                                             );
                                         });
@@ -1704,7 +1651,7 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
             .description(i18n::string("settings.sync.vault.passphrase.description")),
             SettingItem::new(
                 i18n::string("settings.sync.vault.auto_lock_duration.label"),
-                SettingField::element(LocalVaultAutoLockDurationField::new(entity.clone())),
+                SettingField::element(LocalVaultAutoLockDurationField::new(settings.clone())),
             )
             .description(i18n::string(
                 "settings.sync.vault.auto_lock_duration.description",
@@ -1712,9 +1659,10 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.vault.disable.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let disable_in_progress = entity.read(cx).local_vault_disable_in_progress;
+                        let controller = settings.read(cx);
+                        let disable_in_progress = controller.local_vault_disable_in_progress();
                         if disable_in_progress {
                             v_flex()
                                 .w_full()
@@ -1732,15 +1680,15 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
                                     ),
                                 )
                                 .into_any_element()
-                        } else if entity.read(cx).local_vault_can_disable() {
-                            let entity = entity.clone();
+                        } else if controller.local_vault_can_disable() {
+                            let settings = settings.clone();
                             settings_action_button(
                                 "local-vault-disable",
                                 i18n::string("settings.sync.vault.actions.disable"),
                                 false,
                                 move |window, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.submit_local_vault_disable_action(window, cx);
+                                    settings.update(cx, |controller, cx| {
+                                        controller.open_local_vault_disable_confirm(window, cx);
                                     });
                                 },
                             )
@@ -1763,14 +1711,14 @@ fn sync_vault_group(entity: Entity<AppView>) -> SettingGroup {
         ])
 }
 
-fn sync_provider_group(entity: Entity<AppView>) -> SettingGroup {
+fn sync_provider_group(settings: Entity<SettingsController>) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.sync.provider_group.title"))
         .description(i18n::string("settings.sync.provider_group.description"))
         .item(
             SettingItem::new(
                 i18n::string("settings.sync.provider.backend.label"),
-                SettingField::element(SyncProviderField::new(entity.clone())),
+                SettingField::element(SyncProviderField::new(settings)),
             )
             .description(i18n::string("settings.sync.provider.backend.description")),
         )
@@ -1819,7 +1767,7 @@ fn render_text_actions_field(text: String, actions: Vec<AnyElement>) -> AnyEleme
         .into_any_element()
 }
 
-fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {
+fn sync_encryption_group(settings: Entity<SettingsController>) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.sync.encryption_group.title"))
         .description(i18n::string("settings.sync.encryption_group.description"))
@@ -1827,11 +1775,11 @@ fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.encryption.passphrase.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let configured = entity.read(cx).passphrase_is_set();
+                        let configured = settings.read(cx).passphrase_is_set();
                         let operation_in_progress =
-                            entity.read(cx).sync_passphrase_operation_in_progress();
+                            settings.read(cx).sync_passphrase_operation_in_progress();
                         let status_text = i18n::string(if configured {
                             "settings.sync.encryption.passphrase.configured_hint"
                         } else {
@@ -1855,17 +1803,17 @@ fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {
                             );
                         }
 
-                        let action_label = entity.read(cx).sync_passphrase_action_label();
-                        let clear_label = entity.read(cx).sync_passphrase_clear_action_label();
-                        let entity_open = entity.clone();
+                        let action_label = settings.read(cx).sync_passphrase_action_label();
+                        let clear_label = settings.read(cx).sync_passphrase_clear_action_label();
+                        let settings_open = settings.clone();
                         let mut actions = vec![
                             settings_action_button(
                                 "sync-passphrase-open",
                                 action_label,
                                 !configured,
                                 move |window, cx| {
-                                    entity_open.update(cx, |this, cx| {
-                                        this.open_sync_passphrase_popup(window, cx);
+                                    settings_open.update(cx, |controller, cx| {
+                                        controller.open_sync_passphrase_popup(window, cx);
                                     });
                                 },
                             )
@@ -1873,15 +1821,15 @@ fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {
                         ];
 
                         if configured {
-                            let entity_clear = entity.clone();
+                            let settings_clear = settings.clone();
                             actions.push(
                                 settings_action_button(
                                     "sync-passphrase-clear",
                                     clear_label,
                                     false,
-                                    move |window, cx| {
-                                        entity_clear.update(cx, |this, cx| {
-                                            this.clear_sync_passphrase(window, cx);
+                                    move |_window, cx| {
+                                        settings_clear.update(cx, |controller, cx| {
+                                            controller.open_sync_passphrase_clear_confirm_popup(cx);
                                         });
                                     },
                                 )
@@ -1900,7 +1848,7 @@ fn sync_encryption_group(entity: Entity<AppView>) -> SettingGroup {
         )
 }
 
-fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
+fn sync_status_group(settings: Entity<SettingsController>) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.sync.status_group.title"))
         .description(i18n::string("settings.sync.status_group.description"))
@@ -1908,15 +1856,9 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.status.last_synced.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let last_sync_at = entity
-                            .read(cx)
-                            .sync
-                            .sync_engine
-                            .config_store
-                            .config
-                            .last_sync_at;
+                        let last_sync_at = settings.read(cx).sync_config().last_sync_at;
                         let text = if last_sync_at == 0 {
                             i18n::string("settings.sync.status.last_synced.never")
                         } else {
@@ -1937,11 +1879,11 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.status.state.label"),
                 SettingField::render({
-                    let entity = entity.clone();
+                    let settings = settings.clone();
                     move |_, _, cx| {
-                        let status_text = super::super::super::support::sync_status_summary(
-                            &entity.read(cx).sync.sync_status,
-                        );
+                        let sync_status = settings.read(cx).sync_status().clone();
+                        let status_text =
+                            super::super::super::support::sync_status_summary(&sync_status);
                         let roles = miaominal_settings::current_theme().material.roles;
                         div()
                             .w_full()
@@ -1959,8 +1901,8 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
             SettingItem::new(
                 i18n::string("settings.sync.status.action.label"),
                 SettingField::render(move |_options, _, cx| {
-                    let entity = entity.clone();
-                    let disabled = entity.read(cx).sync_in_progress();
+                    let settings = settings.clone();
+                    let disabled = matches!(settings.read(cx).sync_status(), SyncStatus::Syncing);
 
                     editor_button_with_id(
                         "sync-now-button",
@@ -1969,8 +1911,8 @@ fn sync_status_group(entity: Entity<AppView>) -> SettingGroup {
                         true,
                         disabled,
                         move |window, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.trigger_sync_now(window, cx);
+                            settings.update(cx, |controller, cx| {
+                                controller.trigger_sync_now(window, cx);
                             });
                         },
                     )

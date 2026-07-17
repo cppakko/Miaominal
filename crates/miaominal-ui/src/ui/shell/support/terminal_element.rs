@@ -1,10 +1,12 @@
 use super::custom_glyphs;
-use crate::ui::shell::{AppView, PaneId, TerminalHoveredLink};
+use crate::ui::shell::{
+    AppView, PaneId, SessionController, TabId, TerminalHoveredLink, WorkspaceTerminalInputExt,
+};
 use gpui::{
-    Background, Bounds, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
-    InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString,
+    Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
+    InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
     StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
-    canvas, fill, px, quad, rgba, size,
+    Window, canvas, fill, px, quad, rgba, size,
 };
 use miaominal_terminal::{SearchMatchKind, TerminalSnapshot, terminal_font, terminal_font_size};
 use std::{
@@ -17,13 +19,16 @@ use std::{
 const TERMINAL_SCROLLBAR_TRACK_WIDTH: f32 = 6.0;
 const TERMINAL_SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 20.0;
 
-struct TerminalCanvasPrepaint {
+pub(in crate::ui::shell) struct TerminalCanvasPrepaint {
     snapshot: Arc<TerminalSnapshot>,
     focus: FocusHandle,
+    input_controller: WeakEntity<SessionController>,
+    tab_id: TabId,
 }
 
 struct TerminalImeHandler {
-    entity: WeakEntity<AppView>,
+    controller: WeakEntity<SessionController>,
+    tab_id: TabId,
 }
 
 #[derive(Clone, Copy)]
@@ -71,8 +76,11 @@ impl InputHandler for TerminalImeHandler {
             return;
         }
         let bytes = text.as_bytes().to_vec();
-        self.entity
-            .update(cx, |this, cx| this.send_terminal_bytes(bytes, cx))
+        let tab_id = self.tab_id;
+        self.controller
+            .update(cx, |controller, cx| {
+                controller.send_terminal_input(tab_id, bytes, cx);
+            })
             .ok();
     }
 
@@ -117,44 +125,11 @@ pub(in crate::ui::shell) struct TerminalScrollbarMetrics {
     pub(in crate::ui::shell) thumb_max_offset: f32,
 }
 
-#[allow(dead_code)] // single-pane back-compat shim; kept in case external callers reappear
-pub(in crate::ui::shell) fn render_terminal_canvas(
-    snapshot: TerminalSnapshot,
+pub(in crate::ui::shell) fn render_terminal_canvas_for_pane<V: TerminalCanvasHost>(
     hovered_link: Option<TerminalHoveredLink>,
     cell_width: f32,
     line_height: f32,
-    view: WeakEntity<AppView>,
-) -> impl IntoElement {
-    // Back-compat shim: delegates to the pane-aware variant using the active pane.
-    canvas(
-        move |bounds, _window, cx| {
-            view.update(cx, |this, cx| {
-                let pane_id = this.active_pane_id();
-                this.write_pane_terminal_metrics(pane_id, bounds, cell_width, line_height, cx);
-            })
-            .ok();
-        },
-        move |bounds, _state, window, cx| {
-            paint_snapshot(
-                bounds,
-                &snapshot,
-                hovered_link.as_ref(),
-                cell_width,
-                line_height,
-                window,
-                cx,
-            );
-            paint_scrollbar(bounds, &snapshot, window);
-        },
-    )
-    .size_full()
-}
-
-pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
-    hovered_link: Option<TerminalHoveredLink>,
-    cell_width: f32,
-    line_height: f32,
-    view: WeakEntity<AppView>,
+    view: WeakEntity<V>,
     pane_id: PaneId,
     show_scrollbar: bool,
 ) -> impl IntoElement {
@@ -162,8 +137,7 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
     canvas(
         move |bounds, window, cx| -> Option<TerminalCanvasPrepaint> {
             view.update(cx, |this, cx| {
-                prepare_terminal_canvas_prepaint(
-                    this,
+                this.prepare_terminal_canvas_prepaint(
                     pane_id,
                     bounds,
                     cell_width,
@@ -196,7 +170,8 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
                 window.handle_input(
                     focus,
                     TerminalImeHandler {
-                        entity: view_for_paint.clone(),
+                        controller: prepaint.input_controller.clone(),
+                        tab_id: prepaint.tab_id,
                     },
                     cx,
                 );
@@ -221,25 +196,7 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
                     }
 
                     view.update(cx, |this, cx| {
-                        if this.active_pane_id() != pane_id {
-                            return;
-                        }
-
-                        if this.workspace_state.workspace.active_pane.terminal_dragging
-                            || this
-                                .workspace_state
-                                .workspace
-                                .active_pane
-                                .terminal_mouse_reporting_active
-                            || this
-                                .workspace_state
-                                .workspace
-                                .active_pane
-                                .terminal_scrollbar_drag
-                                .is_some()
-                        {
-                            this.handle_terminal_mouse_move(event, cx);
-                        }
+                        this.handle_terminal_outside_mouse_move(pane_id, event, cx);
                     })
                     .ok();
                 }
@@ -260,25 +217,7 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
                     }
 
                     view.update(cx, |this, cx| {
-                        if this.active_pane_id() != pane_id {
-                            return;
-                        }
-
-                        if this.workspace_state.workspace.active_pane.terminal_dragging
-                            || this
-                                .workspace_state
-                                .workspace
-                                .active_pane
-                                .terminal_mouse_reporting_active
-                            || this
-                                .workspace_state
-                                .workspace
-                                .active_pane
-                                .terminal_scrollbar_drag
-                                .is_some()
-                        {
-                            this.handle_terminal_mouse_up(event, cx);
-                        }
+                        this.handle_terminal_outside_mouse_up(pane_id, event, cx);
                     })
                     .ok();
                 }
@@ -286,6 +225,84 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane(
         },
     )
     .size_full()
+}
+
+pub(in crate::ui::shell) trait TerminalCanvasHost:
+    Render + Sized + 'static
+{
+    fn prepare_terminal_canvas_prepaint(
+        &mut self,
+        pane_id: PaneId,
+        bounds: Bounds<Pixels>,
+        cell_width: f32,
+        line_height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TerminalCanvasPrepaint>;
+
+    fn handle_terminal_outside_mouse_move(
+        &mut self,
+        pane_id: PaneId,
+        event: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    );
+
+    fn handle_terminal_outside_mouse_up(
+        &mut self,
+        pane_id: PaneId,
+        event: &MouseUpEvent,
+        cx: &mut Context<Self>,
+    );
+}
+
+impl TerminalCanvasHost for AppView {
+    fn prepare_terminal_canvas_prepaint(
+        &mut self,
+        pane_id: PaneId,
+        bounds: Bounds<Pixels>,
+        cell_width: f32,
+        line_height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TerminalCanvasPrepaint> {
+        prepare_terminal_canvas_prepaint(self, pane_id, bounds, cell_width, line_height, window, cx)
+    }
+
+    fn handle_terminal_outside_mouse_move(
+        &mut self,
+        pane_id: PaneId,
+        event: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_pane_id() != pane_id {
+            return;
+        }
+        let pane = &self.workspace.workspace.active_pane;
+        if pane.terminal_dragging
+            || pane.terminal_mouse_reporting_active
+            || pane.terminal_scrollbar_drag.is_some()
+        {
+            self.handle_terminal_mouse_move(event, cx);
+        }
+    }
+
+    fn handle_terminal_outside_mouse_up(
+        &mut self,
+        pane_id: PaneId,
+        event: &MouseUpEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_pane_id() != pane_id {
+            return;
+        }
+        let pane = &self.workspace.workspace.active_pane;
+        if pane.terminal_dragging
+            || pane.terminal_mouse_reporting_active
+            || pane.terminal_scrollbar_drag.is_some()
+        {
+            self.handle_terminal_mouse_up(event, cx);
+        }
+    }
 }
 
 fn prepare_terminal_canvas_prepaint(
@@ -297,84 +314,69 @@ fn prepare_terminal_canvas_prepaint(
     window: &mut gpui::Window,
     cx: &mut gpui::Context<AppView>,
 ) -> Option<TerminalCanvasPrepaint> {
-    let (tab_index, focus, metrics_changed) =
-        if pane_id == this.workspace_state.workspace.active_pane_id {
-            let metrics_changed = this.workspace_state.workspace.active_pane.terminal_bounds
-                != Some(bounds)
-                || this
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_cell_width
-                    != cell_width
-                || this
-                    .workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_line_height
-                    != line_height;
-            this.workspace_state.workspace.active_pane.terminal_bounds = Some(bounds);
-            this.workspace_state
-                .workspace
-                .active_pane
-                .terminal_cell_width = cell_width;
-            this.workspace_state
-                .workspace
-                .active_pane
-                .terminal_line_height = line_height;
+    let (active_tab_id, focus, metrics_changed) = if pane_id
+        == this.workspace.workspace.active_pane_id
+    {
+        let metrics_changed = this.workspace.workspace.active_pane.terminal_bounds != Some(bounds)
+            || this.workspace.workspace.active_pane.terminal_cell_width != cell_width
+            || this.workspace.workspace.active_pane.terminal_line_height != line_height;
+        this.workspace.workspace.active_pane.terminal_bounds = Some(bounds);
+        this.workspace.workspace.active_pane.terminal_cell_width = cell_width;
+        this.workspace.workspace.active_pane.terminal_line_height = line_height;
 
-            (
-                this.workspace_state.workspace.active_tab,
-                this.workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_focus
-                    .clone(),
-                metrics_changed,
-            )
-        } else {
-            let parked = this
-                .workspace_state
-                .workspace
-                .parked_panes
-                .get_mut(&pane_id)?;
-            let metrics_changed = parked.terminal_bounds != Some(bounds)
-                || parked.terminal_cell_width != cell_width
-                || parked.terminal_line_height != line_height;
-            parked.terminal_bounds = Some(bounds);
-            parked.terminal_cell_width = cell_width;
-            parked.terminal_line_height = line_height;
-
-            (
-                parked.active_tab,
-                parked.terminal_focus.clone(),
-                metrics_changed,
-            )
-        };
-
-    let resized = tab_index.is_some_and(|index| {
-        this.sync_session_terminal_size_from_metrics(
-            index,
-            bounds,
-            cell_width,
-            line_height,
-            !metrics_changed,
-            cx,
+        (
+            this.workspace.workspace.active_tab,
+            this.workspace.workspace.active_pane.terminal_focus.clone(),
+            metrics_changed,
         )
-    });
+    } else {
+        let parked = this.workspace.workspace.parked_panes.get_mut(&pane_id)?;
+        let metrics_changed = parked.terminal_bounds != Some(bounds)
+            || parked.terminal_cell_width != cell_width
+            || parked.terminal_line_height != line_height;
+        parked.terminal_bounds = Some(bounds);
+        parked.terminal_cell_width = cell_width;
+        parked.terminal_line_height = line_height;
+
+        (
+            parked.active_tab,
+            parked.terminal_focus.clone(),
+            metrics_changed,
+        )
+    };
+
+    let resized = active_tab_id
+        .and_then(|tab_id| this.workspace.tabs.index_of(tab_id))
+        .is_some_and(|index| {
+            this.sync_session_terminal_size_from_metrics(
+                index,
+                bounds,
+                cell_width,
+                line_height,
+                !metrics_changed,
+                cx,
+            )
+        });
 
     if metrics_changed || resized {
         cx.notify();
     }
 
-    let focused =
-        pane_id == this.workspace_state.workspace.active_pane_id && focus.is_focused(window);
-    let snapshot: Arc<TerminalSnapshot> = tab_index
-        .and_then(|index| this.workspace_state.tabs.get(index))
-        .and_then(|tab| tab.as_session())
-        .map(|session| session.terminal.snapshot(focused))?;
+    let focused = pane_id == this.workspace.workspace.active_pane_id && focus.is_focused(window);
+    let tab_id = active_tab_id?;
+    let input_controller = this.controllers.session.downgrade();
+    let snapshot = this
+        .controllers
+        .session
+        .read(cx)
+        .terminal_snapshot(tab_id, focused)?;
 
-    Some(TerminalCanvasPrepaint { snapshot, focus })
+    Some(TerminalCanvasPrepaint {
+        snapshot,
+        focus,
+        input_controller,
+        tab_id,
+    })
 }
 
 pub(in crate::ui::shell) fn terminal_scrollbar_metrics(
@@ -924,7 +926,7 @@ mod tests {
         }
 
         let hovered = TerminalHoveredLink {
-            tab_id: 7,
+            tab_id: TabId::new(7),
             line: 0,
             start_column: 9,
             end_column: 13,

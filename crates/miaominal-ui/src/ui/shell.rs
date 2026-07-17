@@ -1,6 +1,5 @@
 use crate::ui::assets::AppIcon;
-use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
-use futures::StreamExt;
+use anyhow::{Result, anyhow};
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, Div, ElementId,
     Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
@@ -8,43 +7,34 @@ use gpui::{
     Pixels, Point, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful,
     Styled, Subscription, WeakEntity, Window, WindowControlArea, canvas, div, prelude::*, px, rgb,
 };
+use gpui_component::{Icon, IconName, Root};
 use gpui_component::{
-    Colorize, Sizable as _, VirtualListScrollHandle,
+    Sizable as _,
     button::{Button, ButtonVariants as _},
-    color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+    color_picker::{ColorPicker, ColorPickerState},
     h_flex,
     input::TabSize,
     input::{InputEvent, InputState},
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
-    select::{SearchableVec, SelectEvent, SelectItem, SelectState},
+    select::{SearchableVec, SelectItem, SelectState},
     stepper::{Stepper, StepperItem},
     table::{Column, TableDelegate, TableEvent, TableState},
     v_flex,
 };
-use gpui_component::{Icon, IconName, Root};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::{
-    AuthMethod, PortForwardKind, PortForwardRule, SessionEnvironmentVariable, SessionProfile,
-    ShellType,
+    AuthMethod, PortForwardKind, PortForwardRule, SessionProfile, ShellType,
 };
 use miaominal_core::snippet::SnippetRecord;
-use miaominal_settings::{self, KeyBinding};
-use miaominal_sftp::{
-    self, SftpCommandSender, SftpDirectoryRequestId, SftpEntry, SftpEvent, SftpEventReceiver,
-    SftpProgressReceiver, SftpTransferChild, SftpTransferChildState, SftpTransferChildUpdate,
-    SftpTransferProgress, TransferChildId, TransferDirection, TransferId,
-};
-use miaominal_ssh::{
-    self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,
-    SessionEventReceiver, SessionMonitorSnapshot,
-};
+use miaominal_settings;
+use miaominal_sftp::{self, SftpEntry, TransferDirection, TransferId};
+use miaominal_ssh::{self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot};
 use miaominal_storage::SettingsStore;
-use miaominal_sync::engine::SyncEngine;
 use miaominal_sync::{SyncProvider, SyncStatus};
 use miaominal_terminal::{
     MouseEncoding, MouseProtocol, MouseReportButton, MouseReportKind, MouseReportModifiers,
-    TerminalInputModes, TerminalScroll, TerminalState, encode_mouse_report, sanitize_paste,
+    TerminalInputModes, TerminalScroll, TerminalState, encode_mouse_report,
     terminal_cell_width_default, terminal_line_height_default,
 };
 use tokio::runtime::Handle as TokioHandle;
@@ -53,7 +43,6 @@ mod actions;
 #[path = "shell/app_view.rs"]
 mod app_view;
 mod bootstrap;
-mod bootstrap_form_factory;
 mod bootstrap_loaders;
 mod bootstrap_subscriptions;
 mod containers;
@@ -65,6 +54,8 @@ mod navigation;
 mod pages;
 mod panes;
 mod render;
+mod session;
+mod session_agent;
 mod session_agent_stream_batch;
 mod session_agent_view;
 mod settings_labels;
@@ -72,9 +63,11 @@ mod sftp_browser;
 mod state;
 mod support;
 mod system_file_icons;
+mod terminal;
 mod workspace;
 
 pub use app_view::AppView;
+use app_view::ShellUiState;
 
 pub(crate) use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
@@ -91,18 +84,52 @@ pub(crate) use crate::ui::utils::{
     format_byte_size, format_local_timestamp, truncate_with_ellipsis,
 };
 pub(in crate::ui::shell) use actions::{
-    PromptHistoryDirection, SessionAgentTargetCandidate, ValidationFailure,
-    ValidationNotificationKind, ai_provider_kind_label_key, ai_provider_select_options,
-    web_search_provider_kind_label_key,
+    ValidationFailure, ValidationNotificationKind, ai_provider_kind_label_key,
+    ai_provider_select_options, error_notification, success_notification, validation_notification,
+    warning_notification, web_search_endpoint_placeholder, web_search_provider_kind_label_key,
 };
-use containers::{AppDataState, AppViewSubscriptions, EditorOverlayState, PanelViewState};
+use containers::{AppViewSubscriptions, RootSubscriptions};
 use controllers::ControllerSet;
-use forms::{
-    ChatSearchForms, HostEditorForms, HostsForms, KeychainForms, PanelForms, PortForwardingForms,
-    SettingsForms, SftpBrowserForms, SnippetsForms, TerminalSearchForms, TrustedHostsForms,
-    WorkspaceAgentForms, WorkspaceForms, WorkspaceSnippetsForms,
+pub(in crate::ui::shell) use controllers::{
+    AgentApprovedToolTask, AgentContinuationPreparation, AgentController, AgentControllerArgs,
+    AgentDeferredCommand, AgentExecMode, AgentFinishStreamOutcome, AgentPromptDraft,
+    AgentPromptDraftOutcome, AgentPromptRequestPreparation, AgentStreamTask,
+    AgentStreamTaskRequest, AgentToolApprovalCommit, AgentToolContinuation, AppCommand,
+    ChatPanelView, ClosedSessionTabState, DeferredAppCommand, KeyBindingSlot, KeychainController,
+    KeychainControllerArgs, KeychainDeferredCommand, KeychainEditorMode, KeychainPageView,
+    LocalSftpEntry, LocalVaultActionRequest, LocalVaultChangePassphraseResult,
+    LocalVaultEnableResult, LocalVaultOperationResult, LocalVaultRootExt, LocalVaultUnlockResult,
+    ManagedKeysChange, MonitorChartPoint, OnboardingState, OnboardingStep,
+    OnboardingStepTransition, OnboardingStepTransitionPhase, PendingAiProviderPopupState,
+    PendingChatSessionDeleteState, PendingChatSessionRenameState, PendingKnownHostDeleteState,
+    PendingLocalDataResetConfirmState, PendingLocalDataResetConfirmationPopupState,
+    PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
+    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
+    PendingSyncDirectionState, PendingSyncPassphraseClearConfirmPopupState,
+    PendingSyncPassphrasePopupState, PendingSyncProviderConfigPopupState,
+    PendingSyncPullConfirmState, PendingWebSearchConfigPopupState, PromptHistoryDirection,
+    SessionAgentBackgroundNotificationKind, SessionAgentMessage, SessionAgentMessageMotion,
+    SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentTargetCandidate,
+    SessionAgentToolCall, SessionAgentToolStatus, SessionConnectionState, SessionController,
+    SessionControllerArgs, SessionDeferredCommand, SessionEventOutcome, SessionEventTabRemoval,
+    SessionFailureStatus, SessionNotificationTone, SessionPortSession, SessionPortSnapshot,
+    SessionPurpose, SessionQueryPort, SessionSftpProgressCenterDragState, SessionSidePanelView,
+    SessionTabState, SessionTerminalPort, SessionTerminalTarget, SettingsController,
+    SettingsControllerArgs, SettingsDeferredCommand, SettingsForms, SftpController,
+    SftpControllerArgs, SftpDeferredCommand, SftpDragSelectionState, SftpPromptKind,
+    SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus,
+    SftpTransferRow, SftpTransferStatus, SyncPullConfirmReason, TerminalLease, TerminalLeaseError,
+    TerminalLeaseGrant, TerminalMenuCommand, TrustedHostFilter, split_message_into_blocks,
 };
-pub(in crate::ui::shell) use forms::{KeyBindingSlot, SelectOption};
+#[cfg(test)]
+pub(in crate::ui::shell) use controllers::{
+    SESSION_MONITOR_HISTORY_LIMIT, SessionAgentExecutionContext, SessionAgentState,
+    SessionMonitoringState, chat_record_from_session_agent_message, restored_tool_status_and_note,
+    session_agent_message_from_record, tool_status_as_str,
+};
+pub(in crate::ui::shell) use forms::SelectOption;
+use forms::{TerminalSearchAnimation, WorkspaceForms};
+pub(in crate::ui::shell) use layout::{ChromeAppViewExt, WorkspacePanesAppViewExt};
 pub(in crate::ui::shell) use metrics::*;
 pub(in crate::ui::shell) use miaominal_services::AppServices;
 pub(in crate::ui::shell) use navigation::SidebarSection;
@@ -115,41 +142,28 @@ pub(in crate::ui::shell) use sftp_browser::{
     SftpBrowserSelectionModifiers, SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
 };
 pub(in crate::ui::shell) use state::{
-    AgentExecMode, ChatPanelView, ClosedSessionTabState, ClosedTabBundle, DialogOverlaySnapshot,
-    DialogState, DraggedTab, ExitingDialogState, HostEditorEnvironmentVariableRow,
-    InlineRenameState, LocalSftpEntry, MonitorChartPoint, OnboardingState, PanelState,
-    PendingAiProviderPopupState, PendingChatSessionDeleteState, PendingChatSessionRenameState,
-    PendingKnownHostDeleteState, PendingLocalVaultDisableConfirmState,
-    PendingManagedKeyDeleteState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
-    PendingSnippetDeleteState, PendingSyncDirectionState, PendingSyncPassphrasePopupState,
-    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
-    PendingWebSearchConfigPopupState, SecretVisibilityState, SessionAgentAutoScrollState,
-    SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
-    SessionAgentPanelDragState, SessionAgentState, SessionAgentToolCall, SessionAgentToolStatus,
-    SessionConnectionState, SessionMonitoringState, SessionPurpose,
-    SessionSftpProgressCenterDragState, SessionSidePanelView, SessionTabState,
-    SftpDragSelectionState, SftpEditSession, SftpPromptKind, SftpPromptState, SftpSplitDivider,
-    SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow, SftpTransferStatus,
-    ShellState, SyncProviderConfigSaveOperation, SyncPullConfirmReason, SyncUiState, TabKind,
-    TabState, TrustedHostFilter, WorkspaceState, split_message_into_blocks,
-    trailing_at_mention_query,
+    DialogOverlaySnapshot, DraggedTab, ExitingDialogState, ShellState,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 pub(in crate::ui::shell) use system_file_icons::render_system_file_icon;
-use workspace::{PaneLayout, SplitAxis, SplitDirection, TabWorkspaceState};
+pub(in crate::ui::shell) use terminal::WorkspaceTerminalInputExt;
+use workspace::{
+    ClosePlanStep, ClosedSftpTabState, ClosedTabBundle, PaneLayout, SplitAxis, SplitDirection,
+    TabDescriptor, TabId, TabKindTag, TabPlacement, TabRegistry, TabState, TabWorkspaceState,
+    WorkspaceModel, reopened_tab_id,
+};
 
+pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
 use support::{
-    CONTAINER_TRANSITION_DURATION, OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent,
-    TerminalKeyPhase, TerminalScrollbarMetrics, classify_terminal_key,
-    container_transition_animation, list_enter_animation, new_input_state, overlay_enter_animation,
+    OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase,
+    TerminalScrollbarMetrics, classify_terminal_key, container_transition_animation,
+    list_enter_animation, localized_secret_placeholder, new_input_state, overlay_enter_animation,
     render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
     render_terminal_canvas_for_pane, set_code_editor_input_placeholder, set_input_placeholder,
     set_input_value, short_feedback_animation, terminal_cell_width, terminal_line_height,
     terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
 };
-pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {
     gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
@@ -171,22 +185,10 @@ pub(in crate::ui::shell) enum ProfileViewMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::ui::shell) enum KeychainPageView {
-    ManagedKeys,
-    AgentIdentities,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum KeychainEditorMode {
-    Import,
-    Deploy,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PrimaryViewKind {
     Sidebar(SidebarSection),
-    Terminal(usize),
-    Sftp(usize),
+    Terminal(TabId),
+    Sftp(TabId),
 }
 
 #[derive(Clone, Copy)]
@@ -206,7 +208,7 @@ pub(in crate::ui::shell) enum TopbarTabVisualKind {
 
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) struct TopbarTabSnapshot {
-    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) tab_id: TabId,
     pub(in crate::ui::shell) visible_index: usize,
     pub(in crate::ui::shell) title: String,
     pub(in crate::ui::shell) kind: TopbarTabVisualKind,
@@ -215,7 +217,7 @@ pub(in crate::ui::shell) struct TopbarTabSnapshot {
 
 #[derive(Clone, Copy, Debug)]
 pub(in crate::ui::shell) struct TopbarTabEnterTransition {
-    pub(in crate::ui::shell) tab_id: usize,
+    pub(in crate::ui::shell) tab_id: TabId,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
 }
@@ -229,8 +231,8 @@ pub(in crate::ui::shell) struct TopbarTabExitTransition {
 
 #[derive(Clone, Copy, Debug)]
 pub(in crate::ui::shell) struct TopbarActiveTabTransition {
-    pub(in crate::ui::shell) from_tab_id: Option<usize>,
-    pub(in crate::ui::shell) to_tab_id: Option<usize>,
+    pub(in crate::ui::shell) from_tab_id: Option<TabId>,
+    pub(in crate::ui::shell) to_tab_id: Option<TabId>,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
 }
@@ -256,38 +258,6 @@ pub(in crate::ui::shell) struct PageEditorSidebarTransition {
     pub(in crate::ui::shell) phase: PageEditorSidebarTransitionPhase,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum OnboardingStep {
-    Welcome,
-    Preferences,
-    Import,
-    Finish,
-}
-
-impl OnboardingStep {
-    pub(in crate::ui::shell) const ALL: [Self; 4] =
-        [Self::Welcome, Self::Preferences, Self::Import, Self::Finish];
-
-    pub(in crate::ui::shell) const fn index(self) -> usize {
-        match self {
-            Self::Welcome => 0,
-            Self::Preferences => 1,
-            Self::Import => 2,
-            Self::Finish => 3,
-        }
-    }
-
-    pub(in crate::ui::shell) fn next(self) -> Option<Self> {
-        Self::ALL.get(self.index() + 1).copied()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum OnboardingStepTransitionPhase {
-    Exiting,
-    Entering,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,58 +299,6 @@ impl SecretRevealTarget {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum PendingLocalVaultUnlockAction {
-    OpenSession(Box<SessionProfile>),
-    OpenSyncNow,
-    DeployManagedKey,
-    SaveProfile,
-    ImportManagedKey,
-    SavePortForwardRule,
-    SaveSnippet,
-    SaveSyncPassphrase(String),
-    OpenSyncProviderConfig(SyncProvider),
-    SaveSyncProviderConfig(SyncProviderConfigSaveDraft),
-    OpenAiProvider(String),
-    SaveAiProvider(AiProviderSaveDraft),
-    OpenWebSearchConfig,
-    SaveWebSearch(WebSearchSaveDraft),
-    ClearSyncPassphrase,
-    RevealSecret(SecretRevealTarget),
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum SyncProviderConfigSaveDraft {
-    GithubGist {
-        token: String,
-        gist_id: Option<String>,
-    },
-    WebDav {
-        url: String,
-        username: String,
-        password: String,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct AiProviderSaveDraft {
-    pub(in crate::ui::shell) provider: miaominal_settings::AiProviderConfig,
-    pub(in crate::ui::shell) api_key: String,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct WebSearchSaveDraft {
-    pub(in crate::ui::shell) config: miaominal_settings::WebSearchConfig,
-    pub(in crate::ui::shell) api_key: String,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct OnboardingStepTransition {
-    pub(in crate::ui::shell) phase: OnboardingStepTransitionPhase,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum WorkspaceSidePanelTransitionPhase {
     Entering,
@@ -390,19 +308,6 @@ pub(in crate::ui::shell) enum WorkspaceSidePanelTransitionPhase {
 #[derive(Clone, Copy, Debug)]
 pub(in crate::ui::shell) struct WorkspaceSidePanelTransition {
     pub(in crate::ui::shell) phase: WorkspaceSidePanelTransitionPhase,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SftpProgressCenterTransitionPhase {
-    Entering,
-    Exiting,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct SftpProgressCenterTransition {
-    pub(in crate::ui::shell) phase: SftpProgressCenterTransitionPhase,
     pub(in crate::ui::shell) started_at: Instant,
     pub(in crate::ui::shell) duration: Duration,
 }
@@ -455,6 +360,22 @@ impl ManagedKeySelectItem {
             title: SharedString::from(key.name.clone()),
             summary: SharedString::from(format!("{}  {}", key.id, key.algorithm)),
         }
+    }
+
+    pub(in crate::ui::shell) fn sorted_items(managed_keys: &[ManagedKeyRecord]) -> Vec<Self> {
+        let mut items = managed_keys.iter().map(Self::new).collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.title
+                .as_ref()
+                .to_ascii_lowercase()
+                .cmp(&right.title.as_ref().to_ascii_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items
+    }
+
+    pub(in crate::ui::shell) fn options(managed_keys: &[ManagedKeyRecord]) -> SearchableVec<Self> {
+        SearchableVec::new(Self::sorted_items(managed_keys))
     }
 }
 

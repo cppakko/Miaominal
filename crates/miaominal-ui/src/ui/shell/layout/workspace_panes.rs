@@ -38,19 +38,78 @@ fn pane_drop_zone_style(
     refined
 }
 
-impl AppView {
-    pub(in crate::ui::shell::layout) fn render_pane_layout(
+pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
+    fn render_pane_layout(
         &mut self,
         layout: &PaneLayout,
         path: &[usize],
-        valid_source_ids: &[usize],
+        valid_source_ids: &[TabId],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+
+    fn render_split_animated_pane(
+        &self,
+        path: &[usize],
+        content: gpui::AnyElement,
+    ) -> gpui::AnyElement;
+
+    fn render_pane_drop_surface(
+        &self,
+        pane_id: super::super::panes::PaneId,
+        content: gpui::AnyElement,
+        valid_source_ids: &[TabId],
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+
+    fn render_pane_drop_targets(
+        &self,
+        pane_id: super::super::panes::PaneId,
+        valid_source_ids: &[TabId],
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+
+    fn render_pane_header(
+        &self,
+        pane_id: super::super::panes::PaneId,
+        cx: &App,
+    ) -> gpui::AnyElement;
+
+    fn render_split_bar(
+        &self,
+        axis: super::super::workspace::SplitAxis,
+        path: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+
+    fn render_parked_pane_surface(
+        &mut self,
+        pane_id: super::super::panes::PaneId,
+        embedded_in_split: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+
+    fn render_active_pane_surface(
+        &mut self,
+        embedded_in_split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement;
+}
+
+impl WorkspacePanesAppViewExt for AppView {
+    fn render_pane_layout(
+        &mut self,
+        layout: &PaneLayout,
+        path: &[usize],
+        valid_source_ids: &[TabId],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         match layout {
             PaneLayout::Leaf(pane_id) => {
                 let embedded_in_split = !path.is_empty();
-                let body = if *pane_id == self.workspace_state.workspace.active_pane_id {
+                let body = if *pane_id == self.workspace.workspace.active_pane_id {
                     self.render_active_pane_surface(embedded_in_split, window, cx)
                 } else {
                     self.render_parked_pane_surface(*pane_id, embedded_in_split, cx)
@@ -58,9 +117,9 @@ impl AppView {
                 let content = if path.is_empty() {
                     body
                 } else {
-                    let is_active = *pane_id == self.workspace_state.workspace.active_pane_id;
+                    let is_active = *pane_id == self.workspace.workspace.active_pane_id;
                     let roles = miaominal_settings::current_theme().material.roles;
-                    let header = self.render_pane_header(*pane_id);
+                    let header = self.render_pane_header(*pane_id, cx);
                     div()
                         .rounded(px(16.0))
                         .border(px(TERMINAL_PANEL_BORDER))
@@ -133,7 +192,7 @@ impl AppView {
         path: &[usize],
         content: gpui::AnyElement,
     ) -> gpui::AnyElement {
-        let Some(animation) = self.workspace_state.workspace.pane_split_animation.as_ref() else {
+        let Some(animation) = self.workspace.workspace.pane_split_animation.as_ref() else {
             return content;
         };
         let Some((&child_index, parent_path)) = path.split_last() else {
@@ -187,7 +246,7 @@ impl AppView {
         &self,
         pane_id: super::super::panes::PaneId,
         content: gpui::AnyElement,
-        valid_source_ids: &[usize],
+        valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         if valid_source_ids.is_empty() {
@@ -207,7 +266,7 @@ impl AppView {
     fn render_pane_drop_targets(
         &self,
         pane_id: super::super::panes::PaneId,
-        valid_source_ids: &[usize],
+        valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         use super::super::panes::PaneTabDropZone;
@@ -215,16 +274,15 @@ impl AppView {
         let entity = cx.entity();
         let center_enabled = self
             .pane_tab_index(pane_id)
-            .and_then(|index| self.workspace_state.tabs.get(index))
-            .and_then(TabState::as_session)
-            .is_some();
+            .and_then(|index| self.workspace.tabs.at(index))
+            .is_some_and(|tab| tab.is_session());
         let edge_inset = gpui::relative(0.24);
 
         let render_zone = |base: gpui::Div,
                            zone: PaneTabDropZone,
                            accepts: bool,
-                           ids: Vec<usize>,
-                           entity: Entity<AppView>| {
+                           ids: Vec<TabId>,
+                           entity: Entity<Self>| {
             let ids_for_drag = ids.clone();
             let ids_for_drop = ids;
             let entity_for_drop = entity.clone();
@@ -306,34 +364,46 @@ impl AppView {
             .into_any_element()
     }
 
-    fn render_pane_header(&self, pane_id: super::super::panes::PaneId) -> gpui::AnyElement {
+    fn render_pane_header(
+        &self,
+        pane_id: super::super::panes::PaneId,
+        cx: &App,
+    ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let is_active = pane_id == self.workspace_state.workspace.active_pane_id;
+        let is_active = pane_id == self.workspace.workspace.active_pane_id;
         let tab_index = if is_active {
-            self.workspace_state.workspace.active_tab
+            self.workspace.workspace.active_tab
         } else {
             self.parked_pane(pane_id).and_then(|p| p.active_tab)
         };
         let (label, status_color) = tab_index
-            .and_then(|idx| self.workspace_state.tabs.get(idx))
+            .and_then(|idx| self.workspace.tabs.get(idx))
             .map(|tab| {
-                let label = tab
-                    .as_session()
-                    .and_then(|s| {
-                        self.data
-                            .sessions
+                let session = self.session_tab(tab.id, cx);
+                let label = session
+                    .as_deref()
+                    .and_then(|session| {
+                        self.controllers
+                            .session
+                            .read(cx)
+                            .profiles()
                             .iter()
-                            .find(|p| p.id == s.profile_id)
+                            .find(|p| p.id == session.profile_id)
                             .map(|p| p.name.clone())
                     })
                     .unwrap_or_else(|| tab.title.to_string());
-                let has_activity = tab.as_session().is_some_and(|session| session.has_activity);
-                (label, tab_status_indicator_color(tab, has_activity))
+                let has_activity = session
+                    .as_deref()
+                    .is_some_and(|session| session.has_activity);
+                (
+                    label,
+                    tab_status_indicator_color(&tab, session.as_deref(), has_activity),
+                )
             })
             .unwrap_or_else(|| (i18n::string("session.workspace.empty_tab_label"), None));
 
@@ -394,7 +464,7 @@ impl AppView {
 
         const PANE_GAP: f32 = 8.0;
         let is_dragging = self
-            .workspace_state
+            .workspace
             .workspace
             .pane_split_drag
             .as_ref()
@@ -414,7 +484,7 @@ impl AppView {
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                 let path = path_for_start.clone();
                 let (flex_a, flex_b) = {
-                    let mut node = &this.workspace_state.workspace.pane_layout;
+                    let mut node = &this.workspace.workspace.pane_layout;
                     for &i in &path {
                         match node {
                             super::super::workspace::PaneLayout::Split { children, .. } => {
@@ -440,7 +510,7 @@ impl AppView {
                     SplitAxis::Vertical => f32::from(event.position.y),
                 };
                 let container_size = this.split_container_size(&path, axis, window);
-                this.workspace_state.workspace.pane_split_drag = Some(PaneSplitDragState {
+                this.workspace.workspace.pane_split_drag = Some(PaneSplitDragState {
                     path,
                     child_index,
                     axis,
@@ -466,7 +536,7 @@ impl AppView {
         .on_drag_move::<PaneSplitDragMarker>(cx.listener(
             move |this, event: &gpui::DragMoveEvent<PaneSplitDragMarker>, _window, cx| {
                 let _ = &parent_path_for_move; // capture for closure type
-                let Some(drag) = this.workspace_state.workspace.pane_split_drag.clone() else {
+                let Some(drag) = this.workspace.workspace.pane_split_drag.clone() else {
                     return;
                 };
                 let pointer = match drag.axis {
@@ -488,13 +558,7 @@ impl AppView {
         .on_mouse_up(
             MouseButton::Left,
             cx.listener(move |this, _event: &MouseUpEvent, _, cx| {
-                if this
-                    .workspace_state
-                    .workspace
-                    .pane_split_drag
-                    .take()
-                    .is_some()
-                {
+                if this.workspace.workspace.pane_split_drag.take().is_some() {
                     cx.notify();
                 }
             }),
@@ -520,43 +584,32 @@ impl AppView {
         let cell_width = self
             .parked_pane(pane_id)
             .map(|p| p.terminal_cell_width)
-            .unwrap_or(
-                self.workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_cell_width,
-            );
+            .unwrap_or(self.workspace.workspace.active_pane.terminal_cell_width);
         let line_height = self
             .parked_pane(pane_id)
             .map(|p| p.terminal_line_height)
-            .unwrap_or(
-                self.workspace_state
-                    .workspace
-                    .active_pane
-                    .terminal_line_height,
-            );
+            .unwrap_or(self.workspace.workspace.active_pane.terminal_line_height);
 
-        let placeholder = parked_tab_index.and_then(|active| {
-            self.workspace_state
-                .tabs
-                .get(active)
-                .and_then(|tab| self.render_session_placeholder(tab, !embedded_in_split, cx))
+        let parked_tab = parked_tab_index.and_then(|tab_id| self.workspace.tabs.state(tab_id));
+        let session_controller = self.controllers.session.clone();
+        let placeholder = parked_tab.as_ref().and_then(|tab| {
+            session_controller.update(cx, |controller, cx| {
+                controller.render_session_placeholder(tab, !embedded_in_split, cx)
+            })
         });
-        let history_banner = parked_tab_index.and_then(|active| {
-            self.workspace_state
-                .tabs
-                .get(active)
-                .and_then(|tab| self.render_session_history_banner(tab, cx))
+        let history_banner = parked_tab.as_ref().and_then(|tab| {
+            session_controller.update(cx, |controller, cx| {
+                controller.render_session_history_banner(tab, cx)
+            })
         });
 
         let has_terminal = parked_tab_index
-            .and_then(|active| self.workspace_state.tabs.get(active))
-            .and_then(TabState::as_session)
+            .and_then(|active| self.session_tab(active, cx))
             .is_some();
 
         let weak = cx.entity().downgrade();
-        let show_scrollbar = self.terminal_scrollbar_visible(pane_id);
-        let terminal_settings = self.settings_store.settings().clone();
+        let show_scrollbar = self.terminal_scrollbar_visible(pane_id, cx);
+        let terminal_settings = self.controllers.settings.read(cx).settings().clone();
 
         let pane_surface = div()
             .id(terminal_pane_surface_id(pane_id))
@@ -656,18 +709,18 @@ impl AppView {
 
                         let view = entity.read(cx);
                         let has_selection = view
-                            .workspace_state
+                            .workspace
                             .workspace
                             .parked_panes
                             .get(&pane_id)
                             .and_then(|parked| parked.active_tab)
-                            .and_then(|index| view.workspace_state.tabs.get(index))
-                            .and_then(TabState::as_session)
+                            .and_then(|tab_id| view.session_tab(tab_id, cx))
                             .is_some_and(|session| session.terminal.has_selection());
+                        let command_source = view.controllers.session.clone();
 
                         build_terminal_context_menu(
                             menu,
-                            entity.clone(),
+                            command_source,
                             has_selection,
                             Some(pane_id),
                             window,
@@ -693,17 +746,17 @@ impl AppView {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let active_index = self.workspace_state.workspace.active_tab;
+        let active_index = self.workspace.workspace.active_tab;
         let terminal_focused = self
-            .workspace_state
+            .workspace
             .workspace
             .active_pane
             .terminal_focus
             .is_focused(window);
         let cell_width = terminal_cell_width(window);
         let line_height = terminal_line_height(window);
-        let active_pane_id = self.workspace_state.workspace.active_pane_id;
-        let show_scrollbar = self.terminal_scrollbar_visible(active_pane_id);
+        let active_pane_id = self.workspace.workspace.active_pane_id;
+        let show_scrollbar = self.terminal_scrollbar_visible(active_pane_id, cx);
 
         let pane_surface = div()
             .id(terminal_pane_surface_id(active_pane_id))
@@ -717,16 +770,23 @@ impl AppView {
             }))
             .bg(rgb(roles.surface_container_highest))
             .overflow_hidden()
-            .when_some(active_index, |this, index| {
-                let tab = &self.workspace_state.tabs[index];
-                if tab.as_session().is_none() {
+            .when_some(active_index, |this, tab_id| {
+                let Some(tab) = self.workspace.tabs.state(tab_id) else {
+                    return this;
+                };
+                if !tab.is_session() {
                     return this;
                 }
-                let placeholder = self.render_session_placeholder(tab, !embedded_in_split, cx);
-                let history_banner = self.render_session_history_banner(tab, cx);
+                let session_controller = self.controllers.session.clone();
+                let placeholder = session_controller.update(cx, |controller, cx| {
+                    controller.render_session_placeholder(&tab, !embedded_in_split, cx)
+                });
+                let history_banner = session_controller.update(cx, |controller, cx| {
+                    controller.render_session_history_banner(&tab, cx)
+                });
                 let tab_id = tab.id;
                 let hovered_link = self
-                    .workspace_state
+                    .workspace
                     .workspace
                     .active_pane
                     .terminal_hovered_link
@@ -734,7 +794,7 @@ impl AppView {
                     .filter(|hovered| hovered.tab_id == tab_id);
                 let show_link_cursor = hovered_link.is_some()
                     && self
-                        .workspace_state
+                        .workspace
                         .workspace
                         .active_pane
                         .terminal_link_open_modifier;
@@ -742,7 +802,7 @@ impl AppView {
 
                 let terminal_surface = div()
                     .id(SharedString::from(format!("terminal-output-{}", tab_id)))
-                    .track_focus(&self.workspace_state.workspace.active_pane.terminal_focus)
+                    .track_focus(&self.workspace.workspace.active_pane.terminal_focus)
                     .size_full()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
@@ -764,10 +824,7 @@ impl AppView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            window.focus(
-                                &this.workspace_state.workspace.active_pane.terminal_focus,
-                                cx,
-                            );
+                            window.focus(&this.workspace.workspace.active_pane.terminal_focus, cx);
                             this.handle_terminal_mouse_down(event, cx);
                         }),
                     )
@@ -795,10 +852,7 @@ impl AppView {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            window.focus(
-                                &this.workspace_state.workspace.active_pane.terminal_focus,
-                                cx,
-                            );
+                            window.focus(&this.workspace.workspace.active_pane.terminal_focus, cx);
                             this.handle_terminal_mouse_down(event, cx);
                         }),
                     )
@@ -822,9 +876,15 @@ impl AppView {
                         show_scrollbar,
                     ))
                     .when_some(
-                        self.advance_terminal_search_overlay(window),
+                        super::workspace_terminal_search::advance_terminal_search_overlay(
+                            self, window, cx,
+                        ),
                         |this, visibility| {
-                            this.child(self.render_terminal_search_overlay(visibility, cx))
+                            this.child(
+                                super::workspace_terminal_search::render_terminal_search_overlay(
+                                    self, visibility, cx,
+                                ),
+                            )
                         },
                     );
 
@@ -884,7 +944,7 @@ impl AppView {
                 )
             });
 
-        let terminal_settings = self.settings_store.settings().clone();
+        let terminal_settings = self.controllers.settings.read(cx).settings().clone();
         if active_index.is_some()
             && (terminal_settings
                 .terminal_right_click_behavior
@@ -907,16 +967,16 @@ impl AppView {
 
                         let view = entity.read(cx);
                         let has_selection = view
-                            .workspace_state
+                            .workspace
                             .workspace
                             .active_tab
-                            .and_then(|index| view.workspace_state.tabs.get(index))
-                            .and_then(TabState::as_session)
+                            .and_then(|tab_id| view.session_tab(tab_id, cx))
                             .is_some_and(|session| session.terminal.has_selection());
+                        let command_source = view.controllers.session.clone();
 
                         build_terminal_context_menu(
                             menu,
-                            entity.clone(),
+                            command_source,
                             has_selection,
                             None,
                             window,

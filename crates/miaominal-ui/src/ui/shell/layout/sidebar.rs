@@ -60,45 +60,51 @@ fn sidebar_item(
         )
 }
 
-impl AppView {
-    pub(in crate::ui::shell) fn render_sidebar(&self, entity: Entity<Self>) -> impl IntoElement {
-        let settings_selected = self.panel_view.sidebar_section == SidebarSection::Settings;
-        let settings_entity = entity.clone();
-        let roles = miaominal_settings::current_theme().material.roles;
-        div()
-            .w(px(LEFT_RAIL_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .bg(rgb(roles.surface_container))
-            .border_r_1()
-            .child(
-                v_flex()
-                    .size_full()
-                    .gap_4()
-                    .px_2()
-                    .py_4()
-                    .children(SidebarSection::all().into_iter().map({
+pub(in crate::ui::shell) fn render_sidebar(
+    app: &AppView,
+    command_source: Entity<SettingsController>,
+) -> impl IntoElement {
+    let settings_selected = app.shell.shell_state.sidebar_section == SidebarSection::Settings;
+    let settings_entity = command_source.clone();
+    let roles = miaominal_settings::current_theme().material.roles;
+    div()
+        .w(px(LEFT_RAIL_WIDTH))
+        .h_full()
+        .flex_shrink_0()
+        .bg(rgb(roles.surface_container))
+        .border_r_1()
+        .child(
+            v_flex()
+                .size_full()
+                .gap_4()
+                .px_2()
+                .py_4()
+                .children(SidebarSection::all().into_iter().map({
+                    let entity = command_source.clone();
+                    move |section| {
                         let entity = entity.clone();
-                        move |section| {
-                            let entity = entity.clone();
-                            let is_selected = self.panel_view.sidebar_section == section;
+                        let is_selected = app.shell.shell_state.sidebar_section == section;
 
-                            sidebar_item(section, is_selected, move |_, cx| {
-                                entity.update(cx, |this, cx| this.set_sidebar_section(section, cx));
-                            })
-                        }
-                    }))
-                    .child(div().flex_1())
-                    .child(sidebar_item(
-                        SidebarSection::Settings,
-                        settings_selected,
-                        move |_, cx| {
-                            let entity = settings_entity.clone();
-                            entity.update(cx, |this, cx| {
-                                this.set_sidebar_section(SidebarSection::Settings, cx);
+                        sidebar_item(section, is_selected, move |_, cx| {
+                            entity.update(cx, |controller, cx| {
+                                controller.emit(AppCommand::SidebarSectionRequested(section), cx);
                             });
-                        },
-                    )),
-            )
-    }
+                        })
+                    }
+                }))
+                .child(div().flex_1())
+                .child(sidebar_item(
+                    SidebarSection::Settings,
+                    settings_selected,
+                    move |_, cx| {
+                        let entity = settings_entity.clone();
+                        entity.update(cx, |controller, cx| {
+                            controller.emit(
+                                AppCommand::SidebarSectionRequested(SidebarSection::Settings),
+                                cx,
+                            );
+                        });
+                    },
+                )),
+        )
 }

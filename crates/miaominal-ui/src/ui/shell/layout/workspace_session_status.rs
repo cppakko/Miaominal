@@ -1,6 +1,6 @@
 use crate::ui::components::{fab_icon_button, md3_spinner};
 use crate::ui::i18n;
-use crate::ui::shell::state::SessionFailureStatus;
+use crate::ui::shell::SessionFailureStatus;
 use gpui_component::Disableable;
 
 use super::super::*;
@@ -12,17 +12,14 @@ struct SessionFailureView {
     failure_status: Option<SessionFailureStatus>,
     profile_id: String,
     purpose: SessionPurpose,
-    tab_id: usize,
+    tab_id: TabId,
 }
 
 pub(in crate::ui::shell::layout) fn session_summary(
     tab: &TabState,
+    session: &SessionTabState,
     sessions: &[SessionProfile],
 ) -> String {
-    let Some(session) = tab.as_session() else {
-        return String::new();
-    };
-
     if let Some(profile) = sessions
         .iter()
         .find(|profile| profile.id == session.profile_id)
@@ -37,47 +34,31 @@ pub(in crate::ui::shell::layout) fn session_summary(
     tab.title.clone()
 }
 
-impl AppView {
-    fn hide_preserved_history_popup(&mut self, tab_id: usize, cx: &mut Context<Self>) {
-        let Some(tab_index) = self
-            .workspace_state
-            .tabs
-            .iter()
-            .position(|tab| tab.id == tab_id)
-        else {
-            return;
-        };
-        let Some(session) = self.workspace_state.tabs[tab_index].as_session_mut() else {
+impl SessionController {
+    fn hide_preserved_history_popup(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        let Some(mut session) = self.tab_mut(tab_id) else {
             return;
         };
 
         session.hide_preserved_history_popup();
+        drop(session);
         cx.notify();
     }
 
-    fn reconnect_session_tab(
+    pub(in crate::ui::shell) fn reconnect_session_tab(
         &mut self,
-        tab_id: usize,
+        tab_id: TabId,
         profile_id: &str,
         write_marker: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab_index) = self
-            .workspace_state
-            .tabs
-            .iter()
-            .position(|tab| tab.id == tab_id)
-        else {
-            return;
-        };
         let profile = self
-            .data
-            .sessions
+            .profiles()
             .iter()
             .find(|profile| profile.id == profile_id)
             .cloned();
 
-        if let Some(session) = self.workspace_state.tabs[tab_index].as_session_mut()
+        if let Some(mut session) = self.tab_mut(tab_id)
             && let Some(profile) = profile
         {
             session.commands = None;
@@ -101,16 +82,22 @@ impl AppView {
         rounded: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let session = tab.as_session()?;
-        if !session.uses_blocking_placeholder() {
-            return None;
-        }
+        let (summary, profile_id, purpose, connection_state) = {
+            let session = self.tab(tab.id)?;
+            if !session.uses_blocking_placeholder() {
+                return None;
+            }
+            (
+                session_summary(tab, &session, &self.profiles()),
+                session.profile_id.clone(),
+                session.purpose,
+                session.connection_state.clone(),
+            )
+        };
 
-        let summary = session_summary(tab, &self.data.sessions);
-
-        match &session.connection_state {
+        match connection_state {
             SessionConnectionState::Connecting => Some(self.render_session_connecting_surface(
-                if session.purpose == SessionPurpose::PortForwarding {
+                if purpose == SessionPurpose::PortForwarding {
                     i18n::string("session.workspace.connecting_forwarding_rule")
                 } else {
                     i18n::string("session.workspace.connecting_to_host")
@@ -122,16 +109,16 @@ impl AppView {
             SessionConnectionState::Failed { error, status } => {
                 Some(self.render_session_failure_surface(
                     SessionFailureView {
-                        title: if session.purpose == SessionPurpose::PortForwarding {
+                        title: if purpose == SessionPurpose::PortForwarding {
                             i18n::string("session.workspace.forwarding_connection_failed")
                         } else {
                             i18n::string("session.workspace.connection_failed")
                         },
                         summary,
-                        error: error.clone(),
-                        failure_status: *status,
-                        profile_id: session.profile_id.clone(),
-                        purpose: session.purpose,
+                        error,
+                        failure_status: status,
+                        profile_id,
+                        purpose,
                         tab_id: tab.id,
                     },
                     rounded,
@@ -140,22 +127,12 @@ impl AppView {
             }
             SessionConnectionState::Reconnecting { error, attempt } => {
                 Some(self.render_session_reconnecting_surface(
-                    summary,
-                    error.clone(),
-                    *attempt,
-                    tab.id,
-                    rounded,
-                    cx,
+                    summary, error, attempt, tab.id, rounded, cx,
                 ))
             }
             SessionConnectionState::Ready => None,
             SessionConnectionState::Disconnected => Some(self.render_session_disconnected_surface(
-                summary,
-                session.profile_id.clone(),
-                session.purpose,
-                tab.id,
-                rounded,
-                cx,
+                summary, profile_id, purpose, tab.id, rounded, cx,
             )),
         }
     }
@@ -165,41 +142,41 @@ impl AppView {
         tab: &TabState,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let session = tab.as_session()?;
-        if !session.preserves_terminal_history() {
-            return None;
-        }
+        let (summary, popup_hidden, profile_id, purpose, connection_state) = {
+            let session = self.tab(tab.id)?;
+            if !session.preserves_terminal_history() {
+                return None;
+            }
+            (
+                session_summary(tab, &session, &self.profiles()),
+                session.preserved_history_popup_hidden(),
+                session.profile_id.clone(),
+                session.purpose,
+                session.connection_state.clone(),
+            )
+        };
 
-        let summary = session_summary(tab, &self.data.sessions);
-        let popup_hidden = session.preserved_history_popup_hidden();
-
-        match &session.connection_state {
+        match connection_state {
             SessionConnectionState::Failed { error, status } => Some(if popup_hidden {
-                self.render_session_reconnect_fab(session.profile_id.clone(), true, tab.id, cx)
+                self.render_session_reconnect_fab(profile_id, true, tab.id, cx)
             } else {
                 self.render_session_failure_banner(
                     SessionFailureView {
                         title: i18n::string("session.workspace.connection_failed"),
                         summary,
-                        error: error.clone(),
-                        failure_status: *status,
-                        profile_id: session.profile_id.clone(),
-                        purpose: session.purpose,
+                        error,
+                        failure_status: status,
+                        profile_id,
+                        purpose,
                         tab_id: tab.id,
                     },
                     cx,
                 )
             }),
             SessionConnectionState::Disconnected => Some(if popup_hidden {
-                self.render_session_reconnect_fab(session.profile_id.clone(), false, tab.id, cx)
+                self.render_session_reconnect_fab(profile_id, false, tab.id, cx)
             } else {
-                self.render_session_disconnected_banner(
-                    summary,
-                    session.profile_id.clone(),
-                    session.purpose,
-                    tab.id,
-                    cx,
-                )
+                self.render_session_disconnected_banner(summary, profile_id, purpose, tab.id, cx)
             }),
             SessionConnectionState::Connecting
             | SessionConnectionState::Ready
@@ -212,7 +189,7 @@ impl AppView {
         summary: String,
         profile_id: String,
         purpose: SessionPurpose,
-        tab_id: usize,
+        tab_id: TabId,
         rounded: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -224,7 +201,7 @@ impl AppView {
         );
         let weak = cx.entity().downgrade();
         let is_port_forward = purpose == SessionPurpose::PortForwarding;
-        let profile_exists = self.data.sessions.iter().any(|p| p.id == profile_id);
+        let profile_exists = self.profiles().iter().any(|p| p.id == profile_id);
 
         div()
             .size_full()
@@ -285,23 +262,12 @@ impl AppView {
                                         let profile_id = profile_id.clone();
                                         move |_window, cx| {
                                             weak.update(cx, |this, cx| {
-                                                let Some(tab_index) = this
-                                                    .workspace_state
-                                                    .tabs
-                                                    .iter()
-                                                    .position(|t| t.id == tab_id)
-                                                else {
-                                                    return;
-                                                };
                                                 let profile = this
-                                                    .data
-                                                    .sessions
+                                                    .profiles()
                                                     .iter()
                                                     .find(|p| p.id == profile_id)
                                                     .cloned();
-                                                if let Some(session) = this.workspace_state.tabs
-                                                    [tab_index]
-                                                    .as_session_mut()
+                                                if let Some(mut session) = this.tab_mut(tab_id)
                                                     && let Some(profile) = profile
                                                 {
                                                     session.commands = None;
@@ -392,7 +358,7 @@ impl AppView {
         summary: String,
         error: String,
         attempt: u32,
-        tab_id: usize,
+        tab_id: TabId,
         rounded: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -464,17 +430,7 @@ impl AppView {
                         None,
                         move |_window, cx| {
                             weak.update(cx, |this, cx| {
-                                let Some(tab_index) = this
-                                    .workspace_state
-                                    .tabs
-                                    .iter()
-                                    .position(|t| t.id == tab_id)
-                                else {
-                                    return;
-                                };
-                                if let Some(session) =
-                                    this.workspace_state.tabs[tab_index].as_session_mut()
-                                {
+                                if let Some(mut session) = this.tab_mut(tab_id) {
                                     session.reconnect_task = None;
                                     session.reconnect_attempt = 0;
                                     session.set_connection_state(SessionConnectionState::Failed {
@@ -514,10 +470,11 @@ impl AppView {
             if material.dark { 65 } else { 50 },
         );
         let weak = cx.entity().downgrade();
+        let profile_controller = cx.entity();
         let profile_id_retry = profile_id.clone();
         let profile_id_edit = profile_id.clone();
         let is_port_forward = purpose == SessionPurpose::PortForwarding;
-        let profile_exists = self.data.sessions.iter().any(|p| p.id == profile_id);
+        let profile_exists = self.profiles().iter().any(|p| p.id == profile_id);
 
         div()
             .size_full()
@@ -597,23 +554,12 @@ impl AppView {
                                         let weak = weak.clone();
                                         move |_window, cx| {
                                             weak.update(cx, |this, cx| {
-                                                let Some(tab_index) = this
-                                                    .workspace_state
-                                                    .tabs
-                                                    .iter()
-                                                    .position(|t| t.id == tab_id)
-                                                else {
-                                                    return;
-                                                };
                                                 let profile = this
-                                                    .data
-                                                    .sessions
+                                                    .profiles()
                                                     .iter()
                                                     .find(|p| p.id == profile_id_retry)
                                                     .cloned();
-                                                if let Some(session) = this.workspace_state.tabs
-                                                    [tab_index]
-                                                    .as_session_mut()
+                                                if let Some(mut session) = this.tab_mut(tab_id)
                                                     && let Some(profile) = profile
                                                 {
                                                     session.commands = None;
@@ -645,20 +591,14 @@ impl AppView {
                                     None,
                                     None,
                                     {
-                                        let weak = weak.clone();
-                                        move |window, cx| {
-                                            weak.update(cx, |this, cx| {
-                                                if let Some(index) = this
-                                                    .data
-                                                    .sessions
-                                                    .iter()
-                                                    .position(|p| p.id == profile_id_edit)
-                                                {
-                                                    this.open_hosts_tab(cx);
-                                                    this.open_host_editor(index, window, cx);
-                                                }
-                                            })
-                                            .ok();
+                                        move |_window, cx| {
+                                            profile_controller.update(cx, |controller, cx| {
+                                                controller.request_profile_editor(
+                                                    profile_id_edit.clone(),
+                                                    true,
+                                                    cx,
+                                                );
+                                            });
                                         }
                                     },
                                 ))
@@ -673,14 +613,14 @@ impl AppView {
         summary: String,
         profile_id: String,
         purpose: SessionPurpose,
-        tab_id: usize,
+        tab_id: TabId,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let weak = cx.entity().downgrade();
         let is_port_forward = purpose == SessionPurpose::PortForwarding;
-        let profile_exists = self.data.sessions.iter().any(|p| p.id == profile_id);
+        let profile_exists = self.profiles().iter().any(|p| p.id == profile_id);
         let supporting_text = (!summary.is_empty()).then_some(summary);
 
         let hide_action = {
@@ -778,7 +718,7 @@ impl AppView {
         let weak = cx.entity().downgrade();
         let profile_id_retry = profile_id.clone();
         let is_port_forward = purpose == SessionPurpose::PortForwarding;
-        let profile_exists = self.data.sessions.iter().any(|p| p.id == profile_id);
+        let profile_exists = self.profiles().iter().any(|p| p.id == profile_id);
         let supporting_text = (!summary.is_empty()).then_some(summary);
 
         let hide_action = {
@@ -890,7 +830,7 @@ impl AppView {
         &self,
         profile_id: String,
         write_marker: bool,
-        tab_id: usize,
+        tab_id: TabId,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let weak = cx.entity().downgrade();

@@ -9,10 +9,11 @@ use gpui_component::v_virtual_list;
 use std::rc::Rc;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
-    app: &AppView,
-    entity: Entity<AppView>,
+    controller: &AgentController,
+    agent: Entity<AgentController>,
+    settings: Entity<SettingsController>,
     _window: &mut Window,
-    _cx: &mut Context<AppView>,
+    cx: &mut App,
     search_visibility: Option<f32>,
 ) -> gpui::AnyElement {
     let material = miaominal_settings::current_theme().material;
@@ -20,16 +21,33 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
         material.palettes.neutral_variant,
         if material.dark { 65 } else { 50 },
     );
-    let all_sessions = app.data.chat_sessions.clone();
-    let current_session_id = app.session_agent.session_id.clone();
-    let history_scroll_handle = app
-        .workspace_state
-        .session_agent_history_scroll_handle
-        .clone();
-    let search_filter_input_entity = app.workspace_forms.chat_search.session_filter_input.clone();
+    let all_sessions = Rc::new(controller.chat_sessions().to_vec());
+    let current_session_id = controller.session_agent().session_id.clone();
+    let runtime_statuses = Rc::new(
+        all_sessions
+            .iter()
+            .map(|session| {
+                if current_session_id.as_deref() == Some(session.id.as_str()) {
+                    (
+                        controller.session_agent().is_busy(),
+                        controller
+                            .session_agent()
+                            .has_tool_call_waiting_for_confirmation(),
+                    )
+                } else {
+                    (
+                        controller.background_session_is_busy(&session.id),
+                        controller.background_session_needs_approval(&session.id),
+                    )
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+    let history_scroll_handle = controller.history_scroll_handle();
+    let search_filter_input_entity = controller.session_filter_input();
 
     // Filter sessions by search query — store indices into all_sessions
-    let search_query = app.session_agent.search_query.clone();
+    let search_query = controller.session_agent().search_query.clone();
     let filtered_indices: Vec<usize> = if let Some(ref query) = search_query {
         let query_lower = query.to_lowercase();
         all_sessions
@@ -111,16 +129,19 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                     .map(|_| size(px(0.0), px(58.0)))
                                     .collect(),
                             );
-                            let view_entity = entity.clone();
+                            let view_entity = agent.clone();
+                            let agent_entity = agent.clone();
                             let current_sid = current_session_id.clone();
                             let session_count = filtered_count;
                             let filtered_ix = filtered_indices_rc.clone();
+                            let sessions = all_sessions.clone();
+                            let statuses = runtime_statuses.clone();
 
                             v_virtual_list(
-                                entity.clone(),
+                                agent.clone(),
                                 "session-agent-history-list",
                                 item_sizes,
-                                move |this, visible_range, _window, _cx| {
+                                move |_this, visible_range, _window, _cx| {
                                     let material = miaominal_settings::current_theme().material;
                                     let roles = material.roles;
                                     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -130,27 +151,27 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                     let warning_color = material.extended.warning.color;
                                     let warning_on_color = material.extended.warning.on_color;
                                     let view_entity = view_entity.clone();
+                                    let agent_entity = agent_entity.clone();
                                     let current_sid = current_sid.clone();
                                     let filtered_ix = filtered_ix.clone();
+                                    let sessions = sessions.clone();
+                                    let statuses = statuses.clone();
 
                                     visible_range
                                         .filter(|ix| *ix < session_count)
                                         .map(|ix| {
                                             // Map virtual list index to actual session index
                                             let actual_ix = filtered_ix[ix];
-                                            let session = &this.data.chat_sessions[actual_ix];
+                                            let session = &sessions[actual_ix];
+                                            let (is_busy, needs_approval) = statuses[actual_ix];
                                             let open_entity = view_entity.clone();
-                                            let delete_entity = view_entity.clone();
-                                            let rename_entity = view_entity.clone();
+                                            let delete_entity = agent_entity.clone();
+                                            let rename_entity = agent_entity.clone();
                                             let session_id = session.id.clone();
                                             let delete_session_id = session.id.clone();
                                             let rename_session_id = session.id.clone();
                                             let is_current = current_sid.as_deref()
                                                 == Some(session.id.as_str());
-                                            let needs_approval = this
-                                                .session_agent_session_needs_approval(&session.id);
-                                            let is_busy =
-                                                this.session_agent_session_is_busy(&session.id);
                                             let title = if session.title.trim().is_empty() {
                                                 if is_current {
                                                     i18n::string("workspace.panel.agent.history.current_chat")
@@ -204,7 +225,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                     let entity = open_entity.clone();
                                                     let session_id = session_id.clone();
                                                     entity.update(cx, |this, cx| {
-                                                        this.load_session_agent_chat(session_id, cx);
+                                                        this.finish_text_drag(cx);
+                                                        this.open_chat_session(session_id, cx);
                                                     });
                                                 })
                                                 .child(
@@ -281,8 +303,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                         let entity = rename_entity.clone();
                                                         let session_id = rename_session_id.clone();
                                                         let title = rename_title.clone();
-                                                        entity.update(cx, |this, cx| {
-                                                            this.request_session_agent_chat_rename(
+                                                        entity.update(cx, |controller, cx| {
+                                                            controller.request_chat_session_rename(
                                                                 session_id, title, window, cx,
                                                             );
                                                         });
@@ -301,8 +323,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                                                         let entity = delete_entity.clone();
                                                         let session_id = delete_session_id.clone();
                                                         let title = delete_title.clone();
-                                                        entity.update(cx, |this, cx| {
-                                                            this.request_session_agent_chat_delete(
+                                                        entity.update(cx, |controller, cx| {
+                                                            controller.request_chat_session_delete(
                                                                 session_id, title, cx,
                                                             );
                                                         });
@@ -321,7 +343,12 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
                         .into_any_element()
                 }),
         )
-        .child(session_agent_composer::render_session_agent_composer(app, entity.clone()))
+        .child(session_agent_composer::render_session_agent_composer(
+            controller,
+            agent,
+            settings,
+            cx,
+        ))
         .with_animation(
             "session-agent-history-view",
             container_transition_animation(),

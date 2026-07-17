@@ -18,7 +18,6 @@ pub struct AppServices {
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
     pub keychain_store: Option<ManagedKeyStore>,
-    pub chat_service: Option<ChatService>,
     pub agent_service: AgentService,
 }
 
@@ -26,6 +25,7 @@ pub struct LoadedAppData {
     pub services: AppServices,
     pub known_hosts_entries: Vec<KnownHostEntry>,
     pub managed_keys: Vec<ManagedKeyRecord>,
+    pub chat_service: Option<ChatService>,
     pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
     pub snippets: Vec<SnippetRecord>,
@@ -41,7 +41,6 @@ impl AppServices {
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
         keychain_store: Option<ManagedKeyStore>,
-        chat_service: Option<ChatService>,
     ) -> Self {
         let agent_service =
             AgentService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
@@ -52,7 +51,6 @@ impl AppServices {
             secrets,
             known_hosts,
             keychain_store,
-            chat_service,
             agent_service,
         }
     }
@@ -150,10 +148,10 @@ impl AppServices {
                 secrets,
                 known_hosts,
                 keychain_store,
-                chat_service,
             ),
             known_hosts_entries,
             managed_keys,
+            chat_service,
             chat_sessions,
             sessions,
             snippets,
