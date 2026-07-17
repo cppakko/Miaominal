@@ -18,8 +18,9 @@ awk '
     }
 ' /proc/meminfo
 
-awk 'NR > 2 && $1 !~ /^lo:/ { rx += $2; tx += $10 }
-    END { printf("net %s %s\n", rx, tx) }
+awk 'BEGIN { rx = 0; tx = 0 }
+    NR > 2 && $1 !~ /^lo:/ { rx += $2; tx += $10 }
+    END { printf("net %.0f %.0f\n", rx, tx) }
 ' /proc/net/dev
 
 awk '{ printf("load %s\n", $1) }' /proc/loadavg

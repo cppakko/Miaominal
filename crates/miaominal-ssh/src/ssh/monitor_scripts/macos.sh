@@ -19,11 +19,12 @@ top -l 1 -n 0 | awk -F'[:,% ]+' '
 sysctl -n vm.swapusage 2>/dev/null | awk 'NR == 1 { printf("swapraw %s\n", $0) }'
 
 netstat -ibn | awk '
+    BEGIN { rx = 0; tx = 0 }
     NR > 1 && $1 !~ /^lo/ && $7 ~ /^[0-9]+$/ && $10 ~ /^[0-9]+$/ {
         rx += $7
         tx += $10
     }
-    END { printf("net %s %s\n", rx, tx) }
+    END { printf("net %.0f %.0f\n", rx, tx) }
 '
 
 sysctl -n vm.loadavg | awk '{

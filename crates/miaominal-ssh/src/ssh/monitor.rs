@@ -153,7 +153,7 @@ impl RemoteMonitorCollector {
                     }
                 }
                 Some("net") => {
-                    let values: Vec<u64> = parts.filter_map(|value| value.parse().ok()).collect();
+                    let values: Vec<u64> = parts.filter_map(parse_network_counter).collect();
                     if values.len() >= 2 {
                         network_totals = Some(NetworkTotals {
                             rx_bytes: values[0],
@@ -174,7 +174,6 @@ impl RemoteMonitorCollector {
         }
 
         let cpu_totals = cpu_totals.context("missing Linux CPU totals")?;
-        let network_totals = network_totals.context("missing Linux network totals")?;
         let memory_total_kib = memory_total_kib.context("missing Linux memory total")? as f64;
         let memory_available_kib =
             memory_available_kib.context("missing Linux memory available")? as f64;
@@ -184,7 +183,9 @@ impl RemoteMonitorCollector {
         let swap_used_kib = (swap_total_kib - swap_free_kib).max(0.0);
 
         let cpu_percent = self.compute_cpu_percent(cpu_totals);
-        let (network_rx_kbps, network_tx_kbps) = self.compute_network_rates(network_totals);
+        let (network_rx_kbps, network_tx_kbps) = network_totals
+            .map(|totals| self.compute_network_rates(totals))
+            .unwrap_or_default();
         let memory_percent = if memory_total_kib > 0.0 {
             ((memory_total_kib - memory_available_kib).max(0.0) / memory_total_kib) * 100.0
         } else {
@@ -758,6 +759,16 @@ fn parse_disk_percent(value: &str) -> Option<f64> {
         })
 }
 
+fn parse_network_counter(value: &str) -> Option<u64> {
+    value.parse::<u64>().ok().or_else(|| {
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite() && *value >= 0.0 && *value <= u64::MAX as f64)
+            .map(|value| value.round() as u64)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,6 +793,33 @@ mod tests {
         assert_eq!(snapshot.disk_used_bytes, Some(512000 * 1024));
         assert_eq!(snapshot.disk_total_bytes, Some(1024000 * 1024));
         assert_eq!(snapshot.disk_percent, 50.0);
+    }
+
+    #[test]
+    fn parses_linux_snapshot_without_network_totals() {
+        let mut collector = RemoteMonitorCollector::default();
+        let snapshot = collector
+            .parse_linux_snapshot("cpu 10 2 3 85 0 0 0 0\nmem 8192 2048 4096 3072\nload 2.4\n")
+            .expect("Linux resource metrics should survive unavailable network counters");
+
+        assert_eq!(snapshot.network_rx_kbps, 0.0);
+        assert_eq!(snapshot.network_tx_kbps, 0.0);
+        assert_eq!(snapshot.memory_total_bytes, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parses_scientific_notation_network_counters() {
+        assert_eq!(parse_network_counter("1.23457e+08"), Some(123_457_000));
+        assert_eq!(parse_network_counter("204800"), Some(204_800));
+        assert_eq!(parse_network_counter("invalid"), None);
+    }
+
+    #[test]
+    fn posix_monitor_scripts_emit_decimal_network_totals() {
+        for script in [LINUX_MONITOR_SCRIPT, MACOS_MONITOR_SCRIPT] {
+            assert!(script.contains("BEGIN { rx = 0; tx = 0 }"));
+            assert!(script.contains("printf(\"net %.0f %.0f\\n\", rx, tx)"));
+        }
     }
 
     #[test]
