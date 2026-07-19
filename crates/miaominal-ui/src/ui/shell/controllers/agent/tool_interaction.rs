@@ -69,9 +69,7 @@ impl AgentController {
         let (reasoning, agent_mode) = {
             let state = self.runtime.get_mut().session_mut(session_id)?;
             let reasoning = state.reasoning_before_tool_call(tool_id);
-            if state.tool_call(tool_id).is_none() {
-                return None;
-            }
+            state.tool_call(tool_id)?;
             state.approve_tool_call(tool_id);
             (reasoning, state.agent_mode)
         };

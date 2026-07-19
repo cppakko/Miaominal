@@ -1,20 +1,15 @@
 use super::*;
 use crate::ui::i18n;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(in crate::ui::shell) enum SidebarSection {
+    #[default]
     Hosts,
     Keychain,
     PortForwarding,
     Snippets,
     KnownHosts,
     Settings,
-}
-
-impl Default for SidebarSection {
-    fn default() -> Self {
-        Self::Hosts
-    }
 }
 
 impl SidebarSection {

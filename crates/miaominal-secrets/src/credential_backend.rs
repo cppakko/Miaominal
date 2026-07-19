@@ -342,6 +342,7 @@ fn open_vault_lock_file(file_path: &Path) -> Result<File> {
     }
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
@@ -567,9 +568,9 @@ impl VaultCredentialBackend {
         state: &'a mut Option<CachedVaultDocument>,
     ) -> Result<&'a VaultDocument> {
         let serialized = self.read_serialized_document()?;
-        if !state
+        if state
             .as_ref()
-            .is_some_and(|cached| cached.serialized == serialized)
+            .is_none_or(|cached| cached.serialized != serialized)
         {
             let document = self.decrypt_serialized_document(serialized.as_deref())?;
             *state = Some(CachedVaultDocument {

@@ -245,9 +245,9 @@ pub async fn generate_title(
                 .to_string();
             if title.is_empty() { None } else { Some(title) }
         }
-        Err(error) => {
+        Err(_error) => {
             #[cfg(debug_assertions)]
-            log::info!("title generation failed: {error:?}");
+            log::info!("title generation failed: {_error:?}");
             None
         }
     }

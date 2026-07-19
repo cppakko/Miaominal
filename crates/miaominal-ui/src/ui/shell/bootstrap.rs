@@ -120,9 +120,9 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
         view.update(cx, |this, cx| {
             let agent = this.controllers.agent.clone();
             let prompt_input = agent.read(cx).prompt_input();
-            if !window
+            if window
                 .focused_input(cx)
-                .is_some_and(|input| input.entity_id() == prompt_input.entity_id())
+                .is_none_or(|input| input.entity_id() != prompt_input.entity_id())
             {
                 return;
             }

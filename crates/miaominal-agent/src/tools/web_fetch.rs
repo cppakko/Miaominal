@@ -35,29 +35,27 @@ pub async fn web_fetch(
             .await
             .map_err(anyhow::Error::from)?;
 
-        if is_followed_redirect(current_response.status()) {
-            if let Some(location) = current_response.headers().get(LOCATION) {
-                if redirect_count == MAX_REDIRECTS {
-                    return Err(AgentError::InvalidArguments(format!(
-                        "web_fetch URL exceeded {MAX_REDIRECTS} redirects"
-                    )));
-                }
-
-                let location = location.to_str().map_err(|_| {
-                    AgentError::InvalidArguments(
-                        "web_fetch redirect contains a non-UTF-8 location".into(),
-                    )
-                })?;
-                let redirected = url.join(location).map_err(|error| {
-                    AgentError::InvalidArguments(format!(
-                        "web_fetch redirect URL is invalid: {error}"
-                    ))
-                })?;
-                // Validation (including DNS resolution) happens again before the next request.
-                validate_http_url(&redirected, approved)?;
-                url = redirected;
-                continue;
+        if is_followed_redirect(current_response.status())
+            && let Some(location) = current_response.headers().get(LOCATION)
+        {
+            if redirect_count == MAX_REDIRECTS {
+                return Err(AgentError::InvalidArguments(format!(
+                    "web_fetch URL exceeded {MAX_REDIRECTS} redirects"
+                )));
             }
+
+            let location = location.to_str().map_err(|_| {
+                AgentError::InvalidArguments(
+                    "web_fetch redirect contains a non-UTF-8 location".into(),
+                )
+            })?;
+            let redirected = url.join(location).map_err(|error| {
+                AgentError::InvalidArguments(format!("web_fetch redirect URL is invalid: {error}"))
+            })?;
+            // Validation (including DNS resolution) happens again before the next request.
+            validate_http_url(&redirected, approved)?;
+            url = redirected;
+            continue;
         }
 
         response = Some(current_response);

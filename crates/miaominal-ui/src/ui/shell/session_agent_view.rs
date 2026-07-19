@@ -186,9 +186,11 @@ impl SessionAgentMessageView {
     ) -> SessionAgentMessage {
         SessionAgentMessage {
             role: self.message.role,
-            content: include_content
-                .then(|| self.message.content.clone())
-                .unwrap_or_default(),
+            content: if include_content {
+                self.message.content.clone()
+            } else {
+                Default::default()
+            },
             tool_call: self.message.tool_call.clone(),
             thinking: self.message.thinking.clone(),
             motion: Default::default(),
@@ -450,10 +452,10 @@ impl SessionAgentMessageView {
     }
 
     pub(in crate::ui::shell) fn finish_thinking(&mut self, cx: &mut Context<Self>) {
-        if let Some(thinking) = self.message.thinking.as_mut() {
-            if thinking.elapsed_ms.is_none() {
-                thinking.elapsed_ms = Some(thinking.started_at.elapsed().as_millis());
-            }
+        if let Some(thinking) = self.message.thinking.as_mut()
+            && thinking.elapsed_ms.is_none()
+        {
+            thinking.elapsed_ms = Some(thinking.started_at.elapsed().as_millis());
         }
         self.thinking_ticker = None;
         cx.notify();

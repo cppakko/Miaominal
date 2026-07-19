@@ -188,6 +188,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
     .into_any_element()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the renderer receives independent message, selection, sizing, and GPUI context inputs"
+)]
 pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
     terminal_originated_selection_drag_active: bool,
     id: impl Into<ElementId>,
@@ -656,6 +660,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the renderer receives independent animation, message, layout, and GPUI context inputs"
+)]
 pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
     terminal_originated_selection_drag_active: bool,
     message_column_width: f32,
@@ -1042,6 +1050,10 @@ fn render_session_agent_ask_user_actions(
         .into_any_element()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the renderer receives independent tool state, selection, sizing, and GPUI context inputs"
+)]
 pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     agent: &AgentController,
     message_column_width: f32,

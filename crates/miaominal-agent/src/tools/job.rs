@@ -785,7 +785,7 @@ mod tests {
         #[cfg(windows)]
         {
             let shell = std::path::PathBuf::from(r"C:\Program Files\Git\bin\sh.exe");
-            return shell.exists().then_some(shell);
+            shell.exists().then_some(shell)
         }
         #[cfg(not(windows))]
         {

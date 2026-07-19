@@ -160,6 +160,10 @@ fn restrict_temporary_file_permissions(file: &fs::File, path: &Path) -> Result<(
 }
 
 #[cfg(not(unix))]
+#[allow(
+    clippy::permissions_set_readonly_false,
+    reason = "this branch only targets platforms where readonly is a file attribute, not Unix mode bits"
+)]
 fn restrict_temporary_file_permissions(file: &fs::File, path: &Path) -> Result<()> {
     let mut permissions = file
         .metadata()

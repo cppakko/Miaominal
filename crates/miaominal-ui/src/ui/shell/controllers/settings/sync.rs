@@ -291,7 +291,7 @@ impl SettingsController {
                                 Some(PendingSyncPullConfirmState { reason });
                         }
                         if let Some(reload) = result.reload {
-                            cx.emit(AppCommand::SyncReloaded(reload));
+                            cx.emit(AppCommand::SyncReloaded(Box::new(reload)));
                         }
 
                         if let Some(window_handle) = notification_window {

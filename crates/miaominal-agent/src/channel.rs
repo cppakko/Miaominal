@@ -316,9 +316,7 @@ impl TerminalExecShared {
             ) {
                 return None;
             }
-            let Some(sentinel) = state.sentinel.clone() else {
-                return None;
-            };
+            let sentinel = state.sentinel.clone()?;
             if sentinel.command_epoch != state.command_epoch || sentinel.bytes.is_empty() {
                 return None;
             }

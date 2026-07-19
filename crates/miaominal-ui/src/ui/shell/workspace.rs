@@ -1352,8 +1352,8 @@ mod tests {
         assert_ne!(standalone, reopened_standalone);
         assert!(tabs.get(owned).is_none());
         assert!(tabs.get(standalone).is_none());
-        assert!(payloads.get(&owned).is_none());
-        assert!(payloads.get(&standalone).is_none());
+        assert!(!payloads.contains_key(&owned));
+        assert!(!payloads.contains_key(&standalone));
         assert_eq!(
             tabs.get(reopened_owned).map(|tab| tab.placement),
             Some(TabPlacement::SessionSidecar {

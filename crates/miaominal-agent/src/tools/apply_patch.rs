@@ -115,10 +115,9 @@ async fn apply_patch_posix(
         shell,
         command.len(),
     );
-    channel.exec(command).await.map_err(|e| {
+    channel.exec(command).await.inspect_err(|_error| {
         #[cfg(debug_assertions)]
-        log::info!("[apply_patch] posix exec failed: {:?}", e);
-        e
+        log::info!("[apply_patch] posix exec failed: {:?}", _error);
     })
 }
 
@@ -153,11 +152,11 @@ async fn apply_patch_windows(
             log::info!("[apply_patch] external patch OK ({} bytes)", output.len());
             Ok(output)
         }
-        Err(exec_err) => {
+        Err(_exec_err) => {
             #[cfg(debug_assertions)]
             log::info!(
                 "[apply_patch] external patch failed ({:?}), trying built-in engine",
-                exec_err,
+                _exec_err,
             );
             apply_patch_via_engine(channel, base_dir, patch).await
         }

@@ -66,7 +66,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     let pending_attachments = state.pending_attachments.clone();
     let exec_mode_is_pty = state.exec_mode.is_pty();
     let target_candidates = agent_controller.target_candidates();
-    let selected_provider_kind = selected_ai_provider_kind(&settings.read(cx), cx);
+    let selected_provider_kind = selected_ai_provider_kind(settings.read(cx), cx);
     let has_provider = selected_provider_kind.is_some();
     let image_text_fallback = has_pending_images
         && selected_provider_kind.is_some_and(|kind| !ai_provider_kind_supports_vision(kind));

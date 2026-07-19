@@ -1267,9 +1267,9 @@ impl AgentController {
         };
         let provider = match self.build_session_agent_provider(&provider_id) {
             Ok(provider) => provider,
-            Err(error) => {
+            Err(_error) => {
                 #[cfg(debug_assertions)]
-                log::info!("skip title generation: {error:?}");
+                log::info!("skip title generation: {_error:?}");
                 return;
             }
         };

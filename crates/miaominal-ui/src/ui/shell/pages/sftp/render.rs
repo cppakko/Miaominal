@@ -1946,6 +1946,10 @@ impl SftpController {
         self.finish_active_drag_selection(tab_id, position, cx)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the tab renderer needs explicit entity, tab, focus, layout, window, and GPUI context inputs"
+    )]
     pub(in crate::ui::shell) fn render_sftp_page_for_tab(
         &mut self,
         entity: Entity<Self>,
@@ -2326,6 +2330,10 @@ impl SftpController {
             .into_any_element()
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the content renderer needs explicit entity, tab, focus, layout, window, and GPUI context inputs"
+    )]
     pub(in crate::ui::shell) fn render_sftp_page_content(
         &mut self,
         entity: Entity<Self>,

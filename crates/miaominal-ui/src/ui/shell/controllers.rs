@@ -91,7 +91,7 @@ pub(in crate::ui::shell) enum AppCommand {
     OverlayDismissed(DialogOverlaySnapshot),
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,
-    SyncReloaded(SyncReloadResult),
+    SyncReloaded(Box<SyncReloadResult>),
     ManagedKeysChanged(ManagedKeysChange),
     SessionMonitoringPreferenceChanged(bool),
     SessionEventApplied {

@@ -258,25 +258,6 @@ impl TopbarHost for AppView {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn delayed_topbar_action_resolves_reordered_tab_by_id() {
-        let target = TabId::new(20);
-        let mut tabs = TabRegistry::from_tabs([
-            TabState::new_hosts(TabId::new(10)),
-            TabState::new_hosts(target),
-            TabState::new_hosts(TabId::new(30)),
-        ]);
-
-        tabs.move_to(2, 0);
-
-        assert_eq!(topbar_action_index(&tabs, target), Some(2));
-    }
-}
-
 fn topbar_add_button<V: TopbarHost>(
     entity: Entity<V>,
     scroll_handle: ScrollHandle,
@@ -1687,5 +1668,24 @@ impl ChromeAppViewExt for AppView {
                 controller.request_new_profile_editor(cx);
             });
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delayed_topbar_action_resolves_reordered_tab_by_id() {
+        let target = TabId::new(20);
+        let mut tabs = TabRegistry::from_tabs([
+            TabState::new_hosts(TabId::new(10)),
+            TabState::new_hosts(target),
+            TabState::new_hosts(TabId::new(30)),
+        ]);
+
+        tabs.move_to(2, 0);
+
+        assert_eq!(topbar_action_index(&tabs, target), Some(2));
     }
 }

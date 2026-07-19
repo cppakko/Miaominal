@@ -1349,6 +1349,10 @@ impl SessionController {
         controller
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the testable constructor receives each independently owned controller state component explicitly"
+    )]
     fn with_subscriptions(
         services: SessionControllerServices,
         profiles: Vec<SessionProfile>,
@@ -4941,9 +4945,8 @@ impl SessionController {
         self.tabs
             .borrow()
             .values()
-            .filter_map(|session| {
-                (session.purpose == SessionPurpose::Terminal).then(|| session.profile_id.clone())
-            })
+            .filter(|&session| session.purpose == SessionPurpose::Terminal)
+            .map(|session| session.profile_id.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect()

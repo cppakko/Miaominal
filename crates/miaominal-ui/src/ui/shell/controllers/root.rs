@@ -578,7 +578,7 @@ impl AppView {
                     };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        let _ = entity_for_window.update(cx, |this, cx| {
+                        entity_for_window.update(cx, |this, cx| {
                             let managed_key_options = ManagedKeySelectItem::sorted_items(
                                 this.controllers.keychain.read(cx).managed_keys(),
                             );
@@ -605,7 +605,7 @@ impl AppView {
                     };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        let _ = entity_for_window.update(cx, |this, cx| {
+                        entity_for_window.update(cx, |this, cx| {
                             let index = this
                                 .controllers
                                 .session
@@ -651,7 +651,7 @@ impl AppView {
                     };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        let _ = entity_for_window.update(cx, |this, cx| {
+                        entity_for_window.update(cx, |this, cx| {
                             this.start_profile_connection_test(profile, window, cx);
                         });
                     }) {
@@ -673,7 +673,7 @@ impl AppView {
                     };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        let _ = entity_for_window.update(cx, |this, cx| {
+                        entity_for_window.update(cx, |this, cx| {
                             let profile = this
                                 .controllers
                                 .session
@@ -704,7 +704,7 @@ impl AppView {
                     };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        let _ = entity_for_window.update(cx, |this, cx| {
+                        entity_for_window.update(cx, |this, cx| {
                             let profile = this
                                 .controllers
                                 .session
@@ -739,7 +739,7 @@ impl AppView {
                 let rule_id = rule_id.clone();
                 let entity = cx.entity();
                 cx.defer(move |cx| {
-                    let _ = entity.update(cx, |this, cx| {
+                    entity.update(cx, |this, cx| {
                         let tab_id = this.workspace.allocate_tab_id();
                         let controller = this.controllers.session.clone();
                         let start = controller.update(cx, |controller, cx| {
@@ -978,12 +978,12 @@ impl AppView {
             AppCommand::RebuildApplication => self.schedule_application_rebuild(cx),
             AppCommand::OverlayDismissed(snapshot) => self.start_dialog_exit(snapshot.clone(), cx),
             AppCommand::OpenTab(request) => self.handle_tab_open_request(request, cx),
-            AppCommand::SyncReloaded(reload) => self.apply_sync_reload(reload.clone(), cx),
+            AppCommand::SyncReloaded(reload) => self.apply_sync_reload((**reload).clone(), cx),
             AppCommand::CloseTab(tab_id) => {
                 let tab_id = *tab_id;
                 let entity = cx.entity();
                 cx.defer(move |cx| {
-                    let _ = entity.update(cx, |this, cx| {
+                    entity.update(cx, |this, cx| {
                         let _ = this.remove_tab_metadata_after_controller_close(tab_id, cx);
                         this.prune_closed_tab_references();
                         cx.notify();

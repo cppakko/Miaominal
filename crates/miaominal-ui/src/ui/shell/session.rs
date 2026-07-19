@@ -747,12 +747,11 @@ impl AppView {
                         if purpose == SessionPurpose::Terminal {
                             affected_monitor_profiles.insert(profile_id);
                         }
-                    } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id) {
-                        if let Some(commands) = sftp.commands.as_ref()
-                            && let Err(error) = commands.close()
-                        {
-                            log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
-                        }
+                    } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id)
+                        && let Some(commands) = sftp.commands.as_ref()
+                        && let Err(error) = commands.close()
+                    {
+                        log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
                     }
                 }
                 ClosePlanStep::Commit(tab_id) => {
@@ -1069,12 +1068,11 @@ impl AppView {
                 if purpose == SessionPurpose::Terminal {
                     affected_monitor_profiles.insert(profile_id);
                 }
-            } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id) {
-                if let Some(commands) = sftp.commands.as_ref()
-                    && let Err(error) = commands.close()
-                {
-                    log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
-                }
+            } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id)
+                && let Some(commands) = sftp.commands.as_ref()
+                && let Err(error) = commands.close()
+            {
+                log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
             }
         }
         for tab_id in remove_ids.into_iter().rev() {

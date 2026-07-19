@@ -165,9 +165,11 @@ impl AgentController {
                     let release_active = releases_pty_lease
                         .then(|| active_pty_lease.clone())
                         .flatten();
-                    let release_targets = releases_pty_lease
-                        .then(|| target_pty_leases.clone())
-                        .unwrap_or_default();
+                    let release_targets = if releases_pty_lease {
+                        target_pty_leases.clone()
+                    } else {
+                        Default::default()
+                    };
                     let event_session_id = session_id.clone();
                     if let Err(error) = this.update(cx, move |controller, cx| {
                         retire_task_leases(release_active.as_ref(), &release_targets);
@@ -652,11 +654,11 @@ impl AgentController {
                         .await
                 })
                 .await
-                .unwrap_or_else(|error| {
+                .inspect_err(|_error| {
                     #[cfg(debug_assertions)]
-                    log::info!("title generation task cancelled: {error:?}");
-                    None
-                });
+                    log::info!("title generation task cancelled: {_error:?}");
+                })
+                .unwrap_or_default();
             if let Some(title) = title {
                 let _ = this.update(cx, move |controller, cx| {
                     controller.update_session_title_for_session(&session_id, Some(title), cx);

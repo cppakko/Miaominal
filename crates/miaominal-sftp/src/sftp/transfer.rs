@@ -225,6 +225,10 @@ async fn cancel_all_transfers_with_timeout(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the task boundary explicitly owns its session, paths, control, concurrency, and event channels"
+)]
 pub(super) fn spawn_upload_task(
     sftp: Arc<SftpSession>,
     event_sender: SftpEventSender,
@@ -264,6 +268,10 @@ pub(super) fn spawn_upload_task(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the task boundary explicitly owns its session, paths, control, concurrency, and event channels"
+)]
 pub(super) fn spawn_download_task(
     sftp: Arc<SftpSession>,
     event_sender: SftpEventSender,
@@ -389,6 +397,10 @@ impl TransferProgress<'_> {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "transfer recursion needs the path pair plus shared control, permit, and progress channels"
+)]
 async fn upload_path(
     sftp: &SftpSession,
     transfer_id: TransferId,
@@ -739,6 +751,10 @@ async fn remove_remote_temporary_file(sftp: &SftpSession, temporary_path: &str) 
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "transfer recursion needs the path pair plus shared control, permit, and progress channels"
+)]
 async fn download_path(
     sftp: &SftpSession,
     transfer_id: TransferId,

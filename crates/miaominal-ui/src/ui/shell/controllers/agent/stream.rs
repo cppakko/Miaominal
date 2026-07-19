@@ -532,9 +532,10 @@ mod tests {
     use crate::ui::shell::SessionAgentMessage;
 
     fn active_stream_state(request_id: u64) -> SessionAgentState {
-        let mut state = SessionAgentState::default();
-        state.active_request_id = request_id;
-        state
+        SessionAgentState {
+            active_request_id: request_id,
+            ..Default::default()
+        }
     }
 
     #[test]
