@@ -96,6 +96,12 @@ fn render_session_sftp_progress_resize_handle(
         .into_any_element()
 }
 
+fn finish_session_agent_panel_resize(app: &mut AppView, cx: &mut Context<AppView>) {
+    if app.controllers.agent.read(cx).take_panel_drag().is_some() {
+        cx.notify();
+    }
+}
+
 pub(in crate::ui::shell) fn render_workspace_surface(
     app: &mut AppView,
     window: &mut Window,
@@ -259,11 +265,14 @@ pub(in crate::ui::shell) fn render_workspace_surface(
             if event.button != MouseButton::Left {
                 return;
             }
-            if this.controllers.agent.read(cx).take_panel_drag().is_some() {
-                cx.stop_propagation();
-                cx.notify();
-            }
+            finish_session_agent_panel_resize(this, cx);
         }))
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(move |this, _event: &MouseUpEvent, _window, cx| {
+                finish_session_agent_panel_resize(this, cx);
+            }),
+        )
         .when_some(side_panel, |this, panel| this.child(panel))
         .child(
             div()
@@ -390,6 +399,111 @@ fn render_session_workspace_sftp_progress_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
+    use gpui_component::{WindowExt as _, text::TextView, text::TextViewState};
+    use std::cell::Cell;
+
+    struct AgentResizeReleaseTestView {
+        resizing: Rc<Cell<bool>>,
+        text: Entity<TextViewState>,
+    }
+
+    impl Render for AgentResizeReleaseTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let resizing_on_down = self.resizing.clone();
+            let resizing_on_up = self.resizing.clone();
+            let resizing_on_up_out = self.resizing.clone();
+
+            div()
+                .size_full()
+                .relative()
+                .capture_any_mouse_up(move |event: &MouseUpEvent, _window, _cx| {
+                    if event.button == MouseButton::Left {
+                        resizing_on_up.set(false);
+                    }
+                })
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    move |_event: &MouseUpEvent, _window, _cx| {
+                        resizing_on_up_out.set(false);
+                    },
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w(px(20.0))
+                        .h(px(100.0))
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, move |_, _window, cx| {
+                            gpui_component::GlobalState::suppress_text_selection(cx);
+                            resizing_on_down.set(true);
+                            cx.stop_propagation();
+                        }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(30.0))
+                        .w(px(320.0))
+                        .h(px(60.0))
+                        .child(TextView::new(&self.text).selectable(true)),
+                )
+        }
+    }
+
+    fn setup_agent_resize_release_test(
+        cx: &mut TestAppContext,
+    ) -> (Rc<Cell<bool>>, &mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let resizing = Rc::new(Cell::new(false));
+        let resizing_for_view = resizing.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|cx| AgentResizeReleaseTestView {
+                resizing: resizing_for_view,
+                text: cx.new(|cx| {
+                    TextViewState::markdown(
+                        "Agent response text that should not remain selected",
+                        cx,
+                    )
+                }),
+            });
+            Root::new(view, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        (resizing, cx)
+    }
+
+    #[gpui::test]
+    fn occluded_agent_resize_release_does_not_leak_into_text_selection(cx: &mut TestAppContext) {
+        let (resizing, cx) = setup_agent_resize_release_test(cx);
+        let modifiers = Modifiers::default();
+        let resize_handle = point(px(4.0), px(20.0));
+
+        cx.simulate_mouse_down(resize_handle, MouseButton::Left, modifiers);
+        assert!(resizing.get());
+        cx.simulate_mouse_up(resize_handle, MouseButton::Left, modifiers);
+        assert!(!resizing.get());
+
+        // A stale resize state must also not consume the next text-selection mouse-up.
+        resizing.set(true);
+        let text_start = point(px(35.0), px(12.0));
+        cx.simulate_mouse_down(text_start, MouseButton::Left, modifiers);
+        cx.simulate_mouse_up(text_start, MouseButton::Left, modifiers);
+        assert!(!resizing.get());
+
+        cx.simulate_mouse_move(point(px(260.0), px(12.0)), None, modifiers);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        let selected_text = cx.update(|window, cx| window.selected_text(cx));
+        assert_eq!(selected_text, "");
+    }
 
     #[test]
     fn session_sftp_progress_resize_moves_in_the_expected_direction() {

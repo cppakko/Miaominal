@@ -62,6 +62,7 @@ fn render_session_agent_resize_handle(
         .on_mouse_down(
             MouseButton::Left,
             move |event: &MouseDownEvent, _window, cx| {
+                gpui_component::GlobalState::suppress_text_selection(cx);
                 controller.update(cx, |controller, cx| {
                     let initial_width = controller.panel_width();
                     controller.set_panel_drag(Some(SessionAgentPanelDragState {
