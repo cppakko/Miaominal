@@ -210,17 +210,17 @@ impl AppView {
         let cell_width = terminal_cell_width(window);
         let line_height = terminal_line_height(window);
 
-        let (available_width, available_height) = if let Some(bounds) =
-            self.workspace.workspace.active_pane.terminal_bounds
-        {
-            (bounds.size.width, bounds.size.height)
-        } else {
-            let win = window.bounds().size;
-            let width = (win.width - px(TERMINAL_PANEL_BORDER)).max(px(cell_width * 2.0));
-            let height = (win.height - px(TOP_BAR_HEIGHT + FOOTER_HEIGHT + TERMINAL_PANEL_BORDER))
+        let (available_width, available_height) =
+            if let Some(bounds) = self.workspace.workspace.active_pane.terminal_bounds {
+                (bounds.size.width, bounds.size.height)
+            } else {
+                let win = window.bounds().size;
+                let width = (win.width - px(TERMINAL_PANEL_BORDER)).max(px(cell_width * 2.0));
+                let height = (win.height
+                    - px(top_bar_height() + FOOTER_HEIGHT + TERMINAL_PANEL_BORDER))
                 .max(px(line_height));
-            (width, height)
-        };
+                (width, height)
+            };
 
         let columns = (f32::from(available_width) / cell_width)
             .floor()

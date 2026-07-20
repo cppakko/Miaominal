@@ -840,7 +840,7 @@ impl AppView {
         let mut available = match axis {
             SplitAxis::Horizontal => f32::from(bounds.width),
             SplitAxis::Vertical => {
-                f32::from(bounds.height) - TOP_BAR_HEIGHT - FOOTER_HEIGHT - TERMINAL_PANEL_BORDER
+                f32::from(bounds.height) - top_bar_height() - FOOTER_HEIGHT - TERMINAL_PANEL_BORDER
             }
         }
         .max(1.0);

@@ -3,8 +3,6 @@ use crate::ui::i18n;
 use gpui::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
 use std::time::{Duration, Instant};
 
-const TOPBAR_TAB_TITLE_HEIGHT: f32 = 14.0;
-const TOPBAR_TAB_RENAME_HEIGHT: f32 = 22.0;
 const TOPBAR_TAB_GAP: f32 = 8.0;
 const TOPBAR_SECTION_GAP: f32 = 12.0;
 const TOPBAR_ACTION_BUTTON_WIDTH: f32 = 36.0;
@@ -752,6 +750,10 @@ impl ChromeAppViewExt for AppView {
         cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
+        let topbar_title_line_height = miaominal_settings::scaled_line_height(14.0).as_f32();
+        let topbar_rename_height = topbar_tab_rename_height(topbar_title_line_height);
+        let topbar_height = top_bar_height();
+        let topbar_tab_strip_height = topbar_height - 8.0;
         let topbar_scroll_handle = self.workspace.topbar_tab_scroll_handle.clone();
         let topbar_scroll_handle_for_tabs = topbar_scroll_handle.clone();
         let current_active_tab_id = self
@@ -788,7 +790,7 @@ impl ChromeAppViewExt for AppView {
 
         div()
             .relative()
-            .h(px(TOP_BAR_HEIGHT))
+            .h(px(topbar_height))
             .w_full()
             .flex_shrink_0()
             .flex()
@@ -867,7 +869,7 @@ impl ChromeAppViewExt for AppView {
                                     .relative()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .h(px(44.0))
+                                    .h(px(topbar_tab_strip_height))
                                     .px_1()
                                     .py(px(4.0))
                                     .rounded(px(24.0))
@@ -965,11 +967,9 @@ impl ChromeAppViewExt for AppView {
                                                                     .bg(rgb(roles.surface_container_highest))
                                                                     .rounded(px(2.0))
                                                                     .xsmall()
-                                                                    .h(px(TOPBAR_TAB_RENAME_HEIGHT))
+                                                                    .h(px(topbar_rename_height))
                                                                     .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                                                    .line_height(miaominal_settings::scaled_line_height(
-                                                                        TOPBAR_TAB_TITLE_HEIGHT,
-                                                                    ))
+                                                                    .line_height(px(topbar_title_line_height))
                                                                     .text_color(rgb(roles.on_surface))
                                                                     .w_full(),
                                                             )
@@ -981,12 +981,10 @@ impl ChromeAppViewExt for AppView {
                                                             )))
                                                             .flex_1()
                                                             .min_w(px(0.0))
-                                                            .h(px(TOPBAR_TAB_TITLE_HEIGHT))
+                                                            .h(px(topbar_title_line_height))
                                                             .truncate()
                                                             .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                                            .line_height(miaominal_settings::scaled_line_height(
-                                                                TOPBAR_TAB_TITLE_HEIGHT,
-                                                            ))
+                                                            .line_height(px(topbar_title_line_height))
                                                             .text_color(rgb(tab_foreground_color))
                                                             .child(display_title)
                                                             .into_any_element()
@@ -1082,7 +1080,7 @@ impl ChromeAppViewExt for AppView {
                                                                 });
                                                             },
                                                         )
-                                                        .when(is_session && !is_renaming, |this| {
+                                                        .when(!is_renaming, |this| {
                                                             this.tooltip(footer_tooltip(tab.title.clone()))
                                                         })
                                                         .context_menu(move |menu, _window, _cx| {
@@ -1319,10 +1317,10 @@ impl ChromeAppViewExt for AppView {
                                                                                         div()
                                                                                             .flex_1()
                                                                                             .min_w(px(0.0))
-                                                                                            .h(px(14.0))
+                                                                                            .h(px(topbar_title_line_height))
                                                                                             .truncate()
                                                                                             .text_size(miaominal_settings::FontSize::Body.scaled())
-                                                                                            .line_height(miaominal_settings::scaled_line_height(14.0))
+                                                                                            .line_height(px(topbar_title_line_height))
                                                                                             .text_color(rgb(tab_foreground_color))
                                                                                             .child(snapshot.title.clone()),
                                                                                     ),
