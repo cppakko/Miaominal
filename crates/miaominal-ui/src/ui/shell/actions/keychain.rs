@@ -22,6 +22,69 @@ fn keychain_agent_identity_noun(count: usize) -> String {
     })
 }
 
+fn managed_key_name_exists(keys: &[ManagedKeyRecord], candidate: &str) -> bool {
+    keys.iter()
+        .any(|key| key.name.trim().eq_ignore_ascii_case(candidate.trim()))
+}
+
+fn unique_managed_key_name(keys: &[ManagedKeyRecord], base: &str, always_numbered: bool) -> String {
+    let base = base.trim();
+    if !always_numbered && !managed_key_name_exists(keys, base) {
+        return base.to_string();
+    }
+
+    let mut suffix = if always_numbered { 1 } else { 2 };
+    loop {
+        let candidate = format!("{base} {suffix}");
+        if !managed_key_name_exists(keys, &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn resolve_managed_key_import_name(
+    keys: &[ManagedKeyRecord],
+    requested_name: &str,
+    import_path: &str,
+    has_pasted_private_key: bool,
+    source: ManagedKeySource,
+    imported_default_name: &str,
+    generated_default_name: &str,
+) -> String {
+    let requested_name = requested_name.trim();
+    if !requested_name.is_empty() {
+        return requested_name.to_string();
+    }
+
+    if !has_pasted_private_key {
+        let file_name = Path::new(import_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::trim)
+            .filter(|stem| !stem.is_empty());
+        if let Some(file_name) = file_name {
+            return unique_managed_key_name(keys, file_name, false);
+        }
+    }
+
+    let default_name = match source {
+        ManagedKeySource::Generated => generated_default_name,
+        ManagedKeySource::Imported => imported_default_name,
+    };
+    unique_managed_key_name(keys, default_name, true)
+}
+
+fn apply_managed_key_rename(
+    keys: &mut [ManagedKeyRecord],
+    key_id: &str,
+    new_name: &str,
+) -> Option<(usize, String)> {
+    let index = keys.iter().position(|key| key.id == key_id)?;
+    let old_name = std::mem::replace(&mut keys[index].name, new_name.to_string());
+    Some((index, old_name))
+}
+
 fn keychain_deploy_exec_command(
     template: &str,
     location: &str,
@@ -383,6 +446,127 @@ impl KeychainController {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn request_managed_key_rename(
+        &mut self,
+        key_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(key) = self.managed_keys.iter().find(|key| key.id == key_id) else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+
+        let current_name = key.name.clone();
+        set_input_value(&self.forms.rename_name_input, &current_name, window, cx);
+        self.forms
+            .rename_name_input
+            .update(cx, |input, cx| input.focus(window, cx));
+        self.pending_managed_key_rename = Some(PendingManagedKeyRenameState {
+            key_id: key.id.clone(),
+            current_name,
+        });
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn cancel_managed_key_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_managed_key_rename.take() {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::ManagedKeyRename(pending),
+            ));
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui::shell) fn confirm_managed_key_rename(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.pending_managed_key_rename.clone() else {
+            return;
+        };
+        let new_name = self
+            .forms
+            .rename_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if new_name.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.rename_name_required"),
+                cx,
+            );
+            return;
+        }
+
+        let Some(index) = self
+            .managed_keys
+            .iter()
+            .position(|key| key.id == pending.key_id)
+        else {
+            self.pending_managed_key_rename = None;
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::ManagedKeyRename(pending),
+            ));
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+
+        let old_name = self.managed_keys[index].name.clone();
+        if old_name == new_name {
+            self.pending_managed_key_rename = None;
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::ManagedKeyRename(pending),
+            ));
+            self.status_message = i18n::string("keychain.messages.rename_unchanged");
+            cx.notify();
+            return;
+        }
+
+        let Some(service) = self.keychain_service() else {
+            self.status_message = i18n::string("keychain.messages.storage_unavailable");
+            cx.notify();
+            return;
+        };
+
+        let Some((index, old_name)) =
+            apply_managed_key_rename(&mut self.managed_keys, &pending.key_id, &new_name)
+        else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+        if let Err(error) = self.persist_managed_keys_after_user_change(&service, cx) {
+            self.managed_keys[index].name = old_name;
+            let message = i18n::string_args(
+                "keychain.messages.rename_failed",
+                &[("error", &error.to_string())],
+            );
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::InvalidInput,
+                message,
+                cx,
+            );
+            return;
+        }
+
+        self.pending_managed_key_rename = None;
+        cx.emit(AppCommand::OverlayDismissed(
+            DialogOverlaySnapshot::ManagedKeyRename(pending),
+        ));
+        self.status_message =
+            i18n::string_args("keychain.messages.renamed", &[("name", &new_name)]);
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn generate_managed_key(
         &mut self,
         window: &mut Window,
@@ -465,21 +649,21 @@ impl KeychainController {
             return;
         }
 
+        let source = self
+            .editor_draft_source
+            .unwrap_or(ManagedKeySource::Imported);
         let import_name = self.forms.name_input.read(cx).value().to_string();
         let default_import_name = i18n::string("keychain.messages.imported_key_default_name");
-        let import_name = if import_name.trim().is_empty() {
-            if has_pasted_private_key {
-                default_import_name.clone()
-            } else {
-                Path::new(&import_path)
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .unwrap_or(default_import_name.as_str())
-                    .to_string()
-            }
-        } else {
-            import_name.trim().to_string()
-        };
+        let default_generated_name = i18n::string("keychain.messages.generated_key_default_name");
+        let import_name = resolve_managed_key_import_name(
+            &self.managed_keys,
+            &import_name,
+            &import_path,
+            has_pasted_private_key,
+            source,
+            &default_import_name,
+            &default_generated_name,
+        );
 
         let private_key_material = if has_pasted_private_key {
             import_private_key
@@ -504,10 +688,6 @@ impl KeychainController {
         let passphrase = (!passphrase.trim().is_empty()).then_some(passphrase.trim());
         let public_key_material =
             (!import_public_key.trim().is_empty()).then_some(import_public_key.trim());
-        let source = self
-            .editor_draft_source
-            .unwrap_or(ManagedKeySource::Imported);
-
         if self.local_vault_status == LocalVaultStatus::Locked {
             cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
                 KeychainDeferredCommand::ImportManagedKey,
@@ -600,25 +780,21 @@ impl KeychainController {
             return None;
         }
 
-        let import_name = self.forms.name_input.read(cx).value().to_string();
-        let default_import_name = i18n::string("keychain.messages.imported_key_default_name");
-        let import_name = if import_name.trim().is_empty() {
-            if has_pasted_private_key {
-                default_import_name.clone()
-            } else {
-                Path::new(&import_path)
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .unwrap_or(default_import_name.as_str())
-                    .to_string()
-            }
-        } else {
-            import_name.trim().to_string()
-        };
-
         let source = self
             .editor_draft_source
             .unwrap_or(ManagedKeySource::Imported);
+        let import_name = self.forms.name_input.read(cx).value().to_string();
+        let default_import_name = i18n::string("keychain.messages.imported_key_default_name");
+        let default_generated_name = i18n::string("keychain.messages.generated_key_default_name");
+        let import_name = resolve_managed_key_import_name(
+            &self.managed_keys,
+            &import_name,
+            &import_path,
+            has_pasted_private_key,
+            source,
+            &default_import_name,
+            &default_generated_name,
+        );
 
         Some(ManagedKeyImportAfterUnlockRequest {
             import_name,
@@ -1019,6 +1195,16 @@ impl KeychainController {
 mod tests {
     use super::*;
 
+    fn managed_key(name: &str) -> ManagedKeyRecord {
+        ManagedKeyRecord {
+            id: format!("managed-key-{name}"),
+            name: name.to_string(),
+            algorithm: "ssh-ed25519".to_string(),
+            public_key: "ssh-ed25519 AAAA".to_string(),
+            source: ManagedKeySource::Imported,
+        }
+    }
+
     #[test]
     fn deploy_exec_command_uses_positional_arguments() {
         let command = KeychainService::deploy_command(
@@ -1042,5 +1228,90 @@ mod tests {
         assert!(command.contains("'echo '\"'\"'$3'\"'\"''"));
         assert!(command.contains("'/tmp/o'\"'\"'clock'"));
         assert!(command.contains("'ssh '\"'\"'key'\"'\"''"));
+    }
+
+    #[test]
+    fn pasted_import_default_name_uses_first_available_number() {
+        let keys = vec![managed_key("Imported key 1"), managed_key("Imported key 3")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "",
+            true,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Imported key 2");
+    }
+
+    #[test]
+    fn generated_key_uses_generated_default_name() {
+        let keys = vec![managed_key("Generated key 1")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "",
+            true,
+            ManagedKeySource::Generated,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Generated key 2");
+    }
+
+    #[test]
+    fn file_import_uses_unique_file_stem() {
+        let keys = vec![managed_key("id_ed25519")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "C:/Users/akko/.ssh/id_ed25519",
+            false,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "id_ed25519 2");
+    }
+
+    #[test]
+    fn explicit_name_is_trimmed_and_may_duplicate_existing_name() {
+        let keys = vec![managed_key("Production")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "  Production  ",
+            "",
+            true,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Production");
+    }
+
+    #[test]
+    fn renaming_changes_only_the_managed_key_name() {
+        let original = managed_key("Production");
+        let mut keys = vec![original.clone()];
+
+        let (_, old_name) =
+            apply_managed_key_rename(&mut keys, original.id.as_str(), "Production deploy key")
+                .expect("managed key should be renamed");
+
+        assert_eq!(old_name, "Production");
+        assert_eq!(keys[0].name, "Production deploy key");
+        assert_eq!(keys[0].id, original.id);
+        assert_eq!(keys[0].algorithm, original.algorithm);
+        assert_eq!(keys[0].public_key, original.public_key);
+        assert_eq!(keys[0].source, original.source);
     }
 }

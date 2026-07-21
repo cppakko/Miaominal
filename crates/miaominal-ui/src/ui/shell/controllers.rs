@@ -39,7 +39,7 @@ pub(in crate::ui::shell) use agent::{
 };
 pub(in crate::ui::shell) use keychain::{
     KeychainController, KeychainControllerArgs, KeychainEditorMode, KeychainPageView,
-    PendingManagedKeyDeleteState,
+    PendingManagedKeyDeleteState, PendingManagedKeyRenameState,
 };
 pub(in crate::ui::shell) use local_vault_root::LocalVaultRootExt;
 pub(in crate::ui::shell) use session::{

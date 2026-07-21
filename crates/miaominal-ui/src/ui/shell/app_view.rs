@@ -948,6 +948,16 @@ impl AppView {
             .pending_managed_key_delete()
     }
 
+    pub(in crate::ui::shell) fn pending_managed_key_rename_prompt(
+        &self,
+        cx: &App,
+    ) -> Option<PendingManagedKeyRenameState> {
+        self.controllers
+            .keychain
+            .read(cx)
+            .pending_managed_key_rename()
+    }
+
     pub(in crate::ui::shell) fn pending_known_host_delete_prompt(
         &self,
         cx: &App,

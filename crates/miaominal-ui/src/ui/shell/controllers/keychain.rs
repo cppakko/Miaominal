@@ -26,10 +26,17 @@ pub(in crate::ui::shell) struct PendingManagedKeyDeleteState {
     pub(in crate::ui::shell) key_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingManagedKeyRenameState {
+    pub(in crate::ui::shell) key_id: String,
+    pub(in crate::ui::shell) current_name: String,
+}
+
 #[derive(Clone)]
 pub(in crate::ui::shell) struct KeychainForms {
     pub(in crate::ui::shell) filter_input: Entity<InputState>,
     pub(in crate::ui::shell) name_input: Entity<InputState>,
+    pub(in crate::ui::shell) rename_name_input: Entity<InputState>,
     pub(in crate::ui::shell) import_path_input: Entity<InputState>,
     pub(in crate::ui::shell) import_private_key_input: Entity<InputState>,
     pub(in crate::ui::shell) import_public_key_input: Entity<InputState>,
@@ -67,6 +74,7 @@ pub(in crate::ui::shell) struct KeychainController {
     pub(in crate::ui::shell) editor_draft_source: Option<ManagedKeySource>,
     pub(in crate::ui::shell) deploy_key_id: Option<String>,
     pub(in crate::ui::shell) pending_managed_key_delete: Option<PendingManagedKeyDeleteState>,
+    pub(in crate::ui::shell) pending_managed_key_rename: Option<PendingManagedKeyRenameState>,
     pub(in crate::ui::shell) status_message: String,
     pub(in crate::ui::shell) import_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) deploy_task: Option<gpui::Task<()>>,
@@ -88,6 +96,13 @@ impl KeychainController {
         );
         let name_input = new_input_state(
             i18n::string("placeholders.keychain.managed_key_name"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let rename_name_input = new_input_state(
+            i18n::string("dialogs.managed_key_rename.name_label"),
             "",
             false,
             window,
@@ -195,6 +210,7 @@ impl KeychainController {
         KeychainForms {
             filter_input,
             name_input,
+            rename_name_input,
             import_path_input,
             import_private_key_input,
             import_public_key_input,
@@ -215,6 +231,10 @@ impl KeychainController {
             (
                 &self.forms.name_input,
                 "placeholders.keychain.managed_key_name",
+            ),
+            (
+                &self.forms.rename_name_input,
+                "dialogs.managed_key_rename.name_label",
             ),
             (
                 &self.forms.import_path_input,
@@ -291,6 +311,7 @@ impl KeychainController {
             editor_draft_source: None,
             deploy_key_id: None,
             pending_managed_key_delete: None,
+            pending_managed_key_rename: None,
             status_message: String::new(),
             import_task: None,
             deploy_task: None,
@@ -327,6 +348,16 @@ impl KeychainController {
         &self,
     ) -> Option<PendingManagedKeyDeleteState> {
         self.pending_managed_key_delete.clone()
+    }
+
+    pub(in crate::ui::shell) fn pending_managed_key_rename(
+        &self,
+    ) -> Option<PendingManagedKeyRenameState> {
+        self.pending_managed_key_rename.clone()
+    }
+
+    pub(in crate::ui::shell) fn managed_key_rename_input(&self) -> Entity<InputState> {
+        self.forms.rename_name_input.clone()
     }
 
     pub(in crate::ui::shell) fn take_pending_managed_key_delete(

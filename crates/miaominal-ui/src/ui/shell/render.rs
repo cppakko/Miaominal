@@ -113,6 +113,7 @@ impl Render for AppView {
         };
         let pending_profile_delete = self.pending_profile_delete_prompt(cx);
         let pending_managed_key_delete = self.pending_managed_key_delete_prompt(cx);
+        let pending_managed_key_rename = self.pending_managed_key_rename_prompt(cx);
         let pending_known_host_delete = self.pending_known_host_delete_prompt(cx);
         let pending_snippet_delete = self.pending_snippet_delete_prompt(cx);
         let pending_port_forward_rule_delete = self.pending_port_forward_rule_delete_prompt(cx);
@@ -275,6 +276,9 @@ impl Render for AppView {
             })
             .when_some(pending_managed_key_delete, |this, prompt| {
                 this.child(self.render_managed_key_delete_prompt(entity.clone(), &prompt, None))
+            })
+            .when_some(pending_managed_key_rename, |this, prompt| {
+                this.child(self.render_managed_key_rename_prompt(&prompt, None, cx))
             })
             .when_some(pending_known_host_delete, |this, prompt| {
                 let controller = self.controllers.session.clone();
@@ -1415,6 +1419,72 @@ impl AppView {
             i18n::string("dialogs.managed_key_delete.title"),
             Some(subtitle),
             None,
+            actions.into_any_element(),
+            exit_progress,
+        )
+    }
+
+    fn render_managed_key_rename_prompt(
+        &self,
+        prompt: &PendingManagedKeyRenameState,
+        exit_progress: Option<f32>,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        let rename_input = self
+            .controllers
+            .keychain
+            .read(cx)
+            .managed_key_rename_input();
+        let subtitle = i18n::string_args(
+            "dialogs.managed_key_rename.message",
+            &[("key_name", &prompt.current_name)],
+        );
+
+        let controller_cancel = self.controllers.keychain.clone();
+        let controller_confirm = self.controllers.keychain.clone();
+        let body = v_flex()
+            .w_full()
+            .child(surface_text_input_stack(
+                i18n::string("dialogs.managed_key_rename.name_label"),
+                rename_input,
+                TextInputSurface::Highest,
+                true,
+            ))
+            .into_any_element();
+
+        let actions = h_flex()
+            .gap_2()
+            .justify_end()
+            .child(
+                basic_dialog_action_button(
+                    "managed-key-rename-cancel",
+                    i18n::string("dialogs.common.cancel"),
+                    BasicDialogActionTone::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_managed_key_rename(cx);
+                    });
+                }),
+            )
+            .child(
+                basic_dialog_action_button(
+                    "managed-key-rename-confirm",
+                    i18n::string("dialogs.managed_key_rename.confirm"),
+                    BasicDialogActionTone::Default,
+                )
+                .on_click(move |_, window, cx| {
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_managed_key_rename(window, cx);
+                    });
+                }),
+            );
+
+        render_basic_dialog(
+            "managed-key-rename",
+            i18n::string("dialogs.managed_key_rename.title"),
+            Some(subtitle),
+            Some(body),
             actions.into_any_element(),
             exit_progress,
         )
@@ -3176,6 +3246,9 @@ impl AppView {
             }
             DialogOverlaySnapshot::ManagedKeyDelete(prompt) => {
                 self.render_managed_key_delete_prompt(entity, &prompt, Some(exit_progress))
+            }
+            DialogOverlaySnapshot::ManagedKeyRename(prompt) => {
+                self.render_managed_key_rename_prompt(&prompt, Some(exit_progress), cx)
             }
             DialogOverlaySnapshot::KnownHostDelete(prompt) => {
                 let controller = self.controllers.session.clone();

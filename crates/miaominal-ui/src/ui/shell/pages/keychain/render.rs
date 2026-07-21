@@ -79,6 +79,7 @@ fn managed_key_card(
     );
     let source_label = managed_key_source_label(key.source);
     let deploy_id = key.id.clone();
+    let rename_id = key.id.clone();
     let delete_id = key.id.clone();
     let item_id = SharedString::from(format!("managed-key-card-{}", key.id.as_str()));
 
@@ -163,6 +164,22 @@ fn managed_key_card(
                                             this.open_keychain_deploy_editor(
                                                 &deploy_id, window, cx,
                                             );
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(icon_button(
+                                AppIcon::Edit,
+                                30.0,
+                                10.0,
+                                None,
+                                None,
+                                Some(roles.outline_variant),
+                                {
+                                    let entity = entity.clone();
+                                    move |window, cx| {
+                                        entity.update(cx, |this, cx| {
+                                            this.request_managed_key_rename(&rename_id, window, cx);
                                         });
                                     }
                                 },

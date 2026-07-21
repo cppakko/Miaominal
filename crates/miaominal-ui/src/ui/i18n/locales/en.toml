@@ -496,6 +496,12 @@ message = "Delete managed key \"{key_name}\"? This also removes the saved privat
 cancel = "Cancel"
 confirm = "Delete"
 
+[dialogs.managed_key_rename]
+title = "Rename managed key"
+message = "Set a new name for managed key \"{key_name}\":"
+name_label = "New name"
+confirm = "Rename"
+
 [dialogs.known_host_delete]
 title = "Delete saved fingerprint?"
 message = "Delete the saved fingerprint for {host}:{port}? You'll be asked to verify it again on the next connection."
@@ -1273,8 +1279,13 @@ generation_failed = "Key generation failed: {error}"
 generated = "Generated an Ed25519 key pair into the editor. Review it and import to save it."
 import_private_key_required = "Choose a private key file or paste private key text to import."
 imported_key_default_name = "Imported key"
+generated_key_default_name = "Generated key"
 import_failed = "Key import failed: {error}"
 imported = "Imported managed key {summary}"
+rename_name_required = "Managed key name cannot be empty."
+rename_failed = "Failed to rename managed key: {error}"
+rename_unchanged = "Managed key name was not changed."
+renamed = "Renamed managed key to \"{name}\"."
 preparing_deploy = "Preparing deployment for {summary}"
 deploy_started = "Deploying {summary} to {profile}"
 deploy_profile_required = "Select a compatible host profile before deploying this key."
