@@ -403,12 +403,7 @@ fn close_topbar_tab<V: TopbarHost>(
 }
 
 fn topbar_pointer_up_should_be_ignored(cx: &mut App) -> bool {
-    if cx.has_active_drag() {
-        cx.stop_propagation();
-        true
-    } else {
-        false
-    }
+    cx.has_active_drag()
 }
 
 fn window_control_button(
