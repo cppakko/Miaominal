@@ -45,7 +45,8 @@ impl TerminalService {
 mod tests {
     use super::*;
     use miaominal_secrets::{
-        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+        APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, VaultCredentialBackend,
+        set_vault_test_parameters,
     };
     use miaominal_storage::known_hosts_store::KnownHostsStore;
     use std::fs;
@@ -61,7 +62,11 @@ mod tests {
         ));
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
-            VaultCredentialBackend::new_with_path(path.clone(), "passphrase"),
+            VaultCredentialBackend::new_with_path(
+                path.clone(),
+                ProtectedPassphrase::try_from_string("passphrase".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
         );
         let secrets = SecretStore::with_credentials(credentials);
         secrets

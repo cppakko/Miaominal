@@ -565,7 +565,8 @@ mod tests {
     use super::*;
     use miaominal_core::keychain::ManagedKeySource;
     use miaominal_secrets::{
-        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+        APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, VaultCredentialBackend,
+        set_vault_test_parameters,
     };
 
     #[test]
@@ -670,7 +671,11 @@ mod tests {
         ));
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
-            VaultCredentialBackend::new_with_path(vault_path.clone(), "provider-secret-test"),
+            VaultCredentialBackend::new_with_path(
+                vault_path.clone(),
+                ProtectedPassphrase::try_from_string("provider-secret-test".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
         );
         credentials
             .initialize()
@@ -705,7 +710,8 @@ mod tests {
             APP_CREDENTIAL_SERVICE,
             VaultCredentialBackend::new_with_path(
                 root.join("secret_vault.json"),
-                "vault-passphrase",
+                ProtectedPassphrase::try_from_string("vault-passphrase".to_string())
+                    .expect("test passphrase should use protected memory"),
             ),
         );
         let secret_store = SecretStore::with_credentials(credentials);

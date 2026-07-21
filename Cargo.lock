@@ -5216,6 +5216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "memsafe"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcf2b4d7a25d60474415c3ed174d37baac2881182484cce3cd765536e17301cf"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "metal"
 version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5323,17 +5333,20 @@ dependencies = [
 name = "miaominal-secrets"
 version = "0.1.0"
 dependencies = [
+ "aes 0.9.0",
  "aes-gcm",
  "anyhow",
  "argon2 0.5.3",
  "base64",
  "keyring",
  "log",
+ "memsafe",
  "miaominal-paths",
  "rand 0.10.1",
  "serde",
  "serde_json",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -5503,6 +5516,7 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "windows 0.62.2",
+ "zeroize",
 ]
 
 [[package]]

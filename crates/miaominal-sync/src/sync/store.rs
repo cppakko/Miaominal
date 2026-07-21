@@ -2,7 +2,8 @@ use crate::SyncConfig;
 use anyhow::{Context, Result};
 use miaominal_paths::{self as paths, atomic_write};
 use miaominal_secrets::{
-    APP_CREDENTIAL_SERVICE, CredentialStore, LockedCredentialBackend, VaultCredentialBackend,
+    APP_CREDENTIAL_SERVICE, CredentialStore, LockedCredentialBackend, ProtectedPassphrase,
+    VaultCredentialBackend,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ impl SyncConfigStore {
         ))
     }
 
-    pub fn load_with_vault(passphrase: impl Into<String>) -> Result<Self> {
+    pub fn load_with_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
         Self::load_with_credentials(CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
             VaultCredentialBackend::new(passphrase)?,
@@ -86,7 +87,7 @@ impl SyncConfigStore {
         )
     }
 
-    pub fn fallback_with_vault(passphrase: impl Into<String>) -> Result<Self> {
+    pub fn fallback_with_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
         Ok(Self::with_credentials(
             std::env::temp_dir().join("miaominal_sync_config.toml"),
             SyncConfig::default(),
@@ -95,6 +96,14 @@ impl SyncConfigStore {
                 VaultCredentialBackend::new(passphrase)?,
             ),
         ))
+    }
+
+    pub fn fallback_with_credentials(credentials: CredentialStore) -> Self {
+        Self::with_credentials(
+            std::env::temp_dir().join("miaominal_sync_config.toml"),
+            SyncConfig::default(),
+            credentials,
+        )
     }
 
     pub fn with_credentials(
@@ -220,6 +229,7 @@ impl SyncConfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_secrets::ProtectedPassphrase;
     use miaominal_secrets::credential_backend::{
         CredentialStore, LockedCredentialBackend, VaultCredentialBackend, set_vault_test_parameters,
     };
@@ -251,7 +261,11 @@ mod tests {
         ));
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
-            VaultCredentialBackend::new_with_path(vault_path.clone(), "passphrase"),
+            VaultCredentialBackend::new_with_path(
+                vault_path.clone(),
+                ProtectedPassphrase::try_from_string("passphrase".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
         );
         let store = SyncConfigStore::with_credentials(
             config_path.clone(),

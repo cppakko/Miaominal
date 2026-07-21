@@ -1485,6 +1485,15 @@ message = "启用机密库前，请再次输入本地机密库口令进行确认
 [settings.sync.vault.passphrase_mismatch_error]
 message = "两次输入的本地机密库口令不一致。"
 
+[settings.sync.vault.passphrase_too_long_error]
+message = "本地机密库口令不能超过 1024 个 UTF-8 字节。"
+
+[settings.sync.vault.secure_memory_unavailable_error]
+message = "受保护内存不可用，无法安全解锁本地机密库。"
+
+[settings.sync.vault.session_revoked_error]
+message = "本地机密库会话已经撤销，需要重新解锁。"
+
 [settings.sync.vault.disable_requires_unlock_error]
 message = "请先解锁本地机密库，再将已保存的机密信息迁回系统凭据存储。"
 

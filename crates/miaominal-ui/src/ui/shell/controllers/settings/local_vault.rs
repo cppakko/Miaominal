@@ -5,20 +5,26 @@ use crate::ui::shell::{
     validation_notification,
 };
 use gpui_component::WindowExt as _;
+use miaominal_secrets::{MAX_VAULT_PASSPHRASE_BYTES, ProtectedPassphrase};
+use zeroize::Zeroizing;
+
+fn local_vault_passphrase_too_long(passphrase: &str) -> bool {
+    passphrase.len() > MAX_VAULT_PASSPHRASE_BYTES
+}
 
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) enum LocalVaultActionRequest {
     Enable {
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
     },
     Unlock {
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
     },
     Lock,
     Disable,
     ChangePassphrase {
-        current_passphrase: String,
-        new_passphrase: String,
+        current_passphrase: ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
     },
 }
 
@@ -28,7 +34,7 @@ pub(in crate::ui::shell) struct LocalVaultUnlockResult {
 }
 
 pub(in crate::ui::shell) struct LocalVaultEnableResult {
-    pub(in crate::ui::shell) passphrase: String,
+    pub(in crate::ui::shell) passphrase: ProtectedPassphrase,
     pub(in crate::ui::shell) vault_secrets: SecretStore,
     pub(in crate::ui::shell) vault_sync_engine: SyncEngine,
     pub(in crate::ui::shell) sync_secret_inputs: LocalVaultSyncSecretInputs,
@@ -288,23 +294,25 @@ impl SettingsController {
             return None;
         }
 
-        let passphrase = self
-            .forms
-            .local_vault_passphrase_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
+        let passphrase = Zeroizing::new(
+            self.forms
+                .local_vault_passphrase_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string(),
+        );
 
         match self.local_vault_status {
             LocalVaultStatus::Disabled => {
-                let passphrase_confirmation = self
-                    .forms
-                    .local_vault_passphrase_confirmation_input
-                    .read(cx)
-                    .value()
-                    .trim()
-                    .to_string();
+                let passphrase_confirmation = Zeroizing::new(
+                    self.forms
+                        .local_vault_passphrase_confirmation_input
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .to_string(),
+                );
 
                 if passphrase.is_empty() {
                     self.notify_local_vault_validation_failure(
@@ -336,6 +344,9 @@ impl SettingsController {
                     return None;
                 }
 
+                let passphrase =
+                    self.protect_local_vault_passphrase(passphrase.as_str(), window, cx)?;
+                self.clear_local_vault_passphrase_input(window, cx);
                 Some(LocalVaultActionRequest::Enable { passphrase })
             }
             LocalVaultStatus::Locked => {
@@ -348,6 +359,9 @@ impl SettingsController {
                     );
                     return None;
                 }
+                let passphrase =
+                    self.protect_local_vault_passphrase(passphrase.as_str(), window, cx)?;
+                self.clear_local_vault_passphrase_input(window, cx);
                 Some(LocalVaultActionRequest::Unlock { passphrase })
             }
             LocalVaultStatus::Unlocked => Some(LocalVaultActionRequest::Lock),
@@ -363,20 +377,22 @@ impl SettingsController {
             return None;
         }
 
-        let passphrase = self
-            .forms
-            .local_vault_passphrase_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        let passphrase_confirmation = self
-            .forms
-            .local_vault_passphrase_confirmation_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
+        let passphrase = Zeroizing::new(
+            self.forms
+                .local_vault_passphrase_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string(),
+        );
+        let passphrase_confirmation = Zeroizing::new(
+            self.forms
+                .local_vault_passphrase_confirmation_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string(),
+        );
 
         if !self.local_vault_can_change_passphrase() {
             self.notify_local_vault_validation_failure(
@@ -415,14 +431,48 @@ impl SettingsController {
             return None;
         }
 
+        let new_passphrase =
+            self.protect_local_vault_passphrase(passphrase.as_str(), window, cx)?;
+        self.clear_local_vault_passphrase_input(window, cx);
         self.local_vault_session_passphrase
             .clone()
             .map(
                 |current_passphrase| LocalVaultActionRequest::ChangePassphrase {
                     current_passphrase,
-                    new_passphrase: passphrase,
+                    new_passphrase,
                 },
             )
+    }
+
+    fn protect_local_vault_passphrase(
+        &mut self,
+        passphrase: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<ProtectedPassphrase> {
+        if local_vault_passphrase_too_long(passphrase) {
+            self.notify_local_vault_validation_failure(
+                ValidationNotificationKind::InvalidInput,
+                i18n::string("settings.sync.vault.passphrase_too_long_error.message"),
+                window,
+                cx,
+            );
+            return None;
+        }
+
+        match ProtectedPassphrase::try_from_string(passphrase.to_string()) {
+            Ok(passphrase) => Some(passphrase),
+            Err(error) => {
+                log::warn!("failed to protect local vault passphrase: {error:#}");
+                self.notify_local_vault_validation_failure(
+                    ValidationNotificationKind::InvalidInput,
+                    i18n::string("settings.sync.vault.secure_memory_unavailable_error.message"),
+                    window,
+                    cx,
+                );
+                None
+            }
+        }
     }
 
     pub(in crate::ui::shell) fn clear_local_vault_passphrase_input(
@@ -685,7 +735,24 @@ impl SettingsController {
         action: &str,
         error: &anyhow::Error,
     ) -> String {
-        let error_message = error.to_string();
+        let error_message = if error.chain().any(|cause| {
+            cause
+                .to_string()
+                .contains("local vault session has been revoked")
+        }) {
+            i18n::string("settings.sync.vault.session_revoked_error.message")
+        } else if error.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains("protected memory")
+                || message.contains("protected-memory")
+                || message.contains("unseal local vault passphrase")
+                || message.contains("unseal local vault cache key")
+                || message.contains("unseal derived key")
+        }) {
+            i18n::string("settings.sync.vault.secure_memory_unavailable_error.message")
+        } else {
+            error.to_string()
+        };
         i18n::string_args(
             "settings.sync.vault.notifications.failed_message",
             &[("action", action), ("error", &error_message)],
@@ -750,7 +817,7 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn start_vault_unlock(
         &mut self,
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
         cx: &mut Context<Self>,
     ) {
         self.local_vault_unlock_in_progress = true;
@@ -775,7 +842,7 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn start_vault_enable(
         &mut self,
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
         session_ids: Vec<String>,
         managed_key_ids: Vec<String>,
         ai_provider_ids: Vec<String>,
@@ -850,8 +917,8 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn start_vault_change_passphrase(
         &mut self,
-        current_passphrase: String,
-        new_passphrase: String,
+        current_passphrase: ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
         cx: &mut Context<Self>,
     ) {
         self.local_vault_unlock_in_progress = true;
@@ -962,7 +1029,7 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn apply_vault_enable(
         &mut self,
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
         vault_secrets: SecretStore,
         vault_sync_engine: SyncEngine,
     ) -> anyhow::Result<LocalVaultTransition> {
@@ -1040,5 +1107,55 @@ impl SettingsController {
                 log::debug!("failed to publish local vault auto-lock result: {error:?}");
             }
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsController, local_vault_passphrase_too_long};
+    use miaominal_secrets::MAX_VAULT_PASSPHRASE_BYTES;
+    use miaominal_settings::AppLanguage;
+
+    #[test]
+    fn local_vault_passphrase_limit_uses_utf8_bytes() {
+        assert!(!local_vault_passphrase_too_long(
+            &"a".repeat(MAX_VAULT_PASSPHRASE_BYTES)
+        ));
+        assert!(local_vault_passphrase_too_long(
+            &"a".repeat(MAX_VAULT_PASSPHRASE_BYTES + 1)
+        ));
+        assert!(local_vault_passphrase_too_long(
+            &"猫".repeat(MAX_VAULT_PASSPHRASE_BYTES / "猫".len() + 1)
+        ));
+    }
+
+    #[test]
+    fn revoked_vault_session_uses_reunlock_guidance() {
+        crate::ui::i18n::set_language(AppLanguage::English);
+        let error = anyhow::anyhow!("local vault session has been revoked");
+
+        let message = SettingsController::local_vault_error_message("Unlock", &error);
+
+        assert!(message.contains("Unlock it again to continue."));
+    }
+
+    #[test]
+    fn protected_memory_failures_use_safe_unlock_guidance() {
+        crate::ui::i18n::set_language(AppLanguage::English);
+        let error = anyhow::anyhow!("failed to unseal derived key: memory protection failed");
+
+        let message = SettingsController::local_vault_error_message("Unlock", &error);
+
+        assert!(message.contains("cannot be unlocked safely"));
+    }
+
+    #[test]
+    fn cache_key_unseal_failures_use_safe_unlock_guidance() {
+        crate::ui::i18n::set_language(AppLanguage::English);
+        let error = anyhow::anyhow!("failed to unseal local vault cache key: protection failed");
+
+        let message = SettingsController::local_vault_error_message("Unlock", &error);
+
+        assert!(message.contains("cannot be unlocked safely"));
     }
 }

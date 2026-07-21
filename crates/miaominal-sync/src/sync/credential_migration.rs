@@ -102,7 +102,8 @@ mod tests {
     use super::*;
     use crate::SyncConfig;
     use miaominal_secrets::{
-        APP_CREDENTIAL_SERVICE, CredentialStore, VaultCredentialBackend, set_vault_test_parameters,
+        APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, VaultCredentialBackend,
+        set_vault_test_parameters,
     };
     use std::path::PathBuf;
 
@@ -122,7 +123,11 @@ mod tests {
 
     fn vault_secret_store(passphrase: &str, vault_path: PathBuf) -> SecretStore {
         set_vault_test_parameters();
-        let backend = VaultCredentialBackend::new_with_path(vault_path, passphrase);
+        let backend = VaultCredentialBackend::new_with_path(
+            vault_path,
+            ProtectedPassphrase::try_from_string(passphrase.to_string())
+                .expect("test passphrase should use protected memory"),
+        );
         let credentials = CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, backend);
         credentials
             .initialize()
@@ -136,7 +141,11 @@ mod tests {
         config_file: PathBuf,
     ) -> SyncConfigStore {
         set_vault_test_parameters();
-        let backend = VaultCredentialBackend::new_with_path(vault_path, passphrase);
+        let backend = VaultCredentialBackend::new_with_path(
+            vault_path,
+            ProtectedPassphrase::try_from_string(passphrase.to_string())
+                .expect("test passphrase should use protected memory"),
+        );
         let credentials = CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, backend);
         credentials
             .initialize()

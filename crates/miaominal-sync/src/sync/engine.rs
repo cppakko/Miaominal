@@ -5,7 +5,7 @@ use super::providers::{PullOutcome, RemoteBackend};
 use super::store::SyncConfigStore;
 use crate::{SyncPayload, SyncProvider, SyncStatus};
 use anyhow::{Context, Result};
-use miaominal_secrets::SecretStore;
+use miaominal_secrets::{CredentialStore, ProtectedPassphrase, SecretStore};
 use miaominal_storage::SettingsStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
@@ -52,13 +52,21 @@ impl SyncEngine {
         Self { config_store }
     }
 
-    pub fn new_vault(passphrase: impl Into<String>) -> Result<Self> {
-        let passphrase = passphrase.into();
+    pub fn new_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
         let config_store = SyncConfigStore::load_with_vault(passphrase.clone()).or_else(|err| {
             log::warn!("failed to load vault sync config: {err:?}");
             SyncConfigStore::fallback_with_vault(passphrase)
         })?;
         Ok(Self { config_store })
+    }
+
+    pub fn new_with_credentials(credentials: CredentialStore) -> Self {
+        let config_store = SyncConfigStore::load_with_credentials(credentials.clone())
+            .unwrap_or_else(|err| {
+                log::warn!("failed to load sync config with shared credentials: {err:?}");
+                SyncConfigStore::fallback_with_credentials(credentials)
+            });
+        Self { config_store }
     }
 
     /// Read data from all stores, build an encrypted payload, and push it to the

@@ -1,6 +1,9 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use miaominal_paths as paths;
-use miaominal_secrets::{SecretStore, VaultCredentialBackend};
+use miaominal_secrets::{
+    APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretStore,
+    VaultCredentialBackend,
+};
 use miaominal_settings::{FONT_SIZE_MAX, FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN};
 use miaominal_storage::SettingsStore;
 use miaominal_sync::SyncProvider;
@@ -21,7 +24,7 @@ pub struct LocalVaultTransition {
     pub secrets: SecretStore,
     pub sync_engine: SyncEngine,
     pub mode: LocalVaultMode,
-    pub session_passphrase: Option<String>,
+    pub session_passphrase: Option<ProtectedPassphrase>,
 }
 
 pub enum LocalVaultPassphraseChangeOutcome {
@@ -132,15 +135,14 @@ impl SettingsService {
     }
 
     pub fn prepare_vault_enable(
-        passphrase: &str,
+        passphrase: &ProtectedPassphrase,
         session_ids: Vec<String>,
         managed_key_ids: Vec<String>,
         ai_provider_ids: Vec<String>,
         source_secrets: SecretStore,
         source_sync_engine: SyncEngine,
     ) -> Result<(SecretStore, SyncEngine)> {
-        let vault_secrets = SecretStore::new_vault(passphrase)?;
-        let vault_sync_engine = SyncEngine::new_vault(passphrase)?;
+        let (vault_secrets, vault_sync_engine) = Self::open_vault(passphrase.clone())?;
 
         let copy_result = Self::copy_secrets_between_backends(
             &session_ids,
@@ -163,7 +165,7 @@ impl SettingsService {
     }
 
     pub fn apply_vault_enable(
-        passphrase: String,
+        passphrase: ProtectedPassphrase,
         vault_secrets: SecretStore,
         vault_sync_engine: SyncEngine,
         settings_store: &mut SettingsStore,
@@ -180,15 +182,14 @@ impl SettingsService {
         })
     }
 
-    pub fn unlock_local_vault(passphrase: String) -> Result<LocalVaultTransition> {
+    pub fn unlock_local_vault(passphrase: ProtectedPassphrase) -> Result<LocalVaultTransition> {
         if !VaultCredentialBackend::default_store_exists()? {
             anyhow::bail!(
                 "local vault file is missing; the vault may have been corrupted or deleted"
             );
         }
 
-        let vault_secrets = SecretStore::new_vault(passphrase.clone())?;
-        let vault_sync_engine = SyncEngine::new_vault(passphrase.clone())?;
+        let (vault_secrets, vault_sync_engine) = Self::open_vault(passphrase.clone())?;
 
         Ok(LocalVaultTransition {
             secrets: vault_secrets,
@@ -199,19 +200,16 @@ impl SettingsService {
     }
 
     pub fn change_local_vault_passphrase(
-        current_passphrase: &str,
-        new_passphrase: String,
+        current_passphrase: &ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
     ) -> Result<LocalVaultPassphraseChangeOutcome> {
         VaultCredentialBackend::rotate_default_store_passphrase(
             current_passphrase,
             &new_passphrase,
         )?;
 
-        match (
-            SecretStore::new_vault(new_passphrase.clone()),
-            SyncEngine::new_vault(new_passphrase.clone()),
-        ) {
-            (Ok(vault_secrets), Ok(vault_sync_engine)) => Ok(
+        match Self::open_vault(new_passphrase.clone()) {
+            Ok((vault_secrets, vault_sync_engine)) => Ok(
                 LocalVaultPassphraseChangeOutcome::Reopened(LocalVaultTransition {
                     secrets: vault_secrets,
                     sync_engine: vault_sync_engine,
@@ -219,23 +217,29 @@ impl SettingsService {
                     session_passphrase: Some(new_passphrase),
                 }),
             ),
-            (secret_result, sync_result) => {
-                let error = match (secret_result.err(), sync_result.err()) {
-                    (Some(error), _) => error,
-                    (_, Some(error)) => error,
-                    (None, None) => {
-                        anyhow!("vault passphrase changed, but the vault could not be reopened")
-                    }
-                };
-
-                Ok(LocalVaultPassphraseChangeOutcome::Locked {
-                    transition: Self::locked_transition(),
-                    error: error.context(
-                        "vault passphrase changed, but the vault could not be reopened automatically",
-                    ),
-                })
-            }
+            Err(error) => Ok(LocalVaultPassphraseChangeOutcome::Locked {
+                transition: Self::locked_transition(),
+                error: error.context(
+                    "vault passphrase changed, but the vault could not be reopened automatically",
+                ),
+            }),
         }
+    }
+
+    fn open_vault(passphrase: ProtectedPassphrase) -> Result<(SecretStore, SyncEngine)> {
+        Self::open_vault_with_backend(VaultCredentialBackend::new(passphrase)?)
+    }
+
+    fn open_vault_with_backend(
+        backend: VaultCredentialBackend,
+    ) -> Result<(SecretStore, SyncEngine)> {
+        let credentials = CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, backend);
+        credentials.initialize()?;
+
+        Ok((
+            SecretStore::with_credentials(credentials.clone()),
+            SyncEngine::new_with_credentials(credentials),
+        ))
     }
 
     pub fn prepare_vault_disable(
@@ -382,7 +386,7 @@ mod tests {
     use super::*;
     use miaominal_secrets::set_vault_test_parameters;
     use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore};
-    use miaominal_secrets::{SecretKind, SecretStore, VaultCredentialBackend};
+    use miaominal_secrets::{ProtectedPassphrase, SecretKind, SecretStore, VaultCredentialBackend};
     use miaominal_sync::SyncConfig;
     use miaominal_sync::store::SyncConfigStore;
     use std::fs;
@@ -409,6 +413,11 @@ mod tests {
         ))
     }
 
+    fn protected(value: &str) -> ProtectedPassphrase {
+        ProtectedPassphrase::try_from_string(value.to_string())
+            .expect("test passphrase should use protected memory")
+    }
+
     fn cleanup_test_vault(path: &Path) {
         let _ = fs::remove_file(path);
         let mut lock_path = path.as_os_str().to_os_string();
@@ -425,7 +434,7 @@ mod tests {
         let config_path = temp_sync_config_path(label);
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
-            VaultCredentialBackend::new_with_path(vault_path.clone(), vault_passphrase),
+            VaultCredentialBackend::new_with_path(vault_path.clone(), protected(vault_passphrase)),
         );
 
         (
@@ -447,7 +456,10 @@ mod tests {
         let config_path = temp_sync_config_path(&format!("{label}-config"));
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
-            VaultCredentialBackend::new_with_path(secrets_path.clone(), "keyring-passphrase"),
+            VaultCredentialBackend::new_with_path(
+                secrets_path.clone(),
+                protected("keyring-passphrase"),
+            ),
         );
         credentials
             .initialize()
@@ -484,6 +496,30 @@ mod tests {
 
         assert_eq!(transition.mode, LocalVaultMode::Disabled);
         assert!(transition.session_passphrase.is_none());
+    }
+
+    #[test]
+    fn shared_vault_backend_is_revoked_for_secret_and_sync_stores() {
+        set_vault_test_parameters();
+        let vault_path = temp_vault_path("shared-revocation");
+        let passphrase = protected("vault-passphrase");
+        let backend = VaultCredentialBackend::new_with_path(vault_path.clone(), passphrase.clone());
+        let (secrets, sync_engine) = SettingsService::open_vault_with_backend(backend)
+            .expect("shared vault backend should open");
+
+        secrets
+            .set("profile-1", SecretKind::Password, "password")
+            .expect("profile password should save");
+        sync_engine
+            .config_store
+            .set_github_token("github-token")
+            .expect("sync token should save through shared backend");
+        passphrase.revoke();
+
+        assert!(secrets.get("profile-1", SecretKind::Password).is_err());
+        assert!(sync_engine.config_store.get_github_token().is_err());
+
+        cleanup_test_vault(&vault_path);
     }
 
     #[test]

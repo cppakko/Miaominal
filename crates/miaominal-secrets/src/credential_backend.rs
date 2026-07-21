@@ -1,5 +1,6 @@
+use crate::protected_memory::{ProtectedDerivedKey, ProtectedPassphrase};
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{Aead, KeyInit, Nonce, array::Array};
+use aes_gcm::aead::{Aead, AeadInOut, KeyInit, Nonce, array::Array};
 use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
@@ -11,6 +12,7 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use zeroize::{Zeroize, Zeroizing};
 
 pub const APP_CREDENTIAL_SERVICE: &str = "dev.akko.miaominal";
 
@@ -22,6 +24,7 @@ static VAULT_MEMORY_COST: AtomicU32 = AtomicU32::new(65536);
 static VAULT_TIME_COST: AtomicU32 = AtomicU32::new(3);
 static VAULT_PARALLELISM: AtomicU32 = AtomicU32::new(4);
 const VAULT_AAD: &[u8] = b"miaominal.secret-vault.v1";
+const VAULT_MEMORY_CACHE_AAD: &[u8] = b"miaominal.secret-vault.memory-cache.v1";
 const VAULT_METADATA_SERVICE: &str = "__vault__";
 const VAULT_METADATA_ACCOUNT: &str = "status";
 const VAULT_METADATA_VALUE: &str = "ready";
@@ -307,17 +310,20 @@ impl CredentialBackend for LockedCredentialBackend {
     }
 }
 
-#[derive(Debug)]
 pub struct VaultCredentialBackend {
     file_path: PathBuf,
-    passphrase: String,
+    passphrase: ProtectedPassphrase,
     state: Mutex<Option<CachedVaultDocument>>,
 }
 
-#[derive(Debug)]
 struct CachedVaultDocument {
     serialized: Option<Vec<u8>>,
-    document: VaultDocument,
+    encrypted_document: EncryptedVaultCache,
+}
+
+struct EncryptedVaultCache {
+    nonce: [u8; 12],
+    ciphertext: Vec<u8>,
 }
 
 // Serializing within the process avoids platform-specific behavior when the
@@ -327,6 +333,37 @@ fn vault_io_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
+
+fn vault_rotation_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+thread_local! {
+    static VAULT_LOCK_TRACE: std::cell::RefCell<Vec<&'static str>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+    static VAULT_DERIVE_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+fn record_vault_lock_trace(lock: &'static str) {
+    VAULT_LOCK_TRACE.with(|trace| trace.borrow_mut().push(lock));
+}
+
+#[cfg(not(test))]
+fn record_vault_lock_trace(_lock: &'static str) {}
+
+#[cfg(test)]
+fn record_vault_derivation() {
+    VAULT_DERIVE_COUNT.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(test))]
+fn record_vault_derivation() {}
 
 fn vault_lock_file_path(file_path: &Path) -> PathBuf {
     let mut lock_path = file_path.as_os_str().to_os_string();
@@ -350,6 +387,7 @@ fn open_vault_lock_file(file_path: &Path) -> Result<File> {
 }
 
 fn with_vault_file_lock<T>(file_path: &Path, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    record_vault_lock_trace("file");
     let _process_lock = vault_io_lock()
         .lock()
         .map_err(|_| anyhow!("vault I/O lock poisoned"))?;
@@ -364,14 +402,14 @@ fn with_vault_file_lock<T>(file_path: &Path, operation: impl FnOnce() -> Result<
 }
 
 impl VaultCredentialBackend {
-    pub fn new(passphrase: impl Into<String>) -> Result<Self> {
+    pub fn new(passphrase: ProtectedPassphrase) -> Result<Self> {
         Ok(Self::new_with_path(Self::default_file_path()?, passphrase))
     }
 
-    pub fn new_with_path(file_path: PathBuf, passphrase: impl Into<String>) -> Self {
+    pub fn new_with_path(file_path: PathBuf, passphrase: ProtectedPassphrase) -> Self {
         Self {
             file_path,
-            passphrase: passphrase.into(),
+            passphrase,
             state: Mutex::new(None),
         }
     }
@@ -386,10 +424,14 @@ impl VaultCredentialBackend {
     }
 
     pub fn rotate_default_store_passphrase(
-        old_passphrase: &str,
-        new_passphrase: &str,
+        old_passphrase: &ProtectedPassphrase,
+        new_passphrase: &ProtectedPassphrase,
     ) -> Result<()> {
-        Self::rotate_store_passphrase(Self::default_file_path()?, old_passphrase, new_passphrase)
+        Self::rotate_store_passphrase(
+            Self::default_file_path()?,
+            old_passphrase.clone(),
+            new_passphrase.clone(),
+        )
     }
 
     fn default_file_path() -> Result<PathBuf> {
@@ -398,16 +440,36 @@ impl VaultCredentialBackend {
 
     fn rotate_store_passphrase(
         file_path: PathBuf,
-        old_passphrase: &str,
-        new_passphrase: &str,
+        old_passphrase: ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
     ) -> Result<()> {
-        with_vault_file_lock(&file_path, || {
-            let current = Self::new_with_path(file_path.clone(), old_passphrase.to_string());
-            let serialized = current.read_serialized_document()?;
-            let document = current.decrypt_serialized_document(serialized.as_deref())?;
-            let next = Self::new_with_path(file_path.clone(), new_passphrase.to_string());
-            next.save_document_locked(&document)?;
-            Ok(())
+        let _rotation_lock = vault_rotation_lock()
+            .lock()
+            .map_err(|_| anyhow!("vault rotation lock poisoned"))?;
+        record_vault_lock_trace("rotation");
+        let current = Self::new_with_path(file_path.clone(), old_passphrase.clone());
+        let next = Self::new_with_path(file_path.clone(), new_passphrase.clone());
+
+        old_passphrase.with_bytes(|old_bytes| {
+            record_vault_lock_trace("session");
+            if old_passphrase.shares_allocation_with(&new_passphrase) {
+                return with_vault_file_lock(&file_path, || {
+                    let serialized = current.read_serialized_document()?;
+                    let mut document =
+                        current.decrypt_serialized_document(serialized.as_deref(), old_bytes)?;
+                    next.write_document_locked(&mut document, old_bytes)
+                });
+            }
+
+            new_passphrase.with_bytes(|new_bytes| {
+                record_vault_lock_trace("session");
+                with_vault_file_lock(&file_path, || {
+                    let serialized = current.read_serialized_document()?;
+                    let mut document =
+                        current.decrypt_serialized_document(serialized.as_deref(), old_bytes)?;
+                    next.write_document_locked(&mut document, new_bytes)
+                })
+            })
         })
     }
 
@@ -435,7 +497,11 @@ impl VaultCredentialBackend {
         }
     }
 
-    fn decrypt_serialized_document(&self, serialized: Option<&[u8]>) -> Result<VaultDocument> {
+    fn decrypt_serialized_document(
+        &self,
+        serialized: Option<&[u8]>,
+        passphrase: &[u8],
+    ) -> Result<VaultDocument> {
         let Some(serialized) = serialized else {
             return Ok(VaultDocument::default());
         };
@@ -445,77 +511,120 @@ impl VaultCredentialBackend {
 
         let stored: StoredVaultDocument = serde_json::from_slice(serialized)
             .with_context(|| format!("failed to parse {}", self.file_path.display()))?;
-        self.decrypt_document(stored)
+        self.decrypt_document(stored, passphrase)
     }
 
     fn initialize_store(&self) -> Result<()> {
-        self.with_store_lock(|| {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| anyhow!("vault lock poisoned"))?;
-            let serialized = self.read_serialized_document()?;
+        self.passphrase
+            .with_session_material(|passphrase, cache_key| {
+                self.with_store_lock(|| {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow!("vault lock poisoned"))?;
+                    let serialized = self.read_serialized_document()?;
 
-            if serialized
-                .as_deref()
-                .is_none_or(|contents| contents.iter().all(|byte| byte.is_ascii_whitespace()))
-            {
-                *state = Some(self.save_document_locked(&VaultDocument::default())?);
-                return Ok(());
-            }
+                    if serialized.as_deref().is_none_or(|contents| {
+                        contents.iter().all(|byte| byte.is_ascii_whitespace())
+                    }) {
+                        let mut document = VaultDocument::default();
+                        *state = Some(self.save_document_locked(
+                            &mut document,
+                            passphrase,
+                            cache_key,
+                        )?);
+                        return Ok(());
+                    }
 
-            if state
-                .as_ref()
-                .is_some_and(|cached| cached.serialized == serialized)
-            {
-                return Ok(());
-            }
+                    if state
+                        .as_ref()
+                        .is_some_and(|cached| cached.serialized == serialized)
+                    {
+                        return Ok(());
+                    }
 
-            let document = self.decrypt_serialized_document(serialized.as_deref())?;
-            *state = Some(CachedVaultDocument {
-                serialized,
-                document,
-            });
-            Ok(())
-        })
+                    let document =
+                        self.decrypt_serialized_document(serialized.as_deref(), passphrase)?;
+                    let encrypted_document =
+                        self.encrypt_document_for_cache(&document, cache_key)?;
+                    *state = Some(CachedVaultDocument {
+                        serialized,
+                        encrypted_document,
+                    });
+                    Ok(())
+                })
+            })
     }
 
-    fn save_document_locked(&self, document: &VaultDocument) -> Result<CachedVaultDocument> {
+    fn save_document_locked(
+        &self,
+        document: &mut VaultDocument,
+        passphrase: &[u8],
+        cache_key: &[u8; 32],
+    ) -> Result<CachedVaultDocument> {
+        Self::account_map_mut(document, VAULT_METADATA_SERVICE)
+            .entry(VAULT_METADATA_ACCOUNT.to_string())
+            .or_insert_with(|| VAULT_METADATA_VALUE.to_string());
+
+        let plaintext = Zeroizing::new(
+            serde_json::to_vec(&document).context("failed to serialize vault document")?,
+        );
+        let stored = self.encrypt_plaintext(&plaintext, passphrase)?;
+        let serialized =
+            serde_json::to_vec_pretty(&stored).context("failed to serialize vault document")?;
+        let encrypted_document = self.encrypt_memory_cache(&plaintext, cache_key)?;
+
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-
-        let mut document = document.clone();
-        Self::account_map_mut(&mut document, VAULT_METADATA_SERVICE)
-            .entry(VAULT_METADATA_ACCOUNT.to_string())
-            .or_insert_with(|| VAULT_METADATA_VALUE.to_string());
-
-        let stored = self.encrypt_document(&document)?;
-        let serialized =
-            serde_json::to_vec_pretty(&stored).context("failed to serialize vault document")?;
         atomic_write(&self.file_path, &serialized)?;
+
         Ok(CachedVaultDocument {
             serialized: Some(serialized),
-            document,
+            encrypted_document,
         })
     }
 
-    fn encrypt_document(&self, document: &VaultDocument) -> Result<StoredVaultDocument> {
+    fn write_document_locked(&self, document: &mut VaultDocument, passphrase: &[u8]) -> Result<()> {
+        Self::account_map_mut(document, VAULT_METADATA_SERVICE)
+            .entry(VAULT_METADATA_ACCOUNT.to_string())
+            .or_insert_with(|| VAULT_METADATA_VALUE.to_string());
+        let plaintext = Zeroizing::new(
+            serde_json::to_vec(&document).context("failed to serialize vault document")?,
+        );
+        let stored = self.encrypt_plaintext(&plaintext, passphrase)?;
+        let serialized =
+            serde_json::to_vec_pretty(&stored).context("failed to serialize vault document")?;
+
+        if let Some(parent) = self.file_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        atomic_write(&self.file_path, &serialized)
+    }
+
+    fn encrypt_plaintext(
+        &self,
+        plaintext: &[u8],
+        passphrase: &[u8],
+    ) -> Result<StoredVaultDocument> {
         let salt_bytes: [u8; 32] = rand::random();
-        let key = derive_key(&self.passphrase, &salt_bytes)?;
-        let plaintext = serde_json::to_vec(document).context("failed to serialize vault")?;
-        let cipher = Aes256Gcm::new(&Array(key));
+        let mut key = derive_key(passphrase, &salt_bytes)?;
         let nonce = Nonce::<Aes256Gcm>::from(rand::random::<[u8; 12]>());
-        let ciphertext = cipher
-            .encrypt(
-                &nonce,
-                aes_gcm::aead::Payload {
-                    msg: &plaintext,
-                    aad: VAULT_AAD,
-                },
-            )
-            .map_err(|error| anyhow!("vault encryption failed: {error}"))?;
+        let ciphertext = key.with_bytes(|key| {
+            let cipher = Aes256Gcm::new_from_slice(key)
+                .map_err(|error| anyhow!("failed to initialize vault cipher: {error}"))?;
+            cipher
+                .encrypt(
+                    &nonce,
+                    aes_gcm::aead::Payload {
+                        msg: plaintext,
+                        aad: VAULT_AAD,
+                    },
+                )
+                .map_err(|error| anyhow!("vault encryption failed: {error}"))
+        })?;
 
         let mut combined = nonce.to_vec();
         combined.extend_from_slice(&ciphertext);
@@ -527,7 +636,65 @@ impl VaultCredentialBackend {
         })
     }
 
-    fn decrypt_document(&self, stored: StoredVaultDocument) -> Result<VaultDocument> {
+    fn encrypt_document_for_cache(
+        &self,
+        document: &VaultDocument,
+        cache_key: &[u8; 32],
+    ) -> Result<EncryptedVaultCache> {
+        let plaintext = Zeroizing::new(
+            serde_json::to_vec(document).context("failed to serialize in-memory vault cache")?,
+        );
+        self.encrypt_memory_cache(&plaintext, cache_key)
+    }
+
+    fn encrypt_memory_cache(
+        &self,
+        plaintext: &[u8],
+        cache_key: &[u8; 32],
+    ) -> Result<EncryptedVaultCache> {
+        let nonce_bytes = rand::random::<[u8; 12]>();
+        let nonce = Nonce::<Aes256Gcm>::from(nonce_bytes);
+        let cipher = Aes256Gcm::new_from_slice(cache_key).map_err(|error| {
+            anyhow!("failed to initialize in-memory vault cache cipher: {error}")
+        })?;
+        let ciphertext = cipher
+            .encrypt(
+                &nonce,
+                aes_gcm::aead::Payload {
+                    msg: plaintext,
+                    aad: VAULT_MEMORY_CACHE_AAD,
+                },
+            )
+            .map_err(|error| anyhow!("failed to encrypt in-memory vault cache: {error}"))?;
+
+        Ok(EncryptedVaultCache {
+            nonce: nonce_bytes,
+            ciphertext,
+        })
+    }
+
+    fn decrypt_memory_cache(
+        &self,
+        encrypted: &EncryptedVaultCache,
+        cache_key: &[u8; 32],
+    ) -> Result<VaultDocument> {
+        let cipher = Aes256Gcm::new_from_slice(cache_key).map_err(|error| {
+            anyhow!("failed to initialize in-memory vault cache cipher: {error}")
+        })?;
+        let nonce = Nonce::<Aes256Gcm>::from(encrypted.nonce);
+        let mut plaintext = Zeroizing::new(encrypted.ciphertext.clone());
+        cipher
+            .decrypt_in_place(&nonce, VAULT_MEMORY_CACHE_AAD, &mut *plaintext)
+            .map_err(|error| anyhow!("failed to decrypt in-memory vault cache: {error}"))?;
+
+        serde_json::from_slice(&plaintext).context("failed to parse in-memory vault cache")
+    }
+
+    fn decrypt_document(
+        &self,
+        stored: StoredVaultDocument,
+        passphrase: &[u8],
+    ) -> Result<VaultDocument> {
         if stored.version != VAULT_VERSION {
             anyhow::bail!("unsupported vault version: {}", stored.version);
         }
@@ -539,64 +706,74 @@ impl VaultCredentialBackend {
             anyhow::bail!("vault salt must be 32 bytes");
         }
 
-        let key = derive_key(&self.passphrase, &salt)?;
-        let combined = base64::engine::general_purpose::STANDARD
+        let mut key = derive_key(passphrase, &salt)?;
+        let mut combined = base64::engine::general_purpose::STANDARD
             .decode(stored.encrypted_payload)
             .context("failed to decode vault payload")?;
         if combined.len() < 12 {
             anyhow::bail!("vault payload missing nonce");
         }
-        let (nonce_bytes, ciphertext) = combined.split_at(12);
-
-        let cipher = Aes256Gcm::new(&Array(key));
-        let plaintext = cipher
-            .decrypt(
-                &Nonce::<Aes256Gcm>::try_from(nonce_bytes)
-                    .map_err(|_| anyhow!("vault nonce must be 12 bytes"))?,
-                aes_gcm::aead::Payload {
-                    msg: ciphertext,
-                    aad: VAULT_AAD,
-                },
-            )
-            .map_err(|error| anyhow!("vault decryption failed: {error}"))?;
+        let ciphertext = combined.split_off(12);
+        let nonce = Nonce::<Aes256Gcm>::try_from(combined.as_slice())
+            .map_err(|_| anyhow!("vault nonce must be 12 bytes"))?;
+        let mut plaintext = Zeroizing::new(ciphertext);
+        key.with_bytes(|key| {
+            let cipher = Aes256Gcm::new_from_slice(key)
+                .map_err(|error| anyhow!("failed to initialize vault cipher: {error}"))?;
+            cipher
+                .decrypt_in_place(&nonce, VAULT_AAD, &mut *plaintext)
+                .map_err(|error| anyhow!("vault decryption failed: {error}"))
+        })?;
 
         serde_json::from_slice(&plaintext).context("failed to parse decrypted vault")
     }
 
-    fn refresh_document_locked<'a>(
+    fn load_document_locked(
         &self,
-        state: &'a mut Option<CachedVaultDocument>,
-    ) -> Result<&'a VaultDocument> {
+        state: &mut Option<CachedVaultDocument>,
+        passphrase: &[u8],
+        cache_key: &[u8; 32],
+    ) -> Result<VaultDocument> {
         let serialized = self.read_serialized_document()?;
-        if state
-            .as_ref()
-            .is_none_or(|cached| cached.serialized != serialized)
+        if let Some(cached) = state.as_ref()
+            && cached.serialized == serialized
         {
-            let document = self.decrypt_serialized_document(serialized.as_deref())?;
-            *state = Some(CachedVaultDocument {
-                serialized,
-                document,
-            });
+            match self.decrypt_memory_cache(&cached.encrypted_document, cache_key) {
+                Ok(document) => return Ok(document),
+                Err(error) => {
+                    log::warn!(
+                        "in-memory vault cache validation failed; rebuilding from disk: {error:#}"
+                    );
+                    state.take();
+                }
+            }
         }
 
-        Ok(&state
-            .as_ref()
-            .expect("vault state is populated after refresh")
-            .document)
+        let document = self.decrypt_serialized_document(serialized.as_deref(), passphrase)?;
+        let encrypted_document = self.encrypt_document_for_cache(&document, cache_key)?;
+        *state = Some(CachedVaultDocument {
+            serialized,
+            encrypted_document,
+        });
+        Ok(document)
     }
 
     fn with_document<T>(&self, f: impl FnOnce(&mut VaultDocument) -> Result<T>) -> Result<T> {
-        self.with_store_lock(|| {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| anyhow!("vault lock poisoned"))?;
-            let mut document = self.refresh_document_locked(&mut state)?.clone();
-            let output = f(&mut document)?;
-            let cached = self.save_document_locked(&document)?;
-            *state = Some(cached);
-            Ok(output)
-        })
+        self.passphrase
+            .with_session_material(|passphrase, cache_key| {
+                self.with_store_lock(|| {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow!("vault lock poisoned"))?;
+                    let mut document =
+                        self.load_document_locked(&mut state, passphrase, cache_key)?;
+                    let output = f(&mut document)?;
+                    let cached = self.save_document_locked(&mut document, passphrase, cache_key)?;
+                    *state = Some(cached);
+                    Ok(output)
+                })
+            })
     }
 
     fn account_map_mut<'a>(
@@ -604,6 +781,17 @@ impl VaultCredentialBackend {
         service: &str,
     ) -> &'a mut BTreeMap<String, String> {
         document.services.entry(service.to_string()).or_default()
+    }
+
+    fn zeroize_string(value: &mut String) {
+        value.zeroize();
+    }
+
+    fn zeroize_accounts(accounts: BTreeMap<String, String>) {
+        for (mut account, mut value) in accounts {
+            Self::zeroize_string(&mut account);
+            Self::zeroize_string(&mut value);
+        }
     }
 }
 
@@ -617,49 +805,72 @@ impl CredentialBackend for VaultCredentialBackend {
     }
 
     fn get(&self, service: &str, account: &str) -> Result<Option<String>> {
-        self.with_store_lock(|| {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| anyhow!("vault lock poisoned"))?;
-            let document = self.refresh_document_locked(&mut state)?;
-            Ok(document
-                .services
-                .get(service)
-                .and_then(|accounts| accounts.get(account).cloned()))
-        })
+        self.passphrase
+            .with_session_material(|passphrase, cache_key| {
+                self.with_store_lock(|| {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow!("vault lock poisoned"))?;
+                    let document = self.load_document_locked(&mut state, passphrase, cache_key)?;
+                    Ok(document
+                        .services
+                        .get(service)
+                        .and_then(|accounts| accounts.get(account).cloned()))
+                })
+            })
     }
 
     fn get_many(&self, service: &str, accounts: &[&str]) -> Result<Vec<Option<String>>> {
-        self.with_store_lock(|| {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| anyhow!("vault lock poisoned"))?;
-            let document = self.refresh_document_locked(&mut state)?;
-            let stored_accounts = document.services.get(service);
+        self.passphrase
+            .with_session_material(|passphrase, cache_key| {
+                self.with_store_lock(|| {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow!("vault lock poisoned"))?;
+                    let document = self.load_document_locked(&mut state, passphrase, cache_key)?;
+                    let stored_accounts = document.services.get(service);
 
-            Ok(accounts
-                .iter()
-                .map(|account| stored_accounts.and_then(|values| values.get(*account).cloned()))
-                .collect())
-        })
+                    Ok(accounts
+                        .iter()
+                        .map(|account| {
+                            stored_accounts.and_then(|values| values.get(*account).cloned())
+                        })
+                        .collect())
+                })
+            })
     }
 
     fn set(&self, service: &str, account: &str, value: &str) -> Result<()> {
         self.with_document(|document| {
-            Self::account_map_mut(document, service).insert(account.to_string(), value.to_string());
+            if let Some(mut previous) = Self::account_map_mut(document, service)
+                .insert(account.to_string(), value.to_string())
+            {
+                Self::zeroize_string(&mut previous);
+            }
             Ok(())
         })
     }
 
     fn delete(&self, service: &str, account: &str) -> Result<()> {
         self.with_document(|document| {
-            if let Some(accounts) = document.services.get_mut(service) {
-                accounts.remove(account);
-                if accounts.is_empty() {
-                    document.services.remove(service);
+            let remove_service = if let Some(accounts) = document.services.get_mut(service) {
+                if let Some((mut stored_account, mut value)) = accounts.remove_entry(account) {
+                    Self::zeroize_string(&mut stored_account);
+                    Self::zeroize_string(&mut value);
                 }
+                accounts.is_empty()
+            } else {
+                false
+            };
+
+            if remove_service
+                && let Some((mut stored_service, accounts)) =
+                    document.services.remove_entry(service)
+            {
+                Self::zeroize_string(&mut stored_service);
+                Self::zeroize_accounts(accounts);
             }
             Ok(())
         })
@@ -673,10 +884,28 @@ struct StoredVaultDocument {
     encrypted_payload: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Serialize, Deserialize, PartialEq, Eq)]
 struct VaultDocument {
     #[serde(default)]
     services: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl Zeroize for VaultDocument {
+    fn zeroize(&mut self) {
+        for (mut service, accounts) in std::mem::take(&mut self.services) {
+            service.zeroize();
+            for (mut account, mut value) in accounts {
+                account.zeroize();
+                value.zeroize();
+            }
+        }
+    }
+}
+
+impl Drop for VaultDocument {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 pub fn encrypt_with_aad(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
@@ -713,7 +942,8 @@ pub fn decrypt_with_aad(key: &[u8; 32], ciphertext: &[u8], aad: &[u8]) -> Result
         .map_err(|error| anyhow!("AES-GCM decryption failed: {error}"))
 }
 
-fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
+fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<ProtectedDerivedKey> {
+    record_vault_derivation();
     let params = Params::new(
         VAULT_MEMORY_COST.load(Ordering::Relaxed),
         VAULT_TIME_COST.load(Ordering::Relaxed),
@@ -722,11 +952,11 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     )
     .map_err(|error| anyhow!("failed to create vault Argon2 params: {error}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; 32];
-    argon2
-        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
-        .map_err(|error| anyhow!("vault key derivation failed: {error}"))?;
-    Ok(key)
+    ProtectedDerivedKey::try_new(|key| {
+        argon2
+            .hash_password_into(passphrase, salt, key)
+            .map_err(|error| anyhow!("vault key derivation failed: {error}"))
+    })
 }
 
 /// Override Argon2id parameters for tests. Call in test setup to avoid
@@ -745,6 +975,7 @@ fn locked_vault_error(service: &str, account: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProtectedPassphrase;
     use std::fs::TryLockError;
     use std::process::{Child, Command, Output, Stdio};
     use std::sync::Barrier;
@@ -757,9 +988,219 @@ mod tests {
     const VAULT_LOCK_PROBE_MARKER_ENV: &str = "MIAOMINAL_TEST_VAULT_LOCK_PROBE_MARKER";
     const VAULT_LOCK_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
+    fn protected(value: &str) -> ProtectedPassphrase {
+        ProtectedPassphrase::try_from_string(value.to_string())
+            .expect("test passphrase should use protected memory")
+    }
+
+    fn legacy_derive_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
+        let params = Params::new(
+            VAULT_MEMORY_COST.load(Ordering::Relaxed),
+            VAULT_TIME_COST.load(Ordering::Relaxed),
+            VAULT_PARALLELISM.load(Ordering::Relaxed),
+            Some(VAULT_OUTPUT_LEN),
+        )
+        .expect("test Argon2 parameters should be valid");
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+        let mut key = [0u8; 32];
+        argon2
+            .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+            .expect("legacy test key derivation should succeed");
+        key
+    }
+
     fn test_backend(path: PathBuf) -> VaultCredentialBackend {
         set_vault_test_parameters();
-        VaultCredentialBackend::new_with_path(path, "correct horse")
+        VaultCredentialBackend::new_with_path(path, protected("correct horse"))
+    }
+
+    fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle)
+    }
+
+    #[test]
+    fn vault_cache_does_not_retain_plaintext_secret_bytes() {
+        let path = test_vault_path("encrypted-memory-cache");
+        let backend = test_backend(path.clone());
+        let secret = "memory-cache-secret-marker";
+        backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", secret)
+            .expect("secret should be stored");
+
+        let state = backend.state.lock().expect("vault state should lock");
+        let cached = state.as_ref().expect("vault state should be cached");
+        let cached_bytes = &cached.encrypted_document.ciphertext;
+
+        assert!(!contains_bytes(cached_bytes, secret.as_bytes()));
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_document_zeroize_removes_all_plaintext_fields() {
+        let mut document = VaultDocument::default();
+        VaultCredentialBackend::account_map_mut(&mut document, APP_CREDENTIAL_SERVICE)
+            .insert("sync:github-token".to_string(), "secret-token".to_string());
+
+        document.zeroize();
+
+        assert!(document.services.is_empty());
+    }
+
+    #[test]
+    fn vault_string_zeroize_helper_clears_removed_plaintext() {
+        let mut secret = "removed-secret".to_string();
+
+        VaultCredentialBackend::zeroize_string(&mut secret);
+
+        assert!(secret.is_empty());
+    }
+
+    #[test]
+    fn corrupted_memory_cache_is_rebuilt_from_disk() {
+        let path = test_vault_path("corrupted-memory-cache");
+        let backend = test_backend(path.clone());
+        backend
+            .set(
+                APP_CREDENTIAL_SERVICE,
+                "sync:github-token",
+                "disk-backed-token",
+            )
+            .expect("secret should be stored");
+
+        {
+            let mut state = backend.state.lock().expect("vault state should lock");
+            let cached = state.as_mut().expect("vault state should be cached");
+            cached.encrypted_document.ciphertext[0] ^= 0xff;
+        }
+
+        let value = backend
+            .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+            .expect("corrupted memory cache should be rebuilt from disk");
+
+        assert_eq!(value.as_deref(), Some("disk-backed-token"));
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_rotation_acquires_session_material_before_the_file_lock() {
+        set_vault_test_parameters();
+        let path = test_vault_path("rotation-lock-order");
+        VaultCredentialBackend::new_with_path(path.clone(), protected("old passphrase"))
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "token")
+            .expect("initial vault should be written");
+        VAULT_LOCK_TRACE.with(|trace| trace.borrow_mut().clear());
+
+        VaultCredentialBackend::rotate_store_passphrase(
+            path.clone(),
+            protected("old passphrase"),
+            protected("new passphrase"),
+        )
+        .expect("rotation should succeed");
+
+        let trace = VAULT_LOCK_TRACE.with(|trace| trace.borrow().clone());
+        assert_eq!(trace, vec!["rotation", "session", "session", "file"]);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn unchanged_memory_cache_reads_do_not_run_argon2() {
+        let path = test_vault_path("cache-hit-no-argon2");
+        let backend = test_backend(path.clone());
+        backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "token")
+            .expect("secret should be stored");
+        VAULT_DERIVE_COUNT.with(|count| count.set(0));
+
+        assert_eq!(
+            backend
+                .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+                .expect("cache read should succeed")
+                .as_deref(),
+            Some("token")
+        );
+        assert_eq!(
+            backend
+                .get_many(APP_CREDENTIAL_SERVICE, &["sync:github-token"])
+                .expect("batched cache read should succeed"),
+            vec![Some("token".to_string())]
+        );
+
+        assert_eq!(VAULT_DERIVE_COUNT.with(std::cell::Cell::get), 0);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_rotation_with_one_session_does_not_relock_the_same_secret() {
+        set_vault_test_parameters();
+        let path = test_vault_path("rotation-shared-session-lock-order");
+        let passphrase = protected("same passphrase");
+        VaultCredentialBackend::new_with_path(path.clone(), passphrase.clone())
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "token")
+            .expect("initial vault should be written");
+        VAULT_LOCK_TRACE.with(|trace| trace.borrow_mut().clear());
+
+        VaultCredentialBackend::rotate_store_passphrase(
+            path.clone(),
+            passphrase.clone(),
+            passphrase,
+        )
+        .expect("rotation with one shared session should succeed");
+
+        let trace = VAULT_LOCK_TRACE.with(|trace| trace.borrow().clone());
+        assert_eq!(trace, vec!["rotation", "session", "file"]);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn revoked_session_write_preserves_file_and_encrypted_cache() {
+        set_vault_test_parameters();
+        let path = test_vault_path("revoked-write-preserves-state");
+        let passphrase = protected("correct horse");
+        let backend = VaultCredentialBackend::new_with_path(path.clone(), passphrase.clone());
+        backend
+            .set(
+                APP_CREDENTIAL_SERVICE,
+                "sync:github-token",
+                "original-token",
+            )
+            .expect("initial secret should be stored");
+        let file_before = fs::read(&path).expect("vault file should be readable");
+        let cache_before = {
+            let state = backend.state.lock().expect("vault state should lock");
+            state
+                .as_ref()
+                .expect("vault state should be cached")
+                .encrypted_document
+                .ciphertext
+                .clone()
+        };
+        passphrase.revoke();
+
+        backend
+            .set(
+                APP_CREDENTIAL_SERVICE,
+                "sync:github-token",
+                "replacement-token",
+            )
+            .expect_err("revoked session must reject writes");
+
+        assert_eq!(
+            fs::read(&path).expect("vault file should remain readable"),
+            file_before
+        );
+        let state = backend.state.lock().expect("vault state should lock");
+        assert_eq!(
+            state
+                .as_ref()
+                .expect("encrypted cache should remain installed")
+                .encrypted_document
+                .ciphertext,
+            cache_before
+        );
+        cleanup_test_vault(&path);
     }
 
     #[test]
@@ -781,14 +1222,124 @@ mod tests {
     }
 
     #[test]
+    fn protected_backend_reads_a_legacy_v1_fixture() {
+        set_vault_test_parameters();
+        let path = test_vault_path("legacy-v1-fixture");
+        let salt = [3u8; 32];
+        let nonce = Nonce::<Aes256Gcm>::from([9u8; 12]);
+        let key = legacy_derive_key("correct horse", &salt);
+        let cipher = Aes256Gcm::new(&Array(key));
+        let mut document = VaultDocument::default();
+        VaultCredentialBackend::account_map_mut(&mut document, APP_CREDENTIAL_SERVICE)
+            .insert("sync:github-token".to_string(), "legacy-token".to_string());
+        let plaintext = serde_json::to_vec(&document).expect("legacy document should serialize");
+        let ciphertext = cipher
+            .encrypt(
+                &nonce,
+                aes_gcm::aead::Payload {
+                    msg: &plaintext,
+                    aad: VAULT_AAD,
+                },
+            )
+            .expect("legacy fixture encryption should succeed");
+        let mut combined = nonce.to_vec();
+        combined.extend_from_slice(&ciphertext);
+        let stored = StoredVaultDocument {
+            version: VAULT_VERSION,
+            salt: base64::engine::general_purpose::STANDARD.encode(salt),
+            encrypted_payload: base64::engine::general_purpose::STANDARD.encode(combined),
+        };
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&stored).expect("fixture should serialize"),
+        )
+        .expect("fixture should be written");
+
+        let value = VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
+            .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+            .expect("protected backend should read legacy fixture");
+
+        assert_eq!(value.as_deref(), Some("legacy-token"));
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn protected_backend_writes_legacy_v1_compatible_documents() {
+        let path = test_vault_path("legacy-v1-output");
+        let backend = test_backend(path.clone());
+        backend
+            .set(
+                APP_CREDENTIAL_SERVICE,
+                "sync:github-token",
+                "protected-token",
+            )
+            .expect("protected backend should write vault");
+
+        let stored: StoredVaultDocument =
+            serde_json::from_slice(&fs::read(&path).expect("vault should be readable"))
+                .expect("vault envelope should parse");
+        assert_eq!(stored.version, VAULT_VERSION);
+        let salt = base64::engine::general_purpose::STANDARD
+            .decode(stored.salt)
+            .expect("salt should decode");
+        let combined = base64::engine::general_purpose::STANDARD
+            .decode(stored.encrypted_payload)
+            .expect("payload should decode");
+        let (nonce, ciphertext) = combined.split_at(12);
+        let key = legacy_derive_key("correct horse", &salt);
+        let plaintext = Aes256Gcm::new(&Array(key))
+            .decrypt(
+                &Nonce::<Aes256Gcm>::try_from(nonce).expect("nonce should be valid"),
+                aes_gcm::aead::Payload {
+                    msg: ciphertext,
+                    aad: VAULT_AAD,
+                },
+            )
+            .expect("legacy crypto path should decrypt protected output");
+        let document: VaultDocument =
+            serde_json::from_slice(&plaintext).expect("legacy plaintext should parse");
+
+        assert_eq!(
+            document
+                .services
+                .get(APP_CREDENTIAL_SERVICE)
+                .and_then(|accounts| accounts.get("sync:github-token"))
+                .map(String::as_str),
+            Some("protected-token")
+        );
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn revoking_the_passphrase_invalidates_existing_backend_clones() {
+        set_vault_test_parameters();
+        let path = test_vault_path("revoked-passphrase");
+        let passphrase = ProtectedPassphrase::try_from_string("correct horse".to_string())
+            .expect("passphrase should be protected");
+        let backend = VaultCredentialBackend::new_with_path(path.clone(), passphrase.clone());
+
+        backend
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("set should succeed");
+        passphrase.revoke();
+
+        let error = backend
+            .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+            .expect_err("revoked backend must not decrypt the vault");
+        assert!(error.to_string().contains("revoked"));
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
     fn vault_backend_rejects_wrong_passphrase() {
         set_vault_test_parameters();
         let path = test_vault_path("wrong-passphrase");
-        VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
+        VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
             .set(APP_CREDENTIAL_SERVICE, "sync:webdav-password", "secret")
             .expect("initial set should succeed");
 
-        let error = VaultCredentialBackend::new_with_path(path.clone(), "wrong horse")
+        let error = VaultCredentialBackend::new_with_path(path.clone(), protected("wrong horse"))
             .get(APP_CREDENTIAL_SERVICE, "sync:webdav-password")
             .expect_err("wrong passphrase should fail");
 
@@ -801,19 +1352,23 @@ mod tests {
     fn vault_backend_rotates_passphrase() {
         set_vault_test_parameters();
         let path = test_vault_path("rotate-passphrase");
-        VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
+        VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
             .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
             .expect("initial set should succeed");
 
-        VaultCredentialBackend::rotate_store_passphrase(path.clone(), "correct horse", "new horse")
-            .expect("rotation should succeed");
+        VaultCredentialBackend::rotate_store_passphrase(
+            path.clone(),
+            protected("correct horse"),
+            protected("new horse"),
+        )
+        .expect("rotation should succeed");
 
-        let value = VaultCredentialBackend::new_with_path(path.clone(), "new horse")
+        let value = VaultCredentialBackend::new_with_path(path.clone(), protected("new horse"))
             .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
             .expect("new passphrase should decrypt vault");
         assert_eq!(value.as_deref(), Some("secret-token"));
 
-        let error = VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
+        let error = VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
             .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
             .expect_err("old passphrase should no longer decrypt vault");
         assert!(error.to_string().contains("vault decryption failed"));
@@ -825,7 +1380,8 @@ mod tests {
     fn vault_backend_initialize_does_not_rewrite_existing_store() {
         set_vault_test_parameters();
         let path = test_vault_path("initialize-no-rewrite");
-        let backend = VaultCredentialBackend::new_with_path(path.clone(), "correct horse");
+        let backend =
+            VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"));
 
         backend
             .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
@@ -847,11 +1403,11 @@ mod tests {
     fn vault_backend_initialize_rejects_wrong_passphrase() {
         set_vault_test_parameters();
         let path = test_vault_path("initialize-wrong-passphrase");
-        VaultCredentialBackend::new_with_path(path.clone(), "correct horse")
+        VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
             .set(APP_CREDENTIAL_SERVICE, "sync:webdav-password", "secret")
             .expect("initial set should succeed");
 
-        let error = VaultCredentialBackend::new_with_path(path.clone(), "wrong horse")
+        let error = VaultCredentialBackend::new_with_path(path.clone(), protected("wrong horse"))
             .initialize(APP_CREDENTIAL_SERVICE)
             .expect_err("wrong passphrase should fail validation");
 
@@ -864,7 +1420,8 @@ mod tests {
     fn vault_backend_get_many_returns_requested_accounts_in_order() {
         set_vault_test_parameters();
         let path = test_vault_path("get-many");
-        let backend = VaultCredentialBackend::new_with_path(path.clone(), "correct horse");
+        let backend =
+            VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"));
 
         backend
             .set(APP_CREDENTIAL_SERVICE, "session-1:password", "hunter2")
@@ -1046,8 +1603,12 @@ mod tests {
             .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
             .expect("old backend should cache the pre-rotation snapshot");
 
-        VaultCredentialBackend::rotate_store_passphrase(path.clone(), "correct horse", "new horse")
-            .expect("rotation should succeed");
+        VaultCredentialBackend::rotate_store_passphrase(
+            path.clone(),
+            protected("correct horse"),
+            protected("new horse"),
+        )
+        .expect("rotation should succeed");
 
         let error = old_backend
             .set(
@@ -1058,7 +1619,8 @@ mod tests {
             .expect_err("old cached backend must refresh and reject the new ciphertext");
         assert!(error.to_string().contains("vault decryption failed"));
 
-        let new_backend = VaultCredentialBackend::new_with_path(path.clone(), "new horse");
+        let new_backend =
+            VaultCredentialBackend::new_with_path(path.clone(), protected("new horse"));
         assert_eq!(
             new_backend
                 .get_many(

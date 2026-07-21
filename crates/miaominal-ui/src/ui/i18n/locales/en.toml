@@ -1623,6 +1623,15 @@ message = "Confirm the local secrets vault passphrase before enabling the vault.
 [settings.sync.vault.passphrase_mismatch_error]
 message = "The local secrets vault passphrases do not match."
 
+[settings.sync.vault.passphrase_too_long_error]
+message = "The local secrets vault passphrase must not exceed 1024 UTF-8 bytes."
+
+[settings.sync.vault.secure_memory_unavailable_error]
+message = "Secure memory is unavailable, so the local secrets vault cannot be unlocked safely."
+
+[settings.sync.vault.session_revoked_error]
+message = "The local secrets vault session has been revoked. Unlock it again to continue."
+
 [settings.sync.vault.disable_requires_unlock_error]
 message = "Unlock the local secrets vault before moving saved secrets back to the system credential store."
 

@@ -2,6 +2,7 @@ use crate::ui::i18n;
 use crate::ui::shell::*;
 use anyhow::Result;
 use gpui::{App, Context, Window};
+use miaominal_secrets::ProtectedPassphrase;
 use miaominal_services::{LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ pub(in crate::ui::shell) trait LocalVaultRootExt: Sized {
         cx: &mut Context<Self>,
     );
 
-    fn spawn_local_vault_unlock(&mut self, passphrase: String, cx: &mut Context<Self>);
+    fn spawn_local_vault_unlock(&mut self, passphrase: ProtectedPassphrase, cx: &mut Context<Self>);
 
     fn apply_local_vault_operation_result(
         &mut self,
@@ -102,7 +103,7 @@ pub(in crate::ui::shell) trait LocalVaultRootExt: Sized {
 
     fn spawn_local_vault_disable(&mut self, cx: &mut Context<Self>);
 
-    fn spawn_local_vault_enable(&mut self, passphrase: String, cx: &mut Context<Self>);
+    fn spawn_local_vault_enable(&mut self, passphrase: ProtectedPassphrase, cx: &mut Context<Self>);
 
     fn finish_local_vault_enable(
         &mut self,
@@ -121,8 +122,8 @@ pub(in crate::ui::shell) trait LocalVaultRootExt: Sized {
 
     fn spawn_local_vault_change_passphrase(
         &mut self,
-        current_passphrase: String,
-        new_passphrase: String,
+        current_passphrase: ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
         cx: &mut Context<Self>,
     );
 
@@ -419,7 +420,11 @@ impl LocalVaultRootExt for AppView {
             } => self.spawn_local_vault_change_passphrase(current_passphrase, new_passphrase, cx),
         }
     }
-    fn spawn_local_vault_unlock(&mut self, passphrase: String, cx: &mut Context<Self>) {
+    fn spawn_local_vault_unlock(
+        &mut self,
+        passphrase: ProtectedPassphrase,
+        cx: &mut Context<Self>,
+    ) {
         self.controllers.settings.update(cx, |controller, cx| {
             controller.start_vault_unlock(passphrase, cx)
         });
@@ -619,7 +624,11 @@ impl LocalVaultRootExt for AppView {
             controller.start_vault_disable(session_ids, managed_key_ids, ai_provider_ids, cx);
         });
     }
-    fn spawn_local_vault_enable(&mut self, passphrase: String, cx: &mut Context<Self>) {
+    fn spawn_local_vault_enable(
+        &mut self,
+        passphrase: ProtectedPassphrase,
+        cx: &mut Context<Self>,
+    ) {
         let (session_ids, managed_key_ids, ai_provider_ids) = self.local_vault_secret_ids(cx);
         self.controllers.settings.update(cx, |controller, cx| {
             controller.start_vault_enable(
@@ -768,8 +777,8 @@ impl LocalVaultRootExt for AppView {
     }
     fn spawn_local_vault_change_passphrase(
         &mut self,
-        current_passphrase: String,
-        new_passphrase: String,
+        current_passphrase: ProtectedPassphrase,
+        new_passphrase: ProtectedPassphrase,
         cx: &mut Context<Self>,
     ) {
         self.controllers.settings.update(cx, |controller, cx| {

@@ -20,7 +20,7 @@ use gpui_component::{
     select::{SearchableVec, SelectEvent, SelectState},
 };
 use miaominal_core::profile::ImportSourceKind;
-use miaominal_secrets::SecretStore;
+use miaominal_secrets::{ProtectedPassphrase, SecretStore};
 use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService, SyncService,
 };
@@ -353,7 +353,7 @@ pub(in crate::ui::shell) struct SettingsController {
     local_vault_operation_task: Option<gpui::Task<()>>,
     local_vault_unlock_in_progress: bool,
     local_vault_disable_in_progress: bool,
-    local_vault_session_passphrase: Option<String>,
+    local_vault_session_passphrase: Option<ProtectedPassphrase>,
     local_vault_auto_lock_task: Option<gpui::Task<()>>,
     recording_binding: Option<KeyBindingSlot>,
     pending_preview: Option<String>,
@@ -1283,9 +1283,17 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn set_local_vault_session_passphrase(
         &mut self,
-        passphrase: Option<String>,
+        passphrase: Option<ProtectedPassphrase>,
     ) {
-        self.local_vault_session_passphrase = passphrase;
+        let previous = std::mem::replace(&mut self.local_vault_session_passphrase, passphrase);
+        if let Some(previous) = previous
+            && self
+                .local_vault_session_passphrase
+                .as_ref()
+                .is_none_or(|current| !previous.shares_allocation_with(current))
+        {
+            previous.revoke();
+        }
     }
 
     pub(in crate::ui::shell) fn editing_ai_provider_id(&self) -> Option<&str> {

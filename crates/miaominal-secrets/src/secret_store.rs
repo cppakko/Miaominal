@@ -1,10 +1,10 @@
-use crate::SecretKind;
 use crate::credential_backend::{
     APP_CREDENTIAL_SERVICE, CredentialStore, LockedCredentialBackend, VaultCredentialBackend,
 };
+use crate::{ProtectedPassphrase, SecretKind};
 use anyhow::{Context, Result};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct StoredProfileSecrets {
     pub password: Option<String>,
     pub passphrase: Option<String>,
@@ -17,6 +17,7 @@ pub struct SecretStore {
 
 impl SecretStore {
     const LOCKED_VAULT_MESSAGE: &'static str = "local vault is locked";
+    const REVOKED_VAULT_MESSAGE: &'static str = "local vault session has been revoked";
 
     pub fn new() -> Self {
         Self {
@@ -28,7 +29,7 @@ impl SecretStore {
         Self { credentials }
     }
 
-    pub fn new_vault(passphrase: impl Into<String>) -> Result<Self> {
+    pub fn new_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
             VaultCredentialBackend::new(passphrase)?,
@@ -108,14 +109,28 @@ impl SecretStore {
     }
 
     pub fn is_locked_error(error: &anyhow::Error) -> bool {
-        error
-            .chain()
-            .any(|cause| cause.to_string().contains(Self::LOCKED_VAULT_MESSAGE))
+        error.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains(Self::LOCKED_VAULT_MESSAGE)
+                || message.contains(Self::REVOKED_VAULT_MESSAGE)
+        })
     }
 }
 
 impl Default for SecretStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revoked_protected_memory_is_reported_as_a_locked_vault() {
+        let error = anyhow::anyhow!("local vault session has been revoked");
+
+        assert!(SecretStore::is_locked_error(&error));
     }
 }
