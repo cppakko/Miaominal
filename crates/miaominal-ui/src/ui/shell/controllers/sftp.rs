@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, Instant, SystemTime},
 };
@@ -106,6 +106,119 @@ fn choose_sftp_download_destination(
             overwrite_confirmed: false,
         })
     })
+}
+
+fn normalize_remote_delete_entries(entries: Vec<(String, bool)>) -> Vec<(String, bool)> {
+    let mut seen_paths = HashSet::new();
+    let unique_entries = entries
+        .into_iter()
+        .filter(|(path, _)| seen_paths.insert(path.clone()))
+        .collect::<Vec<_>>();
+    let directory_paths = unique_entries
+        .iter()
+        .filter(|(_, is_directory)| *is_directory)
+        .map(|(path, _)| remote_path_without_trailing_separator(path))
+        .collect::<HashSet<_>>();
+
+    unique_entries
+        .into_iter()
+        .filter(|(path, _)| !remote_path_has_selected_directory_ancestor(path, &directory_paths))
+        .collect()
+}
+
+fn remote_path_has_selected_directory_ancestor(
+    path: &str,
+    directory_paths: &HashSet<String>,
+) -> bool {
+    let normalized = remote_path_without_trailing_separator(path);
+    if remote_path_contains_unsafe_component(&normalized) {
+        return false;
+    }
+
+    let mut current = normalized.as_str();
+    while let Some(parent) = remote_parent_path_component(current) {
+        if directory_paths.contains(parent) {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
+fn remote_path_without_trailing_separator(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() && path.starts_with('/') {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn remote_path_contains_unsafe_component(path: &str) -> bool {
+    path.split('/')
+        .any(|component| matches!(component, "." | ".."))
+}
+
+fn remote_parent_path_component(path: &str) -> Option<&str> {
+    let path = path.trim_end_matches('/');
+    if path.is_empty() || path == "/" {
+        return None;
+    }
+
+    match path.rfind('/') {
+        Some(0) => Some("/"),
+        Some(index) => Some(path[..index].trim_end_matches('/')),
+        None => None,
+    }
+}
+
+#[derive(Debug)]
+struct LocalDeleteResult {
+    deleted_count: usize,
+    first_error: Option<(PathBuf, String)>,
+}
+
+fn remove_local_entry(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
+fn delete_local_entries(entries: Vec<PathBuf>) -> LocalDeleteResult {
+    let mut deleted_count = 0;
+    let mut first_error = None;
+
+    for path in entries {
+        match remove_local_entry(&path) {
+            Ok(()) => deleted_count += 1,
+            Err(error) if first_error.is_none() => {
+                first_error = Some((path, error.to_string()));
+            }
+            Err(_) => {}
+        }
+    }
+
+    LocalDeleteResult {
+        deleted_count,
+        first_error,
+    }
+}
+
+fn create_local_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let path = parent.join(name);
+    std::fs::create_dir(&path)?;
+    Ok(path)
+}
+
+fn is_valid_local_directory_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -628,6 +741,9 @@ pub(in crate::ui::shell) enum SftpPromptKind {
     CreateRemoteDirectory {
         parent: String,
     },
+    CreateLocalDirectory {
+        parent: PathBuf,
+    },
     ConfirmOverwrite {
         conflict_count: usize,
         pending_uploads: Vec<(PathBuf, String)>,
@@ -637,6 +753,9 @@ pub(in crate::ui::shell) enum SftpPromptKind {
         entries: Vec<(String, bool)>,
         refresh_path: String,
     },
+    ConfirmDeleteLocal {
+        entries: Vec<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -645,9 +764,9 @@ pub(in crate::ui::shell) struct SftpPromptState {
 }
 
 #[derive(Debug, Clone)]
-struct InlineRenameState {
-    pub(in crate::ui::shell) from: String,
-    pub(in crate::ui::shell) parent: String,
+enum InlineRenameState {
+    Local { from: PathBuf, parent: PathBuf },
+    Remote { from: String, parent: String },
 }
 
 struct SftpEditSession {
@@ -1337,6 +1456,28 @@ impl SftpController {
         }
     }
 
+    pub(in crate::ui::shell) fn open_local_path(
+        &mut self,
+        tab_id: TabId,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if path.is_dir() {
+            self.navigate_local_to_path(tab_id, path, cx);
+            return;
+        }
+
+        if let Err(error) = open::that(&path) {
+            let path = path.display().to_string();
+            let error = error.to_string();
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "sftp.messages.open_local_failed",
+                &[("path", &path), ("error", &error)],
+            )));
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui::shell) fn navigate_local_up(
         &mut self,
         tab_id: TabId,
@@ -1475,7 +1616,7 @@ impl SftpController {
         let from = entry.path.clone();
         self.set_inline_rename(
             tab_id,
-            Some(InlineRenameState {
+            Some(InlineRenameState::Remote {
                 from: from.clone(),
                 parent: Self::remote_parent_path(&entry.path),
             }),
@@ -1490,11 +1631,53 @@ impl SftpController {
         cx.notify();
     }
 
-    fn commit_inline_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(tab_id) = self.browser_tab_id(cx) else {
+    pub(in crate::ui::shell) fn begin_local_inline_rename(
+        &mut self,
+        tab_id: TabId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_path) = self.tab(tab_id).and_then(|tab| {
+            (tab.selected_local_paths.len() == 1)
+                .then(|| tab.selected_local_path.clone())
+                .flatten()
+        }) else {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "status.sftp.rename_requires_single_local_entry",
+            )));
+            cx.notify();
             return;
         };
-        let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
+        let Some(parent) = selected_path.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(filename) = selected_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+
+        let display_path = selected_path.display().to_string();
+        self.set_inline_rename(
+            tab_id,
+            Some(InlineRenameState::Local {
+                from: selected_path,
+                parent,
+            }),
+        );
+        let input = self.inline_rename_input();
+        set_input_value(&input, filename, window, cx);
+        self.local_table().update(cx, |table, cx| {
+            table.delegate_mut().inline_rename_path = Some(display_path);
+            table.refresh(cx);
+        });
+        input.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    fn commit_inline_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(tab_id) = self.browser_tab_id(cx) else {
             return;
         };
         let Some(rename_state) = self.inline_rename(tab_id) else {
@@ -1515,34 +1698,72 @@ impl SftpController {
             return;
         }
 
-        let to = Self::join_remote_path(&rename_state.parent, &value);
-        if rename_state.from == to {
-            self.clear_inline_rename(tab_id, cx);
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "sftp.messages.name_unchanged",
-            )));
-            cx.notify();
-            return;
-        }
+        match rename_state {
+            InlineRenameState::Local { from, parent } => {
+                let to = parent.join(&value);
+                if from == to {
+                    self.clear_inline_rename(tab_id, cx);
+                    cx.emit(AppCommand::Feedback(i18n::string(
+                        "sftp.messages.name_unchanged",
+                    )));
+                    cx.notify();
+                    return;
+                }
 
-        let from = rename_state.from.clone();
-        let parent = rename_state.parent.clone();
-        match commands.rename(from.clone(), to.clone()) {
-            Ok(_) => {
-                self.clear_inline_rename(tab_id, cx);
-                cx.emit(AppCommand::Feedback(i18n::string_args(
-                    "sftp.messages.renaming",
-                    &[("from", &from), ("to", &to)],
-                )));
-                self.request_remote_directory(tab_id, parent, cx);
+                match std::fs::rename(&from, &to) {
+                    Ok(()) => {
+                        self.clear_inline_rename(tab_id, cx);
+                        let from_display = from.display().to_string();
+                        let to_display = to.display().to_string();
+                        cx.emit(AppCommand::Feedback(i18n::string_args(
+                            "sftp.messages.renaming",
+                            &[("from", &from_display), ("to", &to_display)],
+                        )));
+                        self.select_local_path(tab_id, to, cx);
+                        self.refresh_local_directory(tab_id, cx);
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        cx.emit(AppCommand::Feedback(i18n::string_args(
+                            "sftp.messages.action_failed",
+                            &[("error", &error)],
+                        )));
+                        cx.notify();
+                    }
+                }
             }
-            Err(error) => {
-                let error = error.to_string();
-                cx.emit(AppCommand::Feedback(i18n::string_args(
-                    "sftp.messages.action_failed",
-                    &[("error", &error)],
-                )));
-                cx.notify();
+            InlineRenameState::Remote { from, parent } => {
+                let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
+                    return;
+                };
+                let to = Self::join_remote_path(&parent, &value);
+                if from == to {
+                    self.clear_inline_rename(tab_id, cx);
+                    cx.emit(AppCommand::Feedback(i18n::string(
+                        "sftp.messages.name_unchanged",
+                    )));
+                    cx.notify();
+                    return;
+                }
+
+                match commands.rename(from.clone(), to.clone()) {
+                    Ok(()) => {
+                        self.clear_inline_rename(tab_id, cx);
+                        cx.emit(AppCommand::Feedback(i18n::string_args(
+                            "sftp.messages.renaming",
+                            &[("from", &from), ("to", &to)],
+                        )));
+                        self.request_remote_directory(tab_id, parent, cx);
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        cx.emit(AppCommand::Feedback(i18n::string_args(
+                            "sftp.messages.action_failed",
+                            &[("error", &error)],
+                        )));
+                        cx.notify();
+                    }
+                }
             }
         }
     }
@@ -1559,6 +1780,10 @@ impl SftpController {
 
     fn clear_inline_rename(&self, tab_id: TabId, cx: &mut Context<Self>) {
         self.set_inline_rename(tab_id, None);
+        self.local_table().update(cx, |table, cx| {
+            table.delegate_mut().inline_rename_path = None;
+            table.refresh(cx);
+        });
         self.remote_table().update(cx, |table, cx| {
             table.delegate_mut().inline_rename_path = None;
             table.refresh(cx);
@@ -4039,6 +4264,101 @@ impl SftpController {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn begin_create_local_directory(
+        &mut self,
+        tab_id: TabId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(parent) = self.tab(tab_id).map(|tab| tab.local_path.clone()) else {
+            return;
+        };
+
+        self.set_prompt(
+            tab_id,
+            Some(SftpPromptState {
+                kind: SftpPromptKind::CreateLocalDirectory { parent },
+            }),
+        );
+        let input = self.prompt_input();
+        set_input_placeholder(
+            &input,
+            i18n::string("sftp.prompts.directory_name_placeholder"),
+            window,
+            cx,
+        );
+        set_input_value(&input, "", window, cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn delete_local_selected(
+        &mut self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entries) = self
+            .tab(tab_id)
+            .map(|tab| tab.selected_local_paths.clone())
+            .filter(|entries| !entries.is_empty())
+        else {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "sftp.messages.select_local_entry_first",
+            )));
+            cx.notify();
+            return;
+        };
+
+        self.set_prompt(
+            tab_id,
+            Some(SftpPromptState {
+                kind: SftpPromptKind::ConfirmDeleteLocal { entries },
+            }),
+        );
+        cx.notify();
+    }
+
+    fn execute_local_delete(
+        &mut self,
+        tab_id: TabId,
+        entries: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { delete_local_entries(entries) })
+                .await;
+
+            let _ = this.update(cx, move |this, cx| {
+                if result.deleted_count > 0 {
+                    let message = if result.deleted_count == 1 {
+                        i18n::string("sftp.messages.removed_one_local_entry")
+                    } else {
+                        let count = result.deleted_count.to_string();
+                        i18n::string_args(
+                            "sftp.messages.removed_local_entries",
+                            &[("count", &count)],
+                        )
+                    };
+                    cx.emit(AppCommand::Feedback(message));
+                    this.refresh_local_directory(tab_id, cx);
+                    cx.notify();
+                    return;
+                }
+
+                if let Some((path, error)) = result.first_error {
+                    let path = path.display().to_string();
+                    cx.emit(AppCommand::Feedback(i18n::string_args(
+                        "sftp.messages.delete_failed_for",
+                        &[("path", &path), ("error", &error)],
+                    )));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(in crate::ui::shell) fn delete_remote_selected(
         &mut self,
         tab_id: TabId,
@@ -4055,17 +4375,19 @@ impl SftpController {
             return;
         };
 
-        let selected_entries = selected_paths
-            .into_iter()
-            .filter_map(|path| {
-                self.resolve_remote_entry(tab_id, &path, cx).map(|entry| {
-                    (
-                        entry.path,
-                        entry.kind == miaominal_sftp::SftpEntryKind::Directory,
-                    )
+        let selected_entries = normalize_remote_delete_entries(
+            selected_paths
+                .into_iter()
+                .filter_map(|path| {
+                    self.resolve_remote_entry(tab_id, &path, cx).map(|entry| {
+                        (
+                            entry.path,
+                            entry.kind == miaominal_sftp::SftpEntryKind::Directory,
+                        )
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>(),
+        );
 
         if selected_entries.is_empty() {
             cx.emit(AppCommand::Feedback(i18n::string(
@@ -4205,15 +4527,67 @@ impl SftpController {
     }
 
     pub(in crate::ui::shell) fn commit_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
-        let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
-            return;
-        };
         let Some(prompt) = self.prompt(tab_id) else {
             return;
         };
         let exit_snapshot = DialogOverlaySnapshot::SftpPrompt {
             tab_id,
             prompt: prompt.clone(),
+        };
+
+        if let SftpPromptKind::ConfirmDeleteLocal { entries } = prompt.kind {
+            self.take_prompt(tab_id);
+            cx.emit(AppCommand::OverlayDismissed(exit_snapshot));
+            self.execute_local_delete(tab_id, entries, cx);
+            return;
+        }
+
+        if let SftpPromptKind::CreateLocalDirectory { parent } = prompt.kind {
+            let value = self.prompt_input().read(cx).value().trim().to_string();
+            if value.is_empty() {
+                self.notify_validation_failure(
+                    ValidationNotificationKind::RequiredInputMissing,
+                    i18n::string("errors.sftp.validation.name_required"),
+                    cx,
+                );
+                return;
+            }
+            if !is_valid_local_directory_name(&value) {
+                self.notify_validation_failure(
+                    ValidationNotificationKind::InvalidInput,
+                    i18n::string("errors.sftp.validation.directory_name_invalid"),
+                    cx,
+                );
+                return;
+            }
+
+            match create_local_directory(&parent, &value) {
+                Ok(path) => {
+                    self.take_prompt(tab_id);
+                    cx.emit(AppCommand::OverlayDismissed(exit_snapshot));
+                    let display_path = path.display().to_string();
+                    cx.emit(AppCommand::Feedback(i18n::string_args(
+                        "sftp.messages.created_local_directory",
+                        &[("path", &display_path)],
+                    )));
+                    self.select_local_path(tab_id, path, cx);
+                    self.refresh_local_directory(tab_id, cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    cx.emit(AppCommand::Feedback(i18n::string_args(
+                        "sftp.messages.action_failed",
+                        &[("error", &error)],
+                    )));
+                    cx.notify();
+                }
+            }
+            return;
+        }
+
+        let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
+            return;
         };
 
         if let SftpPromptKind::ConfirmDelete {
@@ -4282,7 +4656,10 @@ impl SftpController {
                     .create_directory(path)
                     .map(|_| (parent, status_message))
             }
-            SftpPromptKind::ConfirmOverwrite { .. } | SftpPromptKind::ConfirmDelete { .. } => {
+            SftpPromptKind::ConfirmOverwrite { .. }
+            | SftpPromptKind::ConfirmDelete { .. }
+            | SftpPromptKind::ConfirmDeleteLocal { .. }
+            | SftpPromptKind::CreateLocalDirectory { .. } => {
                 unreachable!()
             }
         };
@@ -4634,6 +5011,91 @@ impl EventEmitter<AppCommand> for SftpController {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_delete_removes_files_and_directories_recursively() {
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-sftp-local-delete-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let file = root.join("file.txt");
+        let directory = root.join("directory");
+        std::fs::create_dir_all(&directory).expect("create local delete test directory");
+        std::fs::write(&file, b"file").expect("write local delete test file");
+        std::fs::write(directory.join("nested.txt"), b"nested")
+            .expect("write nested local delete test file");
+
+        let result = delete_local_entries(vec![file.clone(), directory.clone()]);
+
+        assert_eq!(result.deleted_count, 2);
+        assert!(result.first_error.is_none());
+        assert!(!file.exists());
+        assert!(!directory.exists());
+        let _ = std::fs::remove_dir(&root);
+    }
+
+    #[test]
+    fn local_directory_creation_uses_the_current_local_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-sftp-local-create-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create local directory test root");
+
+        let created = create_local_directory(&root, "new-folder")
+            .expect("create folder inside current local directory");
+
+        assert_eq!(created, root.join("new-folder"));
+        assert!(created.is_dir());
+        std::fs::remove_dir_all(&root).expect("clean local directory test root");
+    }
+
+    #[test]
+    fn local_directory_name_must_be_a_single_path_component() {
+        assert!(is_valid_local_directory_name("new-folder"));
+        assert!(!is_valid_local_directory_name("."));
+        assert!(!is_valid_local_directory_name(".."));
+        assert!(!is_valid_local_directory_name("nested/folder"));
+        assert!(!is_valid_local_directory_name("/absolute"));
+
+        #[cfg(windows)]
+        assert!(!is_valid_local_directory_name(r"nested\folder"));
+    }
+
+    #[test]
+    fn remote_delete_normalization_prunes_duplicates_and_selected_descendants() {
+        let entries = normalize_remote_delete_entries(vec![
+            ("/root/child.txt".into(), false),
+            ("/standalone.txt".into(), false),
+            ("/root/nested".into(), true),
+            ("/root".into(), true),
+            ("/root/child.txt".into(), false),
+        ]);
+
+        assert_eq!(
+            entries,
+            vec![("/standalone.txt".into(), false), ("/root".into(), true),]
+        );
+    }
+
+    #[test]
+    fn remote_delete_normalization_uses_posix_component_boundaries() {
+        let entries = normalize_remote_delete_entries(vec![
+            ("/foo".into(), true),
+            ("/foo/child.txt".into(), false),
+            ("/foobar/child.txt".into(), false),
+            ("/foo-bar/child.txt".into(), false),
+        ]);
+
+        assert_eq!(
+            entries,
+            vec![
+                ("/foo".into(), true),
+                ("/foobar/child.txt".into(), false),
+                ("/foo-bar/child.txt".into(), false),
+            ]
+        );
+    }
 
     fn transfer_row() -> SftpTransferRow {
         SftpTransferRow {

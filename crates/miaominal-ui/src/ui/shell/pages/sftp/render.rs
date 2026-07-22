@@ -30,6 +30,18 @@ const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_CHARS: usize = 24;
 const SFTP_BREADCRUMB_LABEL_MAX_WIDTH: f32 = 128.0;
 const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH: f32 = 172.0;
 
+fn remote_delete_confirmation_message_key(entries: &[(String, bool)]) -> &'static str {
+    match (
+        entries.len(),
+        entries.iter().any(|(_, is_directory)| *is_directory),
+    ) {
+        (1, true) => "sftp.prompts.confirm_delete.single_directory_message",
+        (1, false) => "sftp.prompts.confirm_delete.single_message",
+        (_, true) => "sftp.prompts.confirm_delete.multi_with_directories_message",
+        (_, false) => "sftp.prompts.confirm_delete.multi_message",
+    }
+}
+
 #[derive(Clone)]
 struct SftpSplitDragMarker {
     divider: SftpSplitDivider,
@@ -71,6 +83,40 @@ mod tests {
         assert_eq!(
             sftp_breadcrumb_display_label("abcdefghijklmnopqrstuvwxyz", true).as_ref(),
             "abcdefghijklmnopqrstu..."
+        );
+    }
+
+    #[test]
+    fn save_as_is_only_shown_for_single_files_without_an_existing_destination_prompt() {
+        assert!(should_show_remote_save_as(true, true, false));
+        assert!(!should_show_remote_save_as(false, true, false));
+        assert!(!should_show_remote_save_as(true, false, false));
+        assert!(!should_show_remote_save_as(true, true, true));
+    }
+
+    #[test]
+    fn remote_delete_confirmation_distinguishes_recursive_directory_deletion() {
+        assert_eq!(
+            remote_delete_confirmation_message_key(&[("/folder".into(), true)]),
+            "sftp.prompts.confirm_delete.single_directory_message"
+        );
+        assert_eq!(
+            remote_delete_confirmation_message_key(&[
+                ("/folder".into(), true),
+                ("/file.txt".into(), false),
+            ]),
+            "sftp.prompts.confirm_delete.multi_with_directories_message"
+        );
+        assert_eq!(
+            remote_delete_confirmation_message_key(&[("/file.txt".into(), false)]),
+            "sftp.prompts.confirm_delete.single_message"
+        );
+        assert_eq!(
+            remote_delete_confirmation_message_key(&[
+                ("/one.txt".into(), false),
+                ("/two.txt".into(), false),
+            ]),
+            "sftp.prompts.confirm_delete.multi_message"
         );
     }
 
@@ -1017,6 +1063,14 @@ fn context_menu_remote_sftp_entry(
     controller.read(cx).resolve_remote_entry(tab_id, &path, cx)
 }
 
+fn should_show_remote_save_as(
+    is_single_selection: bool,
+    is_file: bool,
+    download_prompts_for_destination: bool,
+) -> bool {
+    is_single_selection && is_file && !download_prompts_for_destination
+}
+
 fn build_local_sftp_context_menu(
     menu: PopupMenu,
     controller: Entity<SftpController>,
@@ -1026,20 +1080,43 @@ fn build_local_sftp_context_menu(
     let mut menu = menu;
 
     if let Some(entry) = context_menu_local_sftp_entry(&controller, tab_id, cx) {
-        if entry.is_directory {
-            let open_controller = controller.clone();
-            let open_path = entry.path.clone();
-            menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
-                move |_, _, cx| {
-                    let controller = open_controller.clone();
-                    let path = open_path.clone();
-                    controller.update(cx, |controller, cx| {
-                        controller.select_local_path(tab_id, path.clone(), cx);
-                        controller.navigate_local_into_selected(tab_id, cx);
-                    });
-                },
-            ));
+        let local_table = controller.read(cx).local_table();
+        let is_single_selection = local_table.read(cx).delegate().has_single_selection();
+        let open_controller = controller.clone();
+        let open_path = entry.path.clone();
+        let rename_controller = controller.clone();
+        let delete_controller = controller.clone();
+        menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.open")).on_click(
+            move |_, _, cx| {
+                let controller = open_controller.clone();
+                let path = open_path.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.open_local_path(tab_id, path, cx);
+                });
+            },
+        ));
+        if is_single_selection {
+            menu = menu.item(
+                PopupMenuItem::new(i18n::string("sftp.menu.rename")).on_click(
+                    move |_, window, cx| {
+                        let controller = rename_controller.clone();
+                        controller.update(cx, |controller, cx| {
+                            controller.begin_local_inline_rename(tab_id, window, cx);
+                        });
+                    },
+                ),
+            );
         }
+        menu = menu
+            .item(
+                PopupMenuItem::new(i18n::string("sftp.menu.delete")).on_click(move |_, _, cx| {
+                    let controller = delete_controller.clone();
+                    controller.update(cx, |controller, cx| {
+                        controller.delete_local_selected(tab_id, cx);
+                    });
+                }),
+            )
+            .item(PopupMenuItem::separator());
 
         let upload_controller = controller.clone();
         let upload_path = entry.path.clone();
@@ -1067,6 +1144,7 @@ fn build_local_sftp_context_menu(
 
     let up_controller = controller;
     let refresh_controller = up_controller.clone();
+    let create_controller = up_controller.clone();
     menu.item(
         PopupMenuItem::new(i18n::string("sftp.menu.go_up")).on_click(move |_, _, cx| {
             let controller = up_controller.clone();
@@ -1082,6 +1160,17 @@ fn build_local_sftp_context_menu(
                 controller.refresh_local_directory(tab_id, cx);
             });
         }),
+    )
+    .item(PopupMenuItem::separator())
+    .item(
+        PopupMenuItem::new(i18n::string("sftp.menu.create_directory")).on_click(
+            move |_, window, cx| {
+                let controller = create_controller.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.begin_create_local_directory(tab_id, window, cx);
+                });
+            },
+        ),
     )
 }
 
@@ -1115,6 +1204,8 @@ fn build_remote_sftp_context_menu(
 
         let download_controller = controller.clone();
         let download_path = entry.path.clone();
+        let save_as_controller = controller.clone();
+        let save_as_path = entry.path.clone();
         let edit_controller = controller.clone();
         let edit_path = entry.path.clone();
         let is_file = entry.kind != miaominal_sftp::SftpEntryKind::Directory;
@@ -1145,6 +1236,19 @@ fn build_remote_sftp_context_menu(
                 },
             ),
         );
+        if should_show_remote_save_as(is_single_selection, is_file, prompt_for_destination) {
+            menu = menu.item(
+                PopupMenuItem::new(i18n::string("sftp.menu.save_as")).on_click(
+                    move |_, window, cx| {
+                        let controller = save_as_controller.clone();
+                        let path = save_as_path.clone();
+                        controller.update(cx, |controller, cx| {
+                            controller.queue_download_path(tab_id, path, true, window, cx);
+                        });
+                    },
+                ),
+            );
+        }
         if is_single_selection && is_file {
             menu = menu.item(PopupMenuItem::new(i18n::string("sftp.menu.edit")).on_click(
                 move |_, _, cx| {
@@ -3124,6 +3228,15 @@ impl SftpController {
                 false,
                 false,
             ),
+            SftpPromptKind::CreateLocalDirectory { .. } => (
+                AppIcon::Folder,
+                roles.primary,
+                i18n::string("sftp.prompts.create_local_directory.title"),
+                i18n::string("sftp.prompts.create_local_directory.confirm"),
+                None,
+                false,
+                false,
+            ),
             SftpPromptKind::ConfirmOverwrite { conflict_count, .. } => {
                 let count_text = conflict_count.to_string();
                 let msg = if *conflict_count == 1 {
@@ -3147,7 +3260,7 @@ impl SftpController {
             SftpPromptKind::ConfirmDelete { entries, .. } => {
                 let msg = if entries.len() == 1 {
                     i18n::string_args(
-                        "sftp.prompts.confirm_delete.single_message",
+                        remote_delete_confirmation_message_key(entries),
                         &[(
                             "name",
                             entries[0].0.rsplit('/').next().unwrap_or(&entries[0].0),
@@ -3156,7 +3269,7 @@ impl SftpController {
                 } else {
                     let count = entries.len().to_string();
                     i18n::string_args(
-                        "sftp.prompts.confirm_delete.multi_message",
+                        remote_delete_confirmation_message_key(entries),
                         &[("count", &count)],
                     )
                 };
@@ -3170,17 +3283,47 @@ impl SftpController {
                     true,
                 )
             }
+            SftpPromptKind::ConfirmDeleteLocal { entries } => {
+                let msg = if entries.len() == 1 {
+                    let name = entries[0]
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| entries[0].display().to_string());
+                    i18n::string_args(
+                        "sftp.prompts.confirm_delete_local.single_message",
+                        &[("name", &name)],
+                    )
+                } else {
+                    let count = entries.len().to_string();
+                    i18n::string_args(
+                        "sftp.prompts.confirm_delete_local.multi_message",
+                        &[("count", &count)],
+                    )
+                };
+                (
+                    AppIcon::Trash,
+                    roles.error,
+                    i18n::string("sftp.prompts.confirm_delete_local.title"),
+                    i18n::string("sftp.prompts.confirm_delete_local.confirm"),
+                    Some(msg.to_string()),
+                    false,
+                    true,
+                )
+            }
         };
 
         let body = match &prompt.kind {
-            SftpPromptKind::CreateRemoteDirectory { .. } => Some(
+            SftpPromptKind::CreateRemoteDirectory { .. }
+            | SftpPromptKind::CreateLocalDirectory { .. } => Some(
                 HintedInput::new(&self.prompt_input())
                     .large()
                     .w_full()
                     .rounded(px(12.0))
                     .into_any_element(),
             ),
-            SftpPromptKind::ConfirmOverwrite { .. } | SftpPromptKind::ConfirmDelete { .. } => None,
+            SftpPromptKind::ConfirmOverwrite { .. }
+            | SftpPromptKind::ConfirmDelete { .. }
+            | SftpPromptKind::ConfirmDeleteLocal { .. } => None,
         };
 
         let cancel_button = basic_dialog_action_button(

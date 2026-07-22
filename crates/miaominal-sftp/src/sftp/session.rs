@@ -1,6 +1,6 @@
 use super::paths::{
     canonical_remote_path, emit_directory_listing, emit_subdirectory_listing,
-    list_directory_entries,
+    list_directory_entries, remove_directory_recursive,
 };
 use super::transfer::{
     TransferControl, cancel_all_transfers, emit_error, emit_error_with_path, emit_transfer_paused,
@@ -52,7 +52,7 @@ enum SftpCommand {
     RemoveFile {
         path: String,
     },
-    RemoveDirectory {
+    RemoveDirectoryRecursive {
         path: String,
     },
     Rename {
@@ -301,7 +301,7 @@ impl SftpCommandSender {
     }
 
     pub fn remove_directory(&self, path: impl Into<String>) -> Result<()> {
-        self.send_command(SftpCommand::RemoveDirectory { path: path.into() })
+        self.send_command(SftpCommand::RemoveDirectoryRecursive { path: path.into() })
     }
 
     pub fn rename(&self, from: impl Into<String>, to: impl Into<String>) -> Result<()> {
@@ -626,14 +626,16 @@ async fn run_session(
                                 .await?;
                         }
                     }
-                    SftpCommand::RemoveDirectory { path } => {
-                        let result = sftp
-                            .remove_dir(path.clone())
-                            .await
-                            .with_context(|| format!("failed to remove remote directory {path}"));
-                        if recover_operation_result(&event_sender, "remove_directory", None, result)
-                            .await?
-                            .is_some()
+                    SftpCommand::RemoveDirectoryRecursive { path } => {
+                        let result = remove_directory_recursive(&sftp, &path).await;
+                        if recover_operation_result(
+                            &event_sender,
+                            "remove_directory_recursive",
+                            Some(&path),
+                            result,
+                        )
+                        .await?
+                        .is_some()
                         {
                             emit_status(&event_sender, format!("Removed remote directory {path}"))
                                 .await?;
@@ -1113,6 +1115,25 @@ mod tests {
                 request_id: SftpDirectoryRequestId(2),
                 path,
             }) if path == "/second"
+        ));
+    }
+
+    #[test]
+    fn remove_directory_queues_recursive_directory_deletion() {
+        let (sender, mut receiver) = unbounded_channel();
+        let commands = SftpCommandSender {
+            sender,
+            next_transfer_id: Arc::new(AtomicU64::new(1)),
+            next_directory_request_id: Arc::new(AtomicU64::new(1)),
+        };
+
+        commands
+            .remove_directory("/remote/tree")
+            .expect("queue recursive directory deletion");
+
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(SftpCommand::RemoveDirectoryRecursive { path }) if path == "/remote/tree"
         ));
     }
 
