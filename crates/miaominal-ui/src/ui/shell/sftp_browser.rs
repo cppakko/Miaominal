@@ -699,18 +699,8 @@ impl TableDelegate for SftpBrowserTableDelegate {
                             .right(px(4.0))
                             .top(px(2.0))
                             .bottom(px(2.0))
-                            .rounded(px(7.0))
+                            .rounded(px(16.0))
                             .bg(rgb(roles.secondary_container)),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(4.0))
-                            .top(px(7.0))
-                            .bottom(px(7.0))
-                            .w(px(3.0))
-                            .rounded(px(999.0))
-                            .bg(rgb(roles.primary)),
                     )
             })
             .on_click(cx.listener(move |table, e: &ClickEvent, _window, cx| {
