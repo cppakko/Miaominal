@@ -27,6 +27,22 @@ fn reopened_sftp_owner(
     reopened.get(&closed_tab.owner).copied()
 }
 
+fn push_session_notification(
+    tone: SessionNotificationTone,
+    title: String,
+    message: String,
+    id: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let notification = match tone {
+        SessionNotificationTone::Success => success_notification(title, message),
+        SessionNotificationTone::Error => error_notification(title, message),
+    }
+    .id1::<AppView>(SharedString::from(id));
+    window.push_notification(notification, cx);
+}
+
 impl AppView {
     pub(in crate::ui::shell) fn profile_requires_local_vault_unlock(
         &self,
@@ -139,6 +155,7 @@ impl AppView {
         let (tab, session) =
             SessionController::build_connection_test_tab(tab_id, &profile, connection.commands);
         self.insert_session_tab(tab, session, cx);
+        window.blur();
         self.controllers.session.update(cx, |controller, cx| {
             controller.spawn_session_event_loop(tab_id, connection.events, cx);
         });
@@ -964,6 +981,7 @@ impl AppView {
         &mut self,
         tab_id: TabId,
         outcome: SessionEventOutcome,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let SessionEventOutcome {
@@ -991,18 +1009,14 @@ impl AppView {
         }
 
         if let Some(notification) = notification {
-            let notification = match notification.tone {
-                SessionNotificationTone::Success => {
-                    success_notification(notification.title, notification.message)
-                }
-                SessionNotificationTone::Error => {
-                    error_notification(notification.title, notification.message)
-                }
-            }
-            .id1::<AppView>(SharedString::from(notification.id));
-            self.with_active_window(cx, move |window, cx| {
-                window.push_notification(notification, cx);
-            });
+            push_session_notification(
+                notification.tone,
+                notification.title,
+                notification.message,
+                notification.id,
+                window,
+                cx,
+            );
         }
 
         let _ = schedule_reconnect_error;
@@ -1225,6 +1239,15 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+
+    struct EmptyTestView;
+
+    impl Render for EmptyTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     #[test]
     fn inactive_terminal_output_only_notifies_for_new_activity() {
@@ -1259,5 +1282,27 @@ mod tests {
         assert_eq!(reopened_sftp_owner(&closed, &reopened), Some(new_owner));
         assert_eq!(closed.tab_id, TabId::new(11));
         assert_eq!(closed.profile.id, "profile");
+    }
+
+    #[gpui::test]
+    fn session_notification_is_pushed_to_supplied_window(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_root, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| EmptyTestView);
+            Root::new(view, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            assert!(window.notifications(cx).is_empty());
+            push_session_notification(
+                SessionNotificationTone::Success,
+                "Connected".to_string(),
+                "SSH connection succeeded".to_string(),
+                "connection-test-success-test".to_string(),
+                window,
+                cx,
+            );
+            assert_eq!(window.notifications(cx).len(), 1);
+        });
     }
 }

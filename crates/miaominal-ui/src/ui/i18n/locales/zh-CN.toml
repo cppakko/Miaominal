@@ -738,6 +738,7 @@ connection_failed_title = "连接失败"
 
 [session.messages]
 testing_connection_to = "正在测试连接到 {profile}"
+connection_test_cancelled = "已取消连接测试"
 opening_tab_for = "正在为 {profile} 打开标签页"
 open_sftp_requires_active_ssh = "打开 SFTP 标签页需要先有一个活动的 SSH 会话标签页。"
 no_tab_to_close = "没有可关闭的标签页"
@@ -1081,6 +1082,9 @@ default = "默认"
 
 [hosts.editor.buttons]
 test_connection = "测试连接"
+
+[hosts.editor.connection_test]
+testing = "正在测试 SSH 连接…"
 
 [errors.host_editor.environment_variables]
 missing_name = "环境变量 {index} 缺少名称。"

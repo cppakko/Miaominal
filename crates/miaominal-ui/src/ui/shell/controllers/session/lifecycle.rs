@@ -1,12 +1,54 @@
 use gpui::Context;
 
-use super::{SessionConnectionState, SessionController, SessionPurpose};
+use super::{AppCommand, SessionConnectionState, SessionController, SessionPurpose};
 use crate::ui::{
     i18n,
     shell::{SessionProfile, TabId},
 };
 
 impl SessionController {
+    fn connection_test_tab_ids(&self) -> Vec<TabId> {
+        self.tabs
+            .borrow()
+            .iter()
+            .filter_map(|(tab_id, session)| {
+                (session.purpose == SessionPurpose::ConnectionTest).then_some(*tab_id)
+            })
+            .collect()
+    }
+
+    pub(in crate::ui::shell) fn connection_test_in_progress(&self) -> bool {
+        !self.connection_test_tab_ids().is_empty()
+    }
+
+    pub(super) fn retire_connection_tests(&self) -> Vec<TabId> {
+        let tab_ids = self.connection_test_tab_ids();
+        for tab_id in tab_ids.iter().copied() {
+            let _ = self.retire_tab_resources(tab_id);
+            let _ = self.remove_tab(tab_id);
+        }
+        tab_ids
+    }
+
+    pub(in crate::ui::shell) fn cancel_profile_connection_test(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let tab_ids = self.retire_connection_tests();
+        if tab_ids.is_empty() {
+            return false;
+        }
+
+        for tab_id in tab_ids {
+            cx.emit(AppCommand::CloseTab(tab_id));
+        }
+        cx.emit(AppCommand::Feedback(i18n::string(
+            "session.messages.connection_test_cancelled",
+        )));
+        cx.notify();
+        true
+    }
+
     pub(in crate::ui::shell) fn tab_purpose(&self, tab_id: TabId) -> Option<SessionPurpose> {
         self.tab(tab_id).map(|session| session.purpose)
     }

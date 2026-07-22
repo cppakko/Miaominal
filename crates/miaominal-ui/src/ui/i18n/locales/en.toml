@@ -876,6 +876,7 @@ connection_failed_title = "Connection failed"
 
 [session.messages]
 testing_connection_to = "Testing connection to {profile}"
+connection_test_cancelled = "Connection test cancelled"
 opening_tab_for = "Opening tab for {profile}"
 open_sftp_requires_active_ssh = "Opening an SFTP tab requires an active SSH session tab."
 no_tab_to_close = "No tab to close"
@@ -1219,6 +1220,9 @@ default = "Default"
 
 [hosts.editor.buttons]
 test_connection = "Test Connection"
+
+[hosts.editor.connection_test]
+testing = "Testing SSH connection..."
 
 [errors.host_editor.environment_variables]
 missing_name = "Environment variable {index} is missing a name."

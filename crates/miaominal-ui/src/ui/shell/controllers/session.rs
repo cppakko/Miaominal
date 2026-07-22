@@ -5713,6 +5713,7 @@ fn release_retired_lease_if_ready(
 mod tests {
     use super::*;
     use crate::ui::shell::{SessionConnectionState, SessionMonitoringState, TerminalState};
+    use miaominal_ssh::SessionEvent;
 
     fn session_payload(profile_id: &str) -> SessionTabState {
         SessionTabState {
@@ -5829,6 +5830,42 @@ mod tests {
                 .expect("second payload should remain")
                 .profile_id,
             "profile-b"
+        );
+    }
+
+    #[test]
+    fn connection_test_state_ignores_other_session_purposes() {
+        let controller = SessionController::new_for_test();
+        let terminal_id = TabId::new(7);
+        let forwarding_id = TabId::new(8);
+        controller.insert_tab(terminal_id, session_payload("profile-a"));
+        let mut forwarding = session_payload("profile-b");
+        forwarding.purpose = SessionPurpose::PortForwarding;
+        controller.insert_tab(forwarding_id, forwarding);
+
+        assert!(!controller.connection_test_in_progress());
+    }
+
+    #[test]
+    fn retiring_connection_tests_removes_only_test_sessions_and_ignores_late_events() {
+        let controller = SessionController::new_for_test();
+        let terminal_id = TabId::new(7);
+        let test_id = TabId::new(9);
+        controller.insert_tab(terminal_id, session_payload("profile-a"));
+        let mut connection_test = session_payload("profile-b");
+        connection_test.purpose = SessionPurpose::ConnectionTest;
+        connection_test.connection_state = SessionConnectionState::Connecting;
+        controller.insert_tab(test_id, connection_test);
+
+        assert!(controller.connection_test_in_progress());
+        assert_eq!(controller.retire_connection_tests(), vec![test_id]);
+        assert!(!controller.connection_test_in_progress());
+        assert!(controller.tab(terminal_id).is_some());
+        assert!(controller.tab(test_id).is_none());
+        assert!(
+            controller
+                .apply_session_event(test_id, SessionEvent::Closed, false, "Test profile-b")
+                .is_none()
         );
     }
 

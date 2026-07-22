@@ -899,6 +899,9 @@ impl AppView {
             AppCommand::SaveSnippetRequested(snippet) => {
                 self.handle_snippet_save_request((**snippet).clone(), window, cx)
             }
+            AppCommand::SessionEventApplied { tab_id, outcome } => {
+                self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
+            }
             _ => self.handle_app_command(command, cx),
         }
     }
@@ -906,9 +909,6 @@ impl AppView {
     fn handle_app_command(&mut self, command: &AppCommand, cx: &mut Context<Self>) {
         match command {
             AppCommand::Feedback(message) => self.shell.status_message = message.clone(),
-            AppCommand::SessionEventApplied { tab_id, outcome } => {
-                self.handle_session_event_outcome(*tab_id, outcome.clone(), cx)
-            }
             AppCommand::TabStatusChanged { tab_id, status } => {
                 if let Some(mut tab) = self.workspace.tabs.get_mut(*tab_id) {
                     tab.status = status.clone();
@@ -925,7 +925,8 @@ impl AppView {
             | AppCommand::VaultActionRequested(_)
             | AppCommand::LocalDataResetRequested
             | AppCommand::SaveProfileRequested(_)
-            | AppCommand::SaveSnippetRequested(_) => {}
+            | AppCommand::SaveSnippetRequested(_)
+            | AppCommand::SessionEventApplied { .. } => {}
             AppCommand::ImportProfilesRequested(source) => {
                 let controller = self.controllers.session.clone();
                 let source = *source;

@@ -96,6 +96,24 @@ pub(in crate::ui::shell) fn render_prompt_overlay(
     stable_key: impl AsRef<str>,
     exit_progress: Option<f32>,
 ) -> AnyElement {
+    render_prompt_overlay_with_radius(panel, stable_key, exit_progress, None)
+}
+
+pub(in crate::ui::shell) fn render_rounded_prompt_overlay(
+    panel: AnyElement,
+    stable_key: impl AsRef<str>,
+    exit_progress: Option<f32>,
+    radius: f32,
+) -> AnyElement {
+    render_prompt_overlay_with_radius(panel, stable_key, exit_progress, Some(radius))
+}
+
+fn render_prompt_overlay_with_radius(
+    panel: AnyElement,
+    stable_key: impl AsRef<str>,
+    exit_progress: Option<f32>,
+    radius: Option<f32>,
+) -> AnyElement {
     let stable_key = stable_key.as_ref().to_string();
     let scrim = miaominal_settings::current_theme().material.roles.scrim;
     let overlay = div()
@@ -107,6 +125,9 @@ pub(in crate::ui::shell) fn render_prompt_overlay(
         .justify_center()
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
+        })
+        .when_some(radius, |this, radius| {
+            this.rounded(px(radius)).overflow_hidden()
         });
 
     if let Some(exit_progress) = exit_progress {
@@ -116,6 +137,7 @@ pub(in crate::ui::shell) fn render_prompt_overlay(
                 div()
                     .absolute()
                     .inset_0()
+                    .when_some(radius, |this, radius| this.rounded(px(radius)))
                     .bg(color_with_alpha(scrim, (136.0 * delta).round() as u8)),
             )
             .child(div().relative().w_full().opacity(delta).child(panel))
@@ -123,13 +145,19 @@ pub(in crate::ui::shell) fn render_prompt_overlay(
     }
 
     overlay
-        .child(div().absolute().inset_0().with_animation(
-            overlay_animation_id(format!("{stable_key}-backdrop")),
-            overlay_enter_animation(),
-            move |element, delta| {
-                element.bg(color_with_alpha(scrim, (136.0 * delta).round() as u8))
-            },
-        ))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .when_some(radius, |this, radius| this.rounded(px(radius)))
+                .with_animation(
+                    overlay_animation_id(format!("{stable_key}-backdrop")),
+                    overlay_enter_animation(),
+                    move |element, delta| {
+                        element.bg(color_with_alpha(scrim, (136.0 * delta).round() as u8))
+                    },
+                ),
+        )
         .child(div().relative().w_full().child(panel).with_animation(
             overlay_animation_id(format!("{stable_key}-panel")),
             overlay_enter_animation(),

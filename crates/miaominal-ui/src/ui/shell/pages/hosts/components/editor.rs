@@ -1,4 +1,4 @@
-use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button};
+use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button, md3_spinner};
 use crate::ui::{
     components::{SectionCard, SegmentedSwitch},
     i18n,
@@ -30,6 +30,7 @@ impl SessionController {
         let available_groups = self.available_groups();
         let auth_method = host_editor.editing_auth_method;
         let host_editor_is_new = self.editor_state().host_editor_is_new;
+        let connection_test_in_progress = self.connection_test_in_progress();
 
         let title = if host_editor_is_new {
             i18n::string("hosts.editor.titles.add")
@@ -655,12 +656,49 @@ impl SessionController {
             .into_any_element(),
         );
         let footer = editor_footer_actions(footer_actions).h_full();
+        let connection_test_overlay = connection_test_in_progress.then(|| {
+            let cancel_controller = controller.clone();
+            let panel = v_flex()
+                .id("host-editor-connection-test-panel")
+                .mx_auto()
+                .w(px(280.0))
+                .items_center()
+                .gap_3()
+                .rounded(px(20.0))
+                .bg(rgb(roles.surface_container_high))
+                .p_5()
+                .child(md3_spinner(48.0))
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(roles.on_surface))
+                        .child(i18n::string("hosts.editor.connection_test.testing")),
+                )
+                .child(editor_button(
+                    i18n::string("dialogs.common.cancel"),
+                    false,
+                    false,
+                    move |_, cx| {
+                        cancel_controller.update(cx, |controller, cx| {
+                            controller.cancel_profile_connection_test(cx);
+                        });
+                    },
+                ));
+            render_rounded_prompt_overlay(
+                panel.into_any_element(),
+                "host-editor-connection-test",
+                None,
+                16.0,
+            )
+        });
 
         div()
             .id("host-editor-sidebar")
             .w(px(EDITOR_DRAWER_WIDTH))
             .min_w(px(360.0))
             .h_full()
+            .relative()
+            .overflow_hidden()
             .bg(rgb(roles.surface_container))
             .child(
                 v_flex()
@@ -682,5 +720,6 @@ impl SessionController {
                     )
                     .child(div().px_4().py_4().child(footer)),
             )
+            .when_some(connection_test_overlay, |this, overlay| this.child(overlay))
     }
 }

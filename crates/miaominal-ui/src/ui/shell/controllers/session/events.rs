@@ -489,7 +489,42 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::shell::{SessionMonitoringState, SessionTabState, TerminalState};
     use tokio::sync::mpsc;
+
+    fn connection_test_controller() -> (SessionController, TabId) {
+        let controller = SessionController::new_for_test();
+        let tab_id = TabId::new(7);
+        controller.insert_tab(
+            tab_id,
+            SessionTabState {
+                profile_id: "profile-a".to_string(),
+                port_forward_rule_id: None,
+                terminal: TerminalState::default(),
+                connection_state: SessionConnectionState::Connecting,
+                preserved_history_popup_hidden: false,
+                pending_profile: None,
+                commands: None,
+                bytes_in: 0,
+                bytes_out: 0,
+                pending_host_key: None,
+                pending_keyboard_interactive: None,
+                reconnect_task: None,
+                reconnect_attempt: 0,
+                has_activity: false,
+                monitoring: SessionMonitoringState::new(false),
+                purpose: SessionPurpose::ConnectionTest,
+            },
+        );
+        (controller, tab_id)
+    }
+
+    fn assert_connection_test_removal(outcome: &SessionEventOutcome) {
+        assert!(matches!(
+            outcome.removal,
+            Some(SessionEventTabRemoval::ConnectionTest { .. })
+        ));
+    }
 
     #[test]
     fn coalesce_session_output_merges_consecutive_output() {
@@ -523,5 +558,69 @@ mod tests {
 
         assert_eq!(chunk, b"ab");
         assert!(matches!(pending, Some(SessionEvent::Status(status)) if status == "ready"));
+    }
+
+    #[test]
+    fn connected_connection_test_requests_success_notification_and_removal() {
+        let (controller, tab_id) = connection_test_controller();
+
+        let outcome = controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Connected("profile-a".to_string()),
+                false,
+                "Test profile-a",
+            )
+            .expect("connection test tab should exist");
+
+        let notification = outcome
+            .notification
+            .as_ref()
+            .expect("successful connection test should notify");
+        assert!(matches!(
+            notification.tone,
+            SessionNotificationTone::Success
+        ));
+        assert_eq!(notification.id, format!("connection-test-success-{tab_id}"));
+        assert_connection_test_removal(&outcome);
+    }
+
+    #[test]
+    fn failed_connection_test_requests_error_notification_and_removal() {
+        let (controller, tab_id) = connection_test_controller();
+
+        let outcome = controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Error("authentication failed".to_string()),
+                false,
+                "Test profile-a",
+            )
+            .expect("connection test tab should exist");
+
+        let notification = outcome
+            .notification
+            .as_ref()
+            .expect("failed connection test should notify");
+        assert!(matches!(notification.tone, SessionNotificationTone::Error));
+        assert_eq!(notification.id, format!("session-failure-{tab_id}"));
+        assert_connection_test_removal(&outcome);
+    }
+
+    #[test]
+    fn prematurely_closed_connection_test_requests_error_notification_and_removal() {
+        let (controller, tab_id) = connection_test_controller();
+
+        let outcome = controller
+            .apply_session_event(tab_id, SessionEvent::Closed, false, "Test profile-a")
+            .expect("connection test tab should exist");
+
+        let notification = outcome
+            .notification
+            .as_ref()
+            .expect("prematurely closed connection test should notify");
+        assert!(matches!(notification.tone, SessionNotificationTone::Error));
+        assert_eq!(notification.id, format!("connection-test-failure-{tab_id}"));
+        assert_connection_test_removal(&outcome);
     }
 }
