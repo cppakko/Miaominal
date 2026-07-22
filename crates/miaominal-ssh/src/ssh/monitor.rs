@@ -21,6 +21,15 @@ struct NetworkTotals {
     tx_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MacosMemoryStats {
+    page_size: u64,
+    internal_pages: u64,
+    purgeable_pages: u64,
+    wired_pages: u64,
+    compressor_pages: u64,
+}
+
 #[derive(Debug, Default)]
 struct MonitorMetadata {
     hostname: Option<String>,
@@ -229,7 +238,10 @@ impl RemoteMonitorCollector {
     fn parse_macos_snapshot(&mut self, output: &str) -> Result<SessionMonitorSnapshot> {
         let mut metadata = MonitorMetadata::default();
         let mut cpu_percent = None;
-        let mut memory_used = None;
+        let mut cpu_percent_from_ticks = None;
+        let mut cpu_percent_fallback = None;
+        let mut memory_used_fallback = None;
+        let mut memory_stats = None;
         let mut memory_total = None;
         let mut swap_used = None;
         let mut swap_total = None;
@@ -262,12 +274,43 @@ impl RemoteMonitorCollector {
                 Some("cpu") => {
                     cpu_percent = parts.next().and_then(|value| value.parse::<f64>().ok());
                 }
+                Some("cputicks") => {
+                    let values = parts
+                        .take(10)
+                        .map(str::parse::<u64>)
+                        .collect::<std::result::Result<Vec<_>, _>>();
+                    if let Ok(values) = values {
+                        cpu_percent_from_ticks = macos_cpu_percent_from_ticks(&values);
+                    }
+                }
+                Some("topline") => {
+                    let raw = parts.collect::<Vec<_>>().join(" ");
+                    cpu_percent_fallback = parse_macos_top_cpu_percent(&raw);
+                }
                 Some("memtotal") => {
-                    memory_total = parts.next().and_then(|value| value.parse::<f64>().ok());
+                    memory_total = parts.next().and_then(|value| value.parse::<u64>().ok());
                 }
                 Some("physmem") => {
                     let raw = parts.collect::<Vec<_>>().join(" ");
-                    memory_used = parse_value_before_label(&raw, "used");
+                    memory_used_fallback = parse_value_before_label(&raw, "used");
+                }
+                Some("memstats") => {
+                    let values = parts
+                        .take(5)
+                        .map(str::parse::<u64>)
+                        .collect::<std::result::Result<Vec<_>, _>>();
+                    if let Ok(values) = values
+                        && values.len() == 5
+                        && values[0] > 0
+                    {
+                        memory_stats = Some(MacosMemoryStats {
+                            page_size: values[0],
+                            internal_pages: values[1],
+                            purgeable_pages: values[2],
+                            wired_pages: values[3],
+                            compressor_pages: values[4],
+                        });
+                    }
                 }
                 Some("swapraw") => {
                     let raw = parts.collect::<Vec<_>>().join(" ");
@@ -295,8 +338,15 @@ impl RemoteMonitorCollector {
             }
         }
 
-        let memory_used = memory_used.context("missing macOS memory usage")?;
-        let memory_total = memory_total.context("missing macOS memory total")?;
+        let memory_total_bytes = memory_total.context("missing macOS memory total")?;
+        let memory_used_bytes = memory_stats
+            .map(|stats| macos_memory_used_bytes(stats, memory_total_bytes))
+            .or_else(|| {
+                memory_used_fallback
+                    .map(f64_to_u64)
+                    .map(|used| used.min(memory_total_bytes))
+            })
+            .context("missing macOS memory usage")?;
         let swap_used = swap_used.context("missing macOS swap usage")?;
         let swap_total = swap_total.context("missing macOS swap total")?;
         let network_totals = network_totals.context("missing macOS network totals")?;
@@ -307,14 +357,19 @@ impl RemoteMonitorCollector {
             hostname: metadata.hostname,
             logical_cpu_count: metadata.logical_cpu_count,
             uptime_seconds: metadata.uptime_seconds,
-            cpu_percent: cpu_percent.unwrap_or_default(),
-            memory_percent: if memory_total > 0.0 {
-                (memory_used / memory_total) * 100.0
+            cpu_percent: cpu_percent_from_ticks
+                .or(cpu_percent)
+                .or(cpu_percent_fallback)
+                .filter(|value| value.is_finite())
+                .unwrap_or_default()
+                .clamp(0.0, 100.0),
+            memory_percent: if memory_total_bytes > 0 {
+                ((memory_used_bytes as f64 / memory_total_bytes as f64) * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             },
-            memory_used_bytes: f64_to_u64(memory_used),
-            memory_total_bytes: f64_to_u64(memory_total),
+            memory_used_bytes,
+            memory_total_bytes,
             swap_percent: if swap_total > 0.0 {
                 (swap_used / swap_total) * 100.0
             } else {
@@ -686,6 +741,37 @@ fn kib_u64_to_bytes(value: u64) -> u64 {
     value.saturating_mul(1024)
 }
 
+fn macos_cpu_percent_from_ticks(values: &[u64]) -> Option<f64> {
+    if values.len() != 10 {
+        return None;
+    }
+
+    let before_total = values[..5].iter().copied().fold(0_u64, u64::saturating_add);
+    let after_total = values[5..].iter().copied().fold(0_u64, u64::saturating_add);
+    let total_delta = after_total.checked_sub(before_total)?;
+    let idle_delta = values[8].checked_sub(values[3])?;
+    if total_delta == 0 || idle_delta > total_delta {
+        return None;
+    }
+
+    Some(((total_delta - idle_delta) as f64 / total_delta as f64) * 100.0)
+}
+
+fn parse_macos_top_cpu_percent(input: &str) -> Option<f64> {
+    parse_value_before_label(input, "idle")
+        .filter(|idle| idle.is_finite())
+        .map(|idle| (100.0 - idle).clamp(0.0, 100.0))
+}
+
+fn macos_memory_used_bytes(stats: MacosMemoryStats, memory_total_bytes: u64) -> u64 {
+    let app_pages = stats.internal_pages.saturating_sub(stats.purgeable_pages);
+    app_pages
+        .saturating_add(stats.wired_pages)
+        .saturating_add(stats.compressor_pages)
+        .saturating_mul(stats.page_size)
+        .min(memory_total_bytes)
+}
+
 fn normalized_label(value: &str) -> String {
     value
         .chars()
@@ -823,11 +909,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_macos_snapshot_and_tolerates_missing_metadata() {
+    fn macos_monitor_script_uses_cpu_ticks_and_vm_statistics() {
+        assert!(MACOS_MONITOR_SCRIPT.contains("export LC_ALL=C"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("sysctl -n kern.cp_time"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("sleep 1"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("printf 'cputicks %s %s\\n'"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("top -l 1 -n 0"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("printf(\"topline %s\\n\", $0)"));
+        assert!(!MACOS_MONITOR_SCRIPT.contains("$(NF - 1)"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("vm.page_pageable_internal_count"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("Pages occupied by compressor:"));
+        assert!(MACOS_MONITOR_SCRIPT.contains("printf(\"memstats %s %s %s %s %s\\n\""));
+    }
+
+    #[test]
+    fn parses_macos_snapshot_with_activity_monitor_memory_usage() {
         let mut collector = RemoteMonitorCollector::default();
         let snapshot = collector
             .parse_macos_snapshot(
-                "cpu 24.5\nmemtotal 8589934592\nphysmem PhysMem: 6G used (1536M wired, 512M compressor), 2G unused.\nswapraw total = 2048.00M used = 512.00M free = 1536.00M (encrypted)\nnet 1000 2000\nload 1.25\ndisk 2048000 1024000 50\n",
+                "topline CPU usage: 0.00% user, 0.00% sys, 100.00% idle   \ncputicks 100 0 50 850 0 130 0 70 900 0\nmemtotal 8589934592\nphysmem PhysMem: 7G used (1536M wired, 512M compressor), 1G unused.\nmemstats 4096 1000000 100000 200000 50000\nswapraw total = 2048.00M used = 512.00M free = 1536.00M (encrypted)\nnet 1000 2000\nload 1.25\ndisk 2048000 1024000 50\n",
             )
             .expect("macOS fixture should parse");
 
@@ -835,11 +935,77 @@ mod tests {
         assert_eq!(snapshot.hostname, None);
         assert_eq!(snapshot.logical_cpu_count, None);
         assert_eq!(snapshot.uptime_seconds, None);
-        assert_eq!(snapshot.memory_used_bytes, 6 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.cpu_percent, 50.0);
+        assert_eq!(snapshot.memory_used_bytes, 1_150_000 * 4096);
         assert_eq!(snapshot.memory_total_bytes, 8 * 1024 * 1024 * 1024);
+        assert!(snapshot.memory_percent < 60.0);
         assert_eq!(snapshot.swap_used_bytes, 512 * 1024 * 1024);
         assert_eq!(snapshot.swap_total_bytes, 2 * 1024 * 1024 * 1024);
         assert_eq!(snapshot.disk_percent, 50.0);
+    }
+
+    #[test]
+    fn macos_snapshot_falls_back_to_top_memory_usage() {
+        let mut collector = RemoteMonitorCollector::default();
+        let snapshot = collector
+            .parse_macos_snapshot(
+                "topline CPU usage: 5.00% user, 10.00% sys, 85.00% idle   \ncputicks invalid 0 0 0 0 0 0 0 0 0\nmemtotal 8589934592\nphysmem PhysMem: 6G used, 2G unused.\nmemstats invalid 100 10 20 5\nswapraw total = 2048.00M used = 512.00M free = 1536.00M\nnet 1000 2000\nload 1.25\n",
+            )
+            .expect("macOS fallback fixture should parse");
+
+        assert_eq!(snapshot.cpu_percent, 15.0);
+        assert_eq!(snapshot.memory_used_bytes, 6 * 1024 * 1024 * 1024);
+        assert_eq!(snapshot.memory_percent, 75.0);
+    }
+
+    #[test]
+    fn macos_cpu_tick_calculation_rejects_reset_or_incomplete_samples() {
+        assert_eq!(
+            macos_cpu_percent_from_ticks(&[100, 0, 50, 850, 0, 130, 0, 70, 900, 0]),
+            Some(50.0)
+        );
+        assert_eq!(
+            macos_cpu_percent_from_ticks(&[100, 0, 50, 850, 0, 90, 0, 40, 800, 0]),
+            None
+        );
+        assert_eq!(macos_cpu_percent_from_ticks(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn parses_macos_top_cpu_by_idle_label_instead_of_field_position() {
+        let parsed =
+            parse_macos_top_cpu_percent("CPU usage: 6.36% user, 7.75% sys, 85.87% idle   \r")
+                .expect("idle percentage should parse despite trailing whitespace");
+        assert!((parsed - 14.13).abs() < 0.000_001);
+        assert_eq!(
+            parse_macos_top_cpu_percent("CPU usage: 0.00% user, 0.00% sys, 100.00% idle"),
+            Some(0.0)
+        );
+        assert_eq!(parse_macos_top_cpu_percent("CPU usage unavailable"), None);
+    }
+
+    #[test]
+    fn macos_memory_calculation_saturates_and_clamps_to_total() {
+        let purgeable_exceeds_internal = MacosMemoryStats {
+            page_size: 4096,
+            internal_pages: 10,
+            purgeable_pages: 20,
+            wired_pages: 3,
+            compressor_pages: 2,
+        };
+        assert_eq!(
+            macos_memory_used_bytes(purgeable_exceeds_internal, u64::MAX),
+            5 * 4096
+        );
+
+        let overflowing = MacosMemoryStats {
+            page_size: u64::MAX,
+            internal_pages: u64::MAX,
+            purgeable_pages: 0,
+            wired_pages: u64::MAX,
+            compressor_pages: u64::MAX,
+        };
+        assert_eq!(macos_memory_used_bytes(overflowing, 1024), 1024);
     }
 
     #[test]
