@@ -102,6 +102,21 @@ fn finish_session_agent_panel_resize(app: &mut AppView, cx: &mut Context<AppView
     }
 }
 
+fn finish_session_sftp_progress_resize(app: &mut AppView, cx: &mut Context<AppView>) -> bool {
+    if app
+        .controllers
+        .sftp
+        .read(cx)
+        .take_session_progress_drag()
+        .is_none()
+    {
+        return false;
+    }
+
+    cx.notify();
+    true
+}
+
 pub(in crate::ui::shell) fn render_workspace_surface(
     app: &mut AppView,
     window: &mut Window,
@@ -299,45 +314,60 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         })
         .on_mouse_move(
             cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                if event.pressed_button != Some(MouseButton::Left) {
-                    return;
-                }
-                let Some(drag) = this.controllers.sftp.read(cx).session_progress_drag() else {
-                    return;
+                let left_pressed = event.pressed_button == Some(MouseButton::Left);
+                let mut handled = if left_pressed {
+                    this.update_session_sftp_drag_selection(event.position, cx)
+                } else {
+                    this.finish_session_sftp_drag_selection(event.position, cx)
                 };
 
-                let pointer_delta = f32::from(event.position.y) - drag.initial_pointer;
-                let next_flex = resized_session_sftp_progress_flex(
-                    drag.container_height,
-                    drag.initial_flex,
-                    pointer_delta,
-                );
-                let current_flex = this.controllers.sftp.read(cx).session_progress_flex();
-                if (current_flex - next_flex).abs() > f32::EPSILON {
-                    this.controllers
-                        .sftp
-                        .read(cx)
-                        .set_session_progress_flex(next_flex);
-                    cx.notify();
+                if left_pressed
+                    && let Some(drag) = this.controllers.sftp.read(cx).session_progress_drag()
+                {
+                    let pointer_delta = f32::from(event.position.y) - drag.initial_pointer;
+                    let next_flex = resized_session_sftp_progress_flex(
+                        drag.container_height,
+                        drag.initial_flex,
+                        pointer_delta,
+                    );
+                    let current_flex = this.controllers.sftp.read(cx).session_progress_flex();
+                    if (current_flex - next_flex).abs() > f32::EPSILON {
+                        this.controllers
+                            .sftp
+                            .read(cx)
+                            .set_session_progress_flex(next_flex);
+                        cx.notify();
+                    }
+                    handled = true;
                 }
-                cx.stop_propagation();
+
+                if handled {
+                    cx.stop_propagation();
+                }
             }),
         )
         .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
             if event.button != MouseButton::Left {
                 return;
             }
-            if this
-                .controllers
-                .sftp
-                .read(cx)
-                .take_session_progress_drag()
-                .is_some()
-            {
+
+            let selection_finished = this.finish_session_sftp_drag_selection(event.position, cx);
+            let progress_resize_finished = finish_session_sftp_progress_resize(this, cx);
+            if selection_finished || progress_resize_finished {
                 cx.stop_propagation();
-                cx.notify();
             }
         }))
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(move |this, event: &MouseUpEvent, _window, cx| {
+                let selection_finished =
+                    this.finish_session_sftp_drag_selection(event.position, cx);
+                let progress_resize_finished = finish_session_sftp_progress_resize(this, cx);
+                if selection_finished || progress_resize_finished {
+                    cx.stop_propagation();
+                }
+            }),
+        )
         .child(workspace_row)
         .when_some(sftp_progress_panel, |this, (panel, visibility)| {
             this.child(
@@ -408,6 +438,11 @@ mod tests {
         text: Entity<TextViewState>,
     }
 
+    struct SessionSftpDragReleaseTestView {
+        dragging: Rc<Cell<bool>>,
+        outside_updates: Rc<Cell<usize>>,
+    }
+
     impl Render for AgentResizeReleaseTestView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let resizing_on_down = self.resizing.clone();
@@ -454,6 +489,52 @@ mod tests {
         }
     }
 
+    impl Render for SessionSftpDragReleaseTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let dragging_on_move = self.dragging.clone();
+            let dragging_on_up = self.dragging.clone();
+            let dragging_on_up_out = self.dragging.clone();
+            let dragging_on_down = self.dragging.clone();
+            let outside_updates = self.outside_updates.clone();
+
+            div()
+                .size_full()
+                .relative()
+                .on_mouse_move(move |event: &MouseMoveEvent, _window, _cx| {
+                    if !dragging_on_move.get() {
+                        return;
+                    }
+                    if event.pressed_button == Some(MouseButton::Left) {
+                        outside_updates.set(outside_updates.get() + 1);
+                    } else {
+                        dragging_on_move.set(false);
+                    }
+                })
+                .capture_any_mouse_up(move |event: &MouseUpEvent, _window, _cx| {
+                    if event.button == MouseButton::Left {
+                        dragging_on_up.set(false);
+                    }
+                })
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    move |_event: &MouseUpEvent, _window, _cx| {
+                        dragging_on_up_out.set(false);
+                    },
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w(px(80.0))
+                        .h(px(100.0))
+                        .on_mouse_down(MouseButton::Left, move |_, _window, _cx| {
+                            dragging_on_down.set(true);
+                        }),
+                )
+        }
+    }
+
     fn setup_agent_resize_release_test(
         cx: &mut TestAppContext,
     ) -> (Rc<Cell<bool>>, &mut VisualTestContext) {
@@ -477,6 +558,28 @@ mod tests {
             let _ = window.draw(cx);
         });
         (resizing, cx)
+    }
+
+    fn setup_session_sftp_drag_release_test(
+        cx: &mut TestAppContext,
+    ) -> (Rc<Cell<bool>>, Rc<Cell<usize>>, &mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let dragging = Rc::new(Cell::new(false));
+        let outside_updates = Rc::new(Cell::new(0));
+        let dragging_for_view = dragging.clone();
+        let outside_updates_for_view = outside_updates.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|_| SessionSftpDragReleaseTestView {
+                dragging: dragging_for_view,
+                outside_updates: outside_updates_for_view,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        (dragging, outside_updates, cx)
     }
 
     #[gpui::test]
@@ -503,6 +606,52 @@ mod tests {
         });
         let selected_text = cx.update(|window, cx| window.selected_text(cx));
         assert_eq!(selected_text, "");
+    }
+
+    #[gpui::test]
+    fn session_sftp_drag_finishes_after_leaving_the_panel(cx: &mut TestAppContext) {
+        let (dragging, outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
+        let modifiers = Modifiers::default();
+        let panel_position = point(px(20.0), px(20.0));
+        let workspace_position = point(px(260.0), px(20.0));
+
+        cx.simulate_mouse_down(panel_position, MouseButton::Left, modifiers);
+        assert!(dragging.get());
+
+        cx.simulate_mouse_move(workspace_position, Some(MouseButton::Left), modifiers);
+        assert!(dragging.get());
+        assert!(outside_updates.get() > 0);
+
+        cx.simulate_mouse_up(workspace_position, MouseButton::Left, modifiers);
+        assert!(!dragging.get());
+    }
+
+    #[gpui::test]
+    fn session_sftp_drag_recovers_when_mouse_up_is_lost(cx: &mut TestAppContext) {
+        let (dragging, _outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
+        let modifiers = Modifiers::default();
+        let panel_position = point(px(20.0), px(20.0));
+        let workspace_position = point(px(260.0), px(20.0));
+
+        cx.simulate_mouse_down(panel_position, MouseButton::Left, modifiers);
+        assert!(dragging.get());
+
+        cx.simulate_mouse_move(workspace_position, None, modifiers);
+        assert!(!dragging.get());
+    }
+
+    #[gpui::test]
+    fn session_sftp_drag_finishes_on_mouse_up_out(cx: &mut TestAppContext) {
+        let (dragging, _outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
+        let modifiers = Modifiers::default();
+        let panel_position = point(px(20.0), px(20.0));
+        let outside_window = point(px(-20.0), px(-20.0));
+
+        cx.simulate_mouse_down(panel_position, MouseButton::Left, modifiers);
+        assert!(dragging.get());
+
+        cx.simulate_mouse_up(outside_window, MouseButton::Left, modifiers);
+        assert!(!dragging.get());
     }
 
     #[test]

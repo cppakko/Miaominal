@@ -142,6 +142,45 @@ impl AppView {
         })
     }
 
+    fn active_session_sftp_drag_tab_id(&self, cx: &App) -> Option<TabId> {
+        let session = self.controllers.session.read(cx);
+        let panel_visible =
+            session.side_panel_open() && session.side_panel_view() == SessionSidePanelView::Sftp;
+        if !panel_visible {
+            return None;
+        }
+
+        self.session_side_panel_sftp_tab_id(cx)
+    }
+
+    pub(in crate::ui::shell) fn update_session_sftp_drag_selection(
+        &mut self,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(tab_id) = self.active_session_sftp_drag_tab_id(cx) else {
+            return false;
+        };
+
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.update_active_drag_selection(tab_id, position, cx)
+        })
+    }
+
+    pub(in crate::ui::shell) fn finish_session_sftp_drag_selection(
+        &mut self,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(tab_id) = self.active_session_sftp_drag_tab_id(cx) else {
+            return false;
+        };
+
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.finish_active_drag_selection(tab_id, position, cx)
+        })
+    }
+
     pub(in crate::ui::shell) fn should_sync_sftp_browser_for_tab(
         &self,
         tab_id: TabId,

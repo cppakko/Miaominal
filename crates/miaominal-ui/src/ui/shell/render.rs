@@ -233,6 +233,8 @@ impl Render for AppView {
 
         let finish_agent_drag = self.controllers.agent.clone();
         let finish_agent_drag_out = finish_agent_drag.clone();
+        let recover_sftp_drag = self.controllers.sftp.clone();
+        let finish_sftp_drag_out = recover_sftp_drag.clone();
 
         div()
             .size_full()
@@ -240,6 +242,13 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .bg(rgb(roles.surface_container))
+            .on_mouse_move(move |event: &MouseMoveEvent, _window, cx| {
+                if event.pressed_button != Some(MouseButton::Left) {
+                    recover_sftp_drag.update(cx, |controller, cx| {
+                        controller.finish_any_active_drag_selection(cx);
+                    });
+                }
+            })
             .capture_any_mouse_up(move |event: &MouseUpEvent, _window, cx| {
                 if event.button == MouseButton::Left {
                     finish_agent_drag.update(cx, |controller, cx| {
@@ -252,6 +261,9 @@ impl Render for AppView {
                 move |_event: &MouseUpEvent, _window, cx| {
                     finish_agent_drag_out.update(cx, |controller, cx| {
                         controller.finish_text_drag(cx);
+                    });
+                    finish_sftp_drag_out.update(cx, |controller, cx| {
+                        controller.finish_any_active_drag_selection(cx);
                     });
                 },
             )
