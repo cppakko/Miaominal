@@ -486,6 +486,15 @@ impl AppView {
     }
 
     fn start_local_data_reset(&mut self, window: &mut super::Window, cx: &mut Context<Self>) {
+        if self
+            .controllers
+            .settings
+            .read(cx)
+            .local_data_reset_in_progress()
+        {
+            return;
+        }
+
         let session_ids = self
             .controllers
             .session
@@ -505,11 +514,16 @@ impl AppView {
             .into_iter()
             .map(|provider| provider.id)
             .collect();
+        let agent_controller = self.controllers.agent.clone();
+        agent_controller.update(cx, |controller, cx| {
+            controller.close_chat_history(cx);
+        });
         self.controllers.settings.update(cx, |controller, cx| {
             controller.start_local_data_reset(
                 session_ids,
                 managed_key_ids,
                 ai_provider_ids,
+                agent_controller,
                 window,
                 cx,
             );

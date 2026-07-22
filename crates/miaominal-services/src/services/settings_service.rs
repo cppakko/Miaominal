@@ -12,6 +12,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use crate::ChatService;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalVaultMode {
     Disabled,
@@ -305,12 +307,14 @@ impl SettingsService {
     ) -> Result<()> {
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
+        let chat_credentials = CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE);
         let config_dir = paths::project_dirs()?.config_dir().to_path_buf();
 
         Self::reset_local_data_with(
             config_dir.as_path(),
             &keyring_secrets,
             &keyring_sync_engine,
+            &chat_credentials,
             session_ids,
             managed_key_ids,
             ai_provider_ids,
@@ -359,10 +363,20 @@ impl SettingsService {
         config_dir: &Path,
         keyring_secrets: &SecretStore,
         keyring_sync_engine: &SyncEngine,
+        chat_credentials: &CredentialStore,
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
     ) -> Result<()> {
+        match fs::remove_dir_all(config_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to remove {}", config_dir.display()));
+            }
+        }
+
         Self::delete_migrated_keyring_secrets(
             session_ids,
             managed_key_ids,
@@ -370,14 +384,11 @@ impl SettingsService {
             keyring_secrets,
             keyring_sync_engine,
         );
-
-        match fs::remove_dir_all(config_dir) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => {
-                Err(error).with_context(|| format!("failed to remove {}", config_dir.display()))
-            }
+        if let Err(error) = ChatService::delete_key(chat_credentials) {
+            log::warn!("failed to delete chat database key from keyring: {error:?}");
         }
+
+        Ok(())
     }
 }
 
@@ -450,7 +461,9 @@ mod tests {
         )
     }
 
-    fn test_keyring_like_backend(label: &str) -> (SecretStore, SyncEngine, PathBuf, PathBuf) {
+    fn test_keyring_like_backend(
+        label: &str,
+    ) -> (SecretStore, SyncEngine, CredentialStore, PathBuf, PathBuf) {
         set_vault_test_parameters();
         let secrets_path = temp_vault_path(&format!("{label}-secrets"));
         let config_path = temp_sync_config_path(&format!("{label}-config"));
@@ -471,9 +484,10 @@ mod tests {
                 config_store: SyncConfigStore::with_credentials(
                     config_path.clone(),
                     SyncConfig::default(),
-                    credentials,
+                    credentials.clone(),
                 ),
             },
+            credentials,
             secrets_path,
             config_path,
         )
@@ -634,8 +648,13 @@ mod tests {
     #[test]
     fn reset_local_data_with_removes_config_dir_and_known_secrets() {
         let config_dir = temp_config_dir("reset-local-data");
-        let (keyring_secrets, keyring_sync_engine, secrets_path, sync_config_path) =
-            test_keyring_like_backend("reset-local-data");
+        let (
+            keyring_secrets,
+            keyring_sync_engine,
+            chat_credentials,
+            secrets_path,
+            sync_config_path,
+        ) = test_keyring_like_backend("reset-local-data");
 
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(config_dir.join("settings.toml"), "font_size = 14.0\n")
@@ -676,11 +695,15 @@ mod tests {
             .config_store
             .set_passphrase("sync-passphrase")
             .expect("sync passphrase should save");
+        chat_credentials
+            .set("chat-db-key", "chat-key")
+            .expect("chat database key should save");
 
         SettingsService::reset_local_data_with(
             &config_dir,
             &keyring_secrets,
             &keyring_sync_engine,
+            &chat_credentials,
             &["session-1".to_string()],
             &["managed-key-1".to_string()],
             &["provider-1".to_string()],
@@ -739,7 +762,61 @@ mod tests {
                 .expect("sync passphrase should be readable after reset"),
             None
         );
+        assert_eq!(
+            chat_credentials
+                .get("chat-db-key")
+                .expect("chat database key should be readable after reset"),
+            None
+        );
 
+        cleanup_test_vault(&secrets_path);
+        let _ = fs::remove_file(sync_config_path);
+    }
+
+    #[test]
+    fn reset_local_data_with_preserves_credentials_when_config_removal_fails() {
+        let config_path = temp_config_dir("reset-local-data-removal-failure");
+        let (
+            keyring_secrets,
+            keyring_sync_engine,
+            chat_credentials,
+            secrets_path,
+            sync_config_path,
+        ) = test_keyring_like_backend("reset-local-data-removal-failure");
+
+        fs::write(&config_path, "not a directory").expect("blocking file should be created");
+        keyring_secrets
+            .set("session-1", SecretKind::Password, "pw")
+            .expect("session password should save");
+        chat_credentials
+            .set("chat-db-key", "chat-key")
+            .expect("chat database key should save");
+
+        let result = SettingsService::reset_local_data_with(
+            &config_path,
+            &keyring_secrets,
+            &keyring_sync_engine,
+            &chat_credentials,
+            &["session-1".to_string()],
+            &[],
+            &[],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            keyring_secrets
+                .get("session-1", SecretKind::Password)
+                .expect("session password should remain readable"),
+            Some("pw".to_string())
+        );
+        assert_eq!(
+            chat_credentials
+                .get("chat-db-key")
+                .expect("chat database key should remain readable"),
+            Some("chat-key".to_string())
+        );
+
+        let _ = fs::remove_file(config_path);
         cleanup_test_vault(&secrets_path);
         let _ = fs::remove_file(sync_config_path);
     }

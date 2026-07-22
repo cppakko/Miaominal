@@ -1,3 +1,4 @@
+use super::super::AgentController;
 use super::*;
 use crate::ui::shell::{
     DialogOverlaySnapshot, ValidationNotificationKind, validation_notification,
@@ -130,6 +131,7 @@ impl SettingsController {
         session_ids: Vec<String>,
         managed_key_ids: Vec<String>,
         ai_provider_ids: Vec<String>,
+        agent_controller: Entity<AgentController>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -154,8 +156,15 @@ impl SettingsController {
 
         if let Err(error) = spawn_result {
             self.local_data_reset_in_progress = false;
+            if let Err(reopen_error) =
+                agent_controller.update(cx, |controller, cx| controller.reopen_chat_history(cx))
+            {
+                log::warn!(
+                    "failed to reopen chat history after local data reset worker spawn failure: {reopen_error:?}"
+                );
+            }
             let error = anyhow::anyhow!(error).context("failed to spawn local data reset worker");
-            let error_message = error.to_string();
+            let error_message = format!("{error:#}");
             let message = i18n::string_args(
                 "settings.about.reset_local.notifications.failed.message",
                 &[("error", &error_message)],
@@ -186,7 +195,16 @@ impl SettingsController {
                 match result {
                     Ok(()) => cx.emit(AppCommand::RebuildApplication),
                     Err(error) => {
-                        let error_message = error.to_string();
+                        if let Err(reopen_error) =
+                            agent_controller.update(cx, |controller, cx| {
+                                controller.reopen_chat_history(cx)
+                            })
+                        {
+                            log::warn!(
+                                "failed to reopen chat history after local data reset failure: {reopen_error:?}"
+                            );
+                        }
+                        let error_message = format!("{error:#}");
                         let message = i18n::string_args(
                             "settings.about.reset_local.notifications.failed.message",
                             &[("error", &error_message)],

@@ -12,11 +12,21 @@ pub struct ChatService {
 }
 
 impl ChatService {
+    pub fn open_default() -> Result<Self> {
+        Self::open(&CredentialStore::new_keyring(
+            miaominal_secrets::APP_CREDENTIAL_SERVICE,
+        ))
+    }
+
     pub fn open(credentials: &CredentialStore) -> Result<Self> {
         let key = load_or_create_key(credentials)?;
         let db_path = miaominal_paths::config_file(CHAT_DB_FILE_NAME)?;
         let store = ChatStore::open(&db_path)?;
         Ok(Self { store, key })
+    }
+
+    pub fn delete_key(credentials: &CredentialStore) -> Result<()> {
+        credentials.delete(CHAT_KEY_ACCOUNT)
     }
 
     pub fn create_session(&self, id: &str, now: i64) -> Result<()> {

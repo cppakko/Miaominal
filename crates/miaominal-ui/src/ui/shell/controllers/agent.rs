@@ -6,6 +6,7 @@ use crate::ui::shell::{
     SessionTerminalPort, TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state,
     set_input_placeholder,
 };
+use anyhow::Result;
 use gpui::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, IntoElement,
     Pixels, Point, Render, Subscription, WeakEntity, Window, div, px,
@@ -702,6 +703,20 @@ impl AgentController {
 
     pub(in crate::ui::shell) fn chat_history_available(&self) -> bool {
         self.chat_service.is_some()
+    }
+
+    pub(in crate::ui::shell) fn close_chat_history(&mut self, cx: &mut Context<Self>) {
+        self.chat_service.take();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn reopen_chat_history(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.chat_service = Some(ChatService::open_default()?);
+        cx.notify();
+        Ok(())
     }
 
     pub(in crate::ui::shell) fn update_session_agent_title(

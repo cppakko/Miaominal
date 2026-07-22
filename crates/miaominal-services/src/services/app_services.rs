@@ -2,7 +2,7 @@ use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::snippet::SnippetRecord;
-use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, SecretStore};
+use miaominal_secrets::SecretStore;
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
@@ -124,8 +124,7 @@ impl AppServices {
                 (None, Vec::new())
             }
         };
-        let chat_credentials = CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE);
-        let (chat_service, chat_sessions) = match ChatService::open(&chat_credentials) {
+        let (chat_service, chat_sessions) = match ChatService::open_default() {
             Ok(service) => {
                 let sessions = service.list_sessions().unwrap_or_else(|error| {
                     log::warn!("failed to list chat sessions: {error:?}");
