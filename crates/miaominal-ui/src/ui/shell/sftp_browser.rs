@@ -284,6 +284,19 @@ impl SftpBrowserTableDelegate {
             .and_then(|path| self.row_index_by_path(path));
     }
 
+    pub(in crate::ui::shell) fn select_context_path(&mut self, path: String) -> bool {
+        if self.selected_paths.contains(&path) {
+            return false;
+        }
+
+        self.set_selected_paths(vec![path.clone()], Some(path));
+        true
+    }
+
+    pub(in crate::ui::shell) fn has_single_selection(&self) -> bool {
+        self.selected_paths.len() == 1
+    }
+
     pub(in crate::ui::shell) fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
     }
@@ -719,11 +732,10 @@ impl TableDelegate for SftpBrowserTableDelegate {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |table, _: &MouseDownEvent, _window, cx| {
-                    if !is_selected {
-                        table.delegate_mut().set_selected_paths(
-                            vec![context_path.clone()],
-                            Some(context_path.clone()),
-                        );
+                    if table
+                        .delegate_mut()
+                        .select_context_path(context_path.clone())
+                    {
                         cx.notify();
                     }
                 }),
@@ -994,5 +1006,36 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 .child(row.owner.clone().unwrap_or_else(|| "--".into()))
                 .into_any_element(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_selects_an_unselected_path_before_menu_construction() {
+        let mut delegate = SftpBrowserTableDelegate::new(SftpBrowserSide::Remote);
+        delegate.set_selected_paths(
+            vec!["/remote/first".into(), "/remote/second".into()],
+            Some("/remote/first".into()),
+        );
+
+        assert!(delegate.select_context_path("/remote/third".into()));
+        assert!(delegate.has_single_selection());
+        assert!(delegate.selected_paths.contains("/remote/third"));
+    }
+
+    #[test]
+    fn context_preserves_multi_selection_when_clicked_path_is_selected() {
+        let mut delegate = SftpBrowserTableDelegate::new(SftpBrowserSide::Remote);
+        delegate.set_selected_paths(
+            vec!["/remote/first".into(), "/remote/second".into()],
+            Some("/remote/first".into()),
+        );
+
+        assert!(!delegate.select_context_path("/remote/second".into()));
+        assert!(!delegate.has_single_selection());
+        assert_eq!(delegate.selected_paths.len(), 2);
     }
 }

@@ -1095,11 +1095,8 @@ fn build_remote_sftp_context_menu(
     let mut menu = menu;
 
     if let Some(entry) = context_menu_remote_sftp_entry(&controller, tab_id, cx) {
-        let is_single_selection = controller
-            .read(cx)
-            .tab(tab_id)
-            .map(|tab| tab.selected_remote_paths.len() == 1)
-            .unwrap_or(false);
+        let remote_table = controller.read(cx).remote_table();
+        let is_single_selection = remote_table.read(cx).delegate().has_single_selection();
 
         if entry.kind == miaominal_sftp::SftpEntryKind::Directory {
             let open_controller = controller.clone();

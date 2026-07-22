@@ -5,7 +5,10 @@ use super::session::{
 };
 use anyhow::{Context, Result, anyhow};
 use miaominal_core::sftp::{TransferDirection, TransferId};
-use russh_sftp::{client::SftpSession, protocol::OpenFlags};
+use russh_sftp::{
+    client::{SftpSession, error::Error as SftpError},
+    protocol::{FileType, OpenFlags, StatusCode},
+};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -26,7 +29,65 @@ const TRANSFER_CHUNK_SIZE: usize = 256 * 1024;
 const TRANSFER_CANCEL_TIMEOUT: Duration = Duration::from_secs(15);
 const TRANSFER_TEMP_PREFIX: &str = ".miaominal-transfer-";
 const TRANSFER_TEMP_SUFFIX: &str = ".part";
-static TRANSFER_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const TRANSFER_BACKUP_PREFIX: &str = ".miaominal-backup-";
+const TRANSFER_BACKUP_SUFFIX: &str = ".bak";
+static TRANSFER_SIDECAR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+type RemoteOperation<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteDestinationKind {
+    Missing,
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+trait RemoteReplaceOps: Sync {
+    fn rename_remote<'a>(&'a self, from: &'a str, to: &'a str) -> RemoteOperation<'a, ()>;
+
+    fn destination_kind<'a>(&'a self, path: &'a str) -> RemoteOperation<'a, RemoteDestinationKind>;
+
+    fn remove_remote_file<'a>(&'a self, path: &'a str) -> RemoteOperation<'a, ()>;
+}
+
+impl RemoteReplaceOps for SftpSession {
+    fn rename_remote<'a>(&'a self, from: &'a str, to: &'a str) -> RemoteOperation<'a, ()> {
+        Box::pin(async move {
+            self.rename(from.to_string(), to.to_string())
+                .await
+                .map_err(anyhow::Error::from)
+        })
+    }
+
+    fn destination_kind<'a>(&'a self, path: &'a str) -> RemoteOperation<'a, RemoteDestinationKind> {
+        Box::pin(async move {
+            match self.symlink_metadata(path.to_string()).await {
+                Ok(metadata) => Ok(match metadata.file_type() {
+                    FileType::File => RemoteDestinationKind::File,
+                    FileType::Dir => RemoteDestinationKind::Directory,
+                    FileType::Symlink => RemoteDestinationKind::Symlink,
+                    FileType::Other => RemoteDestinationKind::Other,
+                }),
+                Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+                    Ok(RemoteDestinationKind::Missing)
+                }
+                Err(error) => Err(error).with_context(|| {
+                    format!("failed to inspect existing remote destination {path}")
+                }),
+            }
+        })
+    }
+
+    fn remove_remote_file<'a>(&'a self, path: &'a str) -> RemoteOperation<'a, ()> {
+        Box::pin(async move {
+            self.remove_file(path.to_string())
+                .await
+                .map_err(anyhow::Error::from)
+        })
+    }
+}
 
 struct LocalTemporaryFile {
     // Struct fields are dropped in declaration order, so the open handle is
@@ -704,14 +765,9 @@ async fn upload_regular_file(
                 return Err(error);
             }
 
-            if let Err(error) = sftp
-                .rename(temporary_path.clone(), remote_path.to_string())
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to atomically replace remote file {remote_path} with {temporary_path}"
-                    )
-                })
+            if let Err(error) =
+                replace_remote_upload(sftp, &temporary_path, remote_path, progress.transfer_id)
+                    .await
             {
                 remove_remote_temporary_file(sftp, &temporary_path).await;
                 return Err(error);
@@ -730,19 +786,109 @@ async fn upload_regular_file(
     }
 }
 
+async fn replace_remote_upload<R: RemoteReplaceOps + ?Sized>(
+    remote: &R,
+    temporary_path: &str,
+    destination_path: &str,
+    transfer_id: TransferId,
+) -> Result<()> {
+    let direct_error = match remote.rename_remote(temporary_path, destination_path).await {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+
+    match remote.destination_kind(destination_path).await? {
+        RemoteDestinationKind::Missing => {
+            return Err(direct_error).with_context(|| {
+                format!(
+                    "failed to install uploaded remote file {temporary_path} at {destination_path}"
+                )
+            });
+        }
+        RemoteDestinationKind::Directory => {
+            return Err(anyhow!(
+                "cannot replace remote directory {destination_path} with an uploaded file"
+            ));
+        }
+        RemoteDestinationKind::Other => {
+            return Err(anyhow!(
+                "cannot replace special remote entry {destination_path} with an uploaded file"
+            ));
+        }
+        RemoteDestinationKind::File | RemoteDestinationKind::Symlink => {}
+    }
+
+    let backup_path = remote_backup_path(destination_path, transfer_id);
+    remote
+        .rename_remote(destination_path, &backup_path)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to move existing remote file {destination_path} to backup {backup_path}"
+            )
+        })?;
+
+    if let Err(install_error) = remote.rename_remote(temporary_path, destination_path).await {
+        return match remote
+            .rename_remote(&backup_path, destination_path)
+            .await
+        {
+            Ok(()) => Err(install_error).with_context(|| {
+                format!(
+                    "failed to replace remote file {destination_path}; restored the original from {backup_path}"
+                )
+            }),
+            Err(rollback_error) => Err(anyhow!(
+                "failed to replace remote file {destination_path}: {install_error:#}; failed to restore the original from {backup_path}: {rollback_error:#}; the original remains at {backup_path}"
+            )),
+        };
+    }
+
+    if let Err(error) = remote.remove_remote_file(&backup_path).await {
+        log::warn!(
+            "uploaded remote file {destination_path}, but failed to remove backup {backup_path}: {error:#}"
+        );
+    }
+
+    Ok(())
+}
+
 fn remote_temporary_path(remote_path: &str, transfer_id: TransferId) -> String {
+    remote_transfer_sidecar_path(
+        remote_path,
+        transfer_id,
+        TRANSFER_TEMP_PREFIX,
+        TRANSFER_TEMP_SUFFIX,
+    )
+}
+
+fn remote_backup_path(remote_path: &str, transfer_id: TransferId) -> String {
+    remote_transfer_sidecar_path(
+        remote_path,
+        transfer_id,
+        TRANSFER_BACKUP_PREFIX,
+        TRANSFER_BACKUP_SUFFIX,
+    )
+}
+
+fn remote_transfer_sidecar_path(
+    remote_path: &str,
+    transfer_id: TransferId,
+    prefix: &str,
+    suffix: &str,
+) -> String {
     let parent = match remote_path.rsplit_once('/') {
         Some(("", _)) => "/",
         Some((parent, _)) => parent,
         None => ".",
     };
-    let sequence = TRANSFER_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary_name = format!(
-        "{TRANSFER_TEMP_PREFIX}{}-{}-{sequence}{TRANSFER_TEMP_SUFFIX}",
+    let sequence = TRANSFER_SIDECAR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let filename = format!(
+        "{prefix}{}-{}-{sequence}{suffix}",
         std::process::id(),
-        transfer_id.0,
+        transfer_id.0
     );
-    join_remote_path(parent, &temporary_name)
+    join_remote_path(parent, &filename)
 }
 
 async fn remove_remote_temporary_file(sftp: &SftpSession, temporary_path: &str) {
@@ -1187,6 +1333,7 @@ pub(super) async fn emit_error_with_path(
 mod tests {
     use super::*;
     use futures::StreamExt as _;
+    use std::sync::Mutex;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1195,6 +1342,159 @@ mod tests {
             .enable_time()
             .build()
             .expect("build current-thread runtime")
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct FakeRemoteEntry {
+        kind: RemoteDestinationKind,
+        contents: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum FakeRemoteOperation {
+        Rename(String, String),
+        Inspect(String),
+        Remove(String),
+    }
+
+    #[derive(Default)]
+    struct FakeRemoteReplaceState {
+        entries: HashMap<String, FakeRemoteEntry>,
+        operations: Vec<FakeRemoteOperation>,
+        fail_install_after_backup: bool,
+        fail_rollback: bool,
+        fail_backup_cleanup: bool,
+    }
+
+    #[derive(Default)]
+    struct FakeRemoteReplaceOps {
+        state: Mutex<FakeRemoteReplaceState>,
+    }
+
+    impl FakeRemoteReplaceOps {
+        fn with_entries(
+            entries: impl IntoIterator<Item = (&'static str, RemoteDestinationKind, &'static str)>,
+        ) -> Self {
+            let entries = entries
+                .into_iter()
+                .map(|(path, kind, contents)| {
+                    (
+                        path.to_string(),
+                        FakeRemoteEntry {
+                            kind,
+                            contents: contents.to_string(),
+                        },
+                    )
+                })
+                .collect();
+            Self {
+                state: Mutex::new(FakeRemoteReplaceState {
+                    entries,
+                    ..FakeRemoteReplaceState::default()
+                }),
+            }
+        }
+
+        fn update(&self, update: impl FnOnce(&mut FakeRemoteReplaceState)) {
+            update(&mut self.state.lock().expect("fake remote lock"));
+        }
+
+        fn entry(&self, path: &str) -> Option<FakeRemoteEntry> {
+            self.state
+                .lock()
+                .expect("fake remote lock")
+                .entries
+                .get(path)
+                .cloned()
+        }
+
+        fn backup_entries(&self) -> Vec<(String, FakeRemoteEntry)> {
+            self.state
+                .lock()
+                .expect("fake remote lock")
+                .entries
+                .iter()
+                .filter(|(path, _)| path.contains(TRANSFER_BACKUP_PREFIX))
+                .map(|(path, entry)| (path.clone(), entry.clone()))
+                .collect()
+        }
+
+        fn operations(&self) -> Vec<FakeRemoteOperation> {
+            self.state
+                .lock()
+                .expect("fake remote lock")
+                .operations
+                .clone()
+        }
+    }
+
+    impl RemoteReplaceOps for FakeRemoteReplaceOps {
+        fn rename_remote<'a>(&'a self, from: &'a str, to: &'a str) -> RemoteOperation<'a, ()> {
+            Box::pin(async move {
+                let mut state = self.state.lock().expect("fake remote lock");
+                state
+                    .operations
+                    .push(FakeRemoteOperation::Rename(from.into(), to.into()));
+
+                let backup_exists = state
+                    .entries
+                    .keys()
+                    .any(|path| path.contains(TRANSFER_BACKUP_PREFIX));
+                if state.fail_install_after_backup
+                    && backup_exists
+                    && from.contains(TRANSFER_TEMP_PREFIX)
+                {
+                    return Err(anyhow!("injected replacement install failure"));
+                }
+                if state.fail_rollback && from.contains(TRANSFER_BACKUP_PREFIX) {
+                    return Err(anyhow!("injected replacement rollback failure"));
+                }
+                if state.entries.contains_key(to) {
+                    return Err(anyhow!("destination already exists"));
+                }
+
+                let entry = state
+                    .entries
+                    .remove(from)
+                    .ok_or_else(|| anyhow!("source does not exist"))?;
+                state.entries.insert(to.into(), entry);
+                Ok(())
+            })
+        }
+
+        fn destination_kind<'a>(
+            &'a self,
+            path: &'a str,
+        ) -> RemoteOperation<'a, RemoteDestinationKind> {
+            Box::pin(async move {
+                let mut state = self.state.lock().expect("fake remote lock");
+                state
+                    .operations
+                    .push(FakeRemoteOperation::Inspect(path.into()));
+                Ok(state
+                    .entries
+                    .get(path)
+                    .map(|entry| entry.kind)
+                    .unwrap_or(RemoteDestinationKind::Missing))
+            })
+        }
+
+        fn remove_remote_file<'a>(&'a self, path: &'a str) -> RemoteOperation<'a, ()> {
+            Box::pin(async move {
+                let mut state = self.state.lock().expect("fake remote lock");
+                state
+                    .operations
+                    .push(FakeRemoteOperation::Remove(path.into()));
+                if state.fail_backup_cleanup && path.contains(TRANSFER_BACKUP_PREFIX) {
+                    return Err(anyhow!("injected backup cleanup failure"));
+                }
+                state
+                    .entries
+                    .remove(path)
+                    .map(|_| ())
+                    .ok_or_else(|| anyhow!("file does not exist"))
+            })
+        }
     }
 
     #[cfg(unix)]
@@ -1747,6 +2047,234 @@ mod tests {
         let relative = remote_temporary_path("file.txt", TransferId(12));
         assert!(relative.starts_with(TRANSFER_TEMP_PREFIX));
         assert!(!relative.contains('/'));
+    }
+
+    #[test]
+    fn remote_backup_paths_stay_beside_the_destination_and_are_unique() {
+        let first = remote_backup_path("/srv/data/file.txt", TransferId(13));
+        let second = remote_backup_path("/srv/data/file.txt", TransferId(13));
+
+        assert!(first.starts_with("/srv/data/.miaominal-backup-"));
+        assert!(first.ends_with(TRANSFER_BACKUP_SUFFIX));
+        assert_ne!(first, second);
+
+        let relative = remote_backup_path("file.txt", TransferId(14));
+        assert!(relative.starts_with(TRANSFER_BACKUP_PREFIX));
+        assert!(!relative.contains('/'));
+    }
+
+    #[test]
+    fn remote_upload_install_uses_direct_rename_when_destination_is_absent() {
+        rt().block_on(async {
+            let remote = FakeRemoteReplaceOps::with_entries([(
+                "/remote/.miaominal-transfer-new.part",
+                RemoteDestinationKind::File,
+                "new",
+            )]);
+
+            replace_remote_upload(
+                &remote,
+                "/remote/.miaominal-transfer-new.part",
+                "/remote/file.txt",
+                TransferId(20),
+            )
+            .await
+            .expect("install new remote file");
+
+            assert_eq!(
+                remote.entry("/remote/file.txt").map(|entry| entry.contents),
+                Some("new".to_string())
+            );
+            assert_eq!(
+                remote.operations(),
+                vec![FakeRemoteOperation::Rename(
+                    "/remote/.miaominal-transfer-new.part".into(),
+                    "/remote/file.txt".into(),
+                )]
+            );
+        });
+    }
+
+    #[test]
+    fn remote_upload_replaces_existing_file_through_backup_swap() {
+        rt().block_on(async {
+            let remote = FakeRemoteReplaceOps::with_entries([
+                (
+                    "/remote/.miaominal-transfer-new.part",
+                    RemoteDestinationKind::File,
+                    "new",
+                ),
+                (
+                    "/remote/file.txt",
+                    RemoteDestinationKind::File,
+                    "old",
+                ),
+            ]);
+
+            replace_remote_upload(
+                &remote,
+                "/remote/.miaominal-transfer-new.part",
+                "/remote/file.txt",
+                TransferId(21),
+            )
+            .await
+            .expect("replace existing remote file");
+
+            assert_eq!(
+                remote.entry("/remote/file.txt").map(|entry| entry.contents),
+                Some("new".to_string())
+            );
+            assert!(remote.backup_entries().is_empty());
+            assert!(
+                remote
+                    .operations()
+                    .iter()
+                    .any(|operation| matches!(operation, FakeRemoteOperation::Remove(path) if path.contains(TRANSFER_BACKUP_PREFIX)))
+            );
+        });
+    }
+
+    #[test]
+    fn remote_upload_restores_original_when_replacement_install_fails() {
+        rt().block_on(async {
+            let remote = FakeRemoteReplaceOps::with_entries([
+                (
+                    "/remote/.miaominal-transfer-new.part",
+                    RemoteDestinationKind::File,
+                    "new",
+                ),
+                ("/remote/file.txt", RemoteDestinationKind::File, "old"),
+            ]);
+            remote.update(|state| state.fail_install_after_backup = true);
+
+            let error = replace_remote_upload(
+                &remote,
+                "/remote/.miaominal-transfer-new.part",
+                "/remote/file.txt",
+                TransferId(22),
+            )
+            .await
+            .expect_err("replacement install should fail");
+
+            assert!(format!("{error:#}").contains("restored the original"));
+            assert_eq!(
+                remote.entry("/remote/file.txt").map(|entry| entry.contents),
+                Some("old".to_string())
+            );
+            assert_eq!(
+                remote
+                    .entry("/remote/.miaominal-transfer-new.part")
+                    .map(|entry| entry.contents),
+                Some("new".to_string())
+            );
+            assert!(remote.backup_entries().is_empty());
+        });
+    }
+
+    #[test]
+    fn remote_upload_reports_backup_path_when_rollback_fails() {
+        rt().block_on(async {
+            let remote = FakeRemoteReplaceOps::with_entries([
+                (
+                    "/remote/.miaominal-transfer-new.part",
+                    RemoteDestinationKind::File,
+                    "new",
+                ),
+                ("/remote/file.txt", RemoteDestinationKind::File, "old"),
+            ]);
+            remote.update(|state| {
+                state.fail_install_after_backup = true;
+                state.fail_rollback = true;
+            });
+
+            let error = replace_remote_upload(
+                &remote,
+                "/remote/.miaominal-transfer-new.part",
+                "/remote/file.txt",
+                TransferId(23),
+            )
+            .await
+            .expect_err("replacement rollback should fail");
+            let message = format!("{error:#}");
+
+            assert!(message.contains("the original remains at"));
+            assert!(message.contains(TRANSFER_BACKUP_PREFIX));
+            assert!(remote.entry("/remote/file.txt").is_none());
+            let backups = remote.backup_entries();
+            assert_eq!(backups.len(), 1);
+            assert_eq!(backups[0].1.contents, "old");
+        });
+    }
+
+    #[test]
+    fn remote_upload_rejects_replacing_directory_or_special_entry() {
+        rt().block_on(async {
+            for (kind, expected_message) in [
+                (RemoteDestinationKind::Directory, "remote directory"),
+                (RemoteDestinationKind::Other, "special remote entry"),
+            ] {
+                let remote = FakeRemoteReplaceOps::with_entries([
+                    (
+                        "/remote/.miaominal-transfer-new.part",
+                        RemoteDestinationKind::File,
+                        "new",
+                    ),
+                    ("/remote/existing", kind, "old"),
+                ]);
+
+                let error = replace_remote_upload(
+                    &remote,
+                    "/remote/.miaominal-transfer-new.part",
+                    "/remote/existing",
+                    TransferId(24),
+                )
+                .await
+                .expect_err("unsupported destination replacement must be rejected");
+
+                assert!(format!("{error:#}").contains(expected_message));
+                assert_eq!(
+                    remote.entry("/remote/existing").map(|entry| entry.kind),
+                    Some(kind)
+                );
+                assert!(remote.backup_entries().is_empty());
+            }
+        });
+    }
+
+    #[test]
+    fn remote_upload_succeeds_when_backup_cleanup_fails() {
+        rt().block_on(async {
+            let remote = FakeRemoteReplaceOps::with_entries([
+                (
+                    "/remote/.miaominal-transfer-new.part",
+                    RemoteDestinationKind::File,
+                    "new",
+                ),
+                (
+                    "/remote/file.txt",
+                    RemoteDestinationKind::Symlink,
+                    "old-link",
+                ),
+            ]);
+            remote.update(|state| state.fail_backup_cleanup = true);
+
+            replace_remote_upload(
+                &remote,
+                "/remote/.miaominal-transfer-new.part",
+                "/remote/file.txt",
+                TransferId(25),
+            )
+            .await
+            .expect("backup cleanup failure must not fail completed upload");
+
+            assert_eq!(
+                remote.entry("/remote/file.txt").map(|entry| entry.contents),
+                Some("new".to_string())
+            );
+            let backups = remote.backup_entries();
+            assert_eq!(backups.len(), 1);
+            assert_eq!(backups[0].1.contents, "old-link");
+        });
     }
 
     #[test]
