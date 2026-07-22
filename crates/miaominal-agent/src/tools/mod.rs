@@ -2,7 +2,6 @@ mod apply_patch;
 mod approval;
 mod glob;
 mod grep;
-mod job;
 mod list;
 mod patch_engine;
 mod read;
@@ -17,7 +16,6 @@ pub use apply_patch::apply_patch;
 pub use approval::{approval, ask_user};
 pub use glob::glob;
 pub use grep::grep;
-pub use job::{list_jobs, poll_job, start_job, stop_job};
 pub use list::list;
 pub use read::read;
 pub use rig_adapter::{AgentToolCancellation, AgentToolSet};
@@ -36,10 +34,6 @@ pub const TOOL_NAMES: &[&str] = &[
     "grep",
     "apply_patch",
     "run_shell",
-    "start_job",
-    "list_jobs",
-    "poll_job",
-    "stop_job",
     "web_search",
     "web_fetch",
     "ask_user",
@@ -63,14 +57,6 @@ pub fn tool_description(name: &str) -> &'static str {
         "run_shell" => {
             "Run an approved non-interactive command using exactly the syntax reported by workspace_info.shell. If shell is cmd, write CMD commands such as dir/type unless you explicitly launch powershell.exe."
         }
-        "start_job" => {
-            "Start an approved long-running remote shell job. Use only for commands that may block, stream, watch, serve, deploy, or run longer than a normal run_shell call; poll the returned job_id until completion."
-        }
-        "list_jobs" => "List known background jobs when a job_id was forgotten or before polling.",
-        "poll_job" => {
-            "Poll a remote background job by job_id and return structured status, exit code, stdout, and stderr."
-        }
-        "stop_job" => "Stop a remote shell job.",
         "web_search" => "Search the web through the configured local provider.",
         "web_fetch" => "Fetch URL text locally with byte caps.",
         "ask_user" => {
@@ -78,5 +64,17 @@ pub fn tool_description(name: &str) -> &'static str {
         }
         "approval" => "Record a user approval response.",
         _ => "Miaominal agent tool.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TOOL_NAMES;
+
+    #[test]
+    fn background_job_tools_are_not_registered() {
+        for removed in ["start_job", "list_jobs", "poll_job", "stop_job"] {
+            assert!(!TOOL_NAMES.contains(&removed));
+        }
     }
 }

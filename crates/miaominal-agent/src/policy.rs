@@ -30,8 +30,8 @@ impl AgentPolicy {
         match tool_name {
             "workspace_info" | "read" | "list" | "glob" | "grep" | "web_search" | "web_fetch"
             | "ask_user" => AgentPolicyDecision::Allow,
-            "run_shell" | "start_job" => AgentPolicyDecision::Allow,
-            "apply_patch" | "list_jobs" | "poll_job" | "stop_job" | "approval" => {
+            "run_shell" => AgentPolicyDecision::Allow,
+            "apply_patch" | "approval" => {
                 if approved {
                     AgentPolicyDecision::Allow
                 } else {
@@ -562,16 +562,10 @@ mod tests {
     }
 
     #[test]
-    fn mutation_job_and_approval_tools_need_approval() {
+    fn mutation_and_approval_tools_need_approval() {
         let policy = AgentPolicy;
 
-        for tool in [
-            "apply_patch",
-            "list_jobs",
-            "poll_job",
-            "stop_job",
-            "approval",
-        ] {
+        for tool in ["apply_patch", "approval"] {
             assert!(matches!(
                 policy.decide(tool, false),
                 AgentPolicyDecision::NeedsApproval { .. }
@@ -596,17 +590,25 @@ mod tests {
     }
 
     #[test]
-    fn shell_tools_defer_to_command_policy() {
+    fn shell_tool_defers_to_command_policy() {
         let policy = AgentPolicy;
 
         assert_eq!(
             policy.decide("run_shell", false),
             AgentPolicyDecision::Allow
         );
-        assert_eq!(
-            policy.decide("start_job", false),
-            AgentPolicyDecision::Allow
-        );
+    }
+
+    #[test]
+    fn removed_job_tools_are_denied() {
+        let policy = AgentPolicy;
+
+        for tool in ["start_job", "list_jobs", "poll_job", "stop_job"] {
+            assert!(matches!(
+                policy.decide(tool, true),
+                AgentPolicyDecision::Deny { .. }
+            ));
+        }
     }
 
     #[test]

@@ -1111,10 +1111,6 @@ impl AgentExecChannel {
             "grep" => tools::grep(channel, parse_args(request.arguments)?).await?,
             "apply_patch" => tools::apply_patch(channel, parse_args(request.arguments)?).await?,
             "run_shell" => tools::run_shell(channel, parse_args(request.arguments)?).await?,
-            "start_job" => tools::start_job(channel, parse_args(request.arguments)?).await?,
-            "list_jobs" => tools::list_jobs(channel).await?,
-            "poll_job" => tools::poll_job(channel, parse_args(request.arguments)?).await?,
-            "stop_job" => tools::stop_job(channel, parse_args(request.arguments)?).await?,
             "web_search" => tools::web_search(channel, parse_args(request.arguments)?).await?,
             "web_fetch" => {
                 tools::web_fetch(channel, parse_args(request.arguments)?, request.approved).await?
@@ -1160,7 +1156,7 @@ impl AgentExecChannel {
                 self.policy
                     .enforce_path(AgentPathAccess::Edit, &base_dir, request.approved)?;
             }
-            "run_shell" | "start_job" => {
+            "run_shell" => {
                 if let Some(cwd) = string_arg(&request.arguments, "cwd") {
                     let cwd = resolve_workspace_path(cwd)?;
                     self.policy

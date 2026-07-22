@@ -595,7 +595,7 @@ fn string_array_schema(description: &str) -> Value {
 
 fn tool_parameters(name: &str) -> Value {
     match name {
-        "workspace_info" | "list_jobs" => object_schema(vec![("target", target_schema())], &[]),
+        "workspace_info" => object_schema(vec![("target", target_schema())], &[]),
         "approval" => object_schema(Vec::new(), &[]),
         "read" => object_schema(
             vec![
@@ -691,21 +691,6 @@ fn tool_parameters(name: &str) -> Value {
                 ),
             ],
             &["command"],
-        ),
-        "start_job" => object_schema(
-            vec![
-                ("command", string_schema("Long-running shell command.")),
-                ("target", target_schema()),
-                ("cwd", string_schema("Remote workspace directory.")),
-            ],
-            &["command"],
-        ),
-        "poll_job" | "stop_job" => object_schema(
-            vec![
-                ("job_id", string_schema("Job id returned by start_job.")),
-                ("target", target_schema()),
-            ],
-            &["job_id"],
         ),
         "web_search" => object_schema(vec![("query", string_schema("Search query."))], &["query"]),
         "web_fetch" => object_schema(
