@@ -925,10 +925,53 @@ async fn download_regular_file(
         .open(remote_path.to_string())
         .await
         .with_context(|| format!("failed to open remote file {remote_path} for download"))?;
-    let mut temporary_file = create_local_temporary_file(local_path)?;
+    let transfer_result = async {
+        let mut temporary_file = create_local_temporary_file(local_path)?;
+        let mut buffer = vec![0; TRANSFER_CHUNK_SIZE];
+        loop {
+            if matches!(
+                active_permit.wait_until_active(control).await?,
+                TransferControlState::Cancelled
+            ) {
+                let _ = temporary_file.file.shutdown().await;
+                return Ok(TransferOutcome::Cancelled);
+            }
 
-    let mut buffer = vec![0; TRANSFER_CHUNK_SIZE];
-    loop {
+            let read = remote_file
+                .read(&mut buffer)
+                .await
+                .with_context(|| format!("failed to read remote file {remote_path}"))?;
+            if read == 0 {
+                break;
+            }
+
+            temporary_file
+                .file
+                .write_all(&buffer[..read])
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to write temporary file for {} while downloading",
+                        local_path.display()
+                    )
+                })?;
+
+            progress.advance(read as u64).await?;
+        }
+
+        temporary_file.file.flush().await.with_context(|| {
+            format!(
+                "failed to flush temporary file for {} after download",
+                local_path.display()
+            )
+        })?;
+        temporary_file.file.sync_all().await.with_context(|| {
+            format!(
+                "failed to sync temporary file for {} after download",
+                local_path.display()
+            )
+        })?;
+
         if matches!(
             active_permit.wait_until_active(control).await?,
             TransferControlState::Cancelled
@@ -937,53 +980,32 @@ async fn download_regular_file(
             return Ok(TransferOutcome::Cancelled);
         }
 
-        let read = remote_file
-            .read(&mut buffer)
-            .await
-            .with_context(|| format!("failed to read remote file {remote_path}"))?;
-        if read == 0 {
-            break;
+        let LocalTemporaryFile { file, path } = temporary_file;
+        drop(file);
+        persist_local_temporary_file(path, local_path)?;
+        Ok(TransferOutcome::Done)
+    }
+    .await;
+
+    let shutdown_result = remote_file
+        .shutdown()
+        .await
+        .with_context(|| format!("failed to close remote file {remote_path} after download"));
+
+    match transfer_result {
+        Ok(outcome) => {
+            shutdown_result?;
+            Ok(outcome)
         }
-
-        temporary_file
-            .file
-            .write_all(&buffer[..read])
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to write temporary file for {} while downloading",
-                    local_path.display()
-                )
-            })?;
-
-        progress.advance(read as u64).await?;
+        Err(error) => {
+            if let Err(shutdown_error) = shutdown_result {
+                log::warn!(
+                    "failed to close remote file {remote_path} after download error: {shutdown_error:#}"
+                );
+            }
+            Err(error)
+        }
     }
-
-    temporary_file.file.flush().await.with_context(|| {
-        format!(
-            "failed to flush temporary file for {} after download",
-            local_path.display()
-        )
-    })?;
-    temporary_file.file.sync_all().await.with_context(|| {
-        format!(
-            "failed to sync temporary file for {} after download",
-            local_path.display()
-        )
-    })?;
-
-    if matches!(
-        active_permit.wait_until_active(control).await?,
-        TransferControlState::Cancelled
-    ) {
-        let _ = temporary_file.file.shutdown().await;
-        return Ok(TransferOutcome::Cancelled);
-    }
-
-    let LocalTemporaryFile { file, path } = temporary_file;
-    drop(file);
-    persist_local_temporary_file(path, local_path)?;
-    Ok(TransferOutcome::Done)
 }
 
 fn create_local_temporary_file(local_path: &Path) -> Result<LocalTemporaryFile> {
