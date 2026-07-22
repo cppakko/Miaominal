@@ -279,6 +279,7 @@ webdav_url = "https://example.com/dav/miaominal_sync.json"
 webdav_username = "用户名"
 webdav_password = "密码"
 passphrase = "加密口令"
+vault_current_passphrase = "当前本地机密库口令"
 vault_passphrase = "本地机密库口令"
 vault_passphrase_confirmation = "再次输入本地机密库口令"
 
@@ -1489,8 +1490,17 @@ label = "机密库口令"
 description = "使用仅限当前设备的口令，并与同步加密口令区分开。"
 unlocked_hint = "本地机密库在当前会话中已解锁。如需再次要求输入口令，请重新锁定。"
 
+[settings.sync.vault.current_passphrase]
+label = "当前机密库口令"
+
+[settings.sync.vault.new_passphrase]
+label = "新机密库口令"
+
 [settings.sync.vault.confirm_passphrase]
 label = "确认机密库口令"
+
+[settings.sync.vault.confirm_new_passphrase]
+label = "确认新机密库口令"
 
 [settings.sync.vault.auto_lock_duration]
 label = "自动锁定时间"
@@ -1509,6 +1519,18 @@ change_passphrase = "更新机密库口令"
 
 [settings.sync.vault.passphrase_required_error]
 message = "启用或解锁机密库前，请先输入本地机密库口令。"
+
+[settings.sync.vault.current_passphrase_required_error]
+message = "更新机密库口令前，请先输入当前口令。"
+
+[settings.sync.vault.current_passphrase_incorrect_error]
+message = "当前本地机密库口令不正确。"
+
+[settings.sync.vault.new_passphrase_required_error]
+message = "请输入新的本地机密库口令。"
+
+[settings.sync.vault.new_passphrase_confirmation_required_error]
+message = "请再次输入新的本地机密库口令进行确认。"
 
 [settings.sync.vault.passphrase_confirmation_required_error]
 message = "启用机密库前，请再次输入本地机密库口令进行确认。"

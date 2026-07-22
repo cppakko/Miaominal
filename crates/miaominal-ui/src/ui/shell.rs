@@ -281,6 +281,7 @@ pub(in crate::ui::shell) enum SecretRevealTarget {
     HostPassword,
     SyncPassphrase,
     SyncPassphraseConfirmation,
+    LocalVaultCurrentPassphrase,
     LocalVaultPassphrase,
     LocalVaultPassphraseConfirmation,
     AiProviderApiKey(String),

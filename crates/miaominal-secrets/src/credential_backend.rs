@@ -1377,6 +1377,35 @@ mod tests {
     }
 
     #[test]
+    fn vault_backend_rejects_rotation_with_wrong_passphrase_without_rewriting() {
+        set_vault_test_parameters();
+        let path = test_vault_path("rotate-wrong-passphrase");
+        VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
+            .set(APP_CREDENTIAL_SERVICE, "sync:github-token", "secret-token")
+            .expect("initial set should succeed");
+        let before = fs::read(&path).expect("vault file should exist");
+
+        let error = VaultCredentialBackend::rotate_store_passphrase(
+            path.clone(),
+            protected("wrong horse"),
+            protected("new horse"),
+        )
+        .expect_err("rotation with the wrong current passphrase should fail");
+
+        assert!(error.to_string().contains("vault decryption failed"));
+        assert_eq!(
+            fs::read(&path).expect("vault file should remain readable"),
+            before
+        );
+        let value = VaultCredentialBackend::new_with_path(path.clone(), protected("correct horse"))
+            .get(APP_CREDENTIAL_SERVICE, "sync:github-token")
+            .expect("the original passphrase should still decrypt the vault");
+        assert_eq!(value.as_deref(), Some("secret-token"));
+
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
     fn vault_backend_initialize_does_not_rewrite_existing_store() {
         set_vault_test_parameters();
         let path = test_vault_path("initialize-no-rewrite");

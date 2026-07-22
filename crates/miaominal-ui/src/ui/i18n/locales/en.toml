@@ -417,6 +417,7 @@ webdav_url = "https://example.com/dav/miaominal_sync.json"
 webdav_username = "Username"
 webdav_password = "Password"
 passphrase = "Encryption passphrase"
+vault_current_passphrase = "Current local secrets vault passphrase"
 vault_passphrase = "Local secrets vault passphrase"
 vault_passphrase_confirmation = "Confirm local secrets vault passphrase"
 
@@ -1627,8 +1628,17 @@ label = "Secrets vault passphrase"
 description = "Use a device-only passphrase that is different from your sync encryption passphrase."
 unlocked_hint = "The local secrets vault is unlocked for this session. Lock it again to require the passphrase."
 
+[settings.sync.vault.current_passphrase]
+label = "Current secrets vault passphrase"
+
+[settings.sync.vault.new_passphrase]
+label = "New secrets vault passphrase"
+
 [settings.sync.vault.confirm_passphrase]
 label = "Confirm secrets vault passphrase"
+
+[settings.sync.vault.confirm_new_passphrase]
+label = "Confirm new secrets vault passphrase"
 
 [settings.sync.vault.auto_lock_duration]
 label = "Auto-lock after"
@@ -1647,6 +1657,18 @@ change_passphrase = "Update secrets vault passphrase"
 
 [settings.sync.vault.passphrase_required_error]
 message = "Enter a local secrets vault passphrase before enabling or unlocking the vault."
+
+[settings.sync.vault.current_passphrase_required_error]
+message = "Enter the current local secrets vault passphrase before updating it."
+
+[settings.sync.vault.current_passphrase_incorrect_error]
+message = "The current local secrets vault passphrase is incorrect."
+
+[settings.sync.vault.new_passphrase_required_error]
+message = "Enter a new local secrets vault passphrase."
+
+[settings.sync.vault.new_passphrase_confirmation_required_error]
+message = "Confirm the new local secrets vault passphrase."
 
 [settings.sync.vault.passphrase_confirmation_required_error]
 message = "Confirm the local secrets vault passphrase before enabling the vault."

@@ -81,6 +81,9 @@ impl SettingsController {
             SecretRevealTarget::SyncPassphraseConfirmation => {
                 Some(self.forms.sync_passphrase_confirmation_input.clone())
             }
+            SecretRevealTarget::LocalVaultCurrentPassphrase => {
+                Some(self.forms.local_vault_current_passphrase_input.clone())
+            }
             SecretRevealTarget::LocalVaultPassphrase => {
                 Some(self.forms.local_vault_passphrase_input.clone())
             }
@@ -120,6 +123,7 @@ impl SettingsController {
             }
             SecretRevealTarget::SyncPassphrase
             | SecretRevealTarget::SyncPassphraseConfirmation
+            | SecretRevealTarget::LocalVaultCurrentPassphrase
             | SecretRevealTarget::LocalVaultPassphrase
             | SecretRevealTarget::LocalVaultPassphraseConfirmation
             | SecretRevealTarget::HostPassword => false,
@@ -152,6 +156,7 @@ impl SettingsController {
             }
             SecretRevealTarget::SyncPassphrase
             | SecretRevealTarget::SyncPassphraseConfirmation
+            | SecretRevealTarget::LocalVaultCurrentPassphrase
             | SecretRevealTarget::LocalVaultPassphrase
             | SecretRevealTarget::LocalVaultPassphraseConfirmation => {}
             SecretRevealTarget::HostPassword => return Ok(()),

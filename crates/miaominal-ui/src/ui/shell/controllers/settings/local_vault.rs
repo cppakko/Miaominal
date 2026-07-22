@@ -153,7 +153,7 @@ impl SettingsController {
         self.local_vault_passphrase_popup = Some(mode);
         self.local_vault_unlock_in_progress = false;
         self.clear_local_vault_passphrase_input(window, cx);
-        self.focus_local_vault_passphrase_input(window, cx);
+        self.focus_local_vault_passphrase_input(mode, window, cx);
         cx.notify();
         true
     }
@@ -171,13 +171,23 @@ impl SettingsController {
         self.local_vault_unlock_in_progress = false;
 
         if let Some(window_handle) = cx.active_window() {
+            let current_input = self.forms.local_vault_current_passphrase_input.clone();
             let input = self.forms.local_vault_passphrase_input.clone();
             let confirmation_input = self.forms.local_vault_passphrase_confirmation_input.clone();
             if let Err(error) = window_handle.update(cx, move |_, window, cx| {
+                current_input.update(cx, |input, cx| {
+                    input.set_value("", window, cx);
+                    input.set_masked(true, window, cx);
+                    if mode == LocalVaultPassphrasePopupMode::ChangePassphrase {
+                        input.focus(window, cx);
+                    }
+                });
                 input.update(cx, |input, cx| {
                     input.set_value("", window, cx);
                     input.set_masked(true, window, cx);
-                    input.focus(window, cx);
+                    if mode != LocalVaultPassphrasePopupMode::ChangePassphrase {
+                        input.focus(window, cx);
+                    }
                 });
                 confirmation_input.update(cx, |input, cx| {
                     input.set_value("", window, cx);
@@ -190,6 +200,8 @@ impl SettingsController {
             }
         }
 
+        self.secret_visibility
+            .set_visible(SecretRevealTarget::LocalVaultCurrentPassphrase, false);
         self.secret_visibility
             .set_visible(SecretRevealTarget::LocalVaultPassphrase, false);
         self.secret_visibility
@@ -377,6 +389,14 @@ impl SettingsController {
             return None;
         }
 
+        let current_passphrase = Zeroizing::new(
+            self.forms
+                .local_vault_current_passphrase_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string(),
+        );
         let passphrase = Zeroizing::new(
             self.forms
                 .local_vault_passphrase_input
@@ -403,10 +423,19 @@ impl SettingsController {
             );
             return None;
         }
+        if current_passphrase.is_empty() {
+            self.notify_local_vault_validation_failure(
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("settings.sync.vault.current_passphrase_required_error.message"),
+                window,
+                cx,
+            );
+            return None;
+        }
         if passphrase.is_empty() {
             self.notify_local_vault_validation_failure(
                 ValidationNotificationKind::RequiredInputMissing,
-                i18n::string("settings.sync.vault.passphrase_required_error.message"),
+                i18n::string("settings.sync.vault.new_passphrase_required_error.message"),
                 window,
                 cx,
             );
@@ -415,7 +444,9 @@ impl SettingsController {
         if passphrase_confirmation.is_empty() {
             self.notify_local_vault_validation_failure(
                 ValidationNotificationKind::RequiredInputMissing,
-                i18n::string("settings.sync.vault.passphrase_confirmation_required_error.message"),
+                i18n::string(
+                    "settings.sync.vault.new_passphrase_confirmation_required_error.message",
+                ),
                 window,
                 cx,
             );
@@ -431,17 +462,14 @@ impl SettingsController {
             return None;
         }
 
+        let current_passphrase =
+            self.protect_local_vault_passphrase(current_passphrase.as_str(), window, cx)?;
         let new_passphrase =
             self.protect_local_vault_passphrase(passphrase.as_str(), window, cx)?;
-        self.clear_local_vault_passphrase_input(window, cx);
-        self.local_vault_session_passphrase
-            .clone()
-            .map(
-                |current_passphrase| LocalVaultActionRequest::ChangePassphrase {
-                    current_passphrase,
-                    new_passphrase,
-                },
-            )
+        Some(LocalVaultActionRequest::ChangePassphrase {
+            current_passphrase,
+            new_passphrase,
+        })
     }
 
     fn protect_local_vault_passphrase(
@@ -481,6 +509,12 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         set_input_value(
+            &self.forms.local_vault_current_passphrase_input,
+            String::new(),
+            window,
+            cx,
+        );
+        set_input_value(
             &self.forms.local_vault_passphrase_input,
             String::new(),
             window,
@@ -493,6 +527,13 @@ impl SettingsController {
             cx,
         );
         set_input_masked(
+            &self.forms.local_vault_current_passphrase_input,
+            true,
+            false,
+            window,
+            cx,
+        );
+        set_input_masked(
             &self.forms.local_vault_passphrase_input,
             true,
             false,
@@ -507,15 +548,25 @@ impl SettingsController {
             cx,
         );
         self.secret_visibility
+            .set_visible(SecretRevealTarget::LocalVaultCurrentPassphrase, false);
+        self.secret_visibility
             .set_visible(SecretRevealTarget::LocalVaultPassphrase, false);
         self.secret_visibility
             .set_visible(SecretRevealTarget::LocalVaultPassphraseConfirmation, false);
     }
 
-    fn focus_local_vault_passphrase_input(&self, window: &mut Window, cx: &mut gpui::App) {
-        self.forms
-            .local_vault_passphrase_input
-            .update(cx, |input, cx| input.focus(window, cx));
+    fn focus_local_vault_passphrase_input(
+        &self,
+        mode: LocalVaultPassphrasePopupMode,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        let input = if mode == LocalVaultPassphrasePopupMode::ChangePassphrase {
+            &self.forms.local_vault_current_passphrase_input
+        } else {
+            &self.forms.local_vault_passphrase_input
+        };
+        input.update(cx, |input, cx| input.focus(window, cx));
     }
 
     pub(in crate::ui::shell) fn dismiss_local_vault_passphrase_popup(
@@ -702,6 +753,26 @@ impl SettingsController {
         self.notify_local_vault_error(action, error, window, cx)
     }
 
+    pub(in crate::ui::shell) fn finish_local_vault_change_passphrase_error(
+        &mut self,
+        action: &str,
+        error: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        self.local_vault_unlock_in_progress = false;
+        let message = Self::local_vault_change_passphrase_error_message(action, error);
+        window.push_notification(
+            error_notification(
+                i18n::string("settings.sync.vault.notifications.failed_title"),
+                message.clone(),
+            ),
+            cx,
+        );
+        cx.notify();
+        message
+    }
+
     pub(in crate::ui::shell) fn finish_local_vault_disable_error(
         &mut self,
         action: &str,
@@ -720,6 +791,15 @@ impl SettingsController {
     ) -> String {
         self.local_vault_unlock_in_progress = false;
         Self::local_vault_error_message(action, error)
+    }
+
+    pub(in crate::ui::shell) fn finish_local_vault_change_passphrase_error_without_window(
+        &mut self,
+        action: &str,
+        error: &anyhow::Error,
+    ) -> String {
+        self.local_vault_unlock_in_progress = false;
+        Self::local_vault_change_passphrase_error_message(action, error)
     }
 
     pub(in crate::ui::shell) fn finish_local_vault_disable_error_without_window(
@@ -757,6 +837,17 @@ impl SettingsController {
             "settings.sync.vault.notifications.failed_message",
             &[("action", action), ("error", &error_message)],
         )
+    }
+
+    fn local_vault_change_passphrase_error_message(action: &str, error: &anyhow::Error) -> String {
+        if error
+            .chain()
+            .any(|cause| cause.to_string().contains("vault decryption failed"))
+        {
+            i18n::string("settings.sync.vault.current_passphrase_incorrect_error.message")
+        } else {
+            Self::local_vault_error_message(action, error)
+        }
     }
 
     fn notify_local_vault_error(
@@ -1157,5 +1248,21 @@ mod tests {
         let message = SettingsController::local_vault_error_message("Unlock", &error);
 
         assert!(message.contains("cannot be unlocked safely"));
+    }
+
+    #[test]
+    fn change_passphrase_decryption_failure_reports_incorrect_current_passphrase() {
+        crate::ui::i18n::set_language(AppLanguage::English);
+        let error = anyhow::anyhow!("vault decryption failed: authentication failure");
+
+        let message = SettingsController::local_vault_change_passphrase_error_message(
+            "Update secrets vault passphrase",
+            &error,
+        );
+
+        assert_eq!(
+            message,
+            "The current local secrets vault passphrase is incorrect."
+        );
     }
 }

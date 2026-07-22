@@ -2137,6 +2137,7 @@ impl AppView {
         let operation_in_progress = settings_controller
             .read(cx)
             .local_vault_unlock_in_progress();
+        let current_input = settings_forms.local_vault_current_passphrase_input.clone();
         let input = settings_forms.local_vault_passphrase_input.clone();
         let confirmation_input = settings_forms
             .local_vault_passphrase_confirmation_input
@@ -2163,8 +2164,43 @@ impl AppView {
                     .text_color(rgb(roles.primary))
                     .child(Icon::new(AppIcon::Vault).size(px(128.0))),
             )
+            .when(
+                mode == LocalVaultPassphrasePopupMode::ChangePassphrase,
+                |this| {
+                    this.child(surface_secret_text_input_stack(
+                        i18n::string("settings.sync.vault.current_passphrase.label"),
+                        current_input.clone(),
+                        crate::ui::components::SecretTextInputStackOptions {
+                            surface: TextInputSurface::Low,
+                            size: gpui_component::Size::Large,
+                            required: true,
+                            disabled: operation_in_progress,
+                            trailing: None,
+                            reveal_icon: settings_controller.read(cx).secret_reveal_icon(
+                                &SecretRevealTarget::LocalVaultCurrentPassphrase,
+                            ),
+                        },
+                        {
+                            let controller = settings_controller.clone();
+                            move |window, cx| {
+                                controller.update(cx, |controller, cx| {
+                                    controller.toggle_secret_visibility(
+                                        SecretRevealTarget::LocalVaultCurrentPassphrase,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        },
+                    ))
+                },
+            )
             .child(surface_secret_text_input_stack(
-                i18n::string("settings.sync.vault.passphrase.label"),
+                if mode == LocalVaultPassphrasePopupMode::ChangePassphrase {
+                    i18n::string("settings.sync.vault.new_passphrase.label")
+                } else {
+                    i18n::string("settings.sync.vault.passphrase.label")
+                },
                 input.clone(),
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
@@ -2191,7 +2227,11 @@ impl AppView {
             ))
             .when(requires_passphrase_confirmation, |this| {
                 this.child(surface_secret_text_input_stack(
-                    i18n::string("settings.sync.vault.confirm_passphrase.label"),
+                    if mode == LocalVaultPassphrasePopupMode::ChangePassphrase {
+                        i18n::string("settings.sync.vault.confirm_new_passphrase.label")
+                    } else {
+                        i18n::string("settings.sync.vault.confirm_passphrase.label")
+                    },
                     confirmation_input.clone(),
                     crate::ui::components::SecretTextInputStackOptions {
                         surface: TextInputSurface::Low,

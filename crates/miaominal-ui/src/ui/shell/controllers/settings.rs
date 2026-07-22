@@ -222,6 +222,7 @@ pub(in crate::ui::shell) struct SecretVisibilityState {
     sync_webdav_password: bool,
     sync_passphrase: bool,
     sync_passphrase_confirmation: bool,
+    local_vault_current_passphrase: bool,
     local_vault_passphrase: bool,
     local_vault_passphrase_confirmation: bool,
     web_search_api_key: bool,
@@ -236,6 +237,7 @@ impl SecretVisibilityState {
             SecretRevealTarget::HostPassword => false,
             SecretRevealTarget::SyncPassphrase => self.sync_passphrase,
             SecretRevealTarget::SyncPassphraseConfirmation => self.sync_passphrase_confirmation,
+            SecretRevealTarget::LocalVaultCurrentPassphrase => self.local_vault_current_passphrase,
             SecretRevealTarget::LocalVaultPassphrase => self.local_vault_passphrase,
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
                 self.local_vault_passphrase_confirmation
@@ -255,6 +257,9 @@ impl SecretVisibilityState {
             SecretRevealTarget::SyncPassphrase => self.sync_passphrase = visible,
             SecretRevealTarget::SyncPassphraseConfirmation => {
                 self.sync_passphrase_confirmation = visible;
+            }
+            SecretRevealTarget::LocalVaultCurrentPassphrase => {
+                self.local_vault_current_passphrase = visible;
             }
             SecretRevealTarget::LocalVaultPassphrase => self.local_vault_passphrase = visible,
             SecretRevealTarget::LocalVaultPassphraseConfirmation => {
@@ -308,6 +313,7 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) sync_passphrase_input: Entity<InputState>,
     pub(in crate::ui::shell) sync_passphrase_confirmation_input: Entity<InputState>,
     pub(in crate::ui::shell) local_data_reset_confirmation_input: Entity<InputState>,
+    pub(in crate::ui::shell) local_vault_current_passphrase_input: Entity<InputState>,
     pub(in crate::ui::shell) local_vault_passphrase_input: Entity<InputState>,
     pub(in crate::ui::shell) local_vault_passphrase_confirmation_input: Entity<InputState>,
     pub(in crate::ui::shell) ai_provider_name_input: Entity<InputState>,
@@ -707,6 +713,13 @@ impl SettingsController {
                 window,
                 cx,
             ),
+            local_vault_current_passphrase_input: new_input_state(
+                i18n::string("settings.sync.placeholders.vault_current_passphrase"),
+                "",
+                true,
+                window,
+                cx,
+            ),
             local_vault_passphrase_input: new_input_state(
                 i18n::string("settings.sync.placeholders.vault_passphrase"),
                 "",
@@ -869,6 +882,10 @@ impl SettingsController {
             (
                 &self.forms.sync_passphrase_input,
                 "settings.sync.placeholders.passphrase",
+            ),
+            (
+                &self.forms.local_vault_current_passphrase_input,
+                "settings.sync.placeholders.vault_current_passphrase",
             ),
             (
                 &self.forms.local_vault_passphrase_input,

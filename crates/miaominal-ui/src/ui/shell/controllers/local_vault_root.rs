@@ -830,7 +830,8 @@ impl LocalVaultRootExt for AppView {
                 let action = self.local_vault_change_action_label(cx);
                 let settings = self.controllers.settings.clone();
                 self.shell.status_message = settings.update(cx, |controller, cx| {
-                    controller.finish_local_vault_error(&action, &error, window, cx)
+                    controller
+                        .finish_local_vault_change_passphrase_error(&action, &error, window, cx)
                 });
             }
         }
@@ -873,7 +874,8 @@ impl LocalVaultRootExt for AppView {
                 let action = self.local_vault_change_action_label(cx);
                 let settings = self.controllers.settings.clone();
                 self.shell.status_message = settings.update(cx, |controller, _| {
-                    controller.finish_local_vault_error_without_window(&action, &error)
+                    controller
+                        .finish_local_vault_change_passphrase_error_without_window(&action, &error)
                 });
             }
         }
