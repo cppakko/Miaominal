@@ -772,10 +772,16 @@ impl AppView {
                 && (!profile.password.is_empty() || !profile.passphrase.is_empty()))
     }
 
-    fn handle_profile_save_request(&mut self, profile: SessionProfile, cx: &mut Context<Self>) {
+    fn handle_profile_save_request(
+        &mut self,
+        profile: SessionProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.profile_save_requires_local_vault_unlock(&profile, cx) {
-            self.defer_app_command(
+            self.defer_app_command_in_window(
                 DeferredAppCommand::Session(SessionDeferredCommand::SaveProfile),
+                window,
                 cx,
             );
             return;
@@ -784,25 +790,15 @@ impl AppView {
         let managed_key_options =
             ManagedKeySelectItem::sorted_items(self.controllers.keychain.read(cx).managed_keys());
         let controller = self.controllers.session.clone();
-        if let Some(window_handle) = cx.active_window()
-            && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                controller.update(cx, |controller, cx| {
-                    controller.commit_profile_save_request(
-                        profile,
-                        managed_key_options,
-                        window,
-                        cx,
-                    );
-                });
-            })
-        {
-            log::debug!("failed to save profile: {error:?}");
-        }
+        controller.update(cx, |controller, cx| {
+            controller.commit_profile_save_request(profile, managed_key_options, window, cx);
+        });
     }
 
     fn handle_snippet_save_request(
         &mut self,
         snippet: miaominal_core::snippet::SnippetRecord,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -811,23 +807,18 @@ impl AppView {
             .read(cx)
             .sync_requires_local_vault_unlock()
         {
-            self.defer_app_command(
+            self.defer_app_command_in_window(
                 DeferredAppCommand::Session(SessionDeferredCommand::SaveSnippet),
+                window,
                 cx,
             );
             return;
         }
 
         let controller = self.controllers.session.clone();
-        if let Some(window_handle) = cx.active_window()
-            && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                controller.update(cx, |controller, cx| {
-                    controller.commit_snippet_save_request(snippet, window, cx);
-                });
-            })
-        {
-            log::debug!("failed to save snippet: {error:?}");
-        }
+        controller.update(cx, |controller, cx| {
+            controller.commit_snippet_save_request(snippet, window, cx);
+        });
     }
 
     pub(super) fn handle_app_command_in_window(
@@ -888,6 +879,12 @@ impl AppView {
                 self.handle_local_vault_action_request(request.clone(), window, cx)
             }
             AppCommand::LocalDataResetRequested => self.start_local_data_reset(window, cx),
+            AppCommand::SaveProfileRequested(profile) => {
+                self.handle_profile_save_request((**profile).clone(), window, cx)
+            }
+            AppCommand::SaveSnippetRequested(snippet) => {
+                self.handle_snippet_save_request((**snippet).clone(), window, cx)
+            }
             _ => self.handle_app_command(command, cx),
         }
     }
@@ -912,13 +909,9 @@ impl AppView {
             | AppCommand::WindowActivationChanged { .. }
             | AppCommand::TerminalMenuRequested { .. }
             | AppCommand::VaultActionRequested(_)
-            | AppCommand::LocalDataResetRequested => {}
-            AppCommand::SaveProfileRequested(profile) => {
-                self.handle_profile_save_request((**profile).clone(), cx)
-            }
-            AppCommand::SaveSnippetRequested(snippet) => {
-                self.handle_snippet_save_request((**snippet).clone(), cx)
-            }
+            | AppCommand::LocalDataResetRequested
+            | AppCommand::SaveProfileRequested(_)
+            | AppCommand::SaveSnippetRequested(_) => {}
             AppCommand::ImportProfilesRequested(source) => {
                 let controller = self.controllers.session.clone();
                 let source = *source;
@@ -1034,12 +1027,30 @@ impl AppView {
         });
     }
 
-    fn defer_app_command(&mut self, command: DeferredAppCommand, cx: &mut Context<Self>) {
+    fn set_deferred_app_command(&mut self, command: DeferredAppCommand) {
         self.shell.status_message =
             i18n::string("settings.sync.vault.access_required_error.message");
         self.shell.deferred_app_command = Some(command);
+    }
+
+    fn defer_app_command(&mut self, command: DeferredAppCommand, cx: &mut Context<Self>) {
+        self.set_deferred_app_command(command);
         self.open_local_vault_passphrase_popup_in_active_window(
             LocalVaultPassphrasePopupMode::PrimaryAction,
+            cx,
+        );
+    }
+
+    fn defer_app_command_in_window(
+        &mut self,
+        command: DeferredAppCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_deferred_app_command(command);
+        self.open_local_vault_passphrase_popup(
+            LocalVaultPassphrasePopupMode::PrimaryAction,
+            window,
             cx,
         );
     }
