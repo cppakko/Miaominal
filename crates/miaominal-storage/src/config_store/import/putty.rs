@@ -1,7 +1,7 @@
 use super::resolve_username;
 use miaominal_core::profile::{
-    AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssueKind, ImportSourceKind, ImportedBatch,
-    ImportedSessionDraft,
+    AuthMethod, DEFAULT_SESSION_CHARSET, ImportField, ImportIssueKind, ImportIssueReason,
+    ImportSourceKind, ImportedBatch, ImportedSessionDraft,
 };
 use std::collections::HashMap;
 
@@ -34,9 +34,11 @@ pub(super) fn import(content: &str) -> ImportedBatch {
                     ImportIssueKind::UnsupportedProtocol,
                     display_name,
                     if protocol.is_empty() {
-                        "PuTTY session is missing the Protocol field".to_string()
+                        ImportIssueReason::MissingField {
+                            field: ImportField::Protocol,
+                        }
                     } else {
-                        format!("PuTTY protocol {protocol} is not supported")
+                        ImportIssueReason::UnsupportedProtocol { protocol }
                     },
                 );
                 return;
@@ -50,7 +52,9 @@ pub(super) fn import(content: &str) -> ImportedBatch {
                 batch.push_issue(
                     ImportIssueKind::MissingRequiredField,
                     session_name,
-                    "missing HostName",
+                    ImportIssueReason::MissingField {
+                        field: ImportField::Host,
+                    },
                 );
                 return;
             }
@@ -59,7 +63,9 @@ pub(super) fn import(content: &str) -> ImportedBatch {
                 batch.push_issue(
                     ImportIssueKind::MissingRequiredField,
                     session_name,
-                    "missing UserName",
+                    ImportIssueReason::MissingField {
+                        field: ImportField::Username,
+                    },
                 );
                 return;
             };
@@ -76,11 +82,25 @@ pub(super) fn import(content: &str) -> ImportedBatch {
                 .get("RemoteCommand")
                 .map(|value| value.trim().to_string())
                 .unwrap_or_default();
-            let port = values
-                .get("PortNumber")
-                .and_then(|value| parse_registry_dword(value))
-                .and_then(|value| u16::try_from(value).ok())
-                .unwrap_or(22);
+            let port = match values.get("PortNumber") {
+                None => 22,
+                Some(value) => match parse_registry_dword(value)
+                    .and_then(|value| u16::try_from(value).ok())
+                    .filter(|port| *port != 0)
+                {
+                    Some(port) => port,
+                    None => {
+                        batch.push_issue(
+                            ImportIssueKind::InvalidEntry,
+                            display_name,
+                            ImportIssueReason::InvalidPort {
+                                value: value.clone(),
+                            },
+                        );
+                        return;
+                    }
+                },
+            };
             let agent_forwarding = values
                 .get("AgentFwd")
                 .and_then(|value| parse_registry_dword(value))
@@ -136,14 +156,38 @@ fn parse_registry_value(line: &str) -> Option<(String, String)> {
     let key = key.trim().trim_matches('"').to_string();
     let value = value.trim();
     let value = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-        value[1..value.len() - 1]
-            .replace(r#"\\"#, r#"\"#)
-            .replace(r#"\n"#, "\n")
-            .replace(r#"\r"#, "\r")
+        decode_registry_string(&value[1..value.len() - 1])
     } else {
         value.to_string()
     };
     Some((key, value))
+}
+
+fn decode_registry_string(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            decoded.push(ch);
+            continue;
+        }
+
+        let Some(next) = chars.next() else {
+            decoded.push('\\');
+            break;
+        };
+        match next {
+            '\\' => decoded.push('\\'),
+            '"' => decoded.push('"'),
+            'n' => decoded.push('\n'),
+            'r' => decoded.push('\r'),
+            _ => {
+                decoded.push('\\');
+                decoded.push(next);
+            }
+        }
+    }
+    decoded
 }
 
 fn parse_registry_dword(value: &str) -> Option<u32> {
@@ -212,5 +256,40 @@ mod tests {
         assert_eq!(profile.port, 22);
         assert_eq!(profile.auth_method, AuthMethod::KeyFile);
         assert_eq!(batch.issue_count(ImportIssueKind::UnsupportedProtocol), 1);
+    }
+
+    #[test]
+    fn putty_decodes_registry_strings_without_reinterpreting_paths() {
+        assert_eq!(
+            parse_registry_value(r#""Path"="C:\\new\\repo\\id.ppk""#),
+            Some(("Path".into(), r#"C:\new\repo\id.ppk"#.into()))
+        );
+        assert_eq!(
+            parse_registry_value(r#""Command"="echo \"hello\"\nnext""#),
+            Some(("Command".into(), "echo \"hello\"\nnext".into()))
+        );
+    }
+
+    #[test]
+    fn putty_skips_invalid_ports_and_defaults_missing_ports() {
+        let batch = import(
+            r#"
+                [HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\bad]
+                "HostName"="bad.example.com"
+                "PortNumber"=dword:00000000
+                "UserName"="root"
+                "Protocol"="ssh"
+
+                [HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\good]
+                "HostName"="good.example.com"
+                "UserName"="root"
+                "Protocol"="ssh"
+            "#,
+        );
+
+        assert_eq!(batch.sessions.len(), 1);
+        assert_eq!(batch.sessions[0].name, "good");
+        assert_eq!(batch.sessions[0].port, 22);
+        assert_eq!(batch.issue_count(ImportIssueKind::InvalidEntry), 1);
     }
 }

@@ -243,10 +243,95 @@ pub enum ImportIssueKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportField {
+    Host,
+    Username,
+    Protocol,
+}
+
+impl std::fmt::Display for ImportField {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Host => "host",
+            Self::Username => "username",
+            Self::Protocol => "protocol",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportIssueReason {
+    UnsupportedHostPattern,
+    ProxyJumpNotImported,
+    IncludeNotExpanded,
+    MatchNotEvaluated { expression: String },
+    MultipleIdentityFiles,
+    NoLiteralHostAlias,
+    MissingField { field: ImportField },
+    UnsupportedProtocol { protocol: String },
+    InvalidPort { value: String },
+    CredentialProfileNotFound { profile: String },
+    EncryptedPasswordNotImported,
+    PasswordCouldNotBeDecoded,
+    KeyReferenceNotImported,
+    GlobalPublicKeyPathMissing,
+    AgentForwardingUnresolved { value: String },
+}
+
+impl std::fmt::Display for ImportIssueReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedHostPattern => formatter.write_str(
+                "OpenSSH wildcard or negated Host patterns are not imported as profiles",
+            ),
+            Self::ProxyJumpNotImported => formatter.write_str("ProxyJump is not imported yet"),
+            Self::IncludeNotExpanded => {
+                formatter.write_str("Include directives are not expanded during import")
+            }
+            Self::MatchNotEvaluated { expression } => write!(
+                formatter,
+                "OpenSSH Match condition `{expression}` was not evaluated"
+            ),
+            Self::MultipleIdentityFiles => formatter
+                .write_str("multiple IdentityFile values matched; only the first one was imported"),
+            Self::NoLiteralHostAlias => {
+                formatter.write_str("no importable OpenSSH host aliases were found in this block")
+            }
+            Self::MissingField { field } => write!(formatter, "missing {field}"),
+            Self::UnsupportedProtocol { protocol } => {
+                write!(formatter, "protocol {protocol} is not supported")
+            }
+            Self::InvalidPort { value } => write!(formatter, "invalid port `{value}`"),
+            Self::CredentialProfileNotFound { profile } => {
+                write!(formatter, "credential profile {profile} was not found")
+            }
+            Self::EncryptedPasswordNotImported => {
+                formatter.write_str("stored password is encrypted and was not imported")
+            }
+            Self::PasswordCouldNotBeDecoded => {
+                formatter.write_str("stored password could not be decoded and was not imported")
+            }
+            Self::KeyReferenceNotImported => {
+                formatter.write_str("key reference was not exported as a local key path")
+            }
+            Self::GlobalPublicKeyPathMissing => {
+                formatter.write_str("global public key is enabled but no key path was exported")
+            }
+            Self::AgentForwardingUnresolved { value } => {
+                write!(
+                    formatter,
+                    "agent forwarding setting {value} could not be resolved"
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportIssue {
     pub kind: ImportIssueKind,
     pub entry_name: String,
-    pub detail: String,
+    pub reason: ImportIssueReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,12 +398,12 @@ impl ImportedBatch {
         &mut self,
         kind: ImportIssueKind,
         entry_name: impl Into<String>,
-        detail: impl Into<String>,
+        reason: ImportIssueReason,
     ) {
         self.issues.push(ImportIssue {
             kind,
             entry_name: entry_name.into(),
-            detail: detail.into(),
+            reason,
         });
     }
 

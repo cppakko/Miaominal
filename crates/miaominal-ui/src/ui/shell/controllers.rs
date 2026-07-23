@@ -44,12 +44,13 @@ pub(in crate::ui::shell) use keychain::{
 pub(in crate::ui::shell) use local_vault_root::LocalVaultRootExt;
 pub(in crate::ui::shell) use session::{
     ClosedSessionTabState, MonitorChartPoint, PendingKnownHostDeleteState,
-    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingSnippetDeleteState,
-    PortForwardSessionStart, SessionConnectionState, SessionController, SessionControllerArgs,
-    SessionEventOutcome, SessionEventTabRemoval, SessionFailureStatus, SessionNotificationTone,
-    SessionPortSession, SessionPortSnapshot, SessionPurpose, SessionQueryPort,
-    SessionSidePanelView, SessionTabState, SessionTerminalPort, SessionTerminalTarget,
-    TerminalLease, TerminalLeaseError, TerminalLeaseGrant, TrustedHostFilter,
+    PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingProfileImportResultState,
+    PendingSnippetDeleteState, PortForwardSessionStart, SessionConnectionState, SessionController,
+    SessionControllerArgs, SessionEventOutcome, SessionEventTabRemoval, SessionFailureStatus,
+    SessionNotificationTone, SessionPortSession, SessionPortSnapshot, SessionPurpose,
+    SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
+    SessionTerminalTarget, TerminalLease, TerminalLeaseError, TerminalLeaseGrant,
+    TrustedHostFilter,
 };
 #[cfg(test)]
 pub(in crate::ui::shell) use session::{SESSION_MONITOR_HISTORY_LIMIT, SessionMonitoringState};

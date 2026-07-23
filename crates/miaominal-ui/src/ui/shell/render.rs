@@ -112,6 +112,7 @@ impl Render for AppView {
             )
         };
         let pending_profile_delete = self.pending_profile_delete_prompt(cx);
+        let pending_profile_import_result = self.pending_profile_import_result(cx);
         let pending_managed_key_delete = self.pending_managed_key_delete_prompt(cx);
         let pending_managed_key_rename = self.pending_managed_key_rename_prompt(cx);
         let pending_known_host_delete = self.pending_known_host_delete_prompt(cx);
@@ -285,6 +286,9 @@ impl Render for AppView {
             })
             .when_some(pending_profile_delete, |this, prompt| {
                 this.child(self.render_profile_delete_prompt(entity.clone(), &prompt, None))
+            })
+            .when_some(pending_profile_import_result, |this, prompt| {
+                this.child(self.render_profile_import_result(&prompt, None))
             })
             .when_some(pending_managed_key_delete, |this, prompt| {
                 this.child(self.render_managed_key_delete_prompt(entity.clone(), &prompt, None))
@@ -1554,6 +1558,121 @@ impl AppView {
             i18n::string("dialogs.profile_delete.title"),
             Some(subtitle),
             None,
+            actions.into_any_element(),
+            exit_progress,
+        )
+    }
+
+    fn render_profile_import_result(
+        &self,
+        prompt: &PendingProfileImportResultState,
+        exit_progress: Option<f32>,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let source = localized_profile_import_source_label(prompt.source);
+        let imported_count = prompt.imported_count.to_string();
+        let issue_count = prompt.issues.len().to_string();
+        let title = i18n::string(if prompt.imported_count == 0 {
+            "settings.connections.import_result.failed_title"
+        } else {
+            "settings.connections.import_result.partial_title"
+        });
+        let supporting_text = i18n::string_args(
+            if prompt.imported_count == 0 {
+                "settings.connections.import_result.failed_summary"
+            } else {
+                "settings.connections.import_result.partial_summary"
+            },
+            &[
+                ("source", &source),
+                ("imported", &imported_count),
+                ("issues", &issue_count),
+            ],
+        );
+
+        let issue_rows = prompt
+            .issues
+            .iter()
+            .enumerate()
+            .map(|(index, issue)| {
+                let entry_name = if issue.entry_name.trim().is_empty() {
+                    i18n::string("settings.connections.import_result.unknown_entry")
+                } else {
+                    issue.entry_name.clone()
+                };
+                let kind = localized_profile_import_issue_kind(issue.kind);
+                let reason = localized_profile_import_issue_reason(&issue.reason);
+                v_flex()
+                    .id(SharedString::from(format!("profile-import-issue-{index}")))
+                    .w_full()
+                    .min_w(px(0.0))
+                    .gap_1()
+                    .p_3()
+                    .rounded(px(14.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_sm()
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(entry_name),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(rgb(roles.tertiary))
+                                    .child(kind),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .text_sm()
+                            .line_height(miaominal_settings::scaled_line_height(18.0))
+                            .text_color(rgb(roles.on_surface_variant))
+                            .child(reason),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        let body = div()
+            .w_full()
+            .max_h(px(360.0))
+            .overflow_y_scrollbar()
+            .child(v_flex().w_full().gap_2().children(issue_rows))
+            .into_any_element();
+
+        let controller = self.controllers.session.clone();
+        let actions = h_flex().justify_end().child(
+            basic_dialog_action_button(
+                "profile-import-result-close",
+                i18n::string("settings.connections.import_result.close"),
+                BasicDialogActionTone::Default,
+            )
+            .on_click(move |_, _, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.dismiss_profile_import_result(cx);
+                });
+            }),
+        );
+
+        render_basic_dialog(
+            "profile-import-result",
+            title,
+            Some(supporting_text),
+            Some(body),
             actions.into_any_element(),
             exit_progress,
         )
@@ -3295,6 +3414,9 @@ impl AppView {
             }
             DialogOverlaySnapshot::ProfileDelete(prompt) => {
                 self.render_profile_delete_prompt(entity, &prompt, Some(exit_progress))
+            }
+            DialogOverlaySnapshot::ProfileImportResult(prompt) => {
+                self.render_profile_import_result(&prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::ManagedKeyDelete(prompt) => {
                 self.render_managed_key_delete_prompt(entity, &prompt, Some(exit_progress))

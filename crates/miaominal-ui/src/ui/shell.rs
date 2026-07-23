@@ -105,7 +105,7 @@ pub(in crate::ui::shell) use controllers::{
     PendingLocalDataResetConfirmState, PendingLocalDataResetConfirmationPopupState,
     PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
     PendingManagedKeyRenameState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
-    PendingSnippetDeleteState, PendingSyncDirectionState,
+    PendingProfileImportResultState, PendingSnippetDeleteState, PendingSyncDirectionState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
     PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
     PendingWebSearchConfigPopupState, PromptHistoryDirection,

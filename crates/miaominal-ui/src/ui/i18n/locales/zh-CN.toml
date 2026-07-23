@@ -128,6 +128,43 @@ putty_filter = "PuTTY 注册表导出"
 securecrt_filter = "SecureCRT XML 导出"
 finalshell_filter = "FinalShell 导出"
 
+[settings.connections.import_result]
+partial_title = "配置已导入，但存在问题"
+failed_title = "没有导入任何配置"
+partial_summary = "已从 {source} 导入 {imported} 个配置。请检查下面的 {issues} 条问题。"
+failed_summary = "未能从 {source} 导入配置。请检查下面的 {issues} 条问题。"
+unknown_entry = "未知条目"
+close = "关闭"
+
+[settings.connections.import_result.kinds]
+unsupported_protocol = "不支持的协议"
+missing_required_field = "缺少字段"
+unsupported_credential = "凭据未导入"
+unsupported_feature = "不支持的功能"
+invalid_entry = "无效条目"
+
+[settings.connections.import_result.fields]
+host = "主机"
+username = "用户名"
+protocol = "协议"
+
+[settings.connections.import_result.reasons]
+unsupported_host_pattern = "通配或否定 Host 模式不会作为独立配置导入。"
+proxy_jump_not_imported = "暂不支持导入 ProxyJump。"
+include_not_expanded = "导入时不会展开 Include 指令。"
+match_not_evaluated = "未计算 Match 条件“{expression}”，其中的设置已跳过。"
+multiple_identity_files = "匹配到多个 IdentityFile，仅导入了第一个。"
+no_literal_host_alias = "该配置块中没有可导入的 OpenSSH 文字主机别名。"
+missing_field = "缺少必填的{field}字段。"
+unsupported_protocol = "不支持协议 {protocol}。"
+invalid_port = "端口 {value} 无效，已跳过该配置。"
+credential_profile_not_found = "找不到凭据配置 {profile}。"
+encrypted_password_not_imported = "保存的密码已加密，未执行导入。"
+password_could_not_be_decoded = "无法解码保存的密码，未执行导入。"
+key_reference_not_imported = "密钥引用没有导出为本地密钥路径。"
+global_public_key_path_missing = "已启用全局公钥，但导出内容中没有密钥路径。"
+agent_forwarding_unresolved = "无法解析 Agent 转发值 {value}。"
+
 [settings.about.overview]
 title = "概览"
 version = "版本 {version}"

@@ -977,6 +977,16 @@ impl AppView {
         self.controllers.session.read(cx).pending_profile_delete()
     }
 
+    pub(in crate::ui::shell) fn pending_profile_import_result(
+        &self,
+        cx: &App,
+    ) -> Option<PendingProfileImportResultState> {
+        self.controllers
+            .session
+            .read(cx)
+            .pending_profile_import_result()
+    }
+
     pub(in crate::ui::shell) fn pending_managed_key_delete_prompt(
         &self,
         cx: &App,

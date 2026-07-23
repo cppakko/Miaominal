@@ -899,6 +899,12 @@ impl AppView {
             AppCommand::SaveSnippetRequested(snippet) => {
                 self.handle_snippet_save_request((**snippet).clone(), window, cx)
             }
+            AppCommand::ImportProfilesRequested(source) => {
+                let controller = self.controllers.session.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.import_profiles_from_source(*source, window, cx);
+                });
+            }
             AppCommand::SessionEventApplied { tab_id, outcome } => {
                 self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
             }
@@ -926,20 +932,8 @@ impl AppView {
             | AppCommand::LocalDataResetRequested
             | AppCommand::SaveProfileRequested(_)
             | AppCommand::SaveSnippetRequested(_)
+            | AppCommand::ImportProfilesRequested(_)
             | AppCommand::SessionEventApplied { .. } => {}
-            AppCommand::ImportProfilesRequested(source) => {
-                let controller = self.controllers.session.clone();
-                let source = *source;
-                if let Some(window_handle) = cx.active_window()
-                    && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                        controller.update(cx, |controller, cx| {
-                            controller.import_profiles_from_source(source, window, cx);
-                        });
-                    })
-                {
-                    log::debug!("failed to open profile import dialog: {error:?}");
-                }
-            }
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),
             AppCommand::EnsureSessionSftpRequested(tab_id) => {

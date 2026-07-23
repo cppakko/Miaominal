@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use miaominal_core::profile::{ImportedBatch, SessionProfile};
+use miaominal_core::profile::{ImportIssue, ImportedBatch, SessionProfile};
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_storage::config_store::store::SessionStore;
 use std::collections::HashSet;
@@ -18,7 +18,13 @@ pub struct DeleteProfileOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedProfilesResult {
     pub imported_count: usize,
-    pub warning_count: usize,
+    pub issues: Vec<ImportIssue>,
+}
+
+impl ImportedProfilesResult {
+    pub fn warning_count(&self) -> usize {
+        self.issues.len()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -170,24 +176,24 @@ impl ProfileService {
         existing_sessions: &mut Vec<SessionProfile>,
         batch: ImportedBatch,
     ) -> Result<ImportedProfilesResult> {
-        let warning_count = batch.issues.len();
-        let imported_count = batch.sessions.len();
+        let ImportedBatch { sessions, issues } = batch;
+        let imported_count = sessions.len();
         let mut staged_profiles = Vec::with_capacity(imported_count);
 
-        for draft in batch.sessions {
+        for draft in sessions {
             let profile_id = next_imported_profile_id(existing_sessions, &staged_profiles);
             staged_profiles.push(draft.into_session_profile(profile_id));
         }
 
         let mut committed_secret_ids = Vec::new();
         for profile in &staged_profiles {
+            if profile.has_stored_password || profile.has_stored_passphrase {
+                committed_secret_ids.push(profile.id.clone());
+            }
+
             if let Err(error) = self.commit_profile_secrets(profile) {
                 self.rollback_imported_profile_secrets(&committed_secret_ids);
                 return Err(error);
-            }
-
-            if profile.has_stored_password || profile.has_stored_passphrase {
-                committed_secret_ids.push(profile.id.clone());
             }
         }
 
@@ -201,7 +207,7 @@ impl ProfileService {
 
         Ok(ImportedProfilesResult {
             imported_count,
-            warning_count,
+            issues,
         })
     }
 }
@@ -228,6 +234,49 @@ fn next_imported_profile_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_core::profile::{
+        AuthMethod, DEFAULT_SESSION_CHARSET, ImportSourceKind, ImportedSessionDraft,
+    };
+    use miaominal_secrets::credential_backend::CredentialBackend;
+    use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct FailPassphraseBackend {
+        values: Arc<Mutex<HashMap<String, String>>>,
+    }
+
+    impl CredentialBackend for FailPassphraseBackend {
+        fn name(&self) -> &'static str {
+            "fail-passphrase"
+        }
+
+        fn get(&self, _service: &str, account: &str) -> Result<Option<String>> {
+            Ok(self
+                .values
+                .lock()
+                .expect("values lock")
+                .get(account)
+                .cloned())
+        }
+
+        fn set(&self, _service: &str, account: &str, value: &str) -> Result<()> {
+            if account.ends_with(":passphrase") {
+                return Err(anyhow!("simulated passphrase write failure"));
+            }
+            self.values
+                .lock()
+                .expect("values lock")
+                .insert(account.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, _service: &str, account: &str) -> Result<()> {
+            self.values.lock().expect("values lock").remove(account);
+            Ok(())
+        }
+    }
 
     fn profile(id: &str, name: &str) -> SessionProfile {
         let mut profile = SessionProfile::blank(id, 1);
@@ -270,5 +319,54 @@ mod tests {
         assert_eq!(outcome.removed.id, "session-2");
         assert_eq!(selected, Some(1));
         assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn import_rolls_back_current_profile_when_passphrase_write_fails() {
+        let backend = FailPassphraseBackend::default();
+        let observed_values = backend.values.clone();
+        let secrets = SecretStore::with_credentials(CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            backend,
+        ));
+        let service = ProfileService::new(None, secrets);
+        let mut sessions = vec![profile("session-1", "Existing")];
+        let original = sessions.clone();
+        let batch = ImportedBatch {
+            sessions: vec![ImportedSessionDraft {
+                source: ImportSourceKind::FinalShellJson,
+                name: "Imported".into(),
+                group: String::new(),
+                host: "example.com".into(),
+                port: 22,
+                username: "root".into(),
+                password: Some("secret".into()),
+                auth_method: AuthMethod::Password,
+                private_key_path: String::new(),
+                certificate_path: String::new(),
+                passphrase: Some("phrase".into()),
+                agent_forwarding: false,
+                startup_command: String::new(),
+                charset: DEFAULT_SESSION_CHARSET.into(),
+            }],
+            issues: Vec::new(),
+        };
+
+        let error = service
+            .import_profiles(&mut sessions, batch)
+            .expect_err("passphrase write should fail");
+
+        assert!(error.to_string().contains("passphrase"));
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|profile| &profile.id)
+                .collect::<Vec<_>>(),
+            original
+                .iter()
+                .map(|profile| &profile.id)
+                .collect::<Vec<_>>()
+        );
+        assert!(observed_values.lock().expect("values lock").is_empty());
     }
 }

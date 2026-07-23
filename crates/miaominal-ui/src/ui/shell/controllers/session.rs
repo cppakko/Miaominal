@@ -18,8 +18,8 @@ use miaominal_agent::{TerminalOutputReceiver, TerminalOutputTap};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::{
-    AuthMethod, DEFAULT_SESSION_CHARSET, ImportedBatch, PortForwardKind, PortForwardRule,
-    SessionEnvironmentVariable, ShellType,
+    AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssue, ImportSourceKind, ImportedBatch,
+    PortForwardKind, PortForwardRule, SessionEnvironmentVariable, ShellType,
 };
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::{SecretKind, SecretStore};
@@ -243,6 +243,13 @@ pub(in crate::ui::shell) struct PendingProfileDeleteState {
     pub(in crate::ui::shell) profile_id: String,
     pub(in crate::ui::shell) profile_name: String,
     pub(in crate::ui::shell) reload_inputs_after_delete: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingProfileImportResultState {
+    pub(in crate::ui::shell) source: ImportSourceKind,
+    pub(in crate::ui::shell) imported_count: usize,
+    pub(in crate::ui::shell) issues: Vec<ImportIssue>,
 }
 
 #[derive(Debug, Clone)]
@@ -584,6 +591,7 @@ struct SessionPanelState {
 #[derive(Default)]
 struct SessionPendingDialogs {
     profile_delete: Option<PendingProfileDeleteState>,
+    profile_import_result: Option<PendingProfileImportResultState>,
     known_host_delete: Option<PendingKnownHostDeleteState>,
     snippet_delete: Option<PendingSnippetDeleteState>,
     port_forward_rule_delete: Option<PendingPortForwardRuleDeleteState>,
@@ -4820,6 +4828,32 @@ impl SessionController {
         if let Some(pending) = self.take_pending_profile_delete() {
             cx.emit(AppCommand::OverlayDismissed(
                 DialogOverlaySnapshot::ProfileDelete(pending),
+            ));
+        }
+    }
+
+    pub(in crate::ui::shell) fn pending_profile_import_result(
+        &self,
+    ) -> Option<PendingProfileImportResultState> {
+        self.pending_dialogs.borrow().profile_import_result.clone()
+    }
+
+    pub(in crate::ui::shell) fn set_pending_profile_import_result(
+        &self,
+        pending: Option<PendingProfileImportResultState>,
+    ) {
+        self.pending_dialogs.borrow_mut().profile_import_result = pending;
+    }
+
+    pub(in crate::ui::shell) fn dismiss_profile_import_result(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self
+            .pending_dialogs
+            .borrow_mut()
+            .profile_import_result
+            .take()
+        {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::ProfileImportResult(pending),
             ));
         }
     }

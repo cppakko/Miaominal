@@ -132,6 +132,43 @@ putty_filter = "PuTTY registry export"
 securecrt_filter = "SecureCRT XML export"
 finalshell_filter = "FinalShell export"
 
+[settings.connections.import_result]
+partial_title = "Profiles imported with issues"
+failed_title = "No profiles were imported"
+partial_summary = "Imported {imported} profiles from {source}. Review the {issues} issues below."
+failed_summary = "No profiles were imported from {source}. Review the {issues} issues below."
+unknown_entry = "Unknown entry"
+close = "Close"
+
+[settings.connections.import_result.kinds]
+unsupported_protocol = "Unsupported protocol"
+missing_required_field = "Missing field"
+unsupported_credential = "Credential not imported"
+unsupported_feature = "Unsupported feature"
+invalid_entry = "Invalid entry"
+
+[settings.connections.import_result.fields]
+host = "host"
+username = "username"
+protocol = "protocol"
+
+[settings.connections.import_result.reasons]
+unsupported_host_pattern = "Wildcard or negated Host patterns are not imported as standalone profiles."
+proxy_jump_not_imported = "ProxyJump is not imported yet."
+include_not_expanded = "Include directives are not expanded during import."
+match_not_evaluated = "The Match condition “{expression}” was not evaluated; its settings were skipped."
+multiple_identity_files = "Multiple IdentityFile values matched; only the first one was imported."
+no_literal_host_alias = "No importable literal OpenSSH host alias was found in this block."
+missing_field = "The required {field} field is missing."
+unsupported_protocol = "Protocol {protocol} is not supported."
+invalid_port = "Port {value} is invalid; the profile was skipped."
+credential_profile_not_found = "Credential profile {profile} was not found."
+encrypted_password_not_imported = "The stored password is encrypted and was not imported."
+password_could_not_be_decoded = "The stored password could not be decoded and was not imported."
+key_reference_not_imported = "The key reference was not exported as a local key path."
+global_public_key_path_missing = "A global public key is enabled, but no key path was exported."
+agent_forwarding_unresolved = "Agent forwarding value {value} could not be resolved."
+
 [settings.about.overview]
 title = "Overview"
 version = "Version {version}"

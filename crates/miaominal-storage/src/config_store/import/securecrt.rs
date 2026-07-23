@@ -1,8 +1,8 @@
 use super::resolve_username_text;
 use anyhow::{Context, Result, anyhow};
 use miaominal_core::profile::{
-    AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssueKind, ImportSourceKind, ImportedBatch,
-    ImportedSessionDraft,
+    AuthMethod, DEFAULT_SESSION_CHARSET, ImportField, ImportIssueKind, ImportIssueReason,
+    ImportSourceKind, ImportedBatch, ImportedSessionDraft,
 };
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
@@ -67,10 +67,9 @@ fn parse_securecrt_session(
         batch.push_issue(
             ImportIssueKind::InvalidEntry,
             session_name,
-            format!(
-                "SecureCRT credential profile {} was not found",
-                credential_title.unwrap_or_default()
-            ),
+            ImportIssueReason::CredentialProfileNotFound {
+                profile: credential_title.unwrap_or_default().to_string(),
+            },
         );
     }
 
@@ -83,9 +82,11 @@ fn parse_securecrt_session(
             ImportIssueKind::UnsupportedProtocol,
             session_name,
             if protocol.is_empty() {
-                "SecureCRT session is missing Protocol Name".to_string()
+                ImportIssueReason::MissingField {
+                    field: ImportField::Protocol,
+                }
             } else {
-                format!("SecureCRT protocol {protocol} is not supported")
+                ImportIssueReason::UnsupportedProtocol { protocol }
             },
         );
         return;
@@ -99,7 +100,9 @@ fn parse_securecrt_session(
         batch.push_issue(
             ImportIssueKind::MissingRequiredField,
             session_name,
-            "missing Hostname",
+            ImportIssueReason::MissingField {
+                field: ImportField::Host,
+            },
         );
         return;
     }
@@ -110,7 +113,9 @@ fn parse_securecrt_session(
         batch.push_issue(
             ImportIssueKind::MissingRequiredField,
             session_name,
-            "missing Username",
+            ImportIssueReason::MissingField {
+                field: ImportField::Username,
+            },
         );
         return;
     };
@@ -143,9 +148,22 @@ fn parse_securecrt_session(
         .unwrap_or_default();
     }
 
-    let port = first_non_empty_securecrt_field("[SSH2] Port", &fields, credential_fields, None)
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(22);
+    let port_value =
+        first_non_empty_securecrt_field("[SSH2] Port", &fields, credential_fields, None);
+    let port = match port_value {
+        None => 22,
+        Some(value) => match value.parse::<u16>().ok().filter(|port| *port != 0) {
+            Some(port) => port,
+            None => {
+                batch.push_issue(
+                    ImportIssueKind::InvalidEntry,
+                    session_name,
+                    ImportIssueReason::InvalidPort { value },
+                );
+                return;
+            }
+        },
+    };
     let startup_command = if matches!(
         first_non_empty_securecrt_field("Use Shell Command", &fields, credential_fields, None,)
             .as_deref(),
@@ -178,7 +196,7 @@ fn parse_securecrt_session(
         batch.push_issue(
             ImportIssueKind::UnsupportedCredential,
             session_name,
-            "SecureCRT stored passwords are encrypted and were not imported",
+            ImportIssueReason::EncryptedPasswordNotImported,
         );
     }
 
@@ -186,7 +204,7 @@ fn parse_securecrt_session(
         batch.push_issue(
             ImportIssueKind::UnsupportedFeature,
             session_name,
-            "SecureCRT is configured to use a global public key; no session key path was exported",
+            ImportIssueReason::GlobalPublicKeyPathMissing,
         );
     }
 
@@ -333,7 +351,9 @@ fn resolve_securecrt_agent_forwarding(
                 batch.push_issue(
                     ImportIssueKind::UnsupportedFeature,
                     session_name,
-                    format!("SecureCRT agent forwarding setting {value} could not be resolved"),
+                    ImportIssueReason::AgentForwardingUnresolved {
+                        value: value.to_string(),
+                    },
                 );
                 return false;
             }
@@ -436,5 +456,35 @@ mod tests {
         assert_eq!(profile.private_key_path, "C:\\Keys\\global_id_ed25519");
         assert!(profile.agent_forwarding);
         assert_eq!(batch.issue_count(ImportIssueKind::UnsupportedFeature), 0);
+    }
+
+    #[test]
+    fn securecrt_skips_invalid_ports_and_defaults_missing_ports() {
+        let batch = import(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+                <VanDyke version="3.0">
+                  <key name="Sessions">
+                    <key name="bad">
+                      <dword name="Is Session">1</dword>
+                      <string name="Protocol Name">SSH2</string>
+                      <string name="Hostname">bad.example.com</string>
+                      <string name="Username">root</string>
+                      <dword name="[SSH2] Port">0</dword>
+                    </key>
+                    <key name="good">
+                      <dword name="Is Session">1</dword>
+                      <string name="Protocol Name">SSH2</string>
+                      <string name="Hostname">good.example.com</string>
+                      <string name="Username">root</string>
+                    </key>
+                  </key>
+                </VanDyke>"#,
+        )
+        .expect("SecureCRT XML should parse");
+
+        assert_eq!(batch.sessions.len(), 1);
+        assert_eq!(batch.sessions[0].name, "good");
+        assert_eq!(batch.sessions[0].port, 22);
+        assert_eq!(batch.issue_count(ImportIssueKind::InvalidEntry), 1);
     }
 }
