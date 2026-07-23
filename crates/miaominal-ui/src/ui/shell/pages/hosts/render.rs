@@ -1,15 +1,16 @@
 use super::super::super::*;
 use super::super::empty_state::{shell_empty_page, shell_empty_state};
 use super::components::{
-    HostCardTagChip, HostCardTags, group_card, host_card_with_action, host_list_row,
+    HostCardBadgeChip, HostCardGroupBadge, HostCardMetadata, HostCardTags, group_card,
+    host_card_with_action, host_list_row,
 };
 use crate::ui::i18n;
 use miaominal_core::profile::SessionProfile;
 use std::{collections::BTreeMap, rc::Rc};
 
-const HOST_CARD_TAG_ROW_UNIT_BUDGET: usize = 28;
+const HOST_CARD_TAG_ROW_UNIT_BUDGET: usize = 30;
 const HOST_CARD_TAG_BADGE_UNIT_OVERHEAD: usize = 4;
-const HOST_CARD_TAG_GAP_UNITS: usize = 2;
+const HOST_CARD_TAG_GAP_UNITS: usize = 1;
 const HOST_CARD_TAG_MIN_LABEL_UNITS: usize = 4;
 
 type HostPageAction = Rc<dyn Fn(usize, &mut Window, &mut App)>;
@@ -145,13 +146,9 @@ fn host_card_tag_badge_units(label: &str) -> usize {
     HOST_CARD_TAG_BADGE_UNIT_OVERHEAD + host_card_tag_display_units(label)
 }
 
-fn host_card_overflow_badge_units(overflow_count: usize) -> usize {
-    host_card_tag_badge_units(&format!("+{overflow_count}"))
-}
-
-fn truncate_host_card_tag_to_units(tag: &str, max_label_units: usize) -> String {
-    if host_card_tag_display_units(tag) <= max_label_units {
-        return tag.to_string();
+fn truncate_host_card_badge_to_units(label: &str, max_label_units: usize) -> String {
+    if host_card_tag_display_units(label) <= max_label_units {
+        return label.to_string();
     }
 
     if max_label_units <= 3 {
@@ -162,7 +159,7 @@ fn truncate_host_card_tag_to_units(tag: &str, max_label_units: usize) -> String 
     let mut used_units = 0;
     let visible_units_budget = max_label_units.saturating_sub(3);
 
-    for character in tag.chars() {
+    for character in label.chars() {
         let character_units = if character.is_ascii() { 1 } else { 2 };
         if used_units + character_units > visible_units_budget {
             break;
@@ -179,7 +176,7 @@ fn truncate_host_card_tag_to_units(tag: &str, max_label_units: usize) -> String 
     }
 }
 
-fn prepare_host_card_tags(raw_tags: &[String]) -> HostCardTags {
+fn prepare_host_card_tags(raw_tags: &[String], row_unit_budget: usize) -> HostCardTags {
     let mut unique_tags = Vec::new();
 
     for raw_tag in raw_tags {
@@ -200,23 +197,17 @@ fn prepare_host_card_tags(raw_tags: &[String]) -> HostCardTags {
     let mut visible_source_count = 0;
 
     for (index, tag) in unique_tags.iter().enumerate() {
-        let remaining_count = unique_tags.len().saturating_sub(index + 1);
         let gap_before_tag_units = if visible.is_empty() {
             0
         } else {
             HOST_CARD_TAG_GAP_UNITS
         };
-        let reserved_overflow_units = if remaining_count > 0 {
-            HOST_CARD_TAG_GAP_UNITS + host_card_overflow_badge_units(remaining_count)
-        } else {
-            0
-        };
-        let available_badge_units = HOST_CARD_TAG_ROW_UNIT_BUDGET
-            .saturating_sub(used_row_units + gap_before_tag_units + reserved_overflow_units);
+        let available_badge_units =
+            row_unit_budget.saturating_sub(used_row_units + gap_before_tag_units);
         let full_badge_units = host_card_tag_badge_units(tag);
 
         if full_badge_units <= available_badge_units {
-            visible.push(HostCardTagChip {
+            visible.push(HostCardBadgeChip {
                 label: SharedString::from(tag.clone()),
                 tooltip: None,
             });
@@ -231,30 +222,86 @@ fn prepare_host_card_tags(raw_tags: &[String]) -> HostCardTags {
             break;
         }
 
-        let label = truncate_host_card_tag_to_units(tag, available_label_units);
-        visible.push(HostCardTagChip {
+        let label = truncate_host_card_badge_to_units(tag, available_label_units);
+        let truncated_badge_units = host_card_tag_badge_units(&label);
+        visible.push(HostCardBadgeChip {
             tooltip: (label != *tag).then(|| SharedString::from(tag.clone())),
             label: SharedString::from(label),
         });
+        used_row_units += gap_before_tag_units + truncated_badge_units;
         visible_source_count = index + 1;
         break;
     }
 
     let overflow_count = unique_tags.len().saturating_sub(visible_source_count);
-    let overflow_tooltip = (overflow_count > 0).then(|| {
-        SharedString::from(
-            unique_tags[visible_source_count..]
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    });
+    let overflow = if overflow_count > 0 {
+        let label = format!("+{overflow_count}");
+        let gap_units = if visible.is_empty() {
+            0
+        } else {
+            HOST_CARD_TAG_GAP_UNITS
+        };
+        if used_row_units + gap_units + host_card_tag_badge_units(&label) <= row_unit_budget {
+            Some(HostCardBadgeChip {
+                label: SharedString::from(label),
+                tooltip: Some(SharedString::from(
+                    unique_tags[visible_source_count..]
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )),
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    HostCardTags {
-        visible,
-        overflow_count,
-        overflow_tooltip,
+    if overflow_count > 0 && overflow.is_none() {
+        if let Some(last_visible) = visible.last_mut() {
+            let tooltip_start = visible_source_count.saturating_sub(1);
+            last_visible.tooltip = Some(SharedString::from(
+                unique_tags[tooltip_start..]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+    }
+
+    HostCardTags { visible, overflow }
+}
+
+fn prepare_host_card_metadata(profile: &SessionProfile) -> HostCardMetadata {
+    let group_name = profile.group.trim();
+    let (group, tags_row_unit_budget) = if group_name.is_empty() {
+        (None, HOST_CARD_TAG_ROW_UNIT_BUDGET)
+    } else {
+        let available_label_units =
+            HOST_CARD_TAG_ROW_UNIT_BUDGET.saturating_sub(HOST_CARD_TAG_BADGE_UNIT_OVERHEAD);
+        let label = truncate_host_card_badge_to_units(group_name, available_label_units);
+        let group_units = host_card_tag_badge_units(&label);
+        let remaining_units = HOST_CARD_TAG_ROW_UNIT_BUDGET.saturating_sub(group_units);
+        let tags_row_unit_budget = remaining_units.saturating_sub(HOST_CARD_TAG_GAP_UNITS);
+
+        (
+            Some(HostCardGroupBadge {
+                badge: HostCardBadgeChip {
+                    tooltip: (label != group_name)
+                        .then(|| SharedString::from(group_name.to_string())),
+                    label: SharedString::from(label),
+                },
+            }),
+            tags_row_unit_budget,
+        )
+    };
+
+    HostCardMetadata {
+        group,
+        tags: prepare_host_card_tags(&profile.tags, tags_row_unit_budget),
     }
 }
 
@@ -266,7 +313,6 @@ fn render_host_profile_item(
     is_list: bool,
     id_prefix: &'static str,
 ) -> gpui::AnyElement {
-    let subtitle = profile_subtitle(profile).map(SharedString::from);
     let display_title = truncate_with_ellipsis(&profile.name, if is_list { 40 } else { 18 });
     let is_favorite = profile.is_favorite;
     let item_id = SharedString::from(format!(
@@ -274,12 +320,14 @@ fn render_host_profile_item(
         if is_list { "row" } else { "card" },
         profile.id
     ));
+    let badge_id_prefix = SharedString::from(format!("{id_prefix}-card-metadata-{}", profile.id));
     let menu_controller = controller;
     let menu_actions = actions.clone();
     let connect_actions = actions.clone();
     let edit_actions = actions;
 
     if is_list {
+        let subtitle = profile_subtitle(profile).map(SharedString::from);
         div()
             .id(item_id)
             .w_full()
@@ -303,7 +351,7 @@ fn render_host_profile_item(
             ))
             .into_any_element()
     } else {
-        let tags = prepare_host_card_tags(&profile.tags);
+        let metadata = prepare_host_card_metadata(profile);
         div()
             .id(item_id)
             .w(px(HOST_CARD_WIDTH))
@@ -318,8 +366,8 @@ fn render_host_profile_item(
             })
             .child(host_card_with_action(
                 display_title,
-                subtitle,
-                tags,
+                metadata,
+                badge_id_prefix,
                 AppIcon::Edit,
                 move |window, cx| connect_actions.connect(index, window, cx),
                 move |window, cx| edit_actions.edit(index, window, cx),
@@ -654,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_host_card_tags_deduplicates_and_summarizes_overflow() {
+    fn prepare_host_card_tags_deduplicates_and_keeps_visible_tags() {
         let tags = vec![
             " jump ".to_string(),
             "JUMP".to_string(),
@@ -663,51 +711,173 @@ mod tests {
             "production".to_string(),
         ];
 
-        let summary = prepare_host_card_tags(&tags);
+        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
 
-        assert_eq!(summary.visible.len(), 2);
+        assert_eq!(summary.visible.len(), 3);
         assert_eq!(summary.visible[0].label.as_ref(), "jump");
         assert_eq!(summary.visible[0].tooltip, None);
         assert_eq!(summary.visible[1].label.as_ref(), "ops");
         assert_eq!(summary.visible[1].tooltip, None);
-        assert_eq!(summary.overflow_count, 2);
-        assert_eq!(summary.overflow_tooltip.as_deref(), Some("db, production"));
+        assert_eq!(summary.visible[2].label.as_ref(), "db");
+        assert_eq!(summary.visible[2].tooltip, None);
+        assert_eq!(summary.overflow.as_ref().unwrap().label.as_ref(), "+1");
+        assert_eq!(
+            summary.overflow.as_ref().unwrap().tooltip.as_deref(),
+            Some("production")
+        );
     }
 
     #[test]
-    fn prepare_host_card_tags_truncates_last_visible_tag_to_fit_budget() {
+    fn prepare_host_card_tags_does_not_remove_visible_tags_for_overflow() {
         let tags = vec![
             "jump".to_string(),
             "private-link".to_string(),
             "production".to_string(),
         ];
 
-        let summary = prepare_host_card_tags(&tags);
+        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
 
         assert_eq!(summary.visible.len(), 2);
         assert_eq!(summary.visible[0].label.as_ref(), "jump");
-        assert_eq!(summary.visible[1].label.as_ref(), "pri...");
-        assert_eq!(summary.visible[1].tooltip.as_deref(), Some("private-link"));
-        assert_eq!(summary.overflow_count, 1);
-        assert_eq!(summary.overflow_tooltip.as_deref(), Some("production"));
+        assert_eq!(summary.visible[1].label.as_ref(), "private-link");
+        assert_eq!(
+            summary.visible[1].tooltip.as_deref(),
+            Some("private-link, production")
+        );
+        assert!(summary.overflow.is_none());
     }
 
     #[test]
     fn prepare_host_card_tags_adds_tooltip_for_truncated_visible_tag() {
         let tags = vec!["abcdefghijklmnopqrstuvwxyzabcd".to_string()];
 
-        let summary = prepare_host_card_tags(&tags);
+        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
 
         assert_eq!(summary.visible.len(), 1);
         assert_eq!(
             summary.visible[0].label.as_ref(),
-            "abcdefghijklmnopqrstu..."
+            "abcdefghijklmnopqrstuvw..."
         );
         assert_eq!(
             summary.visible[0].tooltip.as_deref(),
             Some("abcdefghijklmnopqrstuvwxyzabcd")
         );
-        assert_eq!(summary.overflow_count, 0);
-        assert_eq!(summary.overflow_tooltip, None);
+        assert!(summary.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_places_group_before_tag_with_shared_budget() {
+        let mut profile = SessionProfile::blank("profile-1", 1);
+        profile.group = "HK,HKG,BGP,RP-A".into();
+        profile.tags = vec!["cccc".into()];
+
+        let metadata = prepare_host_card_metadata(&profile);
+        let group = metadata.group.unwrap();
+
+        assert_eq!(group.badge.label.as_ref(), "HK,HKG,BGP,RP-A");
+        assert_eq!(group.badge.tooltip, None);
+        assert_eq!(metadata.tags.visible.len(), 1);
+        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
+        assert_eq!(metadata.tags.visible[0].tooltip, None);
+        assert!(metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_fits_short_second_tag_after_group() {
+        let mut profile = SessionProfile::blank("profile-1", 1);
+        profile.group = "FinalShell".into();
+        profile.tags = vec!["cccc".into(), "a".into()];
+
+        let metadata = prepare_host_card_metadata(&profile);
+
+        assert_eq!(metadata.tags.visible.len(), 2);
+        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
+        assert_eq!(metadata.tags.visible[1].label.as_ref(), "a");
+        assert_eq!(metadata.tags.visible[0].tooltip, None);
+        assert_eq!(metadata.tags.visible[1].tooltip, None);
+        assert!(metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_keeps_first_tag_when_more_tags_do_not_fit() {
+        let mut profile = SessionProfile::blank("profile-1", 1);
+        profile.group = "HK,HKG,BGP,RP-A".into();
+        profile.tags = vec!["cccc".into(), "dddd".into()];
+
+        let metadata = prepare_host_card_metadata(&profile);
+
+        assert_eq!(metadata.tags.visible.len(), 1);
+        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
+        assert_eq!(
+            metadata.tags.visible[0].tooltip.as_deref(),
+            Some("cccc, dddd")
+        );
+        assert!(metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_prioritizes_long_group_over_tags() {
+        let mut profile = SessionProfile::blank("profile-1", 1);
+        profile.group = "abcdefghijklmnopqrstuvwxyzabcd".into();
+        profile.tags = vec!["ops".into(), "db".into()];
+
+        let metadata = prepare_host_card_metadata(&profile);
+        let group = metadata.group.unwrap();
+
+        assert_eq!(group.badge.label.as_ref(), "abcdefghijklmnopqrstuvw...");
+        assert_eq!(
+            group.badge.tooltip.as_deref(),
+            Some("abcdefghijklmnopqrstuvwxyzabcd")
+        );
+        assert!(metadata.tags.visible.is_empty());
+        assert!(metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_uses_full_row_for_tags_without_group() {
+        let mut profile = SessionProfile::blank("profile-1", 1);
+        profile.tags = vec!["jump".into(), "ops".into()];
+
+        let metadata = prepare_host_card_metadata(&profile);
+
+        assert!(metadata.group.is_none());
+        assert_eq!(metadata.tags.visible.len(), 2);
+        assert_eq!(metadata.tags.visible[0].label.as_ref(), "jump");
+        assert_eq!(metadata.tags.visible[1].label.as_ref(), "ops");
+        assert!(metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_metadata_handles_group_only_and_empty_metadata() {
+        let mut group_only = SessionProfile::blank("profile-1", 1);
+        group_only.group = "Production".into();
+
+        let group_only_metadata = prepare_host_card_metadata(&group_only);
+        assert_eq!(
+            group_only_metadata.group.unwrap().badge.label.as_ref(),
+            "Production"
+        );
+        assert!(group_only_metadata.tags.visible.is_empty());
+        assert!(group_only_metadata.tags.overflow.is_none());
+
+        let empty = SessionProfile::blank("profile-2", 2);
+        let empty_metadata = prepare_host_card_metadata(&empty);
+        assert!(empty_metadata.group.is_none());
+        assert!(empty_metadata.tags.visible.is_empty());
+        assert!(empty_metadata.tags.overflow.is_none());
+    }
+
+    #[test]
+    fn prepare_host_card_tags_shows_only_overflow_when_tags_do_not_fit() {
+        let tags = vec!["production".into(), "database".into()];
+
+        let summary = prepare_host_card_tags(&tags, 6);
+
+        assert!(summary.visible.is_empty());
+        assert_eq!(summary.overflow.as_ref().unwrap().label.as_ref(), "+2");
+        assert_eq!(
+            summary.overflow.as_ref().unwrap().tooltip.as_deref(),
+            Some("production, database")
+        );
     }
 }

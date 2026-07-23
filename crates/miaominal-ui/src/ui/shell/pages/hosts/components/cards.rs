@@ -1,26 +1,45 @@
 use super::super::super::super::*;
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardTagChip {
+pub(in crate::ui::shell::pages::hosts) struct HostCardBadgeChip {
     pub label: SharedString,
     pub tooltip: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardTags {
-    pub visible: Vec<HostCardTagChip>,
-    pub overflow_count: usize,
-    pub overflow_tooltip: Option<SharedString>,
+pub(in crate::ui::shell::pages::hosts) struct HostCardGroupBadge {
+    pub badge: HostCardBadgeChip,
 }
 
-fn host_card_tag_badge(
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell::pages::hosts) struct HostCardTags {
+    pub visible: Vec<HostCardBadgeChip>,
+    pub overflow: Option<HostCardBadgeChip>,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui::shell::pages::hosts) struct HostCardMetadata {
+    pub group: Option<HostCardGroupBadge>,
+    pub tags: HostCardTags,
+}
+
+fn host_card_badge_tooltip(text: SharedString) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+}
+
+fn host_card_badge(
+    id: SharedString,
     label: SharedString,
-    _tooltip: Option<SharedString>,
+    tooltip: Option<SharedString>,
     background: u32,
     foreground: u32,
 ) -> gpui::AnyElement {
     div()
+        .id(id)
         .flex_shrink_0()
+        .when_some(tooltip, |this, tooltip| {
+            this.tooltip(host_card_badge_tooltip(tooltip))
+        })
         .child(badge(label, background, foreground))
         .into_any_element()
 }
@@ -113,22 +132,50 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
 
 pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
     title: impl Into<SharedString>,
-    subtitle: Option<SharedString>,
-    tags: HostCardTags,
+    metadata: HostCardMetadata,
+    badge_id_prefix: impl Into<SharedString>,
     action_icon: AppIcon,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
     on_action_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
     let title = title.into();
-    let has_tags = !tags.visible.is_empty() || tags.overflow_count > 0;
-    let overflow_badge =
-        (tags.overflow_count > 0).then(|| SharedString::from(format!("+{}", tags.overflow_count)));
+    let badge_id_prefix = badge_id_prefix.into();
+    let HostCardMetadata { group, tags } = metadata;
+    let has_metadata = group.is_some() || !tags.visible.is_empty() || tags.overflow.is_some();
+    let group_badge = group.map(|group| {
+        host_card_badge(
+            SharedString::from(format!("{badge_id_prefix}-group")),
+            group.badge.label,
+            group.badge.tooltip,
+            roles.surface_container_highest,
+            roles.on_surface_variant,
+        )
+    });
+    let tag_badges: Vec<_> = tags
+        .visible
+        .into_iter()
+        .enumerate()
+        .map(|(index, tag)| {
+            host_card_badge(
+                SharedString::from(format!("{badge_id_prefix}-tag-{index}")),
+                tag.label,
+                tag.tooltip,
+                roles.surface_container_low,
+                roles.on_surface_variant,
+            )
+        })
+        .collect();
+    let overflow_badge = tags.overflow.map(|overflow| {
+        host_card_badge(
+            SharedString::from(format!("{badge_id_prefix}-overflow")),
+            overflow.label,
+            overflow.tooltip,
+            roles.surface_container_highest,
+            roles.on_surface_variant,
+        )
+    });
 
     card_surface(roles.surface_container, 18.0)
         .w(px(HOST_CARD_WIDTH))
@@ -181,46 +228,15 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
                                                 .text_color(rgb(roles.on_surface))
                                                 .child(title),
                                         )
-                                        .children(subtitle.into_iter().map(|subtitle| {
-                                            div()
-                                                .w_full()
-                                                .min_w(px(0.0))
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_size(
-                                                    miaominal_settings::FontSize::Body.scaled(),
-                                                )
-                                                .line_height(
-                                                    miaominal_settings::scaled_line_height(16.0),
-                                                )
-                                                .text_color(rgb(text_muted))
-                                                .child(subtitle)
-                                        }))
-                                        .when(has_tags, move |this| {
+                                        .when(has_metadata, move |this| {
                                             this.child(
                                                 h_flex()
-                                                    .gap_2()
+                                                    .gap_1()
                                                     .min_w(px(0.0))
                                                     .overflow_hidden()
-                                                    .children(tags.visible.into_iter().map(|tag| {
-                                                        host_card_tag_badge(
-                                                            tag.label,
-                                                            tag.tooltip,
-                                                            roles.surface_container_low,
-                                                            roles.on_surface_variant,
-                                                        )
-                                                    }))
-                                                    .when_some(
-                                                        overflow_badge,
-                                                        move |this, label| {
-                                                            this.child(host_card_tag_badge(
-                                                                label,
-                                                                tags.overflow_tooltip.clone(),
-                                                                roles.surface_container_highest,
-                                                                roles.on_surface_variant,
-                                                            ))
-                                                        },
-                                                    ),
+                                                    .children(group_badge)
+                                                    .children(tag_badges)
+                                                    .children(overflow_badge),
                                             )
                                         }),
                                 ),
