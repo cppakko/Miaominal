@@ -5,6 +5,8 @@
 
 mod app;
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use gpui::WindowDecorations;
 #[cfg(target_os = "macos")]
 use gpui::point;
 use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
@@ -94,6 +96,8 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(720.0), px(480.0))),
             titlebar: main_window_titlebar(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            window_decorations: Some(WindowDecorations::Client),
             #[cfg(target_os = "macos")]
             is_movable: false,
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
