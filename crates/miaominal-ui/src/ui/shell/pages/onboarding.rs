@@ -111,41 +111,50 @@ pub(in crate::ui::shell) fn render_onboarding_page(
                     window,
                 ))
                 .child(
-                    v_flex()
+                    div()
                         .flex_1()
                         .w_full()
                         .min_h(px(0.0))
-                        .max_w(px(1040.0))
-                        .mx_auto()
-                        .px_4()
-                        .pt_4()
-                        .pb(px(112.0))
-                        .gap_4()
+                        .overflow_hidden()
                         .child(
-                            v_flex()
-                                .relative()
-                                .items_center()
-                                .justify_center()
-                                .flex_1()
-                                .min_h(px(0.0))
-                                .gap_6()
-                                .p_6()
-                                .rounded(px(28.0))
-                                .opacity(step_render_state.visibility)
-                                .top(px((1.0 - step_render_state.visibility)
-                                    * ONBOARDING_STEP_TRANSITION_OFFSET))
-                                .child(render_onboarding_step_header(current_step))
-                                .when(current_step == OnboardingStep::Welcome, |this| {
-                                    this.child(
-                                        div()
-                                            .w_full()
-                                            .flex()
+                            div().size_full().overflow_y_scrollbar().child(
+                                v_flex()
+                                    .w_full()
+                                    .min_h_full()
+                                    .max_w(px(1040.0))
+                                    .mx_auto()
+                                    .px_4()
+                                    .pt_4()
+                                    .pb(px(112.0))
+                                    .child(
+                                        v_flex()
+                                            .relative()
+                                            .items_center()
                                             .justify_center()
-                                            .text_color(rgb(roles.primary))
-                                            .child(Icon::new(AppIcon::Miaominal).size(px(220.0))),
-                                    )
-                                })
-                                .child(step_content),
+                                            .flex_1()
+                                            .gap_6()
+                                            .p_6()
+                                            .rounded(px(28.0))
+                                            .opacity(step_render_state.visibility)
+                                            .top(px((1.0 - step_render_state.visibility)
+                                                * ONBOARDING_STEP_TRANSITION_OFFSET))
+                                            .child(render_onboarding_step_header(current_step))
+                                            .when(current_step == OnboardingStep::Welcome, |this| {
+                                                this.child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .justify_center()
+                                                        .text_color(rgb(roles.primary))
+                                                        .child(
+                                                            Icon::new(AppIcon::Miaominal)
+                                                                .size(px(220.0)),
+                                                        ),
+                                                )
+                                            })
+                                            .child(step_content),
+                                    ),
+                            ),
                         ),
                 ),
         )
