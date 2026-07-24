@@ -176,6 +176,45 @@ It focuses on SSH sessions, SFTP file transfers, configuration management, and s
 """
 linux_use_terminal = false
 
+[package.metadata.deb]
+maintainer = "cppakko <cppakko@users.noreply.github.com>"
+copyright = "2026, cppakko"
+license-file = ["LICENSE", "0"]
+extended-description = """
+Miaominal is a desktop terminal application for SSH, SFTP, port forwarding,
+secure credential storage, and encrypted configuration synchronization.
+"""
+revision = "1"
+section = "net"
+priority = "optional"
+depends = "$auto"
+recommends = "xdg-desktop-portal"
+assets = [
+    ["target/release/miaominal", "usr/bin/", "755"],
+    ["packaging/linux/miaominal.desktop", "usr/share/applications/", "644"],
+    [
+        "assets/app_icon_system.svg",
+        "usr/share/icons/hicolor/scalable/apps/miaominal.svg",
+        "644",
+    ],
+]
+
+[package.metadata.generate-rpm]
+release = "1"
+license = "MIT"
+summary = "Desktop terminal application for SSH, SFTP, and remote development"
+vendor = "cppakko"
+require-sh = false
+assets = [
+    { source = "target/release/miaominal", dest = "/usr/bin/miaominal", mode = "755" },
+    { source = "packaging/linux/miaominal.desktop", dest = "/usr/share/applications/miaominal.desktop", mode = "644" },
+    { source = "assets/app_icon_system.svg", dest = "/usr/share/icons/hicolor/scalable/apps/miaominal.svg", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/miaominal/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.recommends]
+xdg-desktop-portal = "*"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

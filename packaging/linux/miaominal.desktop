@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Miaominal
+Comment=Desktop terminal for SSH, SFTP, and remote development
+Exec=miaominal
+TryExec=miaominal
+Icon=miaominal
+Terminal=false
+Categories=Development;System;Network;TerminalEmulator;
+Keywords=SSH;SFTP;Terminal;Remote;Server;
+StartupNotify=true
+StartupWMClass=miaominal

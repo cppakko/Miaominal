@@ -63,8 +63,30 @@ jobs:
           if-no-files-found: error
 
   build_linux:
-    name: Build Linux AppImage
-    runs-on: ubuntu-24.04
+    name: Build Linux ${{ matrix.arch_label }} packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch_label: x86_64
+            artifact_name: Miaominal-linux-x86_64
+            appimage_name: Miaominal-linux-x86_64.AppImage
+            deb_name: Miaominal-linux-amd64.deb
+            rpm_name: Miaominal-linux-x86_64.rpm
+            file_arch: x86-64
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch_label: arm64
+            artifact_name: Miaominal-linux-arm64
+            appimage_name: Miaominal-linux-arm64.AppImage
+            deb_name: Miaominal-linux-arm64.deb
+            rpm_name: Miaominal-linux-aarch64.rpm
+            file_arch: ARM aarch64
+            deb_arch: arm64
+            rpm_arch: aarch64
 
     steps:
       - name: Checkout
@@ -78,7 +100,9 @@ jobs:
             clang \
             cmake \
             curl \
+            dpkg-dev \
             elfutils \
+            file \
             g++ \
             gcc \
             gettext-base \
@@ -105,6 +129,8 @@ jobs:
             musl-tools \
             pipewire \
             pkg-config \
+            rpm \
+            squashfs-tools \
             xdg-desktop-portal
 
       - name: Install Rust toolchain
@@ -113,32 +139,84 @@ jobs:
       - name: Restore cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-bundle
-        run: cargo install cargo-bundle --locked
+      - name: Install Linux packaging tools
+        run: |
+          cargo install cargo-bundle --locked
+          cargo install cargo-deb --version 3.7.0 --locked
+          cargo install cargo-generate-rpm --version 0.21.0 --locked
 
       - name: Build Linux AppImage
         run: cargo bundle --release --format appimage
 
-      - name: Normalize AppImage artifact
-        shell: pwsh
-        run: |
-          $appImage = Get-ChildItem -Path target/release/bundle -Filter *.AppImage -Recurse | Select-Object -First 1
-          if (-not $appImage) {
-            throw "AppImage output was not produced."
-          }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $appImage.FullName dist/Miaominal-linux-x86_64.AppImage
+      - name: Build Debian package
+        run: bash packaging/linux/build-deb.sh --no-build
 
-      - name: Upload Linux artifact
+      - name: Build RPM package
+        run: bash packaging/linux/build-rpm.sh --no-build
+
+      - name: Normalize Linux artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage_path="$(find target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          deb_path="$(find target/debian -maxdepth 1 -type f -name 'miaominal_*.deb' -print -quit)"
+          rpm_path="$(find target/generate-rpm -maxdepth 1 -type f -name 'miaominal-*.rpm' -print -quit)"
+
+          test -n "$appimage_path"
+          test -n "$deb_path"
+          test -n "$rpm_path"
+
+          rm -rf dist
+          mkdir -p dist
+          install -m 0755 "$appimage_path" "dist/${{ matrix.appimage_name }}"
+          install -m 0644 "$deb_path" "dist/${{ matrix.deb_name }}"
+          install -m 0644 "$rpm_path" "dist/${{ matrix.rpm_name }}"
+
+      - name: Verify Linux artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          file "dist/${{ matrix.appimage_name }}" | tee /tmp/miaominal-file.txt
+          grep -F "${{ matrix.file_arch }}" /tmp/miaominal-file.txt
+
+          deb_arch="$(dpkg-deb --field "dist/${{ matrix.deb_name }}" Architecture)"
+          test "$deb_arch" = "${{ matrix.deb_arch }}"
+
+          rpm_arch="$(rpm -qp --queryformat '%{ARCH}\n' "dist/${{ matrix.rpm_name }}")"
+          test "$rpm_arch" = "${{ matrix.rpm_arch }}"
+
+          dpkg-deb --info "dist/${{ matrix.deb_name }}"
+          rpm -qip "dist/${{ matrix.rpm_name }}"
+
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Miaominal-linux-x86_64
-          path: dist/Miaominal-linux-x86_64.AppImage
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.appimage_name }}
+            dist/${{ matrix.deb_name }}
+            dist/${{ matrix.rpm_name }}
           if-no-files-found: error
 
   build_windows:
-    name: Build Windows standalone and Inno Setup installer
-    runs-on: windows-2022
+    name: Build Windows ${{ matrix.arch_label }} standalone and installer
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch_label: x64
+            artifact_name: Miaominal-windows-x64
+            standalone_name: Miaominal-windows-x64-standalone.exe
+            setup_name: Miaominal-windows-x64-setup.exe
+            pe_machine: "8664"
+          - runner: windows-11-arm
+            arch_label: arm64
+            artifact_name: Miaominal-windows-arm64
+            standalone_name: Miaominal-windows-arm64-standalone.exe
+            setup_name: Miaominal-windows-arm64-setup.exe
+            pe_machine: "AA64"
 
     steps:
       - name: Checkout
@@ -150,13 +228,24 @@ jobs:
       - name: Restore cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Inno Setup
+      - name: Ensure Inno Setup
         shell: pwsh
         run: |
-          choco install innosetup --yes --no-progress
-          $innoPath = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'
-          if (-not (Test-Path (Join-Path $innoPath 'ISCC.exe'))) {
-            throw "ISCC.exe was not installed at $innoPath"
+          $innoCandidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6')
+          )
+          $innoPath = $innoCandidates |
+            Where-Object { Test-Path (Join-Path $_ 'ISCC.exe') } |
+            Select-Object -First 1
+          if (-not $innoPath) {
+            choco install innosetup --yes --no-progress
+            $innoPath = $innoCandidates |
+              Where-Object { Test-Path (Join-Path $_ 'ISCC.exe') } |
+              Select-Object -First 1
+          }
+          if (-not $innoPath) {
+            throw 'ISCC.exe was not found after installing Inno Setup.'
           }
           $innoPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -178,24 +267,55 @@ jobs:
       - name: Build Windows release binary
         run: cargo build --release --locked
 
+      - name: Verify Windows binary architecture
+        shell: pwsh
+        run: |
+          $binaryPath = 'target/release/miaominal.exe'
+          $bytes = [System.IO.File]::ReadAllBytes($binaryPath)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [Convert]::ToUInt16('${{ matrix.pe_machine }}', 16)
+          if ($machine -ne $expected) {
+            throw ('Unexpected PE machine type 0x{0:X4}; expected 0x{1:X4}.' -f $machine, $expected)
+          }
+          Write-Output ('Verified PE machine type: 0x{0:X4}' -f $machine)
+
       - name: Collect standalone artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/miaominal.exe dist/Miaominal-windows-x64-standalone.exe
+          Copy-Item target/release/miaominal.exe "dist/${{ matrix.standalone_name }}"
+
+      - name: Configure ARM64 installer architecture
+        if: matrix.arch_label == 'arm64'
+        shell: pwsh
+        run: |
+          $issPath = 'packaging/windows/Miaominal.iss'
+          $content = Get-Content -Raw $issPath
+          if ([regex]::Matches($content, '(?m)^ArchitecturesAllowed=x64compatible\r?$').Count -ne 1) {
+            throw 'Expected exactly one x64 ArchitecturesAllowed directive before ARM64 replacement.'
+          }
+          $replacement = "ArchitecturesAllowed=arm64`r`nArchitecturesInstallIn64BitMode=arm64"
+          $content = $content.Replace('ArchitecturesAllowed=x64compatible', $replacement)
+          $allowedCount = [regex]::Matches($content, '(?m)^ArchitecturesAllowed=arm64\r?$').Count
+          $installModeCount = [regex]::Matches($content, '(?m)^ArchitecturesInstallIn64BitMode=arm64\r?$').Count
+          if ($allowedCount -ne 1 -or $installModeCount -ne 1 -or $content.Contains('ArchitecturesAllowed=x64compatible')) {
+            throw 'Failed to configure the Inno Setup script for ARM64.'
+          }
+          Set-Content -Path $issPath -Value $content -Encoding utf8 -NoNewline
 
       - name: Build Inno Setup installer
         shell: pwsh
         run: |
-          ./packaging/windows/build-inno.ps1 -BinaryPath target/release/miaominal.exe -Version $env:APP_VERSION -OutputPath dist/Miaominal-windows-x64-setup.exe
+          ./packaging/windows/build-inno.ps1 -BinaryPath target/release/miaominal.exe -Version $env:APP_VERSION -OutputPath "dist/${{ matrix.setup_name }}"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Miaominal-windows-x64
+          name: ${{ matrix.artifact_name }}
           path: |
-            dist/Miaominal-windows-x64-standalone.exe
-            dist/Miaominal-windows-x64-setup.exe
+            dist/${{ matrix.standalone_name }}
+            dist/${{ matrix.setup_name }}
           if-no-files-found: error
 
   checksums:
