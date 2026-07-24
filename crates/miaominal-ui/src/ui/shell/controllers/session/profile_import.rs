@@ -42,7 +42,7 @@ impl SessionController {
                 return;
             };
             let path = file.path().to_path_buf();
-            let _ = cx.update(move |cx| {
+            cx.update(move |cx| {
                 let Some(window_handle) = cx.active_window() else {
                     return;
                 };

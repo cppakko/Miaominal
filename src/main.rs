@@ -117,6 +117,36 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
 fn main() {
     init_logging();
 
+    let config_dir_initialization = match miaominal_paths::initialize_config_dir() {
+        Ok(initialization) => initialization,
+        Err(error) => {
+            eprintln!("failed to initialize user config directory: {error:#}");
+            std::process::exit(1);
+        }
+    };
+    match config_dir_initialization {
+        miaominal_paths::ConfigDirInitialization::Current { .. } => {}
+        miaominal_paths::ConfigDirInitialization::Migrated { from, to } => {
+            log::info!(
+                "migrated legacy config directory from {} to {}",
+                from.display(),
+                to.display()
+            );
+        }
+        miaominal_paths::ConfigDirInitialization::LegacyFallback {
+            path,
+            intended,
+            error,
+        } => {
+            log::warn!(
+                "using legacy config directory {} because migration to {} failed: {}",
+                path.display(),
+                intended.display(),
+                error
+            );
+        }
+    }
+
     if let Err(error) = miaominal_paths::cleanup_stale_atomic_write_files() {
         log::warn!("failed to clean stale atomic-write files: {error:?}");
     }

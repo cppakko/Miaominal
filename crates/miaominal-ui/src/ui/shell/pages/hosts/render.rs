@@ -259,17 +259,18 @@ fn prepare_host_card_tags(raw_tags: &[String], row_unit_budget: usize) -> HostCa
         None
     };
 
-    if overflow_count > 0 && overflow.is_none() {
-        if let Some(last_visible) = visible.last_mut() {
-            let tooltip_start = visible_source_count.saturating_sub(1);
-            last_visible.tooltip = Some(SharedString::from(
-                unique_tags[tooltip_start..]
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ));
-        }
+    if overflow_count > 0
+        && overflow.is_none()
+        && let Some(last_visible) = visible.last_mut()
+    {
+        let tooltip_start = visible_source_count.saturating_sub(1);
+        last_visible.tooltip = Some(SharedString::from(
+            unique_tags[tooltip_start..]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
     }
 
     HostCardTags { visible, overflow }

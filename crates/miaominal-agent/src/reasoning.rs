@@ -247,12 +247,14 @@ fn gemini_params(model: &str, effort: AiReasoningEffort) -> AgentResult<serde_js
             include_thoughts: Some(true),
         }
     };
-    let mut generation_config = GenerationConfig::default();
     // Rig's Gemini default also sets temperature=1 and maxOutputTokens=4096.
     // Keep those controlled by AgentBuilder/provider defaults and serialize only thinking here.
-    generation_config.temperature = None;
-    generation_config.max_output_tokens = None;
-    generation_config.thinking_config = Some(thinking_config);
+    let generation_config = GenerationConfig {
+        temperature: None,
+        max_output_tokens: None,
+        thinking_config: Some(thinking_config),
+        ..Default::default()
+    };
     serde_json::to_value(AdditionalParameters::default().with_config(generation_config))
         .map_err(|error| AgentError::Backend(error.into()))
 }

@@ -308,7 +308,7 @@ impl SettingsService {
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
         let chat_credentials = CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE);
-        let config_dir = paths::project_dirs()?.config_dir().to_path_buf();
+        let config_dir = paths::config_dir()?;
 
         Self::reset_local_data_with(
             config_dir.as_path(),

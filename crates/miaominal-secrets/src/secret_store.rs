@@ -126,6 +126,18 @@ impl Default for SecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::APP_CREDENTIAL_SERVICE;
+
+    #[test]
+    fn v0_1_keyring_identifiers_remain_stable() {
+        assert_eq!(APP_CREDENTIAL_SERVICE, "dev.akko.miaominal");
+        assert_eq!(SecretKind::Password.suffix(), "password");
+        assert_eq!(SecretKind::Passphrase.suffix(), "passphrase");
+        assert_eq!(
+            SecretKind::ManagedPrivateKey.suffix(),
+            "managed-private-key"
+        );
+    }
 
     #[test]
     fn revoked_protected_memory_is_reported_as_a_locked_vault() {

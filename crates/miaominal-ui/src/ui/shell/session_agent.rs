@@ -1802,7 +1802,7 @@ mod tests {
 
     #[test]
     fn session_agent_history_excludes_persisted_error_messages() {
-        let messages = vec![
+        let messages = [
             SessionAgentMessage::user("question"),
             SessionAgentMessage::assistant_raw("partial answer"),
             SessionAgentMessage::error("provider failed"),
@@ -1817,7 +1817,7 @@ mod tests {
 
     #[test]
     fn complete_conversation_with_error_round_trips_through_persistence_records() {
-        let messages = vec![
+        let messages = [
             SessionAgentMessage::user("earlier question"),
             SessionAgentMessage::assistant_raw("earlier answer"),
             SessionAgentMessage::user("current question"),

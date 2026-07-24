@@ -57,39 +57,6 @@ fn reasoning_effort_selectable(support: AgentReasoningSupport, effort: AiReasoni
     effort == AiReasoningEffort::Default || support != AgentReasoningSupport::Unsupported
 }
 
-#[cfg(test)]
-mod reasoning_menu_tests {
-    use super::*;
-
-    #[test]
-    fn unsupported_models_can_only_select_provider_default() {
-        assert!(reasoning_effort_selectable(
-            AgentReasoningSupport::Unsupported,
-            AiReasoningEffort::Default
-        ));
-        for effort in [
-            AiReasoningEffort::Low,
-            AiReasoningEffort::Medium,
-            AiReasoningEffort::High,
-        ] {
-            assert!(!reasoning_effort_selectable(
-                AgentReasoningSupport::Unsupported,
-                effort
-            ));
-        }
-    }
-
-    #[test]
-    fn unknown_models_keep_all_efforts_selectable() {
-        for effort in AiReasoningEffort::all() {
-            assert!(reasoning_effort_selectable(
-                AgentReasoningSupport::Unknown,
-                *effort
-            ));
-        }
-    }
-}
-
 fn agent_mode_label_key(mode: AgentMode) -> &'static str {
     match mode {
         AgentMode::Ask => "agent.mode.ask",
@@ -766,4 +733,37 @@ fn render_composer_badge_row(
             }))
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod reasoning_menu_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_models_can_only_select_provider_default() {
+        assert!(reasoning_effort_selectable(
+            AgentReasoningSupport::Unsupported,
+            AiReasoningEffort::Default
+        ));
+        for effort in [
+            AiReasoningEffort::Low,
+            AiReasoningEffort::Medium,
+            AiReasoningEffort::High,
+        ] {
+            assert!(!reasoning_effort_selectable(
+                AgentReasoningSupport::Unsupported,
+                effort
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_models_keep_all_efforts_selectable() {
+        for effort in AiReasoningEffort::all() {
+            assert!(reasoning_effort_selectable(
+                AgentReasoningSupport::Unknown,
+                *effort
+            ));
+        }
+    }
 }

@@ -249,6 +249,13 @@ mod tests {
     }
 
     #[test]
+    fn v0_1_sync_keyring_accounts_remain_stable() {
+        assert_eq!(ACCOUNT_GITHUB_TOKEN, "sync:github-token");
+        assert_eq!(ACCOUNT_WEBDAV_PASSWORD, "sync:webdav-password");
+        assert_eq!(ACCOUNT_PASSPHRASE, "sync:encryption-passphrase");
+    }
+
+    #[test]
     fn get_secrets_reads_all_sync_secrets_in_one_call_shape() {
         set_vault_test_parameters();
         let vault_path = std::env::temp_dir().join(format!(
