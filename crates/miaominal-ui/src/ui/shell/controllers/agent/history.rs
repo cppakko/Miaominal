@@ -17,6 +17,7 @@ impl AgentController {
         self.refresh_chat_sessions(cx);
         self.runtime.get_mut().foreground = SessionAgentState {
             panel_view: ChatPanelView::SessionList,
+            agent_mode: self.preferred_agent_mode,
             ..Default::default()
         };
         self.reset_session_filter(cx);
@@ -56,6 +57,7 @@ impl AgentController {
         self.stash_foreground_session(cx);
         if let Some(mut state) = self.runtime.get_mut().take_background_session(&session_id) {
             state.panel_view = ChatPanelView::Conversation;
+            state.agent_mode = self.preferred_agent_mode;
             self.runtime.get_mut().foreground = state;
             self.clear_conversation_search_state(cx);
             cx.emit(AppCommand::Feedback(i18n::string(
@@ -102,6 +104,7 @@ impl AgentController {
             title,
             active_request_id: 1,
             panel_view: ChatPanelView::Conversation,
+            agent_mode: self.preferred_agent_mode,
             ..Default::default()
         };
         cx.emit(AppCommand::Feedback(i18n::string(
@@ -485,24 +488,10 @@ impl AgentController {
 
     fn reset_foreground_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_conversation_view(cx);
-        {
-            let state = &mut self.runtime.get_mut().foreground;
-            state.messages.clear();
-            state.conversation_view = None;
-            state.conversation_view_observation = None;
-            state.conversation_viewport = None;
-            state.session_id = None;
-            state.last_error = None;
-            state.active_request_id = state.active_request_id.wrapping_add(1);
-            state.pending_stream_stop = None;
-            state.pending_agent_cancellation = None;
-            state.pending_task = None;
-            state.selected_at_targets.clear();
-            state.active_at_targets.clear();
-            state.active_exec_context = None;
-            state.title = None;
-            state.panel_view = ChatPanelView::Conversation;
-        }
+        reset_session_agent_state(
+            &mut self.runtime.get_mut().foreground,
+            self.preferred_agent_mode,
+        );
         self.clear_prompt_input(window, cx);
     }
 
@@ -525,6 +514,28 @@ impl AgentController {
         let state = std::mem::take(&mut runtime.foreground);
         runtime.store_background_session(session_id, state);
     }
+}
+
+fn reset_session_agent_state(
+    state: &mut SessionAgentState,
+    agent_mode: miaominal_agent::AgentMode,
+) {
+    state.messages.clear();
+    state.conversation_view = None;
+    state.conversation_view_observation = None;
+    state.conversation_viewport = None;
+    state.session_id = None;
+    state.last_error = None;
+    state.active_request_id = state.active_request_id.wrapping_add(1);
+    state.pending_stream_stop = None;
+    state.pending_agent_cancellation = None;
+    state.pending_task = None;
+    state.selected_at_targets.clear();
+    state.active_at_targets.clear();
+    state.active_exec_context = None;
+    state.title = None;
+    state.panel_view = ChatPanelView::Conversation;
+    state.agent_mode = agent_mode;
 }
 
 pub(in crate::ui::shell) fn chat_record_from_session_agent_message(
@@ -644,4 +655,29 @@ fn unix_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use miaominal_agent::AgentMode;
+
+    #[test]
+    fn new_conversation_keeps_the_last_agent_mode() {
+        let mut state = SessionAgentState {
+            session_id: Some("previous-session".into()),
+            messages: vec![SessionAgentMessage::user("previous question")],
+            agent_mode: AgentMode::Execute,
+            active_request_id: 9,
+            ..Default::default()
+        };
+
+        reset_session_agent_state(&mut state, AgentMode::FullAuto);
+
+        assert_eq!(state.agent_mode, AgentMode::FullAuto);
+        assert!(state.session_id.is_none());
+        assert!(state.messages.is_empty());
+        assert_eq!(state.panel_view, ChatPanelView::Conversation);
+        assert_eq!(state.active_request_id, 10);
+    }
 }

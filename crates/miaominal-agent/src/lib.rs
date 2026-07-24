@@ -6,6 +6,7 @@ mod error;
 mod jobs;
 mod path_guard;
 mod policy;
+mod reasoning;
 mod runtime;
 mod tools;
 mod web;
@@ -26,6 +27,7 @@ pub use chat::{
 pub use error::{AgentError, AgentResult};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
+pub use reasoning::{AgentReasoningSupport, agent_reasoning_support};
 pub use runtime::agent_runtime;
 pub use tools::{AgentToolCancellation, AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
 pub use web::{

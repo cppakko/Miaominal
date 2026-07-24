@@ -441,7 +441,7 @@ where
     }
 }
 
-fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
+pub(super) fn agent_provider_kind(kind: AiProviderKind) -> AgentChatProviderKind {
     match kind {
         AiProviderKind::Anthropic => AgentChatProviderKind::Anthropic,
         AiProviderKind::ChatGpt => AgentChatProviderKind::ChatGpt,
@@ -1327,6 +1327,7 @@ impl AgentController {
             api_key,
             temperature: provider.temperature,
             max_tokens: provider.max_tokens,
+            reasoning_effort: provider.reasoning_effort,
         })
     }
 
@@ -1796,6 +1797,55 @@ mod tests {
         assert_eq!(
             history.last().map(|message| message.content.as_str()),
             Some("assistant 49")
+        );
+    }
+
+    #[test]
+    fn session_agent_history_excludes_persisted_error_messages() {
+        let messages = vec![
+            SessionAgentMessage::user("question"),
+            SessionAgentMessage::assistant_raw("partial answer"),
+            SessionAgentMessage::error("provider failed"),
+        ];
+
+        let history = build_session_agent_history(&messages);
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].content, "question");
+        assert_eq!(history[1].content, "partial answer");
+    }
+
+    #[test]
+    fn complete_conversation_with_error_round_trips_through_persistence_records() {
+        let messages = vec![
+            SessionAgentMessage::user("earlier question"),
+            SessionAgentMessage::assistant_raw("earlier answer"),
+            SessionAgentMessage::user("current question"),
+            SessionAgentMessage::assistant_raw("partial answer"),
+            SessionAgentMessage::error("provider failed"),
+        ];
+
+        let restored = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let record =
+                    chat_record_from_session_agent_message("session-1", index, 100, message)
+                        .expect("message should produce a persistence record");
+                session_agent_message_from_record(record)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(restored.len(), messages.len());
+        assert_eq!(
+            restored
+                .iter()
+                .map(|message| (message.role, message.content.as_str()))
+                .collect::<Vec<_>>(),
+            messages
+                .iter()
+                .map(|message| (message.role, message.content.as_str()))
+                .collect::<Vec<_>>()
         );
     }
 

@@ -2,7 +2,12 @@ use super::super::*;
 use super::session_agent_mentions;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
+use crate::ui::shell::actions::ai_provider_kind_chat_supported;
+use crate::ui::shell::session_agent::agent_provider_kind;
 use gpui::{Animation, AnimationExt as _, ClipboardEntry};
+use gpui_component::{Disableable as _, menu::DropdownMenu as _};
+use miaominal_agent::{AgentMode, AgentReasoningSupport, agent_reasoning_support};
+use miaominal_settings::{AiProviderConfig, AiReasoningEffort};
 use std::time::Duration;
 
 const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);
@@ -18,17 +23,270 @@ fn ai_provider_kind_supports_vision(kind: miaominal_settings::AiProviderKind) ->
     )
 }
 
-fn selected_ai_provider_kind(
-    settings: &SettingsController,
-    _cx: &App,
-) -> Option<miaominal_settings::AiProviderKind> {
+fn selected_ai_provider(settings: &SettingsController, _cx: &App) -> Option<AiProviderConfig> {
     let app_settings = settings.settings();
-    let selected_id = app_settings.selected_ai_provider_id.as_deref()?;
     app_settings
-        .ai_providers
-        .iter()
-        .find(|provider| provider.id == selected_id && provider.enabled)
-        .map(|provider| provider.kind)
+        .selected_ai_provider_id
+        .as_deref()
+        .and_then(|selected_id| {
+            app_settings
+                .ai_providers
+                .iter()
+                .find(|provider| provider.id == selected_id && provider.enabled)
+        })
+        .or_else(|| {
+            app_settings
+                .ai_providers
+                .iter()
+                .find(|provider| provider.enabled && ai_provider_kind_chat_supported(provider.kind))
+        })
+        .filter(|provider| ai_provider_kind_chat_supported(provider.kind))
+        .cloned()
+}
+
+fn reasoning_effort_label_key(effort: AiReasoningEffort) -> &'static str {
+    match effort {
+        AiReasoningEffort::Default => "workspace.panel.agent.reasoning.default",
+        AiReasoningEffort::Low => "workspace.panel.agent.reasoning.low",
+        AiReasoningEffort::Medium => "workspace.panel.agent.reasoning.medium",
+        AiReasoningEffort::High => "workspace.panel.agent.reasoning.high",
+    }
+}
+
+fn reasoning_effort_selectable(support: AgentReasoningSupport, effort: AiReasoningEffort) -> bool {
+    effort == AiReasoningEffort::Default || support != AgentReasoningSupport::Unsupported
+}
+
+#[cfg(test)]
+mod reasoning_menu_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_models_can_only_select_provider_default() {
+        assert!(reasoning_effort_selectable(
+            AgentReasoningSupport::Unsupported,
+            AiReasoningEffort::Default
+        ));
+        for effort in [
+            AiReasoningEffort::Low,
+            AiReasoningEffort::Medium,
+            AiReasoningEffort::High,
+        ] {
+            assert!(!reasoning_effort_selectable(
+                AgentReasoningSupport::Unsupported,
+                effort
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_models_keep_all_efforts_selectable() {
+        for effort in AiReasoningEffort::all() {
+            assert!(reasoning_effort_selectable(
+                AgentReasoningSupport::Unknown,
+                *effort
+            ));
+        }
+    }
+}
+
+fn agent_mode_label_key(mode: AgentMode) -> &'static str {
+    match mode {
+        AgentMode::Ask => "agent.mode.ask",
+        AgentMode::Execute => "agent.mode.execute",
+        AgentMode::NonBlocking => "agent.mode.non_blocking",
+        AgentMode::FullAuto => "agent.mode.full_auto",
+    }
+}
+
+fn render_session_agent_mode_menu(
+    agent: Entity<AgentController>,
+    selected_mode: AgentMode,
+) -> gpui::AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let mode_label = i18n::string(agent_mode_label_key(selected_mode));
+    let menu_agent = agent.clone();
+
+    Button::new("session-agent-mode-menu")
+        .ghost()
+        .small()
+        .compact()
+        .dropdown_caret(true)
+        .label(mode_label.clone())
+        .tooltip(mode_label)
+        .w_full()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .rounded(px(14.0))
+        .bg(rgb(roles.surface_container_high))
+        .text_color(rgb(roles.on_surface))
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(180.0);
+            for mode in [
+                AgentMode::Ask,
+                AgentMode::Execute,
+                AgentMode::NonBlocking,
+                AgentMode::FullAuto,
+            ] {
+                let mode_agent = menu_agent.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(i18n::string(agent_mode_label_key(mode)))
+                        .checked(selected_mode == mode)
+                        .on_click(move |_, _, cx| {
+                            mode_agent.update(cx, |controller, cx| {
+                                controller.select_agent_mode(mode, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
+fn render_session_agent_provider_menu(
+    settings: Entity<SettingsController>,
+    cx: &App,
+) -> gpui::AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let providers = {
+        let controller = settings.read(cx);
+        controller
+            .settings()
+            .ai_providers
+            .iter()
+            .filter(|provider| provider.enabled && ai_provider_kind_chat_supported(provider.kind))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let selected_provider = selected_ai_provider(settings.read(cx), cx);
+    let selected_provider_id = selected_provider
+        .as_ref()
+        .map(|provider| provider.id.clone());
+    let selected_effort = selected_provider
+        .as_ref()
+        .map(|provider| provider.reasoning_effort)
+        .unwrap_or_default();
+    let reasoning_support =
+        selected_provider
+            .as_ref()
+            .map_or(AgentReasoningSupport::Unknown, |provider| {
+                agent_reasoning_support(agent_provider_kind(provider.kind), provider.model.as_str())
+            });
+    let effort_label = i18n::string(reasoning_effort_label_key(selected_effort));
+    let provider_label = selected_provider
+        .as_ref()
+        .map(|provider| provider.name.clone())
+        .unwrap_or_else(|| i18n::string("workspace.panel.agent.provider_menu.empty"));
+    let tooltip = selected_provider.as_ref().map_or_else(
+        || i18n::string("workspace.panel.agent.no_provider_configured"),
+        |provider| match reasoning_support {
+            AgentReasoningSupport::Supported => i18n::string_args(
+                "workspace.panel.agent.tooltips.provider_and_reasoning",
+                &[
+                    ("provider", provider.name.as_str()),
+                    ("level", effort_label.as_str()),
+                ],
+            ),
+            AgentReasoningSupport::Unsupported => i18n::string_args(
+                "workspace.panel.agent.tooltips.provider_reasoning_unsupported",
+                &[
+                    ("provider", provider.name.as_str()),
+                    ("model", provider.model.as_str()),
+                    ("level", effort_label.as_str()),
+                ],
+            ),
+            AgentReasoningSupport::Unknown => i18n::string_args(
+                "workspace.panel.agent.tooltips.provider_reasoning_unknown",
+                &[
+                    ("provider", provider.name.as_str()),
+                    ("model", provider.model.as_str()),
+                    ("level", effort_label.as_str()),
+                ],
+            ),
+        },
+    );
+    let has_provider = selected_provider_id.is_some();
+    let menu_settings = settings.clone();
+    let menu_providers = providers.clone();
+    let menu_selected_provider_id = selected_provider_id.clone();
+    let reasoning_submenu_label = if reasoning_support == AgentReasoningSupport::Unsupported {
+        i18n::string_args(
+            "workspace.panel.agent.provider_menu.reasoning_unsupported",
+            &[("level", effort_label.as_str())],
+        )
+    } else {
+        i18n::string_args(
+            "workspace.panel.agent.provider_menu.reasoning",
+            &[("level", effort_label.as_str())],
+        )
+    };
+
+    Button::new("session-agent-provider-menu")
+        .ghost()
+        .small()
+        .compact()
+        .dropdown_caret(true)
+        .label(provider_label)
+        .tooltip(tooltip)
+        .disabled(!has_provider)
+        .w_full()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .rounded(px(14.0))
+        .bg(rgb(roles.surface_container_high))
+        .text_color(rgb(roles.on_surface))
+        .dropdown_menu(move |menu, window, cx| {
+            let mut menu = menu.min_w(180.0);
+            for provider in &menu_providers {
+                let provider_id = provider.id.clone();
+                let provider_settings = menu_settings.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(provider.name.clone())
+                        .checked(menu_selected_provider_id.as_deref() == Some(provider.id.as_str()))
+                        .on_click(move |_, window, cx| {
+                            let provider_id = provider_id.clone();
+                            provider_settings.update(cx, |controller, cx| {
+                                controller.select_ai_provider(provider_id, window, cx);
+                            });
+                        }),
+                );
+            }
+
+            let Some(provider_id) = menu_selected_provider_id.clone() else {
+                return menu;
+            };
+            let reasoning_settings = menu_settings.clone();
+            menu.separator().submenu(
+                reasoning_submenu_label.clone(),
+                window,
+                cx,
+                move |menu, _, _| {
+                    let mut menu = menu;
+                    for effort in AiReasoningEffort::all() {
+                        let effort = *effort;
+                        let effort_settings = reasoning_settings.clone();
+                        let effort_provider_id = provider_id.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(i18n::string(reasoning_effort_label_key(effort)))
+                                .checked(selected_effort == effort)
+                                .disabled(!reasoning_effort_selectable(reasoning_support, effort))
+                                .on_click(move |_, _, cx| {
+                                    effort_settings.update(cx, |controller, cx| {
+                                        controller.set_ai_provider_reasoning_effort(
+                                            &effort_provider_id,
+                                            effort,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                },
+            )
+        })
+        .into_any_element()
 }
 
 pub(in crate::ui::shell::layout) fn render_session_agent_composer(
@@ -43,10 +301,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
         material.palettes.neutral_variant,
         if material.dark { 65 } else { 50 },
     );
-    let provider_select = settings.read(cx).forms().ai_provider_select;
     let state = agent_controller.session_agent();
     let prompt_input = agent_controller.prompt_input();
-    let agent_mode_select = agent_controller.agent_mode_select();
+    let selected_agent_mode = agent_controller.agent_mode();
     let prompt_menu_input = prompt_input.clone();
     let pty_toggle_controller = agent.clone();
     let attach_controller = agent.clone();
@@ -66,7 +323,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     let pending_attachments = state.pending_attachments.clone();
     let exec_mode_is_pty = state.exec_mode.is_pty();
     let target_candidates = agent_controller.target_candidates();
-    let selected_provider_kind = selected_ai_provider_kind(settings.read(cx), cx);
+    let selected_provider_kind =
+        selected_ai_provider(settings.read(cx), cx).map(|provider| provider.kind);
     let has_provider = selected_provider_kind.is_some();
     let image_text_fallback = has_pending_images
         && selected_provider_kind.is_some_and(|kind| !ai_provider_kind_supports_vision(kind));
@@ -195,10 +453,15 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 .gap_2()
                                 .child(
                                     div().w(px(112.0)).min_w(px(0.0)).child(
-                                        md3_select(&provider_select)
-                                            .small()
-                                            .w_full()
-                                            .bg(rgb(roles.surface_container_high)),
+                                        render_session_agent_provider_menu(settings.clone(), cx),
+                                    ),
+                                )
+                                .child(
+                                    div().w(px(112.0)).min_w(px(0.0)).child(
+                                        render_session_agent_mode_menu(
+                                            agent.clone(),
+                                            selected_agent_mode,
+                                        ),
                                     ),
                                 )
                                 .child(icon_button_with_tooltip(
@@ -243,13 +506,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                         });
                                     },
                                 ))
-                                .child(
-                                    div().w(px(108.0)).child(
-                                        md3_select(&agent_mode_select)
-                                            .with_size(gpui_component::Size::Medium)
-                                            .w_full(),
-                                    ),
-                                )
                                 .child(div().flex_1())
                                 .child(
                                     div()

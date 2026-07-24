@@ -1,6 +1,6 @@
 use gpui::Context;
 
-use super::{AgentController, SessionAgentMessage};
+use super::{AgentController, SessionAgentMessage, SessionAgentState};
 use crate::ui::{
     i18n,
     shell::{
@@ -180,27 +180,17 @@ impl AgentController {
         cx: &mut Context<Self>,
     ) -> bool {
         let is_foreground = self.runtime.borrow().session_is_foreground(session_id);
-        let thinking_index = self.active_thinking_index_for_session(session_id);
-        let previous_message_count = {
+        let failed = {
             let Some(state) = self.runtime.get_mut().session_mut(session_id) else {
                 return false;
             };
-            if state.active_request_id != request_id {
-                return false;
-            }
-            state.finish_active_thinking();
-            let previous_message_count = state.messages.len();
-            state.active_request_id = 0;
-            state.last_error = Some(message.clone());
-            state.push_message_with_enter_motion(SessionAgentMessage::error(message.clone()));
-            previous_message_count
+            append_stream_error(state, request_id, message.clone(), Some(message.clone()))
         };
-        if is_foreground && let Some(index) = thinking_index {
-            self.sync_conversation_message_view(index, cx);
+        if !failed {
+            return false;
         }
-        self.take_pending_task_for_session(session_id, cx);
         if is_foreground {
-            self.push_message_views_from(previous_message_count, cx);
+            self.reconcile_foreground_conversation_view(cx);
         }
         if is_foreground {
             cx.emit(AppCommand::Feedback(message));
@@ -344,5 +334,130 @@ impl AgentController {
         self.persist_session_chat(session_id, cx);
         cx.notify();
         true
+    }
+}
+
+pub(super) fn append_stream_error(
+    state: &mut SessionAgentState,
+    request_id: u64,
+    message: String,
+    last_error: Option<String>,
+) -> bool {
+    if state.active_request_id != request_id {
+        return false;
+    }
+
+    state.finish_active_thinking();
+    state.pending_stream_stop = None;
+    state.pending_agent_cancellation = None;
+    state.pending_task.take();
+    state.active_request_id = 0;
+    state.last_error = last_error;
+    state.push_message_with_enter_motion(SessionAgentMessage::error(message));
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::shell::{SessionAgentMessageRole, SessionAgentToolStatus};
+
+    #[test]
+    fn stream_error_preserves_history_current_turn_and_partial_output() {
+        let mut state = SessionAgentState {
+            active_request_id: 7,
+            messages: vec![
+                SessionAgentMessage::user("earlier question"),
+                SessionAgentMessage::assistant_raw("earlier answer"),
+                SessionAgentMessage::user("current question"),
+                SessionAgentMessage::thinking_raw("partial thoughts"),
+                SessionAgentMessage::assistant_raw("partial answer"),
+            ],
+            ..Default::default()
+        };
+        state.push_tool_call(
+            "tool-1".into(),
+            "read".into(),
+            "{\"path\":\"Cargo.toml\"}".into(),
+            SessionAgentToolStatus::InProgress,
+        );
+
+        assert!(append_stream_error(
+            &mut state,
+            7,
+            "provider failed".into(),
+            Some("provider failed".into()),
+        ));
+
+        assert_eq!(state.messages.len(), 7);
+        assert_eq!(state.messages[0].content, "earlier question");
+        assert_eq!(state.messages[1].content, "earlier answer");
+        assert_eq!(state.messages[2].content, "current question");
+        assert_eq!(state.messages[3].content, "partial thoughts");
+        assert_eq!(state.messages[4].content, "partial answer");
+        assert_eq!(state.messages[5].role, SessionAgentMessageRole::ToolCall);
+        assert_eq!(state.messages[6].role, SessionAgentMessageRole::Error);
+        assert_eq!(state.messages[6].content, "provider failed");
+        assert_eq!(state.active_request_id, 0);
+        assert_eq!(state.last_error.as_deref(), Some("provider failed"));
+    }
+
+    #[test]
+    fn stream_error_finishes_active_thinking_and_is_idempotent_per_request() {
+        let mut state = SessionAgentState {
+            active_request_id: 11,
+            messages: vec![
+                SessionAgentMessage::user("question"),
+                SessionAgentMessage::thinking_raw("partial thoughts"),
+            ],
+            ..Default::default()
+        };
+
+        assert!(append_stream_error(
+            &mut state,
+            11,
+            "network failed".into(),
+            Some("network failed".into()),
+        ));
+        assert!(
+            state.messages[1]
+                .thinking
+                .as_ref()
+                .is_some_and(|thinking| thinking.elapsed_ms.is_some())
+        );
+        assert!(!append_stream_error(
+            &mut state,
+            11,
+            "duplicate failure".into(),
+            Some("duplicate failure".into()),
+        ));
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[2].content, "network failed");
+    }
+
+    #[test]
+    fn stream_error_before_model_output_keeps_history_and_current_user_message() {
+        let mut state = SessionAgentState {
+            active_request_id: 13,
+            messages: vec![
+                SessionAgentMessage::user("earlier question"),
+                SessionAgentMessage::assistant_raw("earlier answer"),
+                SessionAgentMessage::user("current question"),
+            ],
+            ..Default::default()
+        };
+
+        assert!(append_stream_error(
+            &mut state,
+            13,
+            "request could not be sent".into(),
+            Some("request could not be sent".into()),
+        ));
+
+        assert_eq!(state.messages.len(), 4);
+        assert_eq!(state.messages[0].content, "earlier question");
+        assert_eq!(state.messages[1].content, "earlier answer");
+        assert_eq!(state.messages[2].content, "current question");
+        assert_eq!(state.messages[3].role, SessionAgentMessageRole::Error);
     }
 }

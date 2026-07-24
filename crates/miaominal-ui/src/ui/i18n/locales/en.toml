@@ -701,6 +701,17 @@ assistant = "Assistant"
 tool = "Tool"
 error = "Error"
 
+[workspace.panel.agent.provider_menu]
+empty = "No provider"
+reasoning = "Reasoning: {level}"
+reasoning_unsupported = "Reasoning: {level} (model unsupported)"
+
+[workspace.panel.agent.reasoning]
+default = "Provider default"
+low = "Low"
+medium = "Medium"
+high = "High"
+
 [workspace.panel.agent.messages]
 restored = "Chat restored."
 history_unavailable = "Chat history is unavailable."
@@ -798,6 +809,9 @@ rename_chat = "Rename chat"
 delete_chat = "Delete chat"
 attach_file = "Attach files"
 submit_answer = "Submit answer"
+provider_and_reasoning = "{provider} · Reasoning: {level}"
+provider_reasoning_unsupported = "{provider} · {model} does not support configurable reasoning · Saved level: {level}"
+provider_reasoning_unknown = "{provider} · Reasoning: {level} · Compatibility for {model} is unverified; parameters will be sent best effort"
 
 [workspace.panel.agent.history]
 empty = "No saved chats"

@@ -1,7 +1,7 @@
 use crate::ui::i18n;
 use crate::ui::shell::TabId;
 use crate::ui::shell::session_agent_view::SessionAgentConversationView;
-use gpui::{App, Entity, ListOffset, Subscription, px};
+use gpui::{App, AppContext as _, Entity, ListOffset, Subscription, px};
 use miaominal_agent::{AgentMode, AgentToolCancellation};
 use std::collections::HashMap;
 use std::{sync::Arc, time::Instant};
@@ -365,6 +365,46 @@ pub(in crate::ui::shell) fn split_message_into_blocks(content: &str) -> Vec<Stri
 }
 
 impl SessionAgentState {
+    pub(in crate::ui::shell) fn ensure_conversation_view_projection(
+        &mut self,
+        cx: &mut App,
+    ) -> Entity<SessionAgentConversationView> {
+        if let Some(view) = self.conversation_view.as_ref() {
+            return view.clone();
+        }
+
+        let search_layout_active = self
+            .search_query
+            .as_ref()
+            .is_some_and(|query| !query.trim().is_empty());
+        let messages = self.messages.clone();
+        let generating = self.has_pending_task();
+        let viewport = self.conversation_viewport.take();
+        let view =
+            cx.new(move |cx| SessionAgentConversationView::from_messages(messages, generating, cx));
+        if let Some(viewport) = viewport
+            && !viewport.following_tail
+        {
+            let offset = viewport.offset_for_search_layout(search_layout_active);
+            view.read(cx)
+                .scroll_to(offset.item_ix, offset.offset_in_item);
+        }
+        self.conversation_view = Some(view.clone());
+        view
+    }
+
+    pub(in crate::ui::shell) fn reconcile_conversation_view_projection(
+        &mut self,
+        cx: &mut App,
+    ) -> bool {
+        if self.conversation_view.is_none() {
+            return false;
+        }
+        self.release_conversation_view(cx);
+        self.ensure_conversation_view_projection(cx);
+        true
+    }
+
     pub(in crate::ui::shell) fn execution_mode_for_running_tools(&self) -> AgentExecMode {
         self.active_exec_context
             .as_ref()
@@ -818,8 +858,10 @@ impl SessionAgentState {
         if let Some(view) = self.conversation_view.as_ref() {
             let view = view.read(cx);
             let motion_keys = view.enter_motion_keys_for_rebuild(cx);
-            for (message, motion_key) in self.messages.iter_mut().zip(motion_keys) {
-                message.motion.enter_key = motion_key;
+            if motion_keys.len() == self.messages.len() {
+                for (message, motion_key) in self.messages.iter_mut().zip(motion_keys) {
+                    message.motion.enter_key = motion_key;
+                }
             }
             let search_layout_active = self
                 .search_query
@@ -869,6 +911,7 @@ pub(in crate::ui::shell) fn trailing_at_mention_query(value: &str) -> Option<(us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     #[test]
     fn conversation_viewport_preserves_search_offset_on_reopen_and_drops_it_after_clear() {
@@ -890,6 +933,94 @@ mod tests {
             px(0.0)
         );
         assert_eq!(viewport.offset_for_search_layout(false).item_ix, 4);
+    }
+
+    #[test]
+    fn conversation_projection_reconciliation_rebuilds_from_complete_state() {
+        let cx = TestAppContext::single();
+        let stale_view = cx.update(|cx| {
+            cx.new(|cx| {
+                SessionAgentConversationView::from_messages(
+                    vec![SessionAgentMessage::error("stale error-only projection")],
+                    true,
+                    cx,
+                )
+            })
+        });
+        let mut first = SessionAgentMessage::user("earlier question");
+        first.motion.enter_key = Some(41);
+        let mut state = SessionAgentState {
+            messages: vec![
+                first,
+                SessionAgentMessage::assistant_raw("earlier answer"),
+                SessionAgentMessage::user("current question"),
+                SessionAgentMessage::assistant_raw("partial answer"),
+                SessionAgentMessage::error("provider failed"),
+            ],
+            conversation_view: Some(stale_view),
+            ..Default::default()
+        };
+
+        cx.update(|cx| {
+            assert!(state.reconcile_conversation_view_projection(cx));
+            let view = state
+                .conversation_view
+                .as_ref()
+                .expect("conversation projection should be rebuilt");
+            let snapshots = view.read(cx).message_snapshots(cx);
+            assert_eq!(snapshots.len(), state.messages.len());
+            assert_eq!(
+                snapshots
+                    .iter()
+                    .map(|message| (message.role, message.content.as_str()))
+                    .collect::<Vec<_>>(),
+                state
+                    .messages
+                    .iter()
+                    .map(|message| (message.role, message.content.as_str()))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(state.messages[0].motion.enter_key, Some(41));
+            assert!(!view.read(cx).is_generating());
+        });
+        cx.quit();
+    }
+
+    #[test]
+    fn background_state_keeps_complete_messages_without_creating_a_view() {
+        let mut runtime = AgentRuntimeStore {
+            foreground: SessionAgentState {
+                session_id: Some("foreground".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        runtime.store_background_session(
+            "background".into(),
+            SessionAgentState {
+                session_id: Some("background".into()),
+                active_request_id: 3,
+                messages: vec![
+                    SessionAgentMessage::user("earlier question"),
+                    SessionAgentMessage::assistant_raw("earlier answer"),
+                    SessionAgentMessage::user("current question"),
+                ],
+                ..Default::default()
+            },
+        );
+
+        let state = runtime
+            .session_mut("background")
+            .expect("background session should exist");
+        assert!(super::super::conversation::append_stream_error(
+            state,
+            3,
+            "provider failed".into(),
+            Some("provider failed".into()),
+        ));
+        assert_eq!(state.messages.len(), 4);
+        assert_eq!(state.messages[3].role, SessionAgentMessageRole::Error);
+        assert!(state.conversation_view.is_none());
     }
 
     #[test]

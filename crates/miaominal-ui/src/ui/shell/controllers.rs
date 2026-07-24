@@ -95,6 +95,7 @@ pub(in crate::ui::shell) enum AppCommand {
     SyncReloaded(Box<SyncReloadResult>),
     ManagedKeysChanged(ManagedKeysChange),
     SessionMonitoringPreferenceChanged(bool),
+    AgentModePreferenceChanged(miaominal_settings::AiAgentMode),
     SessionEventApplied {
         tab_id: TabId,
         outcome: SessionEventOutcome,

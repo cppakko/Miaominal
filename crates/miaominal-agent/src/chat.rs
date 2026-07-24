@@ -1,9 +1,11 @@
 use crate::channel::{AgentToolCallResponse, ToolOutput};
 use crate::error::{AgentError, AgentResult};
+use crate::reasoning::plan_reasoning_request;
 use crate::tools::{AgentToolCancellation, AgentToolSet};
 use anyhow::Context as _;
 use futures::StreamExt as _;
 use miaominal_core::chat_attachment::ChatImage;
+use miaominal_settings::AiReasoningEffort;
 use rig_core::OneOrMany;
 use rig_core::agent::{Agent, AgentBuilder, MultiTurnStreamItem, StreamingError};
 use rig_core::client::CompletionClient;
@@ -60,6 +62,7 @@ pub struct AgentChatProvider {
     pub api_key: String,
     pub temperature: Option<f64>,
     pub max_tokens: Option<u64>,
+    pub reasoning_effort: AiReasoningEffort,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,10 +214,11 @@ fn build_user_message(text: &str, images: &[ChatImage], vision_supported: bool) 
 /// Generate a concise title (3-8 words) from the first user-assistant exchange.
 /// Returns None on any failure — callers should silently keep the title empty.
 pub async fn generate_title(
-    provider: AgentChatProvider,
+    mut provider: AgentChatProvider,
     user_message: &str,
     assistant_reply: &str,
 ) -> Option<String> {
+    provider.reasoning_effort = AiReasoningEffort::Default;
     let prompt = format!(
         "Generate a concise title (3-8 words) for the following conversation. The title must be in the same language as the user's message. Output only the title, no quotes, punctuation, or extra text.\n\nUser: {user_message}\nAssistant: {assistant_reply}"
     );
@@ -330,6 +334,7 @@ pub async fn stream_chat_after_tool_result(
 
 macro_rules! build_provider_agent {
     ($client_module:ident, $error_msg:expr, $provider:expr, $preamble:expr, $tools:expr, $prompt:expr, $history:expr, $sender:expr) => {{
+        let reasoning_plan = plan_reasoning_request(&$provider)?;
         let mut builder = $client_module::Client::builder().api_key($provider.api_key);
         if !$provider.base_url.trim().is_empty() {
             builder = builder.base_url($provider.base_url);
@@ -338,11 +343,16 @@ macro_rules! build_provider_agent {
         let mut agent_builder = AgentBuilder::new(client.completion_model($provider.model))
             .preamble($preamble)
             .default_max_turns(SESSION_AGENT_MAX_TURNS);
-        if let Some(t) = $provider.temperature {
+        if !reasoning_plan.suppress_temperature
+            && let Some(t) = $provider.temperature
+        {
             agent_builder = agent_builder.temperature(t);
         }
         if let Some(mt) = $provider.max_tokens {
             agent_builder = agent_builder.max_tokens(mt);
+        }
+        if let Some(params) = reasoning_plan.additional_params {
+            agent_builder = agent_builder.additional_params(params);
         }
         if let Some(the_tools) = $tools {
             let tool_mode = the_tools.mode();

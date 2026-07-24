@@ -563,6 +563,17 @@ assistant = "助手"
 tool = "工具"
 error = "错误"
 
+[workspace.panel.agent.provider_menu]
+empty = "无 Provider"
+reasoning = "思考等级：{level}"
+reasoning_unsupported = "思考等级：{level}（当前模型不支持）"
+
+[workspace.panel.agent.reasoning]
+default = "Provider 默认"
+low = "低"
+medium = "中"
+high = "高"
+
 [workspace.panel.agent.messages]
 restored = "对话已恢复。"
 history_unavailable = "对话记录不可用。"
@@ -660,6 +671,9 @@ rename_chat = "重命名对话"
 delete_chat = "删除对话"
 attach_file = "附加文件"
 submit_answer = "提交回答"
+provider_and_reasoning = "{provider} · 思考等级：{level}"
+provider_reasoning_unsupported = "{provider} · {model} 不支持可调思考等级 · 已保存等级：{level}"
+provider_reasoning_unknown = "{provider} · 思考等级：{level} · 尚未确认 {model} 的兼容性，将尽力发送参数"
 
 [workspace.panel.agent.history]
 empty = "还没有已保存的对话"

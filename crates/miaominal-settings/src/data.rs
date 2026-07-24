@@ -66,6 +66,41 @@ impl AiProviderKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiReasoningEffort {
+    #[default]
+    Default,
+    Low,
+    Medium,
+    High,
+}
+
+impl AiReasoningEffort {
+    pub const fn all() -> &'static [Self] {
+        &[Self::Default, Self::Low, Self::Medium, Self::High]
+    }
+
+    pub const fn api_value(self) -> Option<&'static str> {
+        match self {
+            Self::Default => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiAgentMode {
+    Ask,
+    #[default]
+    Execute,
+    NonBlocking,
+    FullAuto,
+}
+
 pub const AI_PROVIDER_TEMPERATURE_MIN: f64 = 0.0;
 pub const AI_PROVIDER_TEMPERATURE_MAX: f64 = 2.0;
 pub const AI_PROVIDER_POSITIVE_INTEGER_MIN: u64 = 1;
@@ -97,6 +132,10 @@ pub struct AiProviderConfig {
     /// Maximum output tokens. When None, the provider default is used.
     #[serde(default)]
     pub max_tokens: Option<u64>,
+
+    /// Reasoning effort for this provider. Default omits provider-specific controls.
+    #[serde(default)]
+    pub reasoning_effort: AiReasoningEffort,
 }
 
 impl PartialEq for AiProviderConfig {
@@ -112,6 +151,7 @@ impl PartialEq for AiProviderConfig {
             && self.context_window == other.context_window
             && self.temperature.map(f64::to_bits) == other.temperature.map(f64::to_bits)
             && self.max_tokens == other.max_tokens
+            && self.reasoning_effort == other.reasoning_effort
     }
 }
 
@@ -131,6 +171,7 @@ impl AiProviderConfig {
             context_window: None,
             temperature: None,
             max_tokens: None,
+            reasoning_effort: AiReasoningEffort::Default,
         };
         provider.sanitize();
         provider
@@ -670,6 +711,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub selected_ai_provider_id: Option<String>,
     #[serde(default)]
+    pub agent_mode: AiAgentMode,
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 }
 
@@ -807,6 +850,7 @@ impl Default for AppSettings {
             local_vault_auto_lock_duration: default_local_vault_auto_lock_duration(),
             ai_providers: Vec::new(),
             selected_ai_provider_id: None,
+            agent_mode: AiAgentMode::default(),
             web_search: WebSearchConfig::default(),
         }
     }
@@ -933,6 +977,7 @@ mod tests {
             theme_id: ThemeId::Dark,
             seed_color: "#123456".into(),
             recent_connections_count: 1,
+            agent_mode: AiAgentMode::FullAuto,
             ..AppSettings::default()
         };
         let remote = AppSettings {
@@ -963,6 +1008,7 @@ mod tests {
                 context_window: None,
                 temperature: None,
                 max_tokens: None,
+                reasoning_effort: AiReasoningEffort::High,
             }],
             ..AppSettings::default()
         };
@@ -989,6 +1035,7 @@ mod tests {
         assert_eq!(local.local_sftp_hidden_columns, vec![0, 1]);
         assert_eq!(local.remote_sftp_hidden_columns, vec![2, 3]);
         assert!(!local.local_vault_enabled);
+        assert_eq!(local.agent_mode, AiAgentMode::FullAuto);
         assert_eq!(
             local.local_vault_auto_lock_duration,
             LocalVaultAutoLockDuration::FiveMinutes
@@ -996,6 +1043,59 @@ mod tests {
         assert_eq!(local.ai_providers.len(), 1);
         assert_eq!(local.ai_providers[0].name, "OpenAI prod");
         assert!(local.ai_providers[0].has_api_key);
+        assert_eq!(
+            local.ai_providers[0].reasoning_effort,
+            AiReasoningEffort::High
+        );
+    }
+
+    #[test]
+    fn legacy_ai_provider_defaults_reasoning_effort() {
+        let provider: AiProviderConfig = toml::from_str(
+            r#"
+id = "provider-1"
+name = "OpenAI"
+kind = "open_ai"
+model = "gpt-4o"
+"#,
+        )
+        .expect("legacy provider should deserialize");
+
+        assert_eq!(provider.reasoning_effort, AiReasoningEffort::Default);
+    }
+
+    #[test]
+    fn ai_provider_reasoning_effort_round_trips() {
+        for effort in AiReasoningEffort::all() {
+            let mut provider = AiProviderConfig::new(AiProviderKind::OpenAi);
+            provider.reasoning_effort = *effort;
+
+            let serialized = toml::to_string(&provider).expect("provider should serialize");
+            let restored: AiProviderConfig =
+                toml::from_str(&serialized).expect("provider should deserialize");
+
+            assert_eq!(restored.reasoning_effort, *effort);
+        }
+    }
+
+    #[test]
+    fn agent_mode_round_trips() {
+        for mode in [
+            AiAgentMode::Ask,
+            AiAgentMode::Execute,
+            AiAgentMode::NonBlocking,
+            AiAgentMode::FullAuto,
+        ] {
+            let settings = AppSettings {
+                agent_mode: mode,
+                ..AppSettings::default()
+            };
+            let serialized = toml::to_string(&settings).expect("settings should serialize");
+            let restored: AppSettings =
+                toml::from_str(&serialized).expect("settings should deserialize");
+
+            assert_eq!(restored.agent_mode, mode);
+        }
     }
 
     #[test]
@@ -1013,6 +1113,7 @@ mod tests {
                 context_window: None,
                 temperature: None,
                 max_tokens: None,
+                reasoning_effort: AiReasoningEffort::Default,
             }],
             ..AppSettings::default()
         };
@@ -1043,6 +1144,7 @@ mod tests {
             context_window: Some(0),
             temperature: Some(-0.1),
             max_tokens: Some(0),
+            reasoning_effort: AiReasoningEffort::Default,
         };
 
         provider.sanitize();

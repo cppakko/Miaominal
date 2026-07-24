@@ -942,6 +942,11 @@ impl AppView {
             AppCommand::SessionMonitoringPreferenceChanged(enabled) => {
                 self.set_auto_collect_session_monitoring(*enabled, cx)
             }
+            AppCommand::AgentModePreferenceChanged(mode) => {
+                self.controllers.settings.update(cx, |controller, cx| {
+                    controller.persist_agent_mode_preference(*mode, cx);
+                });
+            }
             AppCommand::PersistSftpBrowserHiddenColumns {
                 side,
                 hidden_columns,

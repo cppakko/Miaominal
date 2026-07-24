@@ -659,6 +659,7 @@ mod tests {
             context_window: None,
             temperature: Some(0.7),
             max_tokens: Some(1280000),
+            reasoning_effort: miaominal_settings::AiReasoningEffort::Default,
         };
         let settings = AppSettings {
             ai_providers: vec![provider],

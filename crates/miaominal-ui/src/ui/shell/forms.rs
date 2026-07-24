@@ -16,18 +16,6 @@ impl<T> SelectOption<T> {
         }
     }
 
-    pub(in crate::ui::shell) fn new_with_icon(
-        value: T,
-        title: impl Into<SharedString>,
-        icon: AppIcon,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            value,
-            icon: Some(icon),
-        }
-    }
-
     pub(in crate::ui::shell) fn value(&self) -> &T {
         &self.value
     }

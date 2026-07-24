@@ -2,9 +2,9 @@ use crate::theme::{self as material_theme, MaterialTheme};
 
 pub use crate::data::{
     AI_PROVIDER_POSITIVE_INTEGER_MIN, AI_PROVIDER_TEMPERATURE_MAX, AI_PROVIDER_TEMPERATURE_MIN,
-    AiProviderConfig, AiProviderKind, AppLanguage, AppSettings, CURRENT_ONBOARDING_VERSION,
-    FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
-    LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
+    AiAgentMode, AiProviderConfig, AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings,
+    CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX,
+    LINE_HEIGHT_MIN, LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
     PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
     SyncedSettings, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
     WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
@@ -112,6 +112,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.local_vault_auto_lock_duration != b.local_vault_auto_lock_duration
         || a.ai_providers != b.ai_providers
         || a.selected_ai_provider_id != b.selected_ai_provider_id
+        || a.agent_mode != b.agent_mode
         || a.web_search != b.web_search
 }
 
@@ -196,6 +197,24 @@ mod tests {
             settings.local_vault_auto_lock_duration,
             LocalVaultAutoLockDuration::Off
         );
+    }
+
+    #[test]
+    fn deserialize_missing_agent_mode_uses_execute() {
+        let settings: AppSettings = toml::from_str("").expect("settings should deserialize");
+
+        assert_eq!(settings.agent_mode, AiAgentMode::Execute);
+    }
+
+    #[test]
+    fn changed_detects_agent_mode() {
+        let original = AppSettings::default();
+        let modified = AppSettings {
+            agent_mode: AiAgentMode::FullAuto,
+            ..AppSettings::default()
+        };
+
+        assert!(changed(&original, &modified));
     }
 
     #[test]

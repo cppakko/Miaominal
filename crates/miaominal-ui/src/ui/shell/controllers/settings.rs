@@ -25,7 +25,7 @@ use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService, SyncService,
 };
 use miaominal_settings::{
-    AiProviderKind, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
+    AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
     LocalVaultAutoLockDuration, MonitorHistoryDuration, TerminalKeyBindings,
     TerminalRightClickBehavior, ThemeId, WebSearchProviderKind,
 };
@@ -37,6 +37,35 @@ use miaominal_storage::{
 use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus, engine::SyncEngine};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle as TokioHandle;
+
+fn select_ai_provider_setting(settings: &mut AppSettings, provider_id: &str) -> bool {
+    let is_available = settings.ai_providers.iter().any(|provider| {
+        provider.id == provider_id
+            && provider.enabled
+            && ai_provider_kind_chat_supported(provider.kind)
+    });
+    if !is_available {
+        return false;
+    }
+    settings.selected_ai_provider_id = Some(provider_id.to_string());
+    true
+}
+
+fn set_ai_provider_reasoning_effort_setting(
+    settings: &mut AppSettings,
+    provider_id: &str,
+    effort: AiReasoningEffort,
+) -> bool {
+    let Some(provider) = settings
+        .ai_providers
+        .iter_mut()
+        .find(|provider| provider.id == provider_id && provider.enabled)
+    else {
+        return false;
+    };
+    provider.reasoning_effort = effort;
+    true
+}
 
 mod ai_providers;
 mod local_data_reset;
@@ -1041,11 +1070,7 @@ impl SettingsController {
                 let Some(provider_id) = selected.as_ref().map(|item| (*item).clone()) else {
                     return;
                 };
-                if this.settings_store.update(|settings| {
-                    settings.selected_ai_provider_id = Some(provider_id);
-                }) {
-                    cx.notify();
-                }
+                this.persist_selected_ai_provider(provider_id, cx);
             });
         let ai_provider_kind_subscription =
             cx.subscribe(&ai_provider_kind_select, |this: &mut Self, _, event, cx| {
@@ -1189,8 +1214,66 @@ impl SettingsController {
         self.settings_store.settings()
     }
 
+    pub(in crate::ui::shell) fn persist_agent_mode_preference(
+        &mut self,
+        mode: miaominal_settings::AiAgentMode,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .settings_store
+            .update(|settings| settings.agent_mode = mode)
+        {
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui::shell) fn forms(&self) -> SettingsForms {
         self.forms.clone()
+    }
+
+    fn persist_selected_ai_provider(
+        &mut self,
+        provider_id: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut selected = false;
+        if self.settings_store.update(|settings| {
+            selected = select_ai_provider_setting(settings, &provider_id);
+        }) {
+            cx.notify();
+        }
+        selected
+    }
+
+    pub(in crate::ui::shell) fn select_ai_provider(
+        &mut self,
+        provider_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.persist_selected_ai_provider(provider_id.clone(), cx) {
+            return false;
+        }
+        self.forms.ai_provider_select.update(cx, |select, cx| {
+            select.set_selected_value(&provider_id, window, cx);
+        });
+        true
+    }
+
+    pub(in crate::ui::shell) fn set_ai_provider_reasoning_effort(
+        &mut self,
+        provider_id: &str,
+        effort: AiReasoningEffort,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut updated = false;
+        let changed = self.settings_store.update(|settings| {
+            updated = set_ai_provider_reasoning_effort_setting(settings, provider_id, effort);
+        });
+        if changed {
+            cx.notify();
+        }
+        updated
     }
 
     pub(in crate::ui::shell) fn request_profile_import(&self, cx: &mut Context<Self>) {
@@ -1879,3 +1962,45 @@ impl SettingsController {
 }
 
 impl EventEmitter<AppCommand> for SettingsController {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use miaominal_settings::AiProviderConfig;
+
+    #[test]
+    fn provider_selection_preserves_each_provider_reasoning_effort() {
+        let mut openai = AiProviderConfig::new(AiProviderKind::OpenAi);
+        openai.id = "openai".to_string();
+        let mut anthropic = AiProviderConfig::new(AiProviderKind::Anthropic);
+        anthropic.id = "anthropic".to_string();
+        let mut settings = AppSettings {
+            ai_providers: vec![openai, anthropic],
+            ..AppSettings::default()
+        };
+
+        assert!(select_ai_provider_setting(&mut settings, "openai"));
+        assert!(set_ai_provider_reasoning_effort_setting(
+            &mut settings,
+            "openai",
+            AiReasoningEffort::Low
+        ));
+        assert!(select_ai_provider_setting(&mut settings, "anthropic"));
+        assert!(set_ai_provider_reasoning_effort_setting(
+            &mut settings,
+            "anthropic",
+            AiReasoningEffort::High
+        ));
+        assert!(select_ai_provider_setting(&mut settings, "openai"));
+
+        assert_eq!(settings.selected_ai_provider_id.as_deref(), Some("openai"));
+        assert_eq!(
+            settings.ai_providers[0].reasoning_effort,
+            AiReasoningEffort::Low
+        );
+        assert_eq!(
+            settings.ai_providers[1].reasoning_effort,
+            AiReasoningEffort::High
+        );
+    }
+}

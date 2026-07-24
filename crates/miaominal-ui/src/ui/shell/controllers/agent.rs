@@ -2,9 +2,8 @@ use super::AppCommand;
 use crate::ui::i18n;
 use crate::ui::shell::session_agent_view::SessionAgentConversationView;
 use crate::ui::shell::{
-    AppIcon, LocalVaultStatus, SESSION_MONITOR_PANEL_WIDTH, SelectOption, SessionQueryPort,
-    SessionTerminalPort, TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state,
-    set_input_placeholder,
+    LocalVaultStatus, SESSION_MONITOR_PANEL_WIDTH, SessionQueryPort, SessionTerminalPort,
+    TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state, set_input_placeholder,
 };
 use anyhow::Result;
 use gpui::{
@@ -12,9 +11,8 @@ use gpui::{
     Pixels, Point, Render, Subscription, WeakEntity, Window, div, px,
 };
 use gpui_component::{
-    IndexPath, VirtualListScrollHandle,
+    VirtualListScrollHandle,
     input::{InputEvent, InputState},
-    select::{SelectEvent, SelectState},
 };
 use miaominal_agent::AgentMode;
 use miaominal_secrets::SecretStore;
@@ -68,7 +66,6 @@ pub(in crate::ui::shell) struct WorkspaceAgentForms {
     pub(in crate::ui::shell) title_input: Entity<InputState>,
     pub(in crate::ui::shell) rename_title_input: Entity<InputState>,
     pub(in crate::ui::shell) editing_title: bool,
-    pub(in crate::ui::shell) agent_mode_select: Entity<SelectState<Vec<SelectOption<AgentMode>>>>,
     pub(in crate::ui::shell) chat_search: ChatSearchForms,
 }
 
@@ -181,6 +178,24 @@ pub(in crate::ui::shell) struct AgentControllerArgs {
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
 }
 
+fn agent_mode_from_preference(mode: miaominal_settings::AiAgentMode) -> AgentMode {
+    match mode {
+        miaominal_settings::AiAgentMode::Ask => AgentMode::Ask,
+        miaominal_settings::AiAgentMode::Execute => AgentMode::Execute,
+        miaominal_settings::AiAgentMode::NonBlocking => AgentMode::NonBlocking,
+        miaominal_settings::AiAgentMode::FullAuto => AgentMode::FullAuto,
+    }
+}
+
+fn agent_mode_preference(mode: AgentMode) -> miaominal_settings::AiAgentMode {
+    match mode {
+        AgentMode::Ask => miaominal_settings::AiAgentMode::Ask,
+        AgentMode::Execute => miaominal_settings::AiAgentMode::Execute,
+        AgentMode::NonBlocking => miaominal_settings::AiAgentMode::NonBlocking,
+        AgentMode::FullAuto => miaominal_settings::AiAgentMode::FullAuto,
+    }
+}
+
 pub(in crate::ui::shell) struct AgentController {
     task_runtime: TokioHandle,
     agent_service: AgentService,
@@ -199,6 +214,7 @@ pub(in crate::ui::shell) struct AgentController {
     panel_layout: RefCell<AgentPanelLayoutState>,
     pending_chat_session_delete: Option<PendingChatSessionDeleteState>,
     pending_chat_session_rename: Option<PendingChatSessionRenameState>,
+    preferred_agent_mode: AgentMode,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -229,29 +245,6 @@ impl AgentController {
             window,
             cx,
         );
-        let agent_mode_options = vec![
-            SelectOption::new_with_icon(
-                AgentMode::Ask,
-                i18n::string("agent.mode.ask"),
-                AppIcon::Eye,
-            ),
-            SelectOption::new_with_icon(
-                AgentMode::Execute,
-                i18n::string("agent.mode.execute"),
-                AppIcon::Play,
-            ),
-            SelectOption::new_with_icon(
-                AgentMode::NonBlocking,
-                i18n::string("agent.mode.non_blocking"),
-                AppIcon::Sliders,
-            ),
-            SelectOption::new_with_icon(
-                AgentMode::FullAuto,
-                i18n::string("agent.mode.full_auto"),
-                AppIcon::Sparkles,
-            ),
-        ];
-
         WorkspaceAgentForms {
             prompt_input,
             ask_user_input,
@@ -270,14 +263,6 @@ impl AgentController {
                 cx,
             ),
             editing_title: false,
-            agent_mode_select: cx.new(|cx| {
-                SelectState::new(
-                    agent_mode_options,
-                    Some(IndexPath::default().row(1)),
-                    window,
-                    cx,
-                )
-            }),
             chat_search: ChatSearchForms {
                 session_filter_input: new_input_state(
                     i18n::string("placeholders.workspace.search_sessions"),
@@ -347,9 +332,12 @@ impl AgentController {
         let prompt_input = forms.prompt_input.clone();
         let ask_user_input = forms.ask_user_input.clone();
         let title_input = forms.title_input.clone();
-        let agent_mode_select = forms.agent_mode_select.clone();
         let session_filter_input = forms.chat_search.session_filter_input.clone();
         let conversation_search_input = forms.chat_search.conversation_search_input.clone();
+        let preferred_agent_mode =
+            agent_mode_from_preference(miaominal_settings::current_settings().agent_mode);
+        let mut runtime = AgentRuntimeStore::default();
+        runtime.foreground.agent_mode = preferred_agent_mode;
         let subscriptions = vec![
             cx.subscribe(
                 &prompt_input,
@@ -386,20 +374,6 @@ impl AgentController {
                         cx.notify();
                     }
                     _ => {}
-                },
-            ),
-            cx.subscribe(
-                &agent_mode_select,
-                |controller,
-                 select,
-                 _event: &SelectEvent<
-                    Vec<crate::ui::shell::SelectOption<miaominal_agent::AgentMode>>,
-                >,
-                 cx| {
-                    if let Some(mode) = select.read(cx).selected_value().cloned() {
-                        controller.runtime.get_mut().foreground.agent_mode = mode;
-                        cx.notify();
-                    }
                 },
             ),
             cx.subscribe(
@@ -446,7 +420,7 @@ impl AgentController {
             focus: cx.focus_handle(),
             chat_service: args.chat_service,
             chat_sessions: args.chat_sessions,
-            runtime: RefCell::new(AgentRuntimeStore::default()),
+            runtime: RefCell::new(runtime),
             conversation_view_observer,
             history_scroll_handle: VirtualListScrollHandle::new(),
             panel_layout: RefCell::new(AgentPanelLayoutState {
@@ -463,6 +437,7 @@ impl AgentController {
             }),
             pending_chat_session_delete: None,
             pending_chat_session_rename: None,
+            preferred_agent_mode,
             _subscriptions: subscriptions,
         }
     }
@@ -674,14 +649,21 @@ impl AgentController {
         self.forms.title_input.clone()
     }
 
-    pub(in crate::ui::shell) fn agent_mode_select(
-        &self,
-    ) -> Entity<
-        gpui_component::select::SelectState<
-            Vec<crate::ui::shell::SelectOption<miaominal_agent::AgentMode>>,
-        >,
-    > {
-        self.forms.agent_mode_select.clone()
+    pub(in crate::ui::shell) fn select_agent_mode(
+        &mut self,
+        mode: AgentMode,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.runtime.borrow().foreground.agent_mode == mode {
+            return false;
+        }
+        self.runtime.get_mut().foreground.agent_mode = mode;
+        self.preferred_agent_mode = mode;
+        cx.emit(AppCommand::AgentModePreferenceChanged(
+            agent_mode_preference(mode),
+        ));
+        cx.notify();
+        true
     }
 
     pub(in crate::ui::shell) fn editing_title(&self) -> bool {
@@ -870,29 +852,7 @@ impl AgentController {
         let observer = self.conversation_view_observer.clone();
         let controller = cx.weak_entity();
         let state = &mut self.runtime.get_mut().foreground;
-        let search_layout_active = state
-            .search_query
-            .as_ref()
-            .is_some_and(|query| !query.trim().is_empty());
-        let view = if let Some(view) = state.conversation_view.as_ref() {
-            view.clone()
-        } else {
-            let messages = state.messages.clone();
-            let generating = state.has_pending_task();
-            let viewport = state.conversation_viewport.take();
-            let view = cx.new(move |cx| {
-                SessionAgentConversationView::from_messages(messages, generating, cx)
-            });
-            if let Some(viewport) = viewport
-                && !viewport.following_tail
-            {
-                let offset = viewport.offset_for_search_layout(search_layout_active);
-                view.read(cx)
-                    .scroll_to(offset.item_ix, offset.offset_in_item);
-            }
-            state.conversation_view = Some(view.clone());
-            view
-        };
+        let view = state.ensure_conversation_view_projection(cx);
 
         if state.conversation_view_observation.is_none() {
             state.conversation_view_observation =
@@ -906,6 +866,20 @@ impl AgentController {
             view.set_generating_label(generating_label, cx);
         });
         view
+    }
+
+    pub(in crate::ui::shell) fn reconcile_foreground_conversation_view(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let rebuilt = self
+            .runtime
+            .get_mut()
+            .foreground
+            .reconcile_conversation_view_projection(cx);
+        if rebuilt {
+            self.ensure_conversation_view(cx);
+        }
     }
 
     pub(in crate::ui::shell) fn ensure_panel_conversation_view(

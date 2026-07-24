@@ -13,6 +13,7 @@ pub enum AgentError {
     PosixOnly(String),
     ProfileNotFound(String),
     UnsupportedProvider(String),
+    UnsupportedReasoningEffort { provider: String, model: String },
     UnsupportedRoute(String),
     UnknownTool(String),
     Backend(anyhow::Error),
@@ -36,6 +37,10 @@ impl fmt::Display for AgentError {
                 write!(f, "profile `{profile_id}` was not found")
             }
             Self::UnsupportedProvider(message) => write!(f, "{message}"),
+            Self::UnsupportedReasoningEffort { provider, model } => write!(
+                f,
+                "provider `{provider}` model `{model}` does not support configurable reasoning effort"
+            ),
             Self::UnsupportedRoute(route) => write!(f, "backend route `{route}` is not supported"),
             Self::UnknownTool(tool_name) => write!(f, "unknown agent tool `{tool_name}`"),
             Self::Backend(error) => write!(f, "{error}"),

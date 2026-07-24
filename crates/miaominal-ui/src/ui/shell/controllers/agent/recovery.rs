@@ -1,3 +1,4 @@
+use super::conversation::append_stream_error;
 use super::{AgentController, SessionAgentMessage};
 use crate::ui::{i18n, shell::AppCommand};
 use gpui::Context;
@@ -17,43 +18,28 @@ impl AgentController {
         cx: &mut Context<Self>,
     ) -> bool {
         let is_foreground = self.runtime.borrow().session_is_foreground(session_id);
-        let thinking_index = self.active_thinking_index_for_session(session_id);
-        {
+        let error_message = i18n::string_args(
+            "workspace.panel.agent.messages.tool_loop_error_message",
+            &[("message", message)],
+        );
+        let recovered = {
             let Some(state) = self.runtime.get_mut().session_mut(session_id) else {
                 return false;
             };
-            if state.active_request_id != request_id {
-                return false;
-            }
-            state.finish_active_thinking();
-        }
-        if is_foreground && let Some(index) = thinking_index {
-            self.sync_conversation_message_view(index, cx);
-        }
-        self.take_pending_task_for_session(session_id, cx);
-        let previous_message_count = {
-            let state = self
-                .runtime
-                .get_mut()
-                .session_mut(session_id)
-                .expect("agent session disappeared during prompt recovery");
-            state.active_request_id = 0;
-            state.last_error = None;
-            let previous_message_count = state.messages.len();
-            state.push_message_with_enter_motion(SessionAgentMessage::error(i18n::string_args(
-                "workspace.panel.agent.messages.tool_loop_error_message",
-                &[("message", message)],
-            )));
-            previous_message_count
+            append_stream_error(state, request_id, error_message, None)
         };
+        if !recovered {
+            return false;
+        }
         if is_foreground {
-            self.push_message_views_from(previous_message_count, cx);
+            self.reconcile_foreground_conversation_view(cx);
         }
         if is_foreground {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "workspace.panel.agent.messages.tool_loop_error_returned",
             )));
         }
+        self.persist_session_chat(session_id, cx);
         cx.notify();
         true
     }
