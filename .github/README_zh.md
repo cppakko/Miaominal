@@ -38,22 +38,22 @@
 
 ## 安装
 
+### macOS
+
+1. 从 [Releases](https://github.com/cppakko/miaominal/releases/latest) 下载 `Miaominal-macos-arm64.dmg`。
+2. 打开 `.dmg`，把 `Miaominal.app` 拖入 `Applications`。
+
+> [!WARNING]
+> Miaominal 未经过公证签名。如果 macOS 阻止启动，请移除隔离属性：
+> ~~~ bash
+> xattr -dr com.apple.quarantine /Applications/Miaominal.app
+> ~~~
+
 ### Windows
 
 1. 从 [Releases](https://github.com/cppakko/miaominal/releases/latest) 下载 `Miaominal-windows-x64-setup.exe`。
 2. 运行安装包并按提示安装。
    - 也可以下载 `Miaominal-windows-x64-standalone.exe` 直接启动。
-
-### macOS
-
-1. 从 [Releases](https://github.com/cppakko/miaominal/releases/latest) 下载 `Miaominal-macos-arm64.dmg`。
-2. 打开 `.dmg`，把 `Miaominal.app` 拖入 `Applications`。
-3. 如果系统拦截未签名应用，请尝试运行
-
-~~~ bash
-spctl --global-disable
-xattr -dr com.apple.quarantine /Applications/Miaominal.app
-~~~
 
 ### Linux
 
@@ -99,10 +99,10 @@ chmod +x Miaominal-linux-x86_64.AppImage
 
 | 执行模式 | 适合场景 | 工具与审批差别 |
 | --- | --- | --- |
-| **ASK** | 只想让 Agent 帮忙理解项目、检索文件或回答问题。 | 仅开放只读工具、`web_search` / `web_fetch` 和向用户提问，不执行命令或修改文件。 |
+| **Ask** | 只想让 Agent 帮忙理解项目、检索文件或回答问题。 | 仅开放只读工具、`web_search` / `web_fetch` 和向用户提问，不执行命令或修改文件。 |
 | **执行** | 日常开发与运维的默认模式。 | 开放全部工具；网页搜索 / 抓取可直接运行，文件修改、非只读 shell 命令和高风险操作会经过审批或风险策略检查。 |
-| **非阻断** | 想让 Agent 先规划并列出要做的操作，再逐项确认。 | 开放全部工具，但除向用户提问外，工具调用会暂停在审批状态，批准后才继续执行。 |
-| **全自动** | 明确授权 Agent 连续完成任务。 | 开放全部工具并自动执行；仍保留基础路径规范化、执行超时和输出限制。 |
+| **非阻断** | 想让 Agent 先规划并列出要做的操作，再逐项确认。 | 开放全部工具，完全跳过策略审查；工具调用执行前暂停等待批准。仅 `..` 和 `~` 路径规范化始终强制。 |
+| **全自动** | 明确授权 Agent 连续完成任务。 | 开放全部工具，完全跳过策略审查，工具调用自动执行。仅 `..` 和 `~` 路径规范化始终强制。 |
 
 <p align="center">
     <img src="./assets/agent.png" width="760" style="border-radius: 10px;" alt="Session Agent panel screenshot" />

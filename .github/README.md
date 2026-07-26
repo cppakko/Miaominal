@@ -39,22 +39,22 @@
 
 ## Installation
 
+### macOS
+
+1. Download `Miaominal-macos-arm64.dmg` from [Releases](https://github.com/cppakko/miaominal/releases/latest).
+2. Open the `.dmg` and drag `Miaominal.app` into `Applications`.
+
+> [!WARNING]
+> Miaominal is not notarized. If macOS blocks the app, remove the quarantine attribute:
+> ~~~ bash
+> xattr -dr com.apple.quarantine /Applications/Miaominal.app
+> ~~~
+
 ### Windows
 
 1. Download `Miaominal-windows-x64-setup.exe` from [Releases](https://github.com/cppakko/miaominal/releases/latest).
 2. Run the installer and follow the prompts.
    - You can also download `Miaominal-windows-x64-standalone.exe` and launch it directly.
-
-### macOS
-
-1. Download `Miaominal-macos-arm64.dmg` from [Releases](https://github.com/cppakko/miaominal/releases/latest).
-2. Open the `.dmg` and drag `Miaominal.app` into `Applications`.
-3. If macOS blocks the unsigned app, try running:
-
-~~~ bash
-spctl --global-disable
-xattr -dr com.apple.quarantine /Applications/Miaominal.app
-~~~
 
 ### Linux
 
@@ -100,10 +100,10 @@ Open an Agent panel next to the current session and use a configurable provider 
 
 | Execution mode | Best for | Tool and approval behavior |
 | --- | --- | --- |
-| **ASK** | Understanding a project, searching files, or answering questions only. | Only read-only tools, `web_search` / `web_fetch`, and user questions are available. It does not run commands or modify files. |
-| **Run** | The default mode for daily development and operations. | All tools are available. Web search / fetch can run directly, while file edits, non-read-only shell commands, and high-risk operations go through approval or risk checks. |
-| **Non-blocking** | Letting the Agent plan and list operations first, then approving them one by one. | All tools are available, but tool calls pause for approval except when asking the user a question. Approved calls then continue. |
-| **Full Auto** | Explicitly authorizing the Agent to complete a task continuously. | All tools are available and run automatically, while basic path normalization, execution timeouts, and output limits remain in place. |
+| **Ask** | Understanding a project, searching files, or answering questions only. | Only read-only tools, `web_search` / `web_fetch`, and user questions are available. It does not run commands or modify files. |
+| **Execute** | The default mode for daily development and operations. | All tools are available. Web search / fetch can run directly, while file edits, non-read-only shell commands, and high-risk operations go through approval or risk checks. |
+| **Non-blocking** | Letting the Agent plan and list operations first, then approving them one by one. | All tools are available and policy enforcement is bypassed entirely; tool calls pause for approval before executing. Only `..` and `~` path normalization is always enforced. |
+| **Full Auto** | Explicitly authorizing the Agent to complete a task continuously. | All tools are available, policy enforcement is bypassed entirely, and tool calls execute automatically. Only `..` and `~` path normalization is always enforced. |
 
 <p align="center">
     <img src="./assets/agent.png" width="760" style="border-radius: 10px;" alt="Session Agent panel screenshot" />
