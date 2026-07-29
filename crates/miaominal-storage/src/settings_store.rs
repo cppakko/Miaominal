@@ -28,11 +28,12 @@ impl SettingsStore {
         let settings_file_exists = settings_file.exists();
         let existing_app_data = has_existing_app_data(&settings_file)?;
 
-        let (mut settings, has_onboarding_field) = if settings_file_exists {
-            read_settings_file(&settings_file)?
-        } else {
-            (AppSettings::default_for_system(), false)
-        };
+        let (mut settings, has_onboarding_field, migrated_terminal_font_family) =
+            if settings_file_exists {
+                read_settings_file(&settings_file)?
+            } else {
+                (AppSettings::default_for_system(), false, false)
+            };
 
         let migrated_legacy_onboarding = if settings_file_exists {
             !has_onboarding_field
@@ -52,8 +53,10 @@ impl SettingsStore {
             settings,
         };
 
-        if migrated_legacy_onboarding && let Err(error) = store.persist() {
-            log::warn!("failed to persist legacy onboarding migration: {error:?}");
+        if (migrated_legacy_onboarding || migrated_terminal_font_family)
+            && let Err(error) = store.persist()
+        {
+            log::warn!("failed to persist settings migration: {error:?}");
         }
 
         Ok(store)
@@ -116,23 +119,33 @@ impl SettingsStore {
     }
 }
 
-fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool)> {
+fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool)> {
     let content = fs::read_to_string(settings_file)
         .with_context(|| format!("failed to read {}", settings_file.display()))?;
 
     if content.trim().is_empty() {
-        return Ok((AppSettings::default_for_system(), false));
+        return Ok((AppSettings::default_for_system(), false, false));
     }
 
     let raw: toml::Value = toml::from_str(&content)
         .with_context(|| format!("failed to parse {}", settings_file.display()))?;
-    let has_onboarding_field = raw
-        .as_table()
-        .is_some_and(|table| table.contains_key("completed_onboarding_version"));
-    let settings: AppSettings = toml::from_str(&content)
+    let table = raw.as_table();
+    let has_onboarding_field =
+        table.is_some_and(|table| table.contains_key("completed_onboarding_version"));
+    let has_terminal_font_family =
+        table.is_some_and(|table| table.contains_key("terminal_font_family"));
+    let mut settings: AppSettings = toml::from_str(&content)
         .with_context(|| format!("failed to parse {}", settings_file.display()))?;
+    let migrated_terminal_font_family = !has_terminal_font_family;
+    if migrated_terminal_font_family {
+        settings.terminal_font_family = settings.font_family.clone();
+    }
 
-    Ok((settings, has_onboarding_field))
+    Ok((
+        settings,
+        has_onboarding_field,
+        migrated_terminal_font_family,
+    ))
 }
 
 fn has_existing_app_data(settings_file: &Path) -> Result<bool> {
@@ -219,6 +232,48 @@ mod tests {
         let persisted = fs::read_to_string(&paths.settings_file)
             .expect("migrated settings file should be readable");
         assert!(persisted.contains("completed_onboarding_version = 1"));
+    }
+
+    #[test]
+    fn legacy_font_family_is_migrated_to_terminal_font_family() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            "completed_onboarding_version = 1\nfont_family = \"Fira Code\"\n",
+        )
+        .expect("legacy settings file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("legacy settings should load");
+
+        assert_eq!(store.settings().font_family, "Fira Code");
+        assert_eq!(store.settings().terminal_font_family, "Fira Code");
+
+        let persisted = fs::read_to_string(&paths.settings_file)
+            .expect("migrated settings file should be readable");
+        assert!(persisted.contains("terminal_font_family = \"Fira Code\""));
+    }
+
+    #[test]
+    fn explicit_terminal_font_family_is_preserved() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            concat!(
+                "completed_onboarding_version = 1\n",
+                "font_family = \"Segoe UI\"\n",
+                "terminal_font_family = \"JetBrains Mono\"\n",
+            ),
+        )
+        .expect("settings file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("settings should load");
+
+        assert_eq!(store.settings().font_family, "Segoe UI");
+        assert_eq!(store.settings().terminal_font_family, "JetBrains Mono");
     }
 
     #[test]

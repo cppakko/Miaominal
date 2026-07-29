@@ -70,7 +70,7 @@ const MIN_TERMINAL_TEXT_CONTRAST: f32 = 4.5;
 const CONTRAST_MIX_STEPS: usize = 8;
 
 pub fn terminal_font() -> Font {
-    let mut f = font(settings::font_family());
+    let mut f = font(settings::terminal_font_family());
     let fallbacks = settings::font_fallbacks();
     if !fallbacks.is_empty() {
         f.fallbacks = Some(FontFallbacks::from_fonts(fallbacks));

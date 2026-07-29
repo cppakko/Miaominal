@@ -1,6 +1,6 @@
 use crate::model::{AppSettings, DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, Theme, ThemeId};
 use crate::theme as material_theme;
-use gpui::{App, Hsla, Pixels, px, rgb};
+use gpui::{App, Font, FontFallbacks, Hsla, Pixels, font, px, rgb};
 use gpui_component::{
     highlighter::{HighlightTheme, HighlightThemeStyle},
     theme::{Theme as ComponentTheme, ThemeMode},
@@ -77,7 +77,10 @@ pub fn sync_component_theme(cx: &mut App) {
         ThemeMode::Light
     };
     component_theme.font_family = app_settings.effective_font_family().to_string().into();
-    component_theme.mono_font_family = app_settings.effective_font_family().to_string().into();
+    component_theme.mono_font_family = app_settings
+        .effective_terminal_font_family()
+        .to_string()
+        .into();
     component_theme.font_size = px(app_settings.font_size);
     component_theme.mono_font_size = px(app_settings.font_size);
 
@@ -386,6 +389,21 @@ fn syntax_color_weight(color: &str, weight: u16) -> Value {
 
 pub fn font_family() -> String {
     current_settings().effective_font_family().to_string()
+}
+
+pub fn interface_font() -> Font {
+    let mut interface_font = font(font_family());
+    let fallbacks = font_fallbacks();
+    if !fallbacks.is_empty() {
+        interface_font.fallbacks = Some(FontFallbacks::from_fonts(fallbacks));
+    }
+    interface_font
+}
+
+pub fn terminal_font_family() -> String {
+    current_settings()
+        .effective_terminal_font_family()
+        .to_string()
 }
 
 pub fn font_fallbacks() -> Vec<String> {

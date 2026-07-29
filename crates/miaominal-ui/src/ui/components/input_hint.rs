@@ -1,7 +1,7 @@
 use gpui::{
-    App, Entity, EntityId, Global, IntoElement, ParentElement, Pixels, RenderOnce, SharedString,
-    StyleRefinement, Styled, TextRun, Window, black, div, prelude::FluentBuilder as _, px, rems,
-    rgb,
+    App, Entity, EntityId, Focusable as _, Global, IntoElement, ParentElement, Pixels, RenderOnce,
+    SharedString, StyleRefinement, Styled, TextRun, Window, black, div,
+    prelude::FluentBuilder as _, px, rems, rgb,
 };
 use gpui_component::{
     Sizable, Size, StyleSized as _,
@@ -139,6 +139,7 @@ pub(crate) struct HintedInput {
     hint_top: Option<Pixels>,
     hint_bottom: Option<Pixels>,
     hint_center_y: bool,
+    hide_hint_on_focus: bool,
     container_h_full: bool,
 }
 
@@ -153,6 +154,7 @@ impl HintedInput {
             hint_top: None,
             hint_bottom: None,
             hint_center_y: true,
+            hide_hint_on_focus: false,
             container_h_full: false,
         }
     }
@@ -198,6 +200,11 @@ impl HintedInput {
         self
     }
 
+    pub(crate) fn hide_hint_on_focus(mut self) -> Self {
+        self.hide_hint_on_focus = true;
+        self
+    }
+
     pub(crate) fn container_h_full(mut self) -> Self {
         self.container_h_full = true;
         self
@@ -223,6 +230,7 @@ impl RenderOnce for HintedInput {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let hint = input_hint(&self.state, cx);
         let is_empty = self.state.read(cx).value().is_empty();
+        let is_focused = self.state.focus_handle(cx).is_focused(window);
         let default_hint_x = self.size.input_px();
         let default_hint_y = self.size.input_py();
         let hint_left = self.hint_left.unwrap_or(default_hint_x);
@@ -235,32 +243,35 @@ impl RenderOnce for HintedInput {
             .w_full()
             .when(self.container_h_full, |this| this.h_full())
             .child(self.input)
-            .when(is_empty, |this| {
-                this.when_some(hint, |this, hint| {
-                    let gutter_width = match hint.layout {
-                        InputHintLayout::Plain => px(0.0),
-                        InputHintLayout::CodeEditor { folding } => {
-                            code_editor_gutter_width(self.size, folding, window)
-                        }
-                    };
+            .when(
+                is_empty && (!self.hide_hint_on_focus || !is_focused),
+                |this| {
+                    this.when_some(hint, |this, hint| {
+                        let gutter_width = match hint.layout {
+                            InputHintLayout::Plain => px(0.0),
+                            InputHintLayout::CodeEditor { folding } => {
+                                code_editor_gutter_width(self.size, folding, window)
+                            }
+                        };
 
-                    this.child(
-                        div()
-                            .absolute()
-                            .left(hint_left + gutter_width)
-                            .right(hint_right)
-                            .top(hint_top)
-                            .bottom(hint_bottom)
-                            .flex()
-                            .when(self.hint_center_y, |this| this.items_center())
-                            .overflow_hidden()
-                            .child(
-                                Label::new(hint.hint)
-                                    .input_text_size(self.size)
-                                    .text_color(rgb(input_hint_foreground())),
-                            ),
-                    )
-                })
-            })
+                        this.child(
+                            div()
+                                .absolute()
+                                .left(hint_left + gutter_width)
+                                .right(hint_right)
+                                .top(hint_top)
+                                .bottom(hint_bottom)
+                                .flex()
+                                .when(self.hint_center_y, |this| this.items_center())
+                                .overflow_hidden()
+                                .child(
+                                    Label::new(hint.hint)
+                                        .input_text_size(self.size)
+                                        .text_color(rgb(input_hint_foreground())),
+                                ),
+                        )
+                    })
+                },
+            )
     }
 }

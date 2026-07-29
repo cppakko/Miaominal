@@ -13,6 +13,7 @@ use super::{
 use crate::ui::i18n;
 use miaominal_secrets::SecretStore;
 use miaominal_services::SyncReloadResult;
+use miaominal_settings::AppSettings;
 
 mod agent;
 mod keychain;
@@ -246,6 +247,13 @@ const fn sync_reload_domains() -> [SyncReloadDomain; 4] {
     ]
 }
 
+fn terminal_metrics_changed(previous: &AppSettings, next: &AppSettings) -> bool {
+    previous.terminal_font_family != next.terminal_font_family
+        || previous.font_fallbacks != next.font_fallbacks
+        || previous.font_size != next.font_size
+        || previous.line_height != next.line_height
+}
+
 pub(in crate::ui::shell) struct ControllerSet {
     pub session: Entity<SessionController>,
     pub agent: Entity<AgentController>,
@@ -306,14 +314,10 @@ impl ControllerSet {
         subscriptions.push(cx.observe(&self.settings, move |this, controller, cx| {
             let next_settings = controller.read(cx).settings().clone();
             let mut previous_settings = observed_settings.borrow_mut();
-            let terminal_metrics_changed = previous_settings.font_family
-                != next_settings.font_family
-                || previous_settings.font_fallbacks != next_settings.font_fallbacks
-                || previous_settings.font_size != next_settings.font_size
-                || previous_settings.line_height != next_settings.line_height;
+            let metrics_changed = terminal_metrics_changed(&previous_settings, &next_settings);
             *previous_settings = next_settings;
             drop(previous_settings);
-            if terminal_metrics_changed {
+            if metrics_changed {
                 this.invalidate_terminal_metrics();
             }
             cx.notify();
@@ -410,5 +414,23 @@ mod tests {
                 SyncReloadDomain::ManagedKeys,
             ]
         );
+    }
+
+    #[test]
+    fn interface_font_change_does_not_invalidate_terminal_metrics() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.font_family = "Segoe UI".into();
+
+        assert!(!terminal_metrics_changed(&previous, &next));
+    }
+
+    #[test]
+    fn terminal_font_change_invalidates_terminal_metrics() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.terminal_font_family = "JetBrains Mono".into();
+
+        assert!(terminal_metrics_changed(&previous, &next));
     }
 }

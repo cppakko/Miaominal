@@ -94,6 +94,8 @@ impl AppSettings {
 pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
     a.language != b.language
         || a.font_family != b.font_family
+        || a.terminal_font_family != b.terminal_font_family
+        || a.font_fallbacks != b.font_fallbacks
         || (a.font_size - b.font_size).abs() > f32::EPSILON
         || (a.line_height - b.line_height).abs() > f32::EPSILON
         || a.theme_id != b.theme_id
@@ -125,6 +127,7 @@ mod tests {
         let mut settings = AppSettings {
             language: AppLanguage::English,
             font_family: " ".into(),
+            terminal_font_family: "monospace".into(),
             font_size: 3.0,
             line_height: 100.0,
             theme_id: ThemeId::Light,
@@ -135,6 +138,7 @@ mod tests {
         settings.sanitize();
 
         assert_eq!(settings.font_family, default_font_family());
+        assert_eq!(settings.terminal_font_family, default_font_family());
         assert_eq!(settings.font_size, FONT_SIZE_MIN);
         assert_eq!(settings.line_height, LINE_HEIGHT_MAX);
         assert_eq!(settings.seed_color, "#6750a4");
@@ -224,6 +228,20 @@ mod tests {
             local_vault_auto_lock_duration: LocalVaultAutoLockDuration::FiveMinutes,
             ..AppSettings::default()
         };
+
+        assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn changed_detects_terminal_font_family_and_fallbacks() {
+        let original = AppSettings::default();
+        let mut modified = original.clone();
+        modified.terminal_font_family = "JetBrains Mono".into();
+
+        assert!(changed(&original, &modified));
+
+        modified = original.clone();
+        modified.font_fallbacks = vec!["Noto Sans CJK SC".into()];
 
         assert!(changed(&original, &modified));
     }

@@ -1,6 +1,8 @@
 use super::super::super::*;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::{editor_button_with_id, md3_select, md3_spinner};
+use crate::ui::components::{
+    FontFamilyPickerState, editor_button_with_id, font_family_picker, md3_select, md3_spinner,
+};
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
 use gpui_component::{
@@ -75,6 +77,15 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                     .layout(Axis::Vertical)
                     .description(i18n::string_args(
                         "settings.appearance.font_family.description",
+                        &[("font", &default_font_family)],
+                    )),
+                    SettingItem::new(
+                        i18n::string("settings.appearance.terminal_font_family.label"),
+                        SettingField::element(TerminalFontFamilyField::new(entity.clone())),
+                    )
+                    .layout(Axis::Vertical)
+                    .description(i18n::string_args(
+                        "settings.appearance.terminal_font_family.description",
                         &[("font", &default_font_family)],
                     )),
                     SettingItem::new(
@@ -575,18 +586,86 @@ impl SettingFieldElement for FontFamilyField {
     type Element = AnyElement;
 
     fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
-        let select_state = self.entity.read(cx).forms.font_family_select.clone();
+        let controller = self.entity.read(cx);
+        let query_input = controller.forms.font_family_query_input.clone();
+        let scroll_handle = controller.forms.font_family_scroll_handle.clone();
+        let font_options = controller.forms.font_family_options.clone();
+        let selected = controller.settings().font_family.clone();
         let entity = self.entity.clone();
+        let entity_for_select = entity.clone();
 
         setting_field_with_reset_action(
-            md3_select(&select_state)
-                .with_size(options.size)
-                .w_full()
-                .into_any_element(),
+            font_family_picker(
+                FontFamilyPickerState::new(
+                    "settings-interface-font-family",
+                    query_input,
+                    scroll_handle,
+                ),
+                selected,
+                font_options,
+                options.size,
+                move |font, _, cx| {
+                    entity_for_select.update(cx, |this, cx| {
+                        this.update_font_family(font, cx);
+                    });
+                },
+                cx,
+            ),
             false,
             move |window, cx| {
                 entity.update(cx, |this, cx| {
                     this.reset_font_family(window, cx);
+                });
+            },
+        )
+        .into_any_element()
+    }
+}
+
+#[derive(Clone)]
+struct TerminalFontFamilyField {
+    entity: Entity<SettingsController>,
+}
+
+impl TerminalFontFamilyField {
+    fn new(entity: Entity<SettingsController>) -> Self {
+        Self { entity }
+    }
+}
+
+impl SettingFieldElement for TerminalFontFamilyField {
+    type Element = AnyElement;
+
+    fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
+        let controller = self.entity.read(cx);
+        let query_input = controller.forms.terminal_font_family_query_input.clone();
+        let scroll_handle = controller.forms.terminal_font_family_scroll_handle.clone();
+        let font_options = controller.forms.font_family_options.clone();
+        let selected = controller.settings().terminal_font_family.clone();
+        let entity = self.entity.clone();
+        let entity_for_select = entity.clone();
+
+        setting_field_with_reset_action(
+            font_family_picker(
+                FontFamilyPickerState::new(
+                    "settings-terminal-font-family",
+                    query_input,
+                    scroll_handle,
+                ),
+                selected,
+                font_options,
+                options.size,
+                move |font, _, cx| {
+                    entity_for_select.update(cx, |this, cx| {
+                        this.update_terminal_font_family(font, cx);
+                    });
+                },
+                cx,
+            ),
+            false,
+            move |window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.reset_terminal_font_family(window, cx);
                 });
             },
         )

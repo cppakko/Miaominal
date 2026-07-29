@@ -39,8 +39,16 @@ title = "Typography"
 description = "Controls text rendering in the application and terminal."
 
 [settings.appearance.font_family]
-label = "Font family"
-description = "Falls back to {font} when blank or unavailable."
+label = "Interface font"
+description = "Used for the application interface and regular text. Falls back to {font} when blank or unavailable."
+
+[settings.appearance.terminal_font_family]
+label = "Terminal font"
+description = "Used for PTY terminals and code blocks. Falls back to {font} when blank or unavailable."
+
+[settings.appearance.font_picker]
+search_placeholder = "Search fonts"
+no_matches = "No matching fonts"
 
 [settings.appearance.font_fallbacks]
 label = "CJK font fallbacks"
@@ -48,7 +56,7 @@ description = "Comma-separated list of fallback fonts for CJK characters. Leave 
 
 [settings.appearance.font_size]
 label = "Font size"
-description = "Adjust the shared monospace size between {min} and {max}."
+description = "Adjust the font size shared by the interface and terminal between {min} and {max}."
 
 [settings.appearance.line_height]
 label = "Line height"
@@ -1929,8 +1937,10 @@ one_day = "1 day"
 
 [status]
 language_changed = "Language: {language}"
-font_set = "Font set to {font}"
-font_reset = "Font reset to {font}"
+interface_font_set = "Interface font set to {font}"
+interface_font_reset = "Interface font reset to {font}"
+terminal_font_set = "Terminal font set to {font}"
+terminal_font_reset = "Terminal font reset to {font}"
 font_size = "Font size {value}"
 line_height = "Line height {value}"
 theme_seed = "Theme seed: {value}"

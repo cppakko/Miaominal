@@ -35,8 +35,16 @@ title = "文字"
 description = "控制应用界面与终端中的文字显示。"
 
 [settings.appearance.font_family]
-label = "字体"
-description = "为空或不可用时回退到 {font}。"
+label = "界面字体"
+description = "用于应用界面和普通文本；为空或不可用时回退到 {font}。"
+
+[settings.appearance.terminal_font_family]
+label = "终端字体"
+description = "用于 PTY 终端和代码块；为空或不可用时回退到 {font}。"
+
+[settings.appearance.font_picker]
+search_placeholder = "搜索字体"
+no_matches = "没有匹配的字体"
 
 [settings.appearance.font_fallbacks]
 label = "CJK 回退字体"
@@ -44,7 +52,7 @@ description = "用逗号分隔 CJK 字符的回退字体列表。留空时只使
 
 [settings.appearance.font_size]
 label = "字号"
-description = "调整共享等宽字体大小，范围 {min} 到 {max}。"
+description = "调整界面与终端共享的字号，范围 {min} 到 {max}。"
 
 [settings.appearance.line_height]
 label = "行高"
@@ -1791,8 +1799,10 @@ one_day = "1 天"
 
 [status]
 language_changed = "语言：{language}"
-font_set = "字体已设为 {font}"
-font_reset = "字体已重置为 {font}"
+interface_font_set = "界面字体已设为 {font}"
+interface_font_reset = "界面字体已重置为 {font}"
+terminal_font_set = "终端字体已设为 {font}"
+terminal_font_reset = "终端字体已重置为 {font}"
 font_size = "字号 {value}"
 line_height = "行高 {value}"
 theme_seed = "主题种子色：{value}"

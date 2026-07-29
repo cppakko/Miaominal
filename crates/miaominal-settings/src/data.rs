@@ -672,6 +672,8 @@ pub struct AppSettings {
     pub language: AppLanguage,
     #[serde(default = "default_font_family")]
     pub font_family: String,
+    #[serde(default = "default_font_family")]
+    pub terminal_font_family: String,
     #[serde(default = "default_font_fallbacks")]
     pub font_fallbacks: Vec<String>,
     #[serde(default = "default_font_size")]
@@ -830,6 +832,7 @@ impl Default for AppSettings {
         Self {
             language: default_language(),
             font_family: default_font_family(),
+            terminal_font_family: default_font_family(),
             font_fallbacks: default_font_fallbacks(),
             font_size: default_font_size(),
             line_height: default_line_height(),
@@ -863,6 +866,11 @@ impl AppSettings {
         {
             self.font_family = default_font_family();
         }
+        if self.terminal_font_family.trim().is_empty()
+            || should_reset_legacy_platform_font(&self.terminal_font_family)
+        {
+            self.terminal_font_family = default_font_family();
+        }
         self.font_size = self.font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
         self.line_height = self.line_height.clamp(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX);
         self.seed_color = material_theme::normalize_seed_color(&self.seed_color)
@@ -881,6 +889,14 @@ impl AppSettings {
             PLATFORM_DEFAULT_FONT
         } else {
             self.font_family.as_str()
+        }
+    }
+
+    pub fn effective_terminal_font_family(&self) -> &str {
+        if self.terminal_font_family.trim().is_empty() {
+            PLATFORM_DEFAULT_FONT
+        } else {
+            self.terminal_font_family.as_str()
         }
     }
 
@@ -971,6 +987,7 @@ mod tests {
         let mut local = AppSettings {
             language: AppLanguage::SimplifiedChinese,
             font_family: "JetBrains Mono".into(),
+            terminal_font_family: "Fira Code".into(),
             font_fallbacks: vec!["Noto Sans CJK SC".into()],
             font_size: 18.0,
             line_height: 26.0,
@@ -983,6 +1000,7 @@ mod tests {
         let remote = AppSettings {
             language: AppLanguage::English,
             font_family: "Fira Code".into(),
+            terminal_font_family: "Cascadia Mono".into(),
             font_fallbacks: vec!["Sarasa Mono SC".into()],
             font_size: 13.0,
             line_height: 17.0,
@@ -1017,6 +1035,7 @@ mod tests {
 
         assert_eq!(local.language, AppLanguage::SimplifiedChinese);
         assert_eq!(local.font_family, "JetBrains Mono");
+        assert_eq!(local.terminal_font_family, "Fira Code");
         assert_eq!(local.font_fallbacks, vec!["Noto Sans CJK SC"]);
         assert_eq!(local.font_size, 18.0);
         assert_eq!(local.line_height, 26.0);

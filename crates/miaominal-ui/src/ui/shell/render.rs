@@ -242,6 +242,7 @@ impl Render for AppView {
             .relative()
             .flex()
             .flex_col()
+            .font(miaominal_settings::interface_font())
             .bg(rgb(roles.surface_container))
             .on_mouse_move(move |event: &MouseMoveEvent, _window, cx| {
                 if event.pressed_button != Some(MouseButton::Left) {

@@ -11,13 +11,14 @@ use crate::ui::shell::{
 };
 use anyhow::Result;
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Subscription, Window, rgb,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
+    UniformListScrollHandle, Window, rgb,
 };
 use gpui_component::{
     Colorize, IndexPath,
     color_picker::{ColorPickerEvent, ColorPickerState},
     input::{InputEvent, InputState},
-    select::{SearchableVec, SelectEvent, SelectState},
+    select::{SelectEvent, SelectState},
 };
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
@@ -361,7 +362,11 @@ pub(in crate::ui::shell) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<AiProviderKind>>>>,
     pub(in crate::ui::shell) web_search_kind_select:
         Entity<SelectState<Vec<SelectOption<WebSearchProviderKind>>>>,
-    pub(in crate::ui::shell) font_family_select: Entity<SelectState<SearchableVec<String>>>,
+    pub(in crate::ui::shell) font_family_options: Vec<String>,
+    pub(in crate::ui::shell) font_family_query_input: Entity<InputState>,
+    pub(in crate::ui::shell) font_family_scroll_handle: UniformListScrollHandle,
+    pub(in crate::ui::shell) terminal_font_family_query_input: Entity<InputState>,
+    pub(in crate::ui::shell) terminal_font_family_scroll_handle: UniformListScrollHandle,
     pub(in crate::ui::shell) font_fallbacks_input: Entity<InputState>,
     pub(in crate::ui::shell) seed_color_picker: Entity<ColorPickerState>,
     pub(in crate::ui::shell) key_capture_focus: FocusHandle,
@@ -452,7 +457,7 @@ pub(in crate::ui::shell) struct SettingsController {
 }
 
 impl SettingsController {
-    fn font_family_options(current_font_family: &str) -> Vec<String> {
+    fn font_family_options(current_font_families: &[&str]) -> Vec<String> {
         let mut families = miaominal_settings::available_font_families();
         let default_font_family = miaominal_settings::default_font_family();
         if !families
@@ -462,13 +467,15 @@ impl SettingsController {
             families.push(default_font_family);
         }
 
-        let trimmed_current = current_font_family.trim();
-        if !trimmed_current.is_empty()
-            && !families
-                .iter()
-                .any(|family| family.eq_ignore_ascii_case(trimmed_current))
-        {
-            families.push(trimmed_current.to_string());
+        for current_font_family in current_font_families {
+            let trimmed_current = current_font_family.trim();
+            if !trimmed_current.is_empty()
+                && !families
+                    .iter()
+                    .any(|family| family.eq_ignore_ascii_case(trimmed_current))
+            {
+                families.push(trimmed_current.to_string());
+            }
         }
 
         families.sort_by_cached_key(|family| family.to_ascii_lowercase());
@@ -610,21 +617,10 @@ impl SettingsController {
             .iter()
             .position(|provider| *provider.value() == settings.web_search.kind)
             .map(|index| IndexPath::default().row(index));
-        let current_font_family = settings.font_family.clone();
-        let font_family_options = Self::font_family_options(&current_font_family);
-        let default_font_family = miaominal_settings::default_font_family();
-        let font_family_select = cx.new(|cx| {
-            let mut state =
-                SelectState::new(SearchableVec::new(font_family_options), None, window, cx)
-                    .searchable(true);
-            let selected = if current_font_family.trim().is_empty() {
-                default_font_family
-            } else {
-                current_font_family
-            };
-            state.set_selected_value(&selected, window, cx);
-            state
-        });
+        let font_family_options = Self::font_family_options(&[
+            settings.font_family.as_str(),
+            settings.terminal_font_family.as_str(),
+        ]);
         let web_search_config = &settings.web_search;
 
         let forms = SettingsForms {
@@ -691,7 +687,23 @@ impl SettingsController {
                     cx,
                 )
             }),
-            font_family_select,
+            font_family_options,
+            font_family_query_input: new_input_state(
+                i18n::string("settings.appearance.font_picker.search_placeholder"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            font_family_scroll_handle: UniformListScrollHandle::new(),
+            terminal_font_family_query_input: new_input_state(
+                i18n::string("settings.appearance.font_picker.search_placeholder"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            terminal_font_family_scroll_handle: UniformListScrollHandle::new(),
             font_fallbacks_input: new_input_state(
                 "",
                 settings.font_fallbacks.join(", "),
@@ -905,6 +917,14 @@ impl SettingsController {
     ) {
         for (input, key) in [
             (
+                &self.forms.font_family_query_input,
+                "settings.appearance.font_picker.search_placeholder",
+            ),
+            (
+                &self.forms.terminal_font_family_query_input,
+                "settings.appearance.font_picker.search_placeholder",
+            ),
+            (
                 &self.forms.ai_provider_name_input,
                 "settings.ai_providers.placeholders.name",
             ),
@@ -1005,7 +1025,8 @@ impl SettingsController {
         let ai_provider_select = forms.ai_provider_select.clone();
         let ai_provider_kind_select = forms.ai_provider_kind_select.clone();
         let language_select = forms.language_select.clone();
-        let font_family_select = forms.font_family_select.clone();
+        let font_family_query_input = forms.font_family_query_input.clone();
+        let terminal_font_family_query_input = forms.terminal_font_family_query_input.clone();
         let font_fallbacks_input = forms.font_fallbacks_input.clone();
         let seed_color_picker = forms.seed_color_picker.clone();
         let web_search_kind_select = forms.web_search_kind_select.clone();
@@ -1128,13 +1149,32 @@ impl SettingsController {
                     this.set_language(language, cx);
                 }
             });
-        let font_family_subscription =
-            cx.subscribe(&font_family_select, |this: &mut Self, _, event, cx| {
-                let SelectEvent::Confirm(selected) = event;
-                if let Some(font_family) = selected.as_deref() {
-                    this.update_font_family(font_family.to_string(), cx);
+        let font_family_query_subscription = cx.subscribe(
+            &font_family_query_input,
+            |this: &mut Self, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    this.forms
+                        .font_family_scroll_handle
+                        .scroll_to_item(0, ScrollStrategy::Top);
+                    cx.notify();
                 }
-            });
+                InputEvent::Focus | InputEvent::Blur => cx.notify(),
+                _ => {}
+            },
+        );
+        let terminal_font_family_query_subscription = cx.subscribe(
+            &terminal_font_family_query_input,
+            |this: &mut Self, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    this.forms
+                        .terminal_font_family_scroll_handle
+                        .scroll_to_item(0, ScrollStrategy::Top);
+                    cx.notify();
+                }
+                InputEvent::Focus | InputEvent::Blur => cx.notify(),
+                _ => {}
+            },
+        );
         let font_fallbacks_subscription = cx.subscribe(
             &font_fallbacks_input,
             |this: &mut Self, input, event: &InputEvent, cx| {
@@ -1216,7 +1256,8 @@ impl SettingsController {
                 ai_provider_select_subscription,
                 ai_provider_kind_subscription,
                 language_select_subscription,
-                font_family_subscription,
+                font_family_query_subscription,
+                terminal_font_family_query_subscription,
                 font_fallbacks_subscription,
                 seed_color_subscription,
                 web_search_kind_subscription,
@@ -1578,7 +1619,7 @@ impl SettingsController {
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(
-                "status.font_set",
+                "status.interface_font_set",
                 &[("font", &next)],
             )));
             cx.notify();
@@ -1595,13 +1636,58 @@ impl SettingsController {
         let changed = self
             .settings_store
             .update(|settings| settings.font_family = default_font.clone());
-        self.forms.font_family_select.update(cx, |select, cx| {
-            select.set_selected_value(&default_font, window, cx);
-        });
+        set_input_value(&self.forms.font_family_query_input, "", window, cx);
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(
-                "status.font_reset",
+                "status.interface_font_reset",
+                &[("font", &default_font)],
+            )));
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(in crate::ui::shell) fn update_terminal_font_family(
+        &mut self,
+        value: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let trimmed = value.trim();
+        let next = if trimmed.is_empty() {
+            miaominal_settings::default_font_family()
+        } else {
+            trimmed.to_string()
+        };
+
+        let changed = self
+            .settings_store
+            .update(|settings| settings.terminal_font_family = next.clone());
+        if changed {
+            miaominal_settings::sync_component_theme(cx);
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "status.terminal_font_set",
+                &[("font", &next)],
+            )));
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(in crate::ui::shell) fn reset_terminal_font_family(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let default_font = miaominal_settings::default_font_family();
+        let changed = self.settings_store.update(|settings| {
+            settings.terminal_font_family = default_font.clone();
+        });
+        set_input_value(&self.forms.terminal_font_family_query_input, "", window, cx);
+        if changed {
+            miaominal_settings::sync_component_theme(cx);
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "status.terminal_font_reset",
                 &[("font", &default_font)],
             )));
             cx.notify();

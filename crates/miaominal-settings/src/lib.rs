@@ -6,8 +6,8 @@ mod model;
 
 pub use global::{
     FontSize, cell_width_default, current_settings, current_theme, font_fallbacks, font_family,
-    font_size, install, line_height_default, scaled_font_size, scaled_line_height,
-    sync_component_theme,
+    font_size, install, interface_font, line_height_default, scaled_font_size, scaled_line_height,
+    sync_component_theme, terminal_font_family,
 };
 pub use model::{
     AI_PROVIDER_POSITIVE_INTEGER_MIN, AI_PROVIDER_TEMPERATURE_MAX, AI_PROVIDER_TEMPERATURE_MIN,
