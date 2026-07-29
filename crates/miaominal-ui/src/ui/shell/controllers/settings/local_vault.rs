@@ -110,7 +110,9 @@ impl SettingsController {
     }
 
     pub(in crate::ui::shell) fn local_vault_can_disable(&self) -> bool {
-        self.local_vault_status == LocalVaultStatus::Unlocked
+        miaominal_paths::credential_policy().ok()
+            != Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+            && self.local_vault_status == LocalVaultStatus::Unlocked
             && !self.local_vault_operation_in_progress()
     }
 
@@ -831,7 +833,8 @@ impl SettingsController {
         }) {
             i18n::string("settings.sync.vault.secure_memory_unavailable_error.message")
         } else {
-            error.to_string()
+            log::warn!("local vault action {action} failed: {error:#}");
+            i18n::string("settings.sync.vault.operation_failed_error.message")
         };
         i18n::string_args(
             "settings.sync.vault.notifications.failed_message",

@@ -34,6 +34,14 @@ pub(in crate::ui::shell) fn render_onboarding_page(
     let settings_navigation = settings_entity.clone();
     let step_render_state = onboarding_step_render_state(&settings_entity, window, cx);
     let current_step = step_render_state.step;
+    let (onboarding_steps, can_advance, can_finish) = {
+        let settings_controller = settings_entity.read(cx);
+        (
+            settings_controller.onboarding_steps(),
+            settings_controller.can_advance_onboarding(),
+            settings_controller.can_finish_onboarding(),
+        )
+    };
     let (
         font_family_select,
         font_fallbacks_input,
@@ -89,6 +97,10 @@ pub(in crate::ui::shell) fn render_onboarding_page(
             current_shift_right_click_context_menu,
             settings_entity.clone(),
         ),
+        OnboardingStep::Security => render_onboarding_security_step(
+            settings_entity.read(cx).local_vault_status(),
+            settings_entity.clone(),
+        ),
         OnboardingStep::Import => {
             render_onboarding_import_step(settings_entity.read(cx).forms(), settings_entity.clone())
         }
@@ -108,6 +120,8 @@ pub(in crate::ui::shell) fn render_onboarding_page(
                 .child(render_onboarding_title_bar(
                     current_step,
                     settings_entity.clone(),
+                    onboarding_steps,
+                    can_finish,
                     window,
                 ))
                 .child(
@@ -167,6 +181,8 @@ pub(in crate::ui::shell) fn render_onboarding_page(
                 .child(render_onboarding_navigation(
                     current_step,
                     settings_navigation,
+                    can_advance,
+                    can_finish,
                 )),
         )
         .when_some(notification_layer, |this, layer| this.child(layer))
@@ -274,6 +290,8 @@ fn resolve_onboarding_step_render_state(
 fn render_onboarding_title_bar(
     step: OnboardingStep,
     settings: Entity<SettingsController>,
+    steps: &'static [OnboardingStep],
+    portable_vault_ready: bool,
     window: &Window,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -337,12 +355,14 @@ fn render_onboarding_title_bar(
                                 .text_color(rgb(roles.on_surface))
                                 .child(APP_TITLE),
                         )
-                        .child(
-                            div()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(render_onboarding_step_breadcrumb(step, settings)),
-                        ),
+                        .child(div().min_w(px(0.0)).overflow_hidden().child(
+                            render_onboarding_step_breadcrumb(
+                                step,
+                                settings,
+                                steps,
+                                portable_vault_ready,
+                            ),
+                        )),
                 ),
         )
         .when(!onboarding_window_controls_on_left(), |this| {
@@ -473,19 +493,31 @@ fn onboarding_window_control_button(
 fn render_onboarding_step_breadcrumb(
     current_step: OnboardingStep,
     settings: Entity<SettingsController>,
+    steps: &'static [OnboardingStep],
+    portable_vault_ready: bool,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
-    let breadcrumb = OnboardingStep::ALL
-        .into_iter()
+    let portable = steps.contains(&OnboardingStep::Security);
+    let current_index = current_step.index(portable).unwrap_or_default();
+    let breadcrumb = steps
+        .iter()
+        .copied()
         .fold(Breadcrumb::new(), |breadcrumb, step| {
             let is_current = step == current_step;
-            let is_complete = step.index() < current_step.index();
+            let is_complete = step
+                .index(portable)
+                .is_some_and(|index| index < current_index);
+            let can_visit = !portable
+                || portable_vault_ready
+                || step
+                    .index(true)
+                    .is_some_and(|index| index <= OnboardingStep::Security.index(true).unwrap());
             let foreground = if is_current || is_complete {
                 roles.on_surface
             } else {
                 roles.on_surface_variant
             };
-            let item = if is_current {
+            let item = if is_current || !can_visit {
                 BreadcrumbItem::new(i18n::string(step_label_key(step)))
                     .disabled(true)
                     .text_color(rgb(foreground))
@@ -807,9 +839,81 @@ fn render_onboarding_finish_step() -> AnyElement {
         .into_any_element()
 }
 
+fn render_onboarding_security_step(
+    local_vault_status: LocalVaultStatus,
+    settings: Entity<SettingsController>,
+) -> AnyElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let (description_key, action_key) = match local_vault_status {
+        LocalVaultStatus::Disabled => (
+            "onboarding.security.create_description",
+            Some("onboarding.security.create_action"),
+        ),
+        LocalVaultStatus::Locked => (
+            "onboarding.security.unlock_description",
+            Some("onboarding.security.unlock_action"),
+        ),
+        LocalVaultStatus::Unlocked => ("onboarding.security.ready_description", None),
+    };
+
+    h_flex()
+        .w_full()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .max_w(px(520.0))
+                .child(onboarding_filled_surface(
+                    v_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_5()
+                        .child(
+                            Icon::new(if local_vault_status == LocalVaultStatus::Unlocked {
+                                AppIcon::Check
+                            } else {
+                                AppIcon::Vault
+                            })
+                            .size(px(96.0))
+                            .text_color(rgb(roles.primary)),
+                        )
+                        .child(
+                            div()
+                                .max_w(px(420.0))
+                                .text_center()
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .text_color(rgb(roles.on_surface_variant))
+                                .child(i18n::string(description_key)),
+                        )
+                        .when_some(action_key, |this, action_key| {
+                            this.child(editor_button_with_id(
+                                "onboarding-portable-vault-action",
+                                i18n::string(action_key),
+                                true,
+                                true,
+                                false,
+                                move |window, cx| {
+                                    settings.update(cx, |controller, cx| {
+                                        controller.open_local_vault_passphrase_popup(
+                                            LocalVaultPassphrasePopupMode::PrimaryAction,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                },
+                            ))
+                        })
+                        .into_any_element(),
+                )),
+        )
+        .into_any_element()
+}
+
 fn render_onboarding_navigation(
     step: OnboardingStep,
     settings: Entity<SettingsController>,
+    can_advance: bool,
+    can_finish: bool,
 ) -> AnyElement {
     h_flex()
         .w_full()
@@ -821,6 +925,7 @@ fn render_onboarding_navigation(
             onboarding_navigation_button(
                 "onboarding-finish-enter-app",
                 AppIcon::Forward,
+                !can_finish,
                 move |_, cx| {
                     settings.update(cx, |controller, cx| {
                         controller.finish_onboarding(cx);
@@ -829,11 +934,16 @@ fn render_onboarding_navigation(
             )
         } else {
             let settings = settings.clone();
-            onboarding_navigation_button("onboarding-next", AppIcon::Next, move |_, cx| {
-                settings.update(cx, |controller, cx| {
-                    controller.advance_onboarding_step(cx);
-                });
-            })
+            onboarding_navigation_button(
+                "onboarding-next",
+                AppIcon::Next,
+                !can_advance,
+                move |_, cx| {
+                    settings.update(cx, |controller, cx| {
+                        controller.advance_onboarding_step(cx);
+                    });
+                },
+            )
             .into_any_element()
         })
         .into_any_element()
@@ -842,24 +952,50 @@ fn render_onboarding_navigation(
 fn onboarding_navigation_button(
     id: &'static str,
     icon: AppIcon,
+    disabled: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
+    let background = if disabled {
+        roles.surface_container_highest
+    } else {
+        roles.primary
+    };
+    let foreground = if disabled {
+        roles.on_surface_variant
+    } else {
+        roles.on_primary
+    };
 
     div()
         .id(SharedString::from(id))
-        .child(icon_button_with_icon_size(
-            icon,
-            24.0,
-            crate::ui::components::IconButtonStyle {
-                size: 56.0,
-                corner_radius: 99.0,
-                background: Some(roles.primary),
-                foreground: Some(roles.on_primary),
-                border: None,
-            },
-            on_click,
-        ))
+        .child(if disabled {
+            div()
+                .size(px(56.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(99.0))
+                .bg(rgb(background))
+                .text_color(rgb(foreground))
+                .opacity(0.58)
+                .child(Icon::new(icon).size(px(24.0)))
+                .into_any_element()
+        } else {
+            icon_button_with_icon_size(
+                icon,
+                24.0,
+                crate::ui::components::IconButtonStyle {
+                    size: 56.0,
+                    corner_radius: 99.0,
+                    background: Some(background),
+                    foreground: Some(foreground),
+                    border: None,
+                },
+                on_click,
+            )
+            .into_any_element()
+        })
         .into_any_element()
 }
 
@@ -1052,6 +1188,7 @@ fn step_label_key(step: OnboardingStep) -> &'static str {
     match step {
         OnboardingStep::Welcome => "onboarding.steps.welcome",
         OnboardingStep::Preferences => "onboarding.steps.preferences",
+        OnboardingStep::Security => "onboarding.steps.security",
         OnboardingStep::Import => "onboarding.steps.import",
         OnboardingStep::Finish => "onboarding.steps.finish",
     }
@@ -1061,6 +1198,7 @@ fn step_title_key(step: OnboardingStep) -> &'static str {
     match step {
         OnboardingStep::Welcome => "onboarding.hero.title",
         OnboardingStep::Preferences => "onboarding.preferences.title",
+        OnboardingStep::Security => "onboarding.security.title",
         OnboardingStep::Import => "onboarding.import.title",
         OnboardingStep::Finish => "onboarding.finish.title",
     }

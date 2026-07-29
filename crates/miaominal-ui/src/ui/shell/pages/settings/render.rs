@@ -4,8 +4,9 @@ use crate::ui::components::{editor_button_with_id, md3_select, md3_spinner};
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
 use gpui_component::{
-    Disableable, Icon, Size,
+    Disableable, Icon, Size, WindowExt,
     group_box::GroupBoxVariant,
+    notification::Notification,
     setting::{
         RenderOptions, SettingField, SettingFieldElement, SettingGroup, SettingItem, SettingPage,
         Settings,
@@ -272,6 +273,7 @@ fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
 }
 
 fn about_page(settings: Entity<SettingsController>) -> SettingPage {
+    let settings_onboarding = settings.clone();
     let settings_reset_local = settings.clone();
 
     SettingPage::new(i18n::string("settings.pages.about.title"))
@@ -327,9 +329,22 @@ fn about_page(settings: Entity<SettingsController>) -> SettingPage {
                 .item(
                     SettingItem::new(
                         i18n::string("settings.about.onboarding.label"),
-                        SettingField::element(OnboardingActionField::new(settings)),
+                        SettingField::element(OnboardingActionField::new(settings_onboarding)),
                     )
                     .description(i18n::string("settings.about.onboarding.description")),
+                ),
+            SettingGroup::new()
+                .title(i18n::string("settings.about.data_directory.title"))
+                .description(i18n::string("settings.about.data_directory.description"))
+                .item(
+                    SettingItem::new(
+                        i18n::string("settings.about.data_directory.label"),
+                        SettingField::element(DataDirectoryField),
+                    )
+                    .layout(Axis::Vertical)
+                    .description(i18n::string(
+                        "settings.about.data_directory.item_description",
+                    )),
                 ),
             SettingGroup::new()
                 .title(i18n::string("settings.about.reset_local.title"))
@@ -705,6 +720,207 @@ struct OnboardingActionField {
     controller: Entity<SettingsController>,
 }
 
+#[derive(Clone, Copy)]
+struct DataDirectoryField;
+
+impl SettingFieldElement for DataDirectoryField {
+    type Element = AnyElement;
+
+    fn render_field(
+        &self,
+        _options: &RenderOptions,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::Element {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let context = miaominal_paths::initialization_outcome().ok();
+        let portable = context
+            .as_ref()
+            .is_some_and(|context| context.mode() == miaominal_paths::RuntimeMode::Portable);
+        let active = context
+            .as_ref()
+            .map(|context| context.active_data_dir().display().to_string())
+            .unwrap_or_else(|| i18n::string("settings.about.data_directory.unavailable"));
+        let is_default = context
+            .as_ref()
+            .is_some_and(|context| context.active_data_dir() == context.default_data_dir());
+
+        v_flex()
+            .w_full()
+            .min_w(px(0.0))
+            .gap_3()
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .px_3()
+                    .py_2()
+                    .rounded(px(10.0))
+                    .bg(rgb(roles.surface_container_high))
+                    .text_color(rgb(roles.on_surface_variant))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(active),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(settings_data_directory_button(
+                        "settings-open-data-directory",
+                        i18n::string("settings.about.data_directory.open"),
+                        move |_, _| {
+                            if let Ok(path) = miaominal_paths::active_data_dir()
+                                && let Err(error) = open::that(path)
+                            {
+                                log::warn!("failed to open data directory: {error}");
+                            }
+                        },
+                    ))
+                    .child(
+                        settings_data_directory_button(
+                            "settings-choose-data-directory",
+                            i18n::string("settings.about.data_directory.choose"),
+                            move |window, cx| {
+                                choose_data_directory(window, cx);
+                            },
+                        )
+                        .disabled(portable),
+                    )
+                    .child(
+                        settings_data_directory_button(
+                            "settings-restore-default-data-directory",
+                            i18n::string("settings.about.data_directory.restore_default"),
+                            move |window, cx| {
+                                if let Ok(path) = miaominal_paths::default_data_dir() {
+                                    request_data_directory_change_confirmation(path, window, cx);
+                                }
+                            },
+                        )
+                        .disabled(portable || is_default),
+                    ),
+            )
+            .when(portable, |this| {
+                this.child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .child(i18n::string("settings.about.data_directory.portable_hint")),
+                )
+            })
+            .into_any_element()
+    }
+}
+
+fn choose_data_directory(window: &Window, cx: &mut App) {
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_parent(window)
+        .set_title(i18n::string("settings.about.data_directory.dialog_title"));
+    cx.spawn(async move |cx| {
+        let Some(folder) = dialog.pick_folder().await else {
+            return;
+        };
+        let path = folder.path().to_path_buf();
+        cx.update(move |cx| {
+            let Some(window_handle) = cx.active_window() else {
+                return;
+            };
+            if let Err(error) = window_handle.update(cx, move |_, window, cx| {
+                request_data_directory_change_confirmation(path, window, cx);
+            }) {
+                log::debug!("failed to request data directory confirmation: {error:?}");
+            }
+        });
+    })
+    .detach();
+}
+
+fn request_data_directory_change_confirmation(
+    path: std::path::PathBuf,
+    window: &Window,
+    cx: &mut App,
+) {
+    let description = i18n::string_args(
+        "settings.about.data_directory.confirm_message",
+        &[("path", &path.display().to_string())],
+    );
+    let dialog = rfd::AsyncMessageDialog::new()
+        .set_parent(window)
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title(i18n::string("settings.about.data_directory.confirm_title"))
+        .set_description(description)
+        .set_buttons(rfd::MessageButtons::YesNo);
+    cx.spawn(async move |cx| {
+        if dialog.show().await != rfd::MessageDialogResult::Yes {
+            return;
+        }
+        cx.update(
+            move |cx| match miaominal_paths::schedule_data_dir_change(path) {
+                Ok(()) => cx.quit(),
+                Err(error) => {
+                    log::warn!("failed to schedule data directory change: {error:#}");
+                    let error = localized_data_directory_change_error(&error);
+                    let notification = Notification::error(i18n::string_args(
+                        "settings.about.data_directory.failed",
+                        &[("error", &error)],
+                    ))
+                    .title(i18n::string("settings.about.data_directory.failed_title"));
+                    if let Some(window_handle) = cx.active_window()
+                        && let Err(update_error) = window_handle.update(cx, move |_, window, cx| {
+                            window.push_notification(notification, cx);
+                        })
+                    {
+                        log::debug!("failed to show data directory change error: {update_error:?}");
+                    }
+                }
+            },
+        );
+    })
+    .detach();
+}
+
+fn localized_data_directory_change_error(error: &anyhow::Error) -> String {
+    let key = match miaominal_paths::data_directory_change_error_kind(error) {
+        miaominal_paths::DataDirectoryChangeErrorKind::PortableMode => {
+            "settings.about.data_directory.errors.portable_mode"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::RuntimeUnavailable => {
+            "settings.about.data_directory.errors.runtime_unavailable"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetUnavailable => {
+            "settings.about.data_directory.errors.target_unavailable"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetUnsafeLink => {
+            "settings.about.data_directory.errors.target_unsafe_link"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetNotDirectory => {
+            "settings.about.data_directory.errors.target_not_directory"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetIsFilesystemRoot => {
+            "settings.about.data_directory.errors.target_is_filesystem_root"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetOverlapsSource => {
+            "settings.about.data_directory.errors.target_overlaps_source"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetNotEmpty => {
+            "settings.about.data_directory.errors.target_not_empty"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::TargetNotWritable => {
+            "settings.about.data_directory.errors.target_not_writable"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::BootstrapUnavailable => {
+            "settings.about.data_directory.errors.bootstrap_unavailable"
+        }
+        miaominal_paths::DataDirectoryChangeErrorKind::Unknown => {
+            "settings.about.data_directory.errors.unknown"
+        }
+    };
+    i18n::string(key)
+}
+
 impl OnboardingActionField {
     fn new(controller: Entity<SettingsController>) -> Self {
         Self { controller }
@@ -787,6 +1003,16 @@ fn settings_compact_button(
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
     editor_button_with_id(id, label, false, false, false, on_click)
+}
+
+fn settings_data_directory_button(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    settings_compact_button(id, label, on_click)
+        .min_w(px(104.0))
+        .min_h(px(34.0))
 }
 
 fn render_recent_connections_stepper(

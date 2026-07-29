@@ -180,6 +180,39 @@ label = "First-run onboarding"
 action = "Show onboarding"
 description = "Reopen the first-run welcome screen to import profiles or adjust basic preferences."
 
+[settings.about.data_directory]
+title = "Data storage"
+description = "Choose where Miaominal keeps settings, connections, vault data, and chat history."
+label = "Data directory"
+item_description = "Changes migrate all file-based application data on the next launch. System keyring credentials remain on this device."
+open = "Open folder"
+choose = "Choose folder"
+dialog_title = "Choose a new Miaominal data directory"
+restore_default = "Use default"
+portable_hint = "Portable mode is active. The data directory is fixed next to the application."
+unavailable = "Data directory unavailable"
+confirm_title = "Change data directory?"
+confirm_message = "Miaominal will exit and migrate its file-based data to:\n\n{path}\n\nThe target must be empty. System keyring credentials will not be moved. Start Miaominal again to complete the migration."
+failed_title = "Data directory unchanged"
+failed = "The data directory change could not be scheduled: {error}"
+migration_warning_title = "Data migration needs attention"
+migration_warning = "Miaominal could not fully complete the data directory migration. Review the data storage setting and try again."
+migration_before_switch_warning = "The data directory migration failed before switching locations. Miaominal is still using the previous directory; choose a destination again to retry."
+migration_cleanup_warning = "The new data directory is active, but the previous directory could not be cleaned up. Miaominal will retry cleanup on a later launch."
+
+[settings.about.data_directory.errors]
+portable_mode = "Portable mode uses a fixed data directory next to the application."
+runtime_unavailable = "The current data directory information is unavailable. Restart Miaominal and try again."
+target_unavailable = "The selected folder could not be accessed. Check that it still exists and that you have permission to open it."
+target_unsafe_link = "Symbolic links and directory junctions cannot be used as the data directory."
+target_not_directory = "The selected path is not a folder."
+target_is_filesystem_root = "A filesystem root cannot be used as the data directory. Choose a dedicated folder."
+target_overlaps_source = "The new data directory cannot be the current directory, its parent, or one of its subfolders."
+target_not_empty = "The selected folder must be empty. Miaominal does not merge existing application data."
+target_not_writable = "The selected folder is not writable. Check its permissions or choose another folder."
+bootstrap_unavailable = "Miaominal could not save the pending directory change. Check permissions for the current data location."
+unknown = "The data directory change could not be scheduled. See the application log for details."
+
 [settings.about.reset_local]
 title = "Clear local data"
 label = "Reset this device"
@@ -208,7 +241,7 @@ message = "Local settings, secrets, and vault data were cleared from this device
 
 [settings.about.reset_local.notifications.failed]
 title = "Failed to clear local data"
-message = "Could not clear local data: {error}"
+message = "Could not clear local data. Close programs using the data directory, check its permissions, and try again."
 
 [settings.about.reset_local.notifications.window_unavailable]
 message = "Local data was cleared, but the window could not be rebuilt automatically."
@@ -226,6 +259,14 @@ title = "Import existing profiles"
 [onboarding.preferences]
 title = "Tune the basics"
 
+[onboarding.security]
+title = "Protect your Portable data"
+create_description = "Portable mode never uses the system credential store. Create a local secrets vault passphrase before continuing so passwords, private-key passphrases, API keys, sync credentials, and encrypted chat history can be stored safely inside this Portable instance."
+unlock_description = "This Portable instance already has a local secrets vault. Unlock it before continuing so encrypted credentials and chat history remain available."
+ready_description = "The local secrets vault is ready and unlocked for this session. Portable credentials will stay inside this data directory."
+create_action = "Create secrets vault"
+unlock_action = "Unlock secrets vault"
+
 [onboarding.finish]
 title = "Ready to go"
 congratulations_description = "Your basic setup is complete. Ready to start your terminal journey."
@@ -233,6 +274,7 @@ congratulations_description = "Your basic setup is complete. Ready to start your
 [onboarding.steps]
 welcome = "Welcome"
 preferences = "Preferences"
+security = "Security"
 import = "Import"
 finish = "Finish"
 
@@ -1746,6 +1788,9 @@ message = "Unlock the local secrets vault before moving saved secrets back to th
 [settings.sync.vault.change_requires_unlock_error]
 message = "Unlock the local secrets vault before updating its passphrase."
 
+[settings.sync.vault.operation_failed_error]
+message = "The operation could not be completed. Check access to the data directory and try again."
+
 [settings.sync.vault.notifications]
 enabled_title = "Local secrets vault enabled"
 enabled_message = "Migrated saved secrets into the local secrets vault and switched new writes away from the system credential store."
@@ -1905,6 +1950,8 @@ last_tab_close_behavior_exit = "Closing the last tab will quit the application"
 last_tab_close_behavior_open_home = "Closing the last tab will open a new home tab"
 monitor_history_duration_changed = "Monitor history window updated"
 local_vault_auto_lock_duration_changed = "Local secrets vault auto-lock timeout updated"
+chat_history_key_missing = "Encrypted chat history cannot be opened because its vault key is missing. No replacement key was generated, so the existing data can still be recovered."
+chat_history_unavailable = "Encrypted chat history could not be opened. See the application log for details."
 
 [agent.mode]
 ask = "Ask"

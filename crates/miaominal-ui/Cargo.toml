@@ -16,6 +16,7 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 log.workspace = true
 miaominal-agent = { path = "../miaominal-agent" }
 miaominal-core = { path = "../miaominal-core" }
+miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-services = { path = "../miaominal-services" }
 miaominal-settings = { path = "../miaominal-settings" }

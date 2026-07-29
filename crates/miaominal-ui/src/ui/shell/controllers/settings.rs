@@ -20,7 +20,7 @@ use gpui_component::{
     select::{SearchableVec, SelectEvent, SelectState},
 };
 use miaominal_core::profile::ImportSourceKind;
-use miaominal_secrets::{ProtectedPassphrase, SecretStore};
+use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService, SyncService,
 };
@@ -86,26 +86,57 @@ pub(in crate::ui::shell) use web_search::WebSearchSaveDraft;
 pub(in crate::ui::shell) enum OnboardingStep {
     Welcome,
     Preferences,
+    Security,
     Import,
     Finish,
 }
 
 impl OnboardingStep {
-    pub(in crate::ui::shell) const ALL: [Self; 4] =
+    const STANDARD_STEPS: [Self; 4] =
         [Self::Welcome, Self::Preferences, Self::Import, Self::Finish];
+    const PORTABLE_STEPS: [Self; 5] = [
+        Self::Welcome,
+        Self::Preferences,
+        Self::Security,
+        Self::Import,
+        Self::Finish,
+    ];
 
-    pub(in crate::ui::shell) const fn index(self) -> usize {
-        match self {
-            Self::Welcome => 0,
-            Self::Preferences => 1,
-            Self::Import => 2,
-            Self::Finish => 3,
+    pub(in crate::ui::shell) fn steps(portable: bool) -> &'static [Self] {
+        if portable {
+            &Self::PORTABLE_STEPS
+        } else {
+            &Self::STANDARD_STEPS
         }
     }
 
-    pub(in crate::ui::shell) fn next(self) -> Option<Self> {
-        Self::ALL.get(self.index() + 1).copied()
+    pub(in crate::ui::shell) fn index(self, portable: bool) -> Option<usize> {
+        Self::steps(portable).iter().position(|step| *step == self)
     }
+
+    pub(in crate::ui::shell) fn next(self, portable: bool) -> Option<Self> {
+        let index = self.index(portable)?;
+        Self::steps(portable).get(index + 1).copied()
+    }
+}
+
+fn portable_vault_is_required() -> bool {
+    miaominal_paths::credential_policy().ok()
+        == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+}
+
+fn onboarding_step_is_allowed(
+    portable: bool,
+    local_vault_status: LocalVaultStatus,
+    step: OnboardingStep,
+) -> bool {
+    let Some(index) = step.index(portable) else {
+        return false;
+    };
+    if !portable || local_vault_status == LocalVaultStatus::Unlocked {
+        return true;
+    }
+    index <= OnboardingStep::Security.index(true).unwrap_or(usize::MAX)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -854,7 +885,12 @@ impl SettingsController {
                 visible_onboarding_step: OnboardingStep::Welcome,
                 onboarding_step_transition: None,
             },
-            local_vault_status: if local_vault_enabled {
+            local_vault_status: if miaominal_paths::credential_policy().ok()
+                == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+                && !VaultCredentialBackend::default_store_exists().unwrap_or(false)
+            {
+                LocalVaultStatus::Disabled
+            } else if local_vault_enabled {
                 LocalVaultStatus::Locked
             } else {
                 LocalVaultStatus::Disabled
@@ -1313,19 +1349,27 @@ impl SettingsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn finish_onboarding(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui::shell) fn finish_onboarding(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.can_finish_onboarding() {
+            return false;
+        }
         self.onboarding.show_onboarding = false;
         self.reset_onboarding_steps();
         let mut settings_store = self.settings_store.clone();
         settings_store.update(|settings| settings.mark_current_onboarding_completed());
         self.replace_settings_store(settings_store, cx);
         cx.notify();
+        true
     }
 
     pub(in crate::ui::shell) fn advance_onboarding_step(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(next_step) = self.onboarding.onboarding_step.next() else {
+        let portable = portable_vault_is_required();
+        let Some(next_step) = self.onboarding.onboarding_step.next(portable) else {
             return false;
         };
+        if !onboarding_step_is_allowed(portable, self.local_vault_status, next_step) {
+            return false;
+        }
         self.onboarding.onboarding_step = next_step;
         cx.notify();
         true
@@ -1336,12 +1380,32 @@ impl SettingsController {
         step: OnboardingStep,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.onboarding.onboarding_step == step {
+        if self.onboarding.onboarding_step == step || !self.can_visit_onboarding_step(step) {
             return false;
         }
         self.onboarding.onboarding_step = step;
         cx.notify();
         true
+    }
+
+    pub(in crate::ui::shell) fn onboarding_steps(&self) -> &'static [OnboardingStep] {
+        OnboardingStep::steps(portable_vault_is_required())
+    }
+
+    pub(in crate::ui::shell) fn can_visit_onboarding_step(&self, step: OnboardingStep) -> bool {
+        onboarding_step_is_allowed(portable_vault_is_required(), self.local_vault_status, step)
+    }
+
+    pub(in crate::ui::shell) fn can_advance_onboarding(&self) -> bool {
+        let portable = portable_vault_is_required();
+        self.onboarding
+            .onboarding_step
+            .next(portable)
+            .is_some_and(|step| onboarding_step_is_allowed(portable, self.local_vault_status, step))
+    }
+
+    pub(in crate::ui::shell) fn can_finish_onboarding(&self) -> bool {
+        !portable_vault_is_required() || self.local_vault_status == LocalVaultStatus::Unlocked
     }
 
     fn reset_onboarding_steps(&mut self) {
@@ -1967,6 +2031,74 @@ impl EventEmitter<AppCommand> for SettingsController {}
 mod tests {
     use super::*;
     use miaominal_settings::AiProviderConfig;
+
+    #[test]
+    fn portable_onboarding_inserts_security_before_import() {
+        assert_eq!(
+            OnboardingStep::steps(false),
+            &[
+                OnboardingStep::Welcome,
+                OnboardingStep::Preferences,
+                OnboardingStep::Import,
+                OnboardingStep::Finish,
+            ]
+        );
+        assert_eq!(
+            OnboardingStep::steps(true),
+            &[
+                OnboardingStep::Welcome,
+                OnboardingStep::Preferences,
+                OnboardingStep::Security,
+                OnboardingStep::Import,
+                OnboardingStep::Finish,
+            ]
+        );
+        assert_eq!(
+            OnboardingStep::Preferences.next(false),
+            Some(OnboardingStep::Import)
+        );
+        assert_eq!(
+            OnboardingStep::Preferences.next(true),
+            Some(OnboardingStep::Security)
+        );
+    }
+
+    #[test]
+    fn portable_onboarding_blocks_steps_after_security_until_vault_is_unlocked() {
+        for status in [LocalVaultStatus::Disabled, LocalVaultStatus::Locked] {
+            assert!(onboarding_step_is_allowed(
+                true,
+                status,
+                OnboardingStep::Security
+            ));
+            assert!(!onboarding_step_is_allowed(
+                true,
+                status,
+                OnboardingStep::Import
+            ));
+            assert!(!onboarding_step_is_allowed(
+                true,
+                status,
+                OnboardingStep::Finish
+            ));
+        }
+
+        assert!(onboarding_step_is_allowed(
+            true,
+            LocalVaultStatus::Unlocked,
+            OnboardingStep::Finish
+        ));
+        assert!(onboarding_step_is_allowed(
+            false,
+            LocalVaultStatus::Disabled,
+            OnboardingStep::Finish
+        ));
+        assert!(!onboarding_step_is_allowed(
+            false,
+            LocalVaultStatus::Unlocked,
+            OnboardingStep::Security
+        ));
+    }
 
     #[test]
     fn provider_selection_preserves_each_provider_reasoning_effort() {

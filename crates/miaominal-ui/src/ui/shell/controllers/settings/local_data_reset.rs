@@ -164,11 +164,8 @@ impl SettingsController {
                 );
             }
             let error = anyhow::anyhow!(error).context("failed to spawn local data reset worker");
-            let error_message = format!("{error:#}");
-            let message = i18n::string_args(
-                "settings.about.reset_local.notifications.failed.message",
-                &[("error", &error_message)],
-            );
+            log::warn!("local data reset could not start: {error:#}");
+            let message = i18n::string("settings.about.reset_local.notifications.failed.message");
             let notification = Notification::error(message.clone()).title(i18n::string(
                 "settings.about.reset_local.notifications.failed.title",
             ));
@@ -195,6 +192,7 @@ impl SettingsController {
                 match result {
                     Ok(()) => cx.emit(AppCommand::RebuildApplication),
                     Err(error) => {
+                        log::warn!("local data reset failed: {error:#}");
                         if let Err(reopen_error) =
                             agent_controller.update(cx, |controller, cx| {
                                 controller.reopen_chat_history(cx)
@@ -204,10 +202,8 @@ impl SettingsController {
                                 "failed to reopen chat history after local data reset failure: {reopen_error:?}"
                             );
                         }
-                        let error_message = format!("{error:#}");
-                        let message = i18n::string_args(
+                        let message = i18n::string(
                             "settings.about.reset_local.notifications.failed.message",
-                            &[("error", &error_message)],
                         );
                         let notification = Notification::error(message.clone()).title(
                             i18n::string(

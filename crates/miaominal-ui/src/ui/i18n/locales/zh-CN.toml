@@ -176,6 +176,39 @@ label = "首次启动引导"
 action = "显示引导"
 description = "重新打开首次启动欢迎页，以便导入配置或调整基础偏好。"
 
+[settings.about.data_directory]
+title = "数据存储"
+description = "选择 Miaominal 保存设置、连接、保险库和聊天记录的位置。"
+label = "数据目录"
+item_description = "更改后，所有基于文件的应用数据将在下次启动时迁移；系统 Keyring 中的凭据仍保留在本机。"
+open = "打开目录"
+choose = "选择目录"
+dialog_title = "选择新的 Miaominal 数据目录"
+restore_default = "恢复默认"
+portable_hint = "当前处于 Portable 模式，数据目录固定在应用程序旁。"
+unavailable = "数据目录不可用"
+confirm_title = "更改数据目录？"
+confirm_message = "Miaominal 将退出，并在下次启动时把文件数据迁移到：\n\n{path}\n\n目标目录必须为空，系统 Keyring 中的凭据不会迁移。请重新启动 Miaominal 完成迁移。"
+failed_title = "数据目录未更改"
+failed = "无法安排数据目录迁移：{error}"
+migration_warning_title = "数据迁移需要处理"
+migration_warning = "Miaominal 未能完整完成数据目录迁移。请检查“数据存储”设置后重试。"
+migration_before_switch_warning = "数据目录迁移在切换位置前失败。Miaominal 仍在使用原目录；请重新选择目标目录以重试。"
+migration_cleanup_warning = "新数据目录已经启用，但旧目录暂时无法清理。Miaominal 会在后续启动时再次尝试。"
+
+[settings.about.data_directory.errors]
+portable_mode = "Portable 模式的数据目录固定在应用程序旁，无法另行修改。"
+runtime_unavailable = "当前数据目录信息不可用。请重启 Miaominal 后重试。"
+target_unavailable = "无法访问所选文件夹。请确认文件夹仍然存在，并检查访问权限。"
+target_unsafe_link = "符号链接和目录 Junction 不能用作数据目录。"
+target_not_directory = "所选路径不是文件夹。"
+target_is_filesystem_root = "不能将文件系统根目录用作数据目录，请选择一个专用文件夹。"
+target_overlaps_source = "新数据目录不能是当前目录、当前目录的父目录或其子目录。"
+target_not_empty = "所选文件夹必须为空；Miaominal 不会合并已有的应用数据。"
+target_not_writable = "所选文件夹不可写。请检查权限或选择其他文件夹。"
+bootstrap_unavailable = "Miaominal 无法保存待执行的目录更改。请检查当前数据位置的权限。"
+unknown = "无法安排数据目录更改。详细信息已写入应用日志。"
+
 [settings.about.reset_local]
 title = "清除本地数据"
 label = "重置这台设备"
@@ -204,7 +237,7 @@ message = "这台设备上的本地设置、凭据和机密库数据已被清除
 
 [settings.about.reset_local.notifications.failed]
 title = "清除本地数据失败"
-message = "无法清除本地数据：{error}"
+message = "无法清除本地数据。请关闭正在使用数据目录的程序、检查目录权限后重试。"
 
 [settings.about.reset_local.notifications.window_unavailable]
 message = "本地数据已经清除，但当前窗口无法自动重建。"
@@ -222,6 +255,14 @@ title = "导入已有配置"
 [onboarding.preferences]
 title = "完成基础设置"
 
+[onboarding.security]
+title = "保护 Portable 数据"
+create_description = "Portable 模式不会使用系统凭据存储。继续前请创建本地机密库口令，以便将密码、私钥口令、API Key、同步凭据和加密聊天历史安全地保存在当前 Portable 实例中。"
+unlock_description = "当前 Portable 实例已有本地机密库。继续前请先解锁，以便使用已加密的凭据和聊天历史。"
+ready_description = "本地机密库已就绪并在本次会话中解锁。Portable 凭据将始终保存在此数据目录内。"
+create_action = "创建机密库"
+unlock_action = "解锁机密库"
+
 [onboarding.finish]
 title = "一切就绪！"
 congratulations_description = "基础设置已完成，开始你的终端之旅吧。"
@@ -229,6 +270,7 @@ congratulations_description = "基础设置已完成，开始你的终端之旅�
 [onboarding.steps]
 welcome = "欢迎"
 preferences = "偏好"
+security = "安全"
 import = "导入"
 finish = "完成"
 
@@ -1608,6 +1650,9 @@ message = "请先解锁本地机密库，再将已保存的机密信息迁回系
 [settings.sync.vault.change_requires_unlock_error]
 message = "请先解锁本地机密库，再更新其口令。"
 
+[settings.sync.vault.operation_failed_error]
+message = "无法完成此操作。请检查数据目录的访问权限后重试。"
+
 [settings.sync.vault.notifications]
 enabled_title = "本地机密库已启用"
 enabled_message = "已将保存的机密信息迁移到本地机密库，后续内容也将写入机密库。"
@@ -1767,6 +1812,8 @@ last_tab_close_behavior_exit = "关闭最后一个标签页时将退出应用"
 last_tab_close_behavior_open_home = "关闭最后一个标签页时将打开新的主页标签页"
 monitor_history_duration_changed = "监控历史窗口已更新"
 local_vault_auto_lock_duration_changed = "本地机密库自动锁定时间已更新"
+chat_history_key_missing = "无法打开加密聊天历史，因为机密库中缺少对应密钥。Miaominal 未生成替代密钥，因此现有数据仍可恢复。"
+chat_history_unavailable = "无法打开加密聊天历史，详细信息已写入应用日志。"
 
 [settings.ai_providers.providers_group]
 title = "已配置提供商"

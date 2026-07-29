@@ -624,8 +624,39 @@ impl AgentController {
     ) {
         self.secrets = secrets.clone();
         self.local_vault_status = local_vault_status;
-        self.agent_service =
-            AgentService::new(self.task_runtime.clone(), secrets, self.known_hosts.clone());
+        self.agent_service = AgentService::new(
+            self.task_runtime.clone(),
+            secrets.clone(),
+            self.known_hosts.clone(),
+        );
+        if miaominal_paths::credential_policy().ok()
+            == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+        {
+            self.chat_service = if local_vault_status == LocalVaultStatus::Unlocked {
+                match ChatService::open(&secrets.credentials()) {
+                    Ok(service) => Some(service),
+                    Err(error) => {
+                        log::warn!("chat service unavailable after vault unlock: {error:?}");
+                        let key = if error.chain().any(|cause| {
+                            cause.to_string().contains("encryption key is unavailable")
+                        }) {
+                            "status.chat_history_key_missing"
+                        } else {
+                            "status.chat_history_unavailable"
+                        };
+                        cx.emit(AppCommand::Feedback(i18n::string(key)));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            self.chat_sessions = self
+                .chat_service
+                .as_ref()
+                .and_then(|service| service.list_sessions().ok())
+                .unwrap_or_default();
+        }
         cx.notify();
     }
 
@@ -696,7 +727,15 @@ impl AgentController {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.chat_service = Some(ChatService::open_default()?);
+        self.chat_service = Some(
+            if miaominal_paths::credential_policy()?
+                == miaominal_paths::CredentialPolicy::LocalVaultRequired
+            {
+                ChatService::open(&self.secrets.credentials())?
+            } else {
+                ChatService::open_default()?
+            },
+        );
         cx.notify();
         Ok(())
     }

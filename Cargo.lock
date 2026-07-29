@@ -5326,7 +5326,11 @@ dependencies = [
  "anyhow",
  "directories",
  "log",
+ "serde",
+ "sha2 0.11.0",
  "tempfile",
+ "toml 1.1.2+spec-1.1.0",
+ "uuid",
 ]
 
 [[package]]
@@ -5490,6 +5494,7 @@ dependencies = [
  "log",
  "miaominal-agent",
  "miaominal-core",
+ "miaominal-paths",
  "miaominal-secrets",
  "miaominal-services",
  "miaominal-settings",

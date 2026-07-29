@@ -287,8 +287,27 @@ impl AppView {
             managed_keys,
             chat_service,
             chat_sessions,
-            status_message,
+            mut status_message,
         } = load_app_data(runtime, local_vault_enabled);
+        let initialization_warning =
+            miaominal_paths::initialization_outcome()
+                .ok()
+                .and_then(|context| {
+                    context.warning()?;
+                    let key = match context.warning_kind() {
+                        Some(
+                            miaominal_paths::RuntimeWarningKind::DataMigrationBeforeSwitchFailed,
+                        ) => "settings.about.data_directory.migration_before_switch_warning",
+                        Some(miaominal_paths::RuntimeWarningKind::DataMigrationCleanupPending) => {
+                            "settings.about.data_directory.migration_cleanup_warning"
+                        }
+                        None => "settings.about.data_directory.migration_warning",
+                    };
+                    Some(i18n::string(key))
+                });
+        if let Some(warning) = initialization_warning.as_ref() {
+            status_message = warning.clone();
+        }
         let rename_input = new_input_state(
             i18n::string("placeholders.workspace.tab_name"),
             "",
@@ -393,6 +412,15 @@ impl AppView {
                 controller_subscriptions,
             ),
         };
+
+        if let Some(warning) = initialization_warning {
+            window.push_notification(
+                gpui_component::notification::Notification::error(warning).title(i18n::string(
+                    "settings.about.data_directory.migration_warning_title",
+                )),
+                cx,
+            );
+        }
 
         view.refresh_localized_placeholders(window, cx);
         view.sync_terminal_focus_reporting(window, cx);

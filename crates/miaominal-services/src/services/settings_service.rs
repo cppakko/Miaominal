@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+#[cfg(test)]
+use anyhow::Context as _;
+use anyhow::Result;
 use miaominal_paths as paths;
 use miaominal_secrets::{
     APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretStore,
@@ -8,8 +10,11 @@ use miaominal_settings::{FONT_SIZE_MAX, FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEI
 use miaominal_storage::SettingsStore;
 use miaominal_sync::SyncProvider;
 use miaominal_sync::{credential_migration, engine::SyncEngine};
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::io::ErrorKind;
+#[cfg(test)]
 use std::path::Path;
 
 use crate::ChatService;
@@ -146,6 +151,10 @@ impl SettingsService {
     ) -> Result<(SecretStore, SyncEngine)> {
         let (vault_secrets, vault_sync_engine) = Self::open_vault(passphrase.clone())?;
 
+        if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
+            return Ok((vault_secrets, vault_sync_engine));
+        }
+
         let copy_result = Self::copy_secrets_between_backends(
             &session_ids,
             &managed_key_ids,
@@ -251,6 +260,9 @@ impl SettingsService {
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
     ) -> Result<LocalVaultTransition> {
+        if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
+            anyhow::bail!("the local vault cannot be disabled in portable mode");
+        }
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
 
@@ -273,6 +285,9 @@ impl SettingsService {
     }
 
     pub fn apply_vault_disable(settings_store: &mut SettingsStore) -> Result<()> {
+        if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
+            anyhow::bail!("the local vault cannot be disabled in portable mode");
+        }
         let mut settings = settings_store.settings().clone();
         settings.local_vault_enabled = false;
         settings_store.replace(settings)?;
@@ -305,20 +320,24 @@ impl SettingsService {
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
     ) -> Result<()> {
+        if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
+            return paths::clear_active_data_dir();
+        }
         let keyring_secrets = SecretStore::new();
         let keyring_sync_engine = SyncEngine::new();
         let chat_credentials = CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE);
-        let config_dir = paths::config_dir()?;
-
-        Self::reset_local_data_with(
-            config_dir.as_path(),
-            &keyring_secrets,
-            &keyring_sync_engine,
-            &chat_credentials,
+        paths::clear_active_data_dir()?;
+        Self::delete_migrated_keyring_secrets(
             session_ids,
             managed_key_ids,
             ai_provider_ids,
-        )
+            &keyring_secrets,
+            &keyring_sync_engine,
+        );
+        if let Err(error) = ChatService::delete_key(&chat_credentials) {
+            log::warn!("failed to delete chat database key from keyring: {error:?}");
+        }
+        Ok(())
     }
 
     fn copy_secrets_between_backends(
@@ -359,6 +378,7 @@ impl SettingsService {
         }
     }
 
+    #[cfg(test)]
     fn reset_local_data_with(
         config_dir: &Path,
         keyring_secrets: &SecretStore,

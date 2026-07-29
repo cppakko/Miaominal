@@ -12,7 +12,15 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn load() -> Result<Self> {
-        Self::load_with_path(paths::config_file("settings.toml")?)
+        let mut store = Self::load_with_path(paths::config_file("settings.toml")?)?;
+        if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired
+            && !store.settings.local_vault_enabled
+        {
+            let mut settings = store.settings.clone();
+            settings.local_vault_enabled = true;
+            store.replace(settings)?;
+        }
+        Ok(store)
     }
 
     #[doc(hidden)]
@@ -52,7 +60,10 @@ impl SettingsStore {
     }
 
     pub fn fallback() -> Self {
-        let settings = AppSettings::default_for_system();
+        let mut settings = AppSettings::default_for_system();
+        if paths::credential_policy().ok() == Some(paths::CredentialPolicy::LocalVaultRequired) {
+            settings.local_vault_enabled = true;
+        }
         install(settings.clone());
         Self {
             settings_file: std::env::temp_dir().join("miaominal_settings.toml"),

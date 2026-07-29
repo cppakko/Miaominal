@@ -117,14 +117,14 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
 fn main() {
     init_logging();
 
-    let config_dir_initialization = match miaominal_paths::initialize_config_dir() {
-        Ok(initialization) => initialization,
+    let runtime_context = match miaominal_paths::initialize_runtime() {
+        Ok(context) => context,
         Err(error) => {
-            eprintln!("failed to initialize user config directory: {error:#}");
+            eprintln!("failed to initialize user data directory: {error:#}");
             std::process::exit(1);
         }
     };
-    match config_dir_initialization {
+    match runtime_context.config_initialization() {
         miaominal_paths::ConfigDirInitialization::Current { .. } => {}
         miaominal_paths::ConfigDirInitialization::Migrated { from, to } => {
             log::info!(
@@ -145,6 +145,15 @@ fn main() {
                 error
             );
         }
+    }
+    if runtime_context.mode() == miaominal_paths::RuntimeMode::Portable {
+        log::info!(
+            "portable mode enabled with data directory {}",
+            runtime_context.active_data_dir().display()
+        );
+    }
+    if let Some(warning) = runtime_context.warning() {
+        log::warn!("{warning}");
     }
 
     if let Err(error) = miaominal_paths::cleanup_stale_atomic_write_files() {

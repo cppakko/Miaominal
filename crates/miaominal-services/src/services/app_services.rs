@@ -124,7 +124,14 @@ impl AppServices {
                 (None, Vec::new())
             }
         };
-        let (chat_service, chat_sessions) = match ChatService::open_default() {
+        let chat_result = if miaominal_paths::credential_policy().ok()
+            == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+        {
+            ChatService::open(&secrets.credentials())
+        } else {
+            ChatService::open_default()
+        };
+        let (chat_service, chat_sessions) = match chat_result {
             Ok(service) => {
                 let sessions = service.list_sessions().unwrap_or_else(|error| {
                     log::warn!("failed to list chat sessions: {error:?}");

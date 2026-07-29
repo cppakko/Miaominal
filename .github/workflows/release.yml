@@ -27,6 +27,7 @@ jobs:
             arch_label: arm64
             artifact_name: Miaominal-macos-arm64
             dmg_name: Miaominal-macos-arm64.dmg
+            portable_name: Miaominal-macos-arm64-portable.zip
 
     steps:
       - name: Checkout
@@ -54,12 +55,19 @@ jobs:
             "target/release/bundle/osx/${APP_NAME}.app" \
             "dist/${{ matrix.dmg_name }}" \
             "${APP_NAME}"
+          portable_root="dist/${APP_NAME}-portable"
+          mkdir -p "$portable_root/data"
+          cp -R "target/release/bundle/osx/${APP_NAME}.app" "$portable_root/"
+          : > "$portable_root/portable.flag"
+          ditto -c -k --keepParent "$portable_root" "dist/${{ matrix.portable_name }}"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.dmg_name }}
+          path: |
+            dist/${{ matrix.dmg_name }}
+            dist/${{ matrix.portable_name }}
           if-no-files-found: error
 
   build_linux:
@@ -75,6 +83,7 @@ jobs:
             appimage_name: Miaominal-linux-x86_64.AppImage
             deb_name: Miaominal-linux-amd64.deb
             rpm_name: Miaominal-linux-x86_64.rpm
+            portable_name: Miaominal-linux-x86_64-portable.zip
             file_arch: x86-64
             deb_arch: amd64
             rpm_arch: x86_64
@@ -84,6 +93,7 @@ jobs:
             appimage_name: Miaominal-linux-arm64.AppImage
             deb_name: Miaominal-linux-arm64.deb
             rpm_name: Miaominal-linux-aarch64.rpm
+            portable_name: Miaominal-linux-arm64-portable.zip
             file_arch: ARM aarch64
             deb_arch: arm64
             rpm_arch: aarch64
@@ -171,6 +181,11 @@ jobs:
           install -m 0755 "$appimage_path" "dist/${{ matrix.appimage_name }}"
           install -m 0644 "$deb_path" "dist/${{ matrix.deb_name }}"
           install -m 0644 "$rpm_path" "dist/${{ matrix.rpm_name }}"
+          portable_root="dist/Miaominal-portable"
+          mkdir -p "$portable_root/data"
+          install -m 0755 target/release/miaominal "$portable_root/miaominal"
+          : > "$portable_root/portable.flag"
+          (cd dist && zip -qr "${{ matrix.portable_name }}" Miaominal-portable)
 
       - name: Verify Linux artifacts
         shell: bash
@@ -196,6 +211,7 @@ jobs:
             dist/${{ matrix.appimage_name }}
             dist/${{ matrix.deb_name }}
             dist/${{ matrix.rpm_name }}
+            dist/${{ matrix.portable_name }}
           if-no-files-found: error
 
   build_windows:
@@ -210,12 +226,14 @@ jobs:
             artifact_name: Miaominal-windows-x64
             standalone_name: Miaominal-windows-x64-standalone.exe
             setup_name: Miaominal-windows-x64-setup.exe
+            portable_name: Miaominal-windows-x64-portable.zip
             pe_machine: "8664"
           - runner: windows-11-arm
             arch_label: arm64
             artifact_name: Miaominal-windows-arm64
             standalone_name: Miaominal-windows-arm64-standalone.exe
             setup_name: Miaominal-windows-arm64-setup.exe
+            portable_name: Miaominal-windows-arm64-portable.zip
             pe_machine: "AA64"
 
     steps:
@@ -285,6 +303,24 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/miaominal.exe "dist/${{ matrix.standalone_name }}"
+          $portableRoot = 'dist/Miaominal-portable'
+          New-Item -ItemType Directory -Force -Path "$portableRoot/data" | Out-Null
+          Copy-Item target/release/miaominal.exe "$portableRoot/miaominal.exe"
+          New-Item -ItemType File -Force -Path "$portableRoot/portable.flag" | Out-Null
+          Compress-Archive -Path $portableRoot -DestinationPath "dist/${{ matrix.portable_name }}"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archivePath = (Resolve-Path "dist/${{ matrix.portable_name }}").Path
+          $archive = [System.IO.Compression.ZipFile]::Open(
+            $archivePath,
+            [System.IO.Compression.ZipArchiveMode]::Update
+          )
+          try {
+            if ($null -eq $archive.GetEntry('Miaominal-portable/data/')) {
+              $archive.CreateEntry('Miaominal-portable/data/') | Out-Null
+            }
+          } finally {
+            $archive.Dispose()
+          }
 
       - name: Configure ARM64 installer architecture
         if: matrix.arch_label == 'arm64'
@@ -316,6 +352,7 @@ jobs:
           path: |
             dist/${{ matrix.standalone_name }}
             dist/${{ matrix.setup_name }}
+            dist/${{ matrix.portable_name }}
           if-no-files-found: error
 
   checksums:

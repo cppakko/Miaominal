@@ -29,6 +29,10 @@ impl SecretStore {
         Self { credentials }
     }
 
+    pub fn credentials(&self) -> CredentialStore {
+        self.credentials.clone()
+    }
+
     pub fn new_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
         let credentials = CredentialStore::with_backend(
             APP_CREDENTIAL_SERVICE,
