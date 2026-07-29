@@ -1,7 +1,7 @@
 use super::super::*;
 use crate::ui::i18n;
 use gpui_component::WindowExt as _;
-use miaominal_core::keychain::ManagedKeySource;
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
 use miaominal_services::KeychainService;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,18 @@ fn keychain_deploy_exec_command(
     public_key: &str,
 ) -> String {
     KeychainService::deploy_command(template, location, filename, public_key)
+}
+
+fn managed_key_generation_result_for_editor(
+    editor_open: bool,
+    editor_mode: KeychainEditorMode,
+    result: Result<(String, String)>,
+) -> Result<Option<(String, String)>> {
+    if !editor_open || editor_mode != KeychainEditorMode::Import {
+        return Ok(None);
+    }
+
+    result.map(Some)
 }
 
 struct ManagedKeyImportAfterUnlockRequest {
@@ -286,6 +298,8 @@ impl KeychainController {
         self.editor_open = false;
         self.editor_mode = KeychainEditorMode::Import;
         self.deploy_key_id = None;
+        self.generation_task = None;
+        self.generation_in_progress = false;
         self.status_message = i18n::string("keychain.messages.closed_sidebar");
         cx.notify();
     }
@@ -295,6 +309,8 @@ impl KeychainController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.generation_task = None;
+        self.generation_in_progress = false;
         self.editor_draft_source = None;
         self.editor_mode = KeychainEditorMode::Import;
         self.deploy_key_id = None;
@@ -569,42 +585,143 @@ impl KeychainController {
 
     pub(in crate::ui::shell) fn generate_managed_key(
         &mut self,
-        window: &mut Window,
+        algorithm: ManagedKeyGenerationAlgorithm,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let generated_material = self
-            .keychain_service()
-            .map_or_else(KeychainService::generate_ed25519_material, |service| {
-                service.generate_material()
-            });
-
-        match generated_material {
-            Ok((private_key_material, public_key_material)) => {
-                self.editor_draft_source = Some(ManagedKeySource::Generated);
-                set_input_value(&self.forms.import_path_input, "", window, cx);
-                set_input_value(
-                    &self.forms.import_private_key_input,
-                    &private_key_material,
-                    window,
-                    cx,
-                );
-                set_input_value(
-                    &self.forms.import_public_key_input,
-                    &public_key_material,
-                    window,
-                    cx,
-                );
-                set_input_value(&self.forms.import_passphrase_input, "", window, cx);
-                self.status_message = i18n::string("keychain.messages.generated");
-            }
-            Err(error) => {
-                let error = error.to_string();
-                self.status_message =
-                    i18n::string_args("keychain.messages.generation_failed", &[("error", &error)]);
-            }
+        if self.generation_in_progress {
+            return;
         }
 
+        let algorithm_label = i18n::string(match algorithm {
+            ManagedKeyGenerationAlgorithm::Ed25519 => "keychain.generation_algorithm.ed25519",
+            ManagedKeyGenerationAlgorithm::Rsa4096 => "keychain.generation_algorithm.rsa_4096",
+        });
+        self.generation_in_progress = true;
+        self.status_message = i18n::string_args(
+            "keychain.messages.generating",
+            &[("algorithm", &algorithm_label)],
+        );
         cx.notify();
+
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let worker_name = match algorithm {
+            ManagedKeyGenerationAlgorithm::Ed25519 => "generate-managed-ed25519-key",
+            ManagedKeyGenerationAlgorithm::Rsa4096 => "generate-managed-rsa-4096-key",
+        };
+        let spawn_result = std::thread::Builder::new()
+            .name(worker_name.to_string())
+            .spawn(move || {
+                tx.send(KeychainService::generate_material(algorithm)).ok();
+            });
+
+        if let Err(error) = spawn_result {
+            self.generation_in_progress = false;
+            let error = error.to_string();
+            self.status_message = i18n::string_args(
+                "keychain.messages.generation_failed",
+                &[("algorithm", &algorithm_label), ("error", &error)],
+            );
+            cx.notify();
+            return;
+        }
+
+        let active_window = cx.active_window();
+        self.generation_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    rx.recv()
+                        .unwrap_or_else(|_| Err(anyhow!("managed key generation task cancelled")))
+                })
+                .await;
+
+            let Some(window_handle) = active_window else {
+                this.update(cx, move |this, cx| {
+                    this.generation_task = None;
+                    this.generation_in_progress = false;
+                    let error = "active window is unavailable";
+                    this.status_message = i18n::string_args(
+                        "keychain.messages.generation_failed",
+                        &[("algorithm", &algorithm_label), ("error", error)],
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
+            let result = std::rc::Rc::new(std::cell::RefCell::new(Some(result)));
+            let result_for_window = result.clone();
+            let this_for_window = this.clone();
+            let algorithm_label_for_window = algorithm_label.clone();
+            let update_result = window_handle.update(cx, move |_, window, cx| {
+                let Some(result) = result_for_window.borrow_mut().take() else {
+                    return;
+                };
+                this_for_window
+                    .update(cx, move |this, cx| {
+                        this.generation_task = None;
+                        this.generation_in_progress = false;
+
+                        match managed_key_generation_result_for_editor(
+                            this.editor_open,
+                            this.editor_mode,
+                            result,
+                        ) {
+                            Ok(Some((private_key_material, public_key_material))) => {
+                                this.editor_draft_source = Some(ManagedKeySource::Generated);
+                                set_input_value(&this.forms.import_path_input, "", window, cx);
+                                set_input_value(
+                                    &this.forms.import_private_key_input,
+                                    &private_key_material,
+                                    window,
+                                    cx,
+                                );
+                                set_input_value(
+                                    &this.forms.import_public_key_input,
+                                    &public_key_material,
+                                    window,
+                                    cx,
+                                );
+                                set_input_value(
+                                    &this.forms.import_passphrase_input,
+                                    "",
+                                    window,
+                                    cx,
+                                );
+                                this.status_message = i18n::string_args(
+                                    "keychain.messages.generated",
+                                    &[("algorithm", &algorithm_label_for_window)],
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let error = error.to_string();
+                                this.status_message = i18n::string_args(
+                                    "keychain.messages.generation_failed",
+                                    &[
+                                        ("algorithm", &algorithm_label_for_window),
+                                        ("error", &error),
+                                    ],
+                                );
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            });
+
+            if let Err(error) = update_result {
+                log::debug!("failed to apply managed key generation result: {error:?}");
+                this.update(cx, |this, cx| {
+                    this.generation_task = None;
+                    this.generation_in_progress = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        }));
     }
 
     pub(in crate::ui::shell) fn import_managed_key(
@@ -1262,6 +1379,36 @@ mod tests {
         );
 
         assert_eq!(name, "Generated key 2");
+    }
+
+    #[test]
+    fn generated_material_is_ignored_after_editor_closes_or_changes_mode() {
+        let closed = managed_key_generation_result_for_editor(
+            false,
+            KeychainEditorMode::Import,
+            Ok(("private".into(), "public".into())),
+        )
+        .expect("closed editor should ignore generated material");
+        let deploy = managed_key_generation_result_for_editor(
+            true,
+            KeychainEditorMode::Deploy,
+            Ok(("private".into(), "public".into())),
+        )
+        .expect("deploy editor should ignore generated material");
+
+        assert_eq!(closed, None);
+        assert_eq!(deploy, None);
+    }
+
+    #[test]
+    fn generation_failure_produces_no_editor_material() {
+        let result = managed_key_generation_result_for_editor(
+            true,
+            KeychainEditorMode::Import,
+            Err(anyhow!("generation failed")),
+        );
+
+        assert!(result.is_err());
     }
 
     #[test]

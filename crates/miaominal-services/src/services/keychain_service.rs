@@ -1,5 +1,5 @@
 use anyhow::Result;
-use miaominal_core::keychain::{ManagedKeyRecord, ManagedKeySource};
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeyRecord, ManagedKeySource};
 use miaominal_core::profile::{AuthMethod, SessionProfile, ShellType};
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_ssh::{self as ssh, AgentIdentitySummary};
@@ -68,12 +68,8 @@ impl KeychainService {
         })
     }
 
-    pub fn generate_material(&self) -> Result<(String, String)> {
-        Self::generate_ed25519_material()
-    }
-
-    pub fn generate_ed25519_material() -> Result<(String, String)> {
-        ManagedKeyStore::generate_ed25519_material()
+    pub fn generate_material(algorithm: ManagedKeyGenerationAlgorithm) -> Result<(String, String)> {
+        ManagedKeyStore::generate_material(algorithm)
     }
 
     pub fn import_key(

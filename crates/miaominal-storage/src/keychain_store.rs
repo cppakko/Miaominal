@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use miaominal_core::keychain::{ManagedKeyRecord, ManagedKeySource};
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeyRecord, ManagedKeySource};
 use miaominal_paths::{self as paths, atomic_write};
 use russh::keys::{self, Algorithm, PrivateKey, PublicKey};
 use serde::{Deserialize, Serialize};
@@ -73,10 +73,18 @@ impl ManagedKeyStore {
         }
     }
 
-    pub fn generate_ed25519_material() -> Result<(String, String)> {
+    pub fn generate_material(algorithm: ManagedKeyGenerationAlgorithm) -> Result<(String, String)> {
         let mut random = rand::rng();
-        let key = PrivateKey::random(&mut random, Algorithm::Ed25519)
-            .context("failed to generate Ed25519 key")?;
+        let key = match algorithm {
+            ManagedKeyGenerationAlgorithm::Ed25519 => {
+                PrivateKey::random(&mut random, Algorithm::Ed25519)
+                    .context("failed to generate Ed25519 key")?
+            }
+            ManagedKeyGenerationAlgorithm::Rsa4096 => PrivateKey::from(
+                keys::ssh_key::private::RsaKeypair::random(&mut random, 4096)
+                    .context("failed to generate RSA-4096 key")?,
+            ),
+        };
         let private_key_material = key
             .to_openssh(keys::ssh_key::LineEnding::LF)
             .context("failed to serialize private key")?
@@ -152,6 +160,96 @@ impl ManagedKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn generated_rsa_4096_material() -> (String, String) {
+        static MATERIAL: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+        MATERIAL
+            .get_or_init(|| {
+                ManagedKeyStore::generate_material(ManagedKeyGenerationAlgorithm::Rsa4096)
+                    .expect("RSA-4096 key should generate")
+            })
+            .clone()
+    }
+
+    #[test]
+    fn generated_ed25519_material_round_trips() {
+        let (private_key, public_key) =
+            ManagedKeyStore::generate_material(ManagedKeyGenerationAlgorithm::Ed25519)
+                .expect("Ed25519 key should generate");
+        let decoded = keys::decode_secret_key(&private_key, None)
+            .expect("generated Ed25519 key should decode");
+
+        assert_eq!(decoded.algorithm(), Algorithm::Ed25519);
+        assert_eq!(
+            decoded
+                .public_key()
+                .to_openssh()
+                .expect("public key should serialize"),
+            public_key
+        );
+    }
+
+    #[test]
+    fn generated_rsa_4096_material_round_trips() {
+        let (private_key, public_key) = generated_rsa_4096_material();
+        let decoded =
+            keys::decode_secret_key(&private_key, None).expect("generated RSA key should decode");
+        let rsa = decoded
+            .key_data()
+            .rsa()
+            .expect("generated key should contain RSA material");
+
+        assert_eq!(decoded.algorithm(), Algorithm::Rsa { hash: None });
+        assert_eq!(rsa.key_size(), 4096);
+        assert_eq!(
+            decoded
+                .public_key()
+                .to_openssh()
+                .expect("public key should serialize"),
+            public_key
+        );
+    }
+
+    #[test]
+    fn encrypted_rsa_material_imports_and_normalizes() {
+        let store = ManagedKeyStore::with_path(PathBuf::new());
+        let (private_key, _) = generated_rsa_4096_material();
+        let decoded =
+            keys::decode_secret_key(&private_key, None).expect("generated RSA key should decode");
+        let encrypted = decoded
+            .encrypt(&mut rand::rng(), "test-passphrase")
+            .expect("RSA key should encrypt")
+            .to_openssh(keys::ssh_key::LineEnding::LF)
+            .expect("encrypted RSA key should serialize")
+            .to_string();
+
+        let (record, normalized) = store
+            .import_private_key(
+                &[],
+                "RSA deploy key",
+                ManagedKeySource::Generated,
+                &encrypted,
+                None,
+                Some("test-passphrase"),
+            )
+            .expect("encrypted RSA key should import");
+        let normalized_key = keys::decode_secret_key(&normalized, None)
+            .expect("normalized RSA key should decode without a passphrase");
+
+        assert_eq!(record.algorithm, "ssh-rsa");
+        assert_eq!(
+            record.public_key,
+            normalized_key.public_key().to_openssh().unwrap()
+        );
+        assert_eq!(
+            normalized_key
+                .key_data()
+                .rsa()
+                .expect("normalized key should be RSA")
+                .key_size(),
+            4096
+        );
+    }
 
     #[test]
     fn next_key_id_starts_after_current_key_count() {

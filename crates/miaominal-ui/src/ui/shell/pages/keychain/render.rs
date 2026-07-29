@@ -5,7 +5,8 @@ use crate::ui::{
     components::{SectionCard, md3_spinner},
     i18n,
 };
-use miaominal_core::keychain::ManagedKeySource;
+use gpui_component::menu::DropdownMenu as _;
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
 use rfd::FileDialog;
 
 const KEYCHAIN_CARD_WIDTH: f32 = 332.0;
@@ -490,6 +491,8 @@ impl KeychainController {
             if material.dark { 65 } else { 50 },
         );
         let store_available = self.keychain_store.is_some();
+        let generation_in_progress = self.generation_in_progress;
+        let import_available = store_available && !generation_in_progress;
         let forms = &self.forms;
         let is_deploy_mode = self.editor_mode == KeychainEditorMode::Deploy;
         let deploy_in_progress = self.deploy_in_progress;
@@ -780,23 +783,54 @@ impl KeychainController {
                 ),
         );
 
+        let generate_button = editor_button_with_id(
+            "keychain-editor-footer-generate",
+            i18n::string(if generation_in_progress {
+                "keychain.editor.generating"
+            } else {
+                "keychain.editor.generate_key"
+            }),
+            true,
+            true,
+            !store_available || generation_in_progress,
+            |_, _| {},
+        )
+        .child(Icon::new(IconName::ChevronDown).xsmall())
+        .dropdown_menu({
+            let menu_entity = entity.clone();
+            move |menu, _, _| {
+                let ed25519_entity = menu_entity.clone();
+                let rsa_entity = menu_entity.clone();
+                menu.min_w(220.0)
+                    .item(
+                        PopupMenuItem::new(i18n::string("keychain.editor.generate_ed25519"))
+                            .on_click(move |_, window, cx| {
+                                ed25519_entity.update(cx, |this, cx| {
+                                    this.generate_managed_key(
+                                        ManagedKeyGenerationAlgorithm::Ed25519,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new(i18n::string("keychain.editor.generate_rsa_4096"))
+                            .on_click(move |_, window, cx| {
+                                rsa_entity.update(cx, |this, cx| {
+                                    this.generate_managed_key(
+                                        ManagedKeyGenerationAlgorithm::Rsa4096,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+            }
+        });
+
         let import_footer = editor_footer_actions(vec![
-            editor_button_with_id(
-                "keychain-editor-footer-generate",
-                i18n::string("keychain.editor.generate_ed25519"),
-                true,
-                true,
-                !store_available,
-                {
-                    let entity = entity.clone();
-                    move |window, cx| {
-                        entity.update(cx, |this, cx| {
-                            this.generate_managed_key(window, cx);
-                        });
-                    }
-                },
-            )
-            .into_any_element(),
+            generate_button.into_any_element(),
             div()
                 .id("keychain-editor-footer-cancel")
                 .child(icon_button(
@@ -822,17 +856,17 @@ impl KeychainController {
                     AppIcon::Upload,
                     EDITOR_FOOTER_ACTION_HEIGHT,
                     12.0,
-                    Some(if store_available {
+                    Some(if import_available {
                         roles.primary
                     } else {
                         roles.surface_container_highest
                     }),
-                    Some(if store_available {
+                    Some(if import_available {
                         roles.on_primary
                     } else {
                         roles.on_surface_variant
                     }),
-                    Some(if store_available {
+                    Some(if import_available {
                         roles.primary
                     } else {
                         roles.outline_variant
@@ -840,7 +874,7 @@ impl KeychainController {
                     {
                         let entity = entity.clone();
                         move |window, cx| {
-                            if !store_available {
+                            if !import_available {
                                 return;
                             }
 
