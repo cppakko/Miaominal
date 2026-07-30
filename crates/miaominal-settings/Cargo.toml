@@ -4,10 +4,14 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+default = []
+desktop-ui = ["dep:fontdb", "dep:gpui", "dep:gpui-component"]
+
 [dependencies]
-fontdb.workspace = true
-gpui.workspace = true
-gpui-component.workspace = true
+fontdb = { workspace = true, optional = true }
+gpui = { workspace = true, optional = true }
+gpui-component = { workspace = true, optional = true }
 material-colors.workspace = true
 serde.workspace = true
 serde_json.workspace = true

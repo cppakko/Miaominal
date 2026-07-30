@@ -11,7 +11,7 @@ futures.workspace = true
 flate2.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
-miaominal-settings = { path = "../miaominal-settings" }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-sftp = { path = "../miaominal-sftp" }
 miaominal-storage = { path = "../miaominal-storage" }

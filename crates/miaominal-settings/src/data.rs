@@ -1,5 +1,6 @@
 use crate::theme as material_theme;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop-ui")]
 use std::sync::OnceLock;
 
 fn default_true() -> bool {
@@ -615,9 +616,13 @@ pub const PLATFORM_DEFAULT_FONT: &str = "Menlo";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const PLATFORM_DEFAULT_FONT: &str = "DejaVu Sans Mono";
 
+#[cfg(feature = "desktop-ui")]
 static AVAILABLE_FONT_FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(all(
+    feature = "desktop-ui",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
 static LINUX_DEFAULT_FONT_FAMILY: OnceLock<String> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
@@ -753,19 +758,32 @@ pub fn default_font_family() -> String {
     PLATFORM_DEFAULT_FONT.to_string()
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(all(
+    feature = "desktop-ui",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
 pub fn default_font_family() -> String {
     LINUX_DEFAULT_FONT_FAMILY
         .get_or_init(resolve_linux_default_font_family)
         .clone()
 }
 
+#[cfg(all(
+    not(feature = "desktop-ui"),
+    not(any(target_os = "windows", target_os = "macos"))
+))]
+pub fn default_font_family() -> String {
+    PLATFORM_DEFAULT_FONT.to_string()
+}
+
+#[cfg(feature = "desktop-ui")]
 pub fn available_font_families() -> Vec<String> {
     AVAILABLE_FONT_FAMILIES
         .get_or_init(discover_system_font_families)
         .clone()
 }
 
+#[cfg(feature = "desktop-ui")]
 fn discover_system_font_families() -> Vec<String> {
     let mut database = fontdb::Database::new();
     database.load_system_fonts();
@@ -785,12 +803,16 @@ fn discover_system_font_families() -> Vec<String> {
     families
 }
 
+#[cfg(feature = "desktop-ui")]
 fn sort_and_dedup_font_families(families: &mut Vec<String>) {
     families.sort_by_cached_key(|family| family.to_ascii_lowercase());
     families.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(all(
+    feature = "desktop-ui",
+    not(any(target_os = "windows", target_os = "macos"))
+))]
 fn resolve_linux_default_font_family() -> String {
     let mut database = fontdb::Database::new();
     database.load_system_fonts();

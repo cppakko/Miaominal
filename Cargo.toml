@@ -119,7 +119,6 @@ winresource = "0.1"
 [dependencies]
 miaominal-core = { path = "crates/miaominal-core" }
 miaominal-paths = { path = "crates/miaominal-paths" }
-miaominal-settings = { path = "crates/miaominal-settings" }
 miaominal-ui = { path = "crates/miaominal-ui" }
 aes-gcm.workspace = true
 alacritty_terminal.workspace = true

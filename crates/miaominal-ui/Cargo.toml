@@ -19,7 +19,7 @@ miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-services = { path = "../miaominal-services" }
-miaominal-settings = { path = "../miaominal-settings" }
+miaominal-settings = { path = "../miaominal-settings", features = ["desktop-ui"] }
 miaominal-sftp = { path = "../miaominal-sftp" }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }

@@ -13,7 +13,7 @@ log.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
-miaominal-settings = { path = "../miaominal-settings" }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
 miaominal-storage = { path = "../miaominal-storage" }
 rand.workspace = true
 reqwest.workspace = true

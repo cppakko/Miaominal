@@ -298,11 +298,10 @@ fn initialize_standard_runtime(current: PathBuf, legacy: PathBuf) -> Result<Runt
                         &bootstrap_dir,
                         &location_file,
                         &mut location,
-                    ) {
-                        log::warn!(
-                            "failed to roll back data migration request: {rollback_error:#}"
-                        );
-                    }
+                    )
+                {
+                    log::warn!("failed to roll back data migration request: {rollback_error:#}");
+                }
                 active = location
                     .active_dir
                     .clone()

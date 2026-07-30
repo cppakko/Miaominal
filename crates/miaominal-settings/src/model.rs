@@ -1,5 +1,10 @@
 use crate::theme::{self as material_theme, MaterialTheme};
 
+pub(crate) use crate::data::DEFAULT_CELL_WIDTH;
+#[cfg(feature = "desktop-ui")]
+pub(crate) use crate::data::DEFAULT_FONT_SIZE;
+#[cfg(feature = "desktop-ui")]
+pub use crate::data::available_font_families;
 pub use crate::data::{
     AI_PROVIDER_POSITIVE_INTEGER_MIN, AI_PROVIDER_TEMPERATURE_MAX, AI_PROVIDER_TEMPERATURE_MIN,
     AiAgentMode, AiProviderConfig, AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings,
@@ -8,19 +13,8 @@ pub use crate::data::{
     PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
     SyncedSettings, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
     WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
-    ai_provider_kind_label, available_font_families, default_font_fallbacks, default_font_family,
+    ai_provider_kind_label, default_font_fallbacks, default_font_family,
 };
-pub(crate) use crate::data::{DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE};
-
-impl KeyBinding {
-    pub fn matches_keystroke(&self, keystroke: &gpui::Keystroke) -> bool {
-        self.ctrl == keystroke.modifiers.control
-            && self.shift == keystroke.modifiers.shift
-            && self.alt == keystroke.modifiers.alt
-            && !keystroke.modifiers.platform
-            && keystroke.key.eq_ignore_ascii_case(&self.key)
-    }
-}
 
 impl AppLanguage {
     pub fn detect_system() -> Self {

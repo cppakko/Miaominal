@@ -12,7 +12,7 @@ miaominal-agent = { path = "../miaominal-agent" }
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
-miaominal-settings = { path = "../miaominal-settings" }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
 miaominal-sftp = { path = "../miaominal-sftp" }
 miaominal-ssh = { path = "../miaominal-ssh" }
 miaominal-storage = { path = "../miaominal-storage" }

@@ -11,6 +11,7 @@ use alacritty_terminal::term::{
 };
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
 use gpui::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
+pub use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -64,7 +65,6 @@ impl EventListener for MiaominalListener {
 
 pub const DEFAULT_TERMINAL_COLUMNS: usize = 120;
 pub const DEFAULT_TERMINAL_LINES: usize = 32;
-pub const MIN_TERMINAL_COLUMNS: usize = 20;
 pub const SCROLLBACK_LINES: usize = 10_000;
 const MIN_TERMINAL_TEXT_CONTRAST: f32 = 4.5;
 const CONTRAST_MIX_STEPS: usize = 8;

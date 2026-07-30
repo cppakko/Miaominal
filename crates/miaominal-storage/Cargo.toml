@@ -11,7 +11,7 @@ log.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
-miaominal-settings = { path = "../miaominal-settings" }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
 rand.workspace = true
 roxmltree.workspace = true
 rusqlite.workspace = true

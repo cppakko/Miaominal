@@ -12,9 +12,9 @@ use miaominal_core::known_host::HostKeyCheck;
 use miaominal_core::profile::{
     AuthMethod, PortForwardRule, SessionEnvironmentVariable, SessionProfile, ShellType,
 };
+use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use miaominal_secrets::SecretStore;
 use miaominal_storage::KnownHostsStore;
-use miaominal_terminal::MIN_TERMINAL_COLUMNS;
 use russh::keys::{HashAlg, PublicKey};
 use russh::{Channel, ChannelMsg, Disconnect, client};
 use std::collections::HashMap;
