@@ -63,14 +63,38 @@ impl Render for AppView {
                     controller.release_conversation_view(cx);
                 });
             }
-            let notification_layer =
-                Root::render_notification_layer(window, cx).map(IntoElement::into_any_element);
-            return pages::render_onboarding_page(
-                self.controllers.settings.clone(),
-                notification_layer,
-                window,
-                cx,
-            );
+            let pending_local_vault_passphrase_popup =
+                self.pending_local_vault_passphrase_popup(cx);
+            let exiting_dialogs = self.active_exiting_dialogs(window);
+            let onboarding_page =
+                pages::render_onboarding_page(self.controllers.settings.clone(), None, window, cx);
+            return div()
+                .size_full()
+                .relative()
+                .child(onboarding_page)
+                .when_some(pending_local_vault_passphrase_popup, |this, mode| {
+                    this.child(self.render_local_vault_passphrase_popup(
+                        entity.clone(),
+                        mode,
+                        None,
+                        bottom_popup_viewport_height,
+                        cx,
+                    ))
+                })
+                .children(exiting_dialogs.into_iter().map(|(snapshot, progress)| {
+                    self.render_exiting_dialog_overlay(
+                        entity.clone(),
+                        snapshot,
+                        progress,
+                        bottom_popup_viewport_height,
+                        cx,
+                    )
+                }))
+                .when_some(
+                    Root::render_notification_layer(window, cx),
+                    |this, layer| this.child(layer),
+                )
+                .into_any_element();
         }
         let has_active_session = self.has_active_session();
         let has_active_sftp_tab = self
