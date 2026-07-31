@@ -453,6 +453,7 @@ fn take_non_interactive_exec_error(error: &Arc<Mutex<Option<String>>>) -> Option
     error.lock().ok().and_then(|mut guard| guard.take())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_profile_pty_command(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,

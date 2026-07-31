@@ -348,6 +348,7 @@ impl SettingsService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn copy_secrets_between_backends(
         session_ids: &[String],
         managed_key_ids: &[String],
@@ -389,6 +390,7 @@ impl SettingsService {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn reset_local_data_with(
         config_dir: &Path,
         keyring_secrets: &SecretStore,

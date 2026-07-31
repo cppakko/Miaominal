@@ -490,6 +490,7 @@ pub fn start_session(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,

@@ -3,6 +3,7 @@ use anyhow::Result;
 use super::store::SyncConfigStore;
 use miaominal_secrets::{SecretKind, SecretStore};
 
+#[allow(clippy::too_many_arguments)]
 pub fn copy_secrets_between_backends<S, K>(
     session_ids: S,
     managed_key_ids: K,

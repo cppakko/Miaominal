@@ -19,6 +19,7 @@ use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_payload(
     device_id: &str,
     sessions: &[SessionProfile],
@@ -71,6 +72,7 @@ pub fn decrypt_remote_payload(
     decrypt_payload(payload, passphrase)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_plaintext_payload(
     payload: &SyncPlaintextPayload,
     session_store: &SessionStore,

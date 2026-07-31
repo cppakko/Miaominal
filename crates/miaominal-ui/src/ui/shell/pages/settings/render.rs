@@ -30,15 +30,15 @@ pub(in crate::ui::shell) fn render_settings_page(
 }
 
 fn setting_pages(settings: Entity<SettingsController>) -> Vec<SettingPage> {
-    let mut pages = Vec::with_capacity(7);
-    pages.push(appearance_page(settings.clone()));
-    pages.push(connections_page(settings.clone()));
-    pages.push(key_bindings_page(settings.clone()));
-    pages.push(ai_providers_page(settings.clone()));
-    pages.push(sync_page(settings.clone()));
-    pages.push(vault_page(settings.clone()));
-    pages.push(about_page(settings));
-    pages
+    vec![
+        appearance_page(settings.clone()),
+        connections_page(settings.clone()),
+        key_bindings_page(settings.clone()),
+        ai_providers_page(settings.clone()),
+        sync_page(settings.clone()),
+        vault_page(settings.clone()),
+        about_page(settings),
+    ]
 }
 
 fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {

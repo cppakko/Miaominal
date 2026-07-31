@@ -113,6 +113,7 @@ impl SyncEngine {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn push_internal(
         &mut self,
         session_store: &SessionStore,
