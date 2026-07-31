@@ -1,5 +1,6 @@
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_settings::SyncedSettings;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,8 @@ impl SyncConfig {
 }
 
 pub const LEGACY_SYNC_PAYLOAD_VERSION: u32 = 1;
-pub const SYNC_PAYLOAD_VERSION: u32 = 2;
+pub const PREVIOUS_SYNC_PAYLOAD_VERSION: u32 = 2;
+pub const SYNC_PAYLOAD_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncKdf {
@@ -104,6 +106,7 @@ pub struct SyncPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncPlaintextPayload {
     pub sessions: Vec<SessionProfile>,
+    pub proxies: Vec<ProxyProfile>,
     pub snippets: Vec<SnippetRecord>,
     pub managed_keys: Vec<ManagedKeyRecord>,
     pub settings: SyncedSettings,
@@ -121,6 +124,8 @@ pub struct PlaintextSecrets {
     pub ai_provider_secrets: Vec<AiProviderSecret>,
     #[serde(default)]
     pub web_search_secret: Option<WebSearchSecret>,
+    #[serde(default)]
+    pub proxy_secrets: Vec<ProxySecret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +152,12 @@ pub struct AiProviderSecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchSecret {
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySecret {
+    pub id: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

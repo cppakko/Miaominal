@@ -1005,6 +1005,7 @@ impl AgentController {
             targets: approval_mentions.pty_interrupts.clone(),
         };
         let sessions = self.session_profiles();
+        let proxies = self.session_proxies();
         let agent_service = self.agent_service();
         let secrets = self.secrets();
         let known_hosts = self.known_hosts();
@@ -1029,6 +1030,7 @@ impl AgentController {
                 agent_service,
                 profile,
                 profiles: sessions,
+                proxies,
                 secrets,
                 known_hosts,
                 web_search_config,
@@ -1383,12 +1385,14 @@ impl AgentController {
 
     fn agent_exec_channel_for_profile(&self, profile: SessionProfile) -> AgentExecChannel {
         let profiles = self.session_profiles();
+        let proxies = self.session_proxies();
         let agent_service = self.agent_service();
         let secrets = self.secrets();
         let known_hosts = self.known_hosts();
-        let mut channel = agent_service.channel_for_profile_snapshot_with_stores(
+        let mut channel = agent_service.channel_for_profile_snapshot_with_stores_and_proxies(
             profile,
             &profiles,
+            &proxies,
             secrets.clone(),
             known_hosts,
         );

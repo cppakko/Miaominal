@@ -1560,6 +1560,7 @@ password_requires_password = "Password authentication requires a password."
 managed_key_requires_id = "Managed key authentication requires a managed key ID."
 ssh_agent_requires_identity = "SSH agent authentication requires an agent identity."
 certificate_requires_key_based_identity = "OpenSSH certificates require a key-based identity."
+entry_proxy_missing = "The selected entry proxy no longer exists: {id}"
 
 [forwarding.status]
 idle = "Idle"
@@ -1976,3 +1977,75 @@ ask = "Ask"
 execute = "Execute"
 non_blocking = "Non-blocking"
 full_auto = "Auto"
+
+[settings.proxies.group]
+title = "Entry proxies"
+description = "Create reusable SOCKS5 or HTTP CONNECT proxies for SSH entry connections."
+
+[settings.proxies.saved]
+label = "Saved proxies"
+description = "Proxy passwords are stored separately and included only inside encrypted sync payloads."
+
+[settings.proxies]
+empty = "No proxies have been configured. Hosts connect directly until an entry proxy is selected."
+
+[settings.proxies.picker]
+search_placeholder = "Search proxies"
+no_matches = "No matching proxies"
+
+[settings.proxies.auth]
+none = "No authentication"
+username_password = "Username and password"
+
+[settings.proxies.editor]
+add_title = "Add proxy"
+edit_title = "Edit proxy"
+
+[settings.proxies.actions]
+save = "Save proxy"
+clear_password = "Clear saved password"
+
+[settings.proxies.fields]
+name = "Name"
+protocol = "Protocol"
+host = "Address"
+port = "Port"
+auth_mode = "Authentication"
+username = "Username"
+password = "Password"
+resolve_dns = "Resolve DNS through proxy"
+resolve_dns_description = "Send target hostnames to the SOCKS5 proxy instead of resolving them locally."
+
+[settings.proxies.password]
+keep_hint = "Leave this field empty to keep the saved password, enter a value to replace it."
+new_hint = "A password is required for username/password authentication."
+clear_pending = "The saved password will be cleared when this proxy is saved."
+
+[settings.proxies.placeholders]
+name = "Proxy name"
+host = "proxy.example.com or IP address"
+port = "Proxy port"
+username = "Proxy username"
+password = "Keep existing or enter a new password"
+
+[settings.proxies.messages]
+not_found = "The proxy no longer exists."
+invalid_port = "Enter a valid proxy port from 1 to 65535."
+saved = "Proxy saved."
+save_failed = "Failed to save proxy"
+deleted = "Proxy deleted."
+delete_failed = "Failed to delete proxy"
+
+[settings.proxies.validation]
+name_required = "Enter a proxy name."
+name_duplicate = "Proxy names must be unique."
+host_required = "Enter a proxy address."
+host_invalid = "The proxy address cannot contain whitespace or control characters."
+username_required = "Enter a username when proxy authentication is enabled."
+http_username_colon = "An HTTP CONNECT proxy username cannot contain a colon."
+password_required = "Enter a password for username/password authentication."
+
+[hosts.editor.entry_proxy]
+label = "Entry proxy"
+direct = "Direct connection"
+missing_option = "Proxy missing ({id})"

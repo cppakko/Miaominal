@@ -5,6 +5,7 @@ use super::session::{
 };
 use anyhow::Result;
 use miaominal_core::profile::{PortForwardKind, PortForwardRule, SessionProfile};
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_storage::KnownHostsStore;
 use russh::{Disconnect, client};
@@ -278,6 +279,7 @@ pub fn start_port_forward_session(
     runtime: &TokioHandle,
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SessionConnection {
@@ -292,6 +294,7 @@ pub fn start_port_forward_session(
                 if let Err(error) = run_port_forward_session(
                     profile,
                     all_profiles,
+                    all_proxies,
                     secrets,
                     known_hosts,
                     command_receiver,
@@ -319,6 +322,7 @@ pub fn start_port_forward_session(
 async fn run_port_forward_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
@@ -333,6 +337,7 @@ async fn run_port_forward_session(
     } = connect_authenticated_session_internal(
         profile,
         all_profiles,
+        all_proxies,
         secrets,
         known_hosts,
         &mut command_receiver,

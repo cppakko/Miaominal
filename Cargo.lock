@@ -5414,6 +5414,7 @@ dependencies = [
  "anyhow",
  "base64",
  "futures",
+ "httparse",
  "log",
  "miaominal-core",
  "miaominal-secrets",
@@ -5422,6 +5423,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-socks",
 ]
 
 [[package]]

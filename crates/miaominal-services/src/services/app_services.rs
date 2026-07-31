@@ -1,12 +1,13 @@
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::SecretStore;
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
-use miaominal_storage::known_hosts_store::KnownHostsStore;
+use miaominal_storage::{ProxyStore, known_hosts_store::KnownHostsStore};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::{AgentService, ChatService};
@@ -14,6 +15,7 @@ use crate::{AgentService, ChatService};
 pub struct AppServices {
     pub runtime: TokioHandle,
     pub session_store: Option<SessionStore>,
+    pub proxy_store: Option<ProxyStore>,
     pub snippet_store: Option<SnippetStore>,
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
@@ -28,6 +30,7 @@ pub struct LoadedAppData {
     pub chat_service: Option<ChatService>,
     pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
+    pub proxies: Vec<ProxyProfile>,
     pub snippets: Vec<SnippetRecord>,
     pub selected_profile: Option<usize>,
     pub status_message: String,
@@ -37,6 +40,7 @@ impl AppServices {
     pub fn new(
         runtime: TokioHandle,
         session_store: Option<SessionStore>,
+        proxy_store: Option<ProxyStore>,
         snippet_store: Option<SnippetStore>,
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
@@ -47,6 +51,7 @@ impl AppServices {
         Self {
             runtime,
             session_store,
+            proxy_store,
             snippet_store,
             secrets,
             known_hosts,
@@ -131,6 +136,28 @@ impl AppServices {
         } else {
             ChatService::open_default()
         };
+
+        let (proxy_store, proxies, proxy_warning) = match ProxyStore::new() {
+            Ok(store) => match store.load(&secrets) {
+                Ok(proxies) => (Some(store), proxies, None),
+                Err(error) => {
+                    log::warn!("proxy store load failed: {error:?}");
+                    (
+                        Some(store),
+                        Vec::new(),
+                        Some(format!("Proxy configuration could not be loaded: {error}")),
+                    )
+                }
+            },
+            Err(error) => {
+                log::warn!("proxy store unavailable: {error:?}");
+                (
+                    None,
+                    Vec::new(),
+                    Some(format!("Proxy storage is unavailable: {error}")),
+                )
+            }
+        };
         let (chat_service, chat_sessions) = match chat_result {
             Ok(service) => {
                 let sessions = service.list_sessions().unwrap_or_else(|error| {
@@ -145,11 +172,15 @@ impl AppServices {
             }
         };
         let selected_profile = (!sessions.is_empty()).then_some(0);
+        let status_message = proxy_warning
+            .map(|warning| format!("{status_message} {warning}"))
+            .unwrap_or(status_message);
 
         LoadedAppData {
             services: Self::new(
                 runtime,
                 session_store,
+                proxy_store,
                 snippet_store,
                 secrets,
                 known_hosts,
@@ -160,6 +191,7 @@ impl AppServices {
             chat_service,
             chat_sessions,
             sessions,
+            proxies,
             snippets,
             selected_profile,
             status_message,

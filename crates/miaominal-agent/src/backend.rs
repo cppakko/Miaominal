@@ -1,5 +1,6 @@
 use crate::error::{AgentError, AgentResult};
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_ssh as ssh;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -48,6 +49,7 @@ impl ExecMode {
 pub struct SshExecRequest {
     pub profile: SessionProfile,
     pub all_profiles: Vec<SessionProfile>,
+    pub all_proxies: Vec<ProxyProfile>,
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
     pub command: String,
@@ -63,6 +65,7 @@ impl SshBackend {
             ExecMode::Raw => ssh::execute_profile_command(
                 request.profile,
                 request.all_profiles,
+                request.all_proxies,
                 request.secrets,
                 request.known_hosts,
                 request.command,
@@ -72,6 +75,7 @@ impl SshBackend {
             ExecMode::Pty { columns, lines } => ssh::execute_profile_pty_command(
                 request.profile,
                 request.all_profiles,
+                request.all_proxies,
                 request.secrets,
                 request.known_hosts,
                 request.command,

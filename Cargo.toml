@@ -43,6 +43,7 @@ directories = "6.0.0"
 env_logger = "0.11"
 fontdb = { version = "0.23", features = ["fontconfig", "fontconfig-parser"] }
 futures = "0.3"
+httparse = "1"
 flate2 = "1"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = [
@@ -110,6 +111,7 @@ tokio = { version = "1", features = [
     "sync",
     "time",
 ] }
+tokio-socks = "0.5.2"
 toml = "1.1.2"
 unicode-segmentation = "1.13.3"
 uuid = { version = "1.23.4", features = ["v4"] }

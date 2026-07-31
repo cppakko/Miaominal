@@ -61,11 +61,11 @@ pub(in crate::ui::shell) use settings::{
     OnboardingStep, OnboardingStepTransition, OnboardingStepTransitionPhase,
     PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingLocalVaultDisableConfirmState,
-    PendingSyncDirectionState, PendingSyncPassphraseClearConfirmPopupState,
-    PendingSyncPassphrasePopupState, PendingSyncProviderConfigPopupState,
-    PendingSyncPullConfirmState, PendingWebSearchConfigPopupState, SettingsController,
-    SettingsControllerArgs, SettingsForms, SyncProviderConfigSaveDraft, SyncPullConfirmReason,
-    WebSearchSaveDraft,
+    PendingProxyConfigPopupState, PendingSyncDirectionState,
+    PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
+    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
+    PendingWebSearchConfigPopupState, ProxySaveDraft, SettingsController, SettingsControllerArgs,
+    SettingsForms, SyncProviderConfigSaveDraft, SyncPullConfirmReason, WebSearchSaveDraft,
 };
 pub(in crate::ui::shell) use sftp::{
     LocalSftpEntry, SessionSftpProgressCenterDragState, SftpController, SftpControllerArgs,
@@ -94,6 +94,7 @@ pub(in crate::ui::shell) enum AppCommand {
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,
     SyncReloaded(Box<SyncReloadResult>),
+    ProxiesChanged(Vec<miaominal_core::proxy::ProxyProfile>),
     ManagedKeysChanged(ManagedKeysChange),
     SessionMonitoringPreferenceChanged(bool),
     AgentModePreferenceChanged(miaominal_settings::AiAgentMode),
@@ -199,6 +200,7 @@ pub(in crate::ui::shell) enum SettingsDeferredCommand {
     SaveAiProvider(AiProviderSaveDraft),
     OpenWebSearchConfig,
     SaveWebSearch(WebSearchSaveDraft),
+    SaveProxy(ProxySaveDraft),
     ClearSyncPassphrase,
     RevealSecret(SecretRevealTarget),
 }
@@ -234,14 +236,16 @@ fn clear_managed_key_profile_references(profiles: &mut [SessionProfile], key_id:
 enum SyncReloadDomain {
     Settings,
     Sessions,
+    Proxies,
     Snippets,
     ManagedKeys,
 }
 
-const fn sync_reload_domains() -> [SyncReloadDomain; 4] {
+const fn sync_reload_domains() -> [SyncReloadDomain; 5] {
     [
         SyncReloadDomain::Settings,
         SyncReloadDomain::Sessions,
+        SyncReloadDomain::Proxies,
         SyncReloadDomain::Snippets,
         SyncReloadDomain::ManagedKeys,
     ]
@@ -281,7 +285,8 @@ impl ControllerSet {
                 AgentController::new(agent, session_query.clone(), session_terminal, window, cx)
             }),
             sftp: cx.new(|cx| SftpController::new(sftp, session_query.clone(), window, cx)),
-            settings: cx.new(|cx| SettingsController::new(settings, window, cx)),
+            settings: cx
+                .new(|cx| SettingsController::new(settings, session_query.clone(), window, cx)),
             keychain: cx.new(|cx| KeychainController::new(keychain, session_query, window, cx)),
         }
     }
@@ -410,6 +415,7 @@ mod tests {
             [
                 SyncReloadDomain::Settings,
                 SyncReloadDomain::Sessions,
+                SyncReloadDomain::Proxies,
                 SyncReloadDomain::Snippets,
                 SyncReloadDomain::ManagedKeys,
             ]

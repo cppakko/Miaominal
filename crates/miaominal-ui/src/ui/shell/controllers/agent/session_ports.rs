@@ -5,10 +5,15 @@ use crate::ui::{
     i18n,
     shell::{SessionProfile, SessionTerminalTarget, TabId, TerminalLeaseError, TerminalLeaseGrant},
 };
+use miaominal_core::proxy::ProxyProfile;
 
 impl AgentController {
     pub(in crate::ui::shell) fn session_profiles(&self) -> Vec<SessionProfile> {
         self.session_query.profiles()
+    }
+
+    pub(in crate::ui::shell) fn session_proxies(&self) -> Vec<ProxyProfile> {
+        self.session_query.proxies()
     }
 
     pub(in crate::ui::shell) fn terminal_targets(&self) -> Vec<SessionTerminalTarget> {

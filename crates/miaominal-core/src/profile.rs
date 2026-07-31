@@ -115,6 +115,8 @@ pub struct SessionProfile {
     pub shell_type: ShellType,
     #[serde(default)]
     pub proxy_jump_profile_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_proxy_id: Option<String>,
     #[serde(default)]
     pub has_stored_password: bool,
     #[serde(default)]
@@ -152,6 +154,7 @@ impl SessionProfile {
             environment_variables: Vec::new(),
             shell_type: ShellType::Posix,
             proxy_jump_profile_ids: Vec::new(),
+            entry_proxy_id: None,
             has_stored_password: false,
             has_stored_passphrase: false,
             port_forwarding_rules: Vec::new(),
@@ -457,5 +460,19 @@ mod tests {
         let profile = SessionProfile::blank("session-3", 1);
 
         assert_eq!(profile.kind, ProfileKind::Ssh);
+    }
+
+    #[test]
+    fn legacy_profile_without_entry_proxy_defaults_to_direct() {
+        let profile = SessionProfile::blank("session-legacy", 1);
+        let mut value = serde_json::to_value(profile).expect("profile should serialize");
+        value
+            .as_object_mut()
+            .expect("profile should be an object")
+            .remove("entry_proxy_id");
+
+        let profile: SessionProfile =
+            serde_json::from_value(value).expect("legacy profile should deserialize");
+        assert_eq!(profile.entry_proxy_id, None);
     }
 }

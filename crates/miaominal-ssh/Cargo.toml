@@ -8,6 +8,7 @@ publish = false
 anyhow.workspace = true
 base64.workspace = true
 futures.workspace = true
+httparse.workspace = true
 log.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-secrets = { path = "../miaominal-secrets" }
@@ -15,4 +16,5 @@ miaominal-storage = { path = "../miaominal-storage" }
 russh.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
+tokio-socks.workspace = true

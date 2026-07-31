@@ -7,6 +7,7 @@ use miaominal_agent::{
     TerminalExecHandle,
 };
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_services::AgentService;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -57,6 +58,7 @@ pub(in crate::ui::shell) struct AgentApprovedToolTask {
     pub agent_service: AgentService,
     pub profile: SessionProfile,
     pub profiles: Vec<SessionProfile>,
+    pub proxies: Vec<ProxyProfile>,
     pub secrets: SecretStore,
     pub known_hosts: KnownHostsStore,
     pub web_search_config: miaominal_settings::WebSearchConfig,
@@ -273,6 +275,7 @@ impl AgentController {
             agent_service,
             profile,
             profiles,
+            proxies,
             secrets,
             known_hosts,
             web_search_config,
@@ -302,12 +305,14 @@ impl AgentController {
                 };
                 runtime.block_on(async move {
                     let tool = async move {
-                        let mut channel = agent_service.channel_for_profile_snapshot_with_stores(
-                            profile,
-                            &profiles,
-                            secrets.clone(),
-                            known_hosts,
-                        );
+                        let mut channel = agent_service
+                            .channel_for_profile_snapshot_with_stores_and_proxies(
+                                profile,
+                                &profiles,
+                                &proxies,
+                                secrets.clone(),
+                                known_hosts,
+                            );
                         if web_search_config.enabled {
                             let web_search_api_key =
                                 secrets.get("web_search", SecretKind::WebSearchApiKey)?;

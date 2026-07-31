@@ -286,17 +286,20 @@ impl AppView {
     pub(in crate::ui::shell) fn apply_sync_reload(
         &mut self,
         reload: SyncReloadResult,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let any_reload_failed = reload.any_failed();
         let SyncReloadResult {
             settings,
             sessions,
+            proxies,
             snippets,
             managed_keys,
         } = reload;
         let mut settings = Some(settings);
         let mut sessions = Some(sessions);
+        let mut proxies = Some(proxies);
         let mut snippets = Some(snippets);
         let mut managed_keys = Some(managed_keys);
 
@@ -320,6 +323,20 @@ impl AppView {
                             self.controllers.session.read(cx).replace_profiles(sessions)
                         }
                         Err(error) => log::warn!("failed to reload sessions after sync: {error}"),
+                    }
+                }
+                SyncReloadDomain::Proxies => {
+                    match proxies.take().expect("proxy reload is distributed once") {
+                        Ok(proxies) => {
+                            self.controllers
+                                .session
+                                .read(cx)
+                                .replace_proxies(proxies.clone());
+                            self.controllers.settings.update(cx, |controller, cx| {
+                                controller.replace_proxies(proxies, window, cx);
+                            });
+                        }
+                        Err(error) => log::warn!("failed to reload proxies after sync: {error}"),
                     }
                 }
                 SyncReloadDomain::Snippets => match snippets
@@ -908,6 +925,21 @@ impl AppView {
             AppCommand::SessionEventApplied { tab_id, outcome } => {
                 self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
             }
+            AppCommand::ProxiesChanged(proxies) => {
+                let proxies = proxies.clone();
+                self.controllers.session.update(cx, |controller, cx| {
+                    controller.replace_proxies(proxies);
+                    controller.refresh_entry_proxy_select(window, cx);
+                    cx.notify();
+                });
+            }
+            AppCommand::SyncReloaded(reload) => {
+                self.apply_sync_reload((**reload).clone(), window, cx);
+                self.controllers.session.update(cx, |controller, cx| {
+                    controller.refresh_entry_proxy_select(window, cx);
+                    cx.notify();
+                });
+            }
             _ => self.handle_app_command(command, cx),
         }
     }
@@ -933,7 +965,9 @@ impl AppView {
             | AppCommand::SaveProfileRequested(_)
             | AppCommand::SaveSnippetRequested(_)
             | AppCommand::ImportProfilesRequested(_)
-            | AppCommand::SessionEventApplied { .. } => {}
+            | AppCommand::SessionEventApplied { .. }
+            | AppCommand::ProxiesChanged(_)
+            | AppCommand::SyncReloaded(_) => {}
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),
             AppCommand::EnsureSessionSftpRequested(tab_id) => {
@@ -985,7 +1019,6 @@ impl AppView {
             AppCommand::RebuildApplication => self.schedule_application_rebuild(cx),
             AppCommand::OverlayDismissed(snapshot) => self.start_dialog_exit(snapshot.clone(), cx),
             AppCommand::OpenTab(request) => self.handle_tab_open_request(request, cx),
-            AppCommand::SyncReloaded(reload) => self.apply_sync_reload((**reload).clone(), cx),
             AppCommand::CloseTab(tab_id) => {
                 let tab_id = *tab_id;
                 let entity = cx.entity();

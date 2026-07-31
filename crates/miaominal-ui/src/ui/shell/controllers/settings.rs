@@ -1,4 +1,4 @@
-use super::AppCommand;
+use super::{AppCommand, SessionQueryPort};
 use crate::ui::i18n;
 use crate::ui::shell::actions::ai_provider_kind_chat_supported;
 use crate::ui::shell::{
@@ -11,7 +11,7 @@ use crate::ui::shell::{
 };
 use anyhow::Result;
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
     UniformListScrollHandle, Window, rgb,
 };
 use gpui_component::{
@@ -21,9 +21,11 @@ use gpui_component::{
     select::{SelectEvent, SelectState},
 };
 use miaominal_core::profile::ImportSourceKind;
+use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
 use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
-    LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService, SyncService,
+    LocalVaultPassphraseChangeOutcome, LocalVaultTransition, ProxyPasswordUpdate, ProxyService,
+    SettingsService, SyncService,
 };
 use miaominal_settings::{
     AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
@@ -31,7 +33,7 @@ use miaominal_settings::{
     TerminalRightClickBehavior, ThemeId, WebSearchProviderKind,
 };
 use miaominal_storage::{
-    SettingsStore,
+    ProxyStore, SettingsStore,
     config_store::store::{SessionStore, SnippetStore},
     keychain_store::ManagedKeyStore,
 };
@@ -68,9 +70,30 @@ fn set_ai_provider_reasoning_effort_setting(
     true
 }
 
+fn proxy_management_select_options(proxies: &[ProxyProfile]) -> Vec<SelectOption<String>> {
+    proxies
+        .iter()
+        .map(|proxy| SelectOption::new(proxy.id.clone(), proxy_management_label(proxy)))
+        .collect()
+}
+
+fn proxy_management_label(proxy: &ProxyProfile) -> String {
+    let protocol = match proxy.protocol {
+        ProxyProtocol::Socks5 => "SOCKS5",
+        ProxyProtocol::HttpConnect => "HTTP CONNECT",
+    };
+    format!(
+        "{} · {protocol} · {}:{}",
+        proxy.connection_label(),
+        proxy.host,
+        proxy.port
+    )
+}
+
 mod ai_providers;
 mod local_data_reset;
 mod local_vault;
+mod proxies;
 mod secret_visibility;
 mod sync;
 mod web_search;
@@ -80,6 +103,7 @@ pub(in crate::ui::shell) use local_vault::{
     LocalVaultActionRequest, LocalVaultChangePassphraseResult, LocalVaultEnableResult,
     LocalVaultOperationResult, LocalVaultUnlockResult,
 };
+pub(in crate::ui::shell) use proxies::ProxySaveDraft;
 pub(in crate::ui::shell) use sync::{LocalVaultSyncSecretInputs, SyncProviderConfigSaveDraft};
 pub(in crate::ui::shell) use web_search::WebSearchSaveDraft;
 
@@ -247,6 +271,12 @@ pub(in crate::ui::shell) struct PendingSyncProviderConfigPopupState {
     pub(in crate::ui::shell) provider: SyncProvider,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::ui::shell) struct PendingProxyConfigPopupState {
+    pub(in crate::ui::shell) proxy_id: String,
+    pub(in crate::ui::shell) is_new: bool,
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::ui::shell) struct OnboardingState {
     pub(in crate::ui::shell) show_onboarding: bool,
@@ -362,6 +392,14 @@ pub(in crate::ui::shell) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<AiProviderKind>>>>,
     pub(in crate::ui::shell) web_search_kind_select:
         Entity<SelectState<Vec<SelectOption<WebSearchProviderKind>>>>,
+    pub(in crate::ui::shell) proxy_management_select:
+        Entity<SelectState<Vec<SelectOption<String>>>>,
+    pub(in crate::ui::shell) proxy_management_query_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_management_scroll_handle: UniformListScrollHandle,
+    pub(in crate::ui::shell) proxy_protocol_select:
+        Entity<SelectState<Vec<SelectOption<ProxyProtocol>>>>,
+    pub(in crate::ui::shell) proxy_auth_mode_select:
+        Entity<SelectState<Vec<SelectOption<ProxyAuthMode>>>>,
     pub(in crate::ui::shell) font_family_options: Vec<String>,
     pub(in crate::ui::shell) font_family_query_input: Entity<InputState>,
     pub(in crate::ui::shell) font_family_scroll_handle: UniformListScrollHandle,
@@ -391,6 +429,11 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) web_search_api_key_input: Entity<InputState>,
     pub(in crate::ui::shell) web_search_endpoint_input: Entity<InputState>,
     pub(in crate::ui::shell) web_search_max_results_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_name_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_host_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_port_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_username_input: Entity<InputState>,
+    pub(in crate::ui::shell) proxy_password_input: Entity<InputState>,
 }
 
 pub(in crate::ui::shell) struct SettingsControllerArgs {
@@ -398,6 +441,8 @@ pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub session_store: Option<SessionStore>,
     pub snippet_store: Option<SnippetStore>,
     pub keychain_store: Option<ManagedKeyStore>,
+    pub proxy_store: Option<ProxyStore>,
+    pub proxies: Vec<ProxyProfile>,
     pub settings_store: SettingsStore,
     pub secrets: SecretStore,
 }
@@ -414,6 +459,12 @@ pub(in crate::ui::shell) struct SettingsController {
     session_store: Option<SessionStore>,
     snippet_store: Option<SnippetStore>,
     keychain_store: Option<ManagedKeyStore>,
+    proxy_store: Option<ProxyStore>,
+    proxies: Vec<ProxyProfile>,
+    session_query: SessionQueryPort,
+    editing_proxy_id: Option<String>,
+    proxy_resolve_dns_through_proxy: bool,
+    proxy_password_clear_requested: bool,
     settings_store: SettingsStore,
     secrets: SecretStore,
     pub(in crate::ui::shell) forms: SettingsForms,
@@ -440,6 +491,7 @@ pub(in crate::ui::shell) struct SettingsController {
     ai_provider_popup: Option<PendingAiProviderPopupState>,
     web_search_config_popup: Option<PendingWebSearchConfigPopupState>,
     sync_provider_config_popup: Option<PendingSyncProviderConfigPopupState>,
+    proxy_config_popup: Option<PendingProxyConfigPopupState>,
     local_vault_passphrase_popup: Option<LocalVaultPassphrasePopupMode>,
     sync_provider_config_save_task: Option<gpui::Task<()>>,
     sync_passphrase_task: Option<gpui::Task<()>>,
@@ -485,6 +537,7 @@ impl SettingsController {
 
     fn build_bootstrap(
         settings_store: &SettingsStore,
+        proxies: &[ProxyProfile],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> SettingsBootstrap {
@@ -617,6 +670,23 @@ impl SettingsController {
             .iter()
             .position(|provider| *provider.value() == settings.web_search.kind)
             .map(|index| IndexPath::default().row(index));
+        let proxy_management_options = proxy_management_select_options(proxies);
+        let selected_proxy_management =
+            (!proxy_management_options.is_empty()).then(|| IndexPath::default().row(0));
+        let proxy_protocol_options = vec![
+            SelectOption::new(ProxyProtocol::Socks5, "SOCKS5"),
+            SelectOption::new(ProxyProtocol::HttpConnect, "HTTP CONNECT"),
+        ];
+        let proxy_auth_mode_options = vec![
+            SelectOption::new(
+                ProxyAuthMode::None,
+                i18n::string("settings.proxies.auth.none"),
+            ),
+            SelectOption::new(
+                ProxyAuthMode::UsernamePassword,
+                i18n::string("settings.proxies.auth.username_password"),
+            ),
+        ];
         let font_family_options = Self::font_family_options(&[
             settings.font_family.as_str(),
             settings.terminal_font_family.as_str(),
@@ -683,6 +753,38 @@ impl SettingsController {
                 SelectState::new(
                     web_search_kind_options,
                     selected_web_search_kind,
+                    window,
+                    cx,
+                )
+            }),
+            proxy_management_select: cx.new(|cx| {
+                SelectState::new(
+                    proxy_management_options,
+                    selected_proxy_management,
+                    window,
+                    cx,
+                )
+            }),
+            proxy_management_query_input: new_input_state(
+                i18n::string("settings.proxies.picker.search_placeholder"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            proxy_management_scroll_handle: UniformListScrollHandle::new(),
+            proxy_protocol_select: cx.new(|cx| {
+                SelectState::new(
+                    proxy_protocol_options,
+                    Some(IndexPath::default().row(0)),
+                    window,
+                    cx,
+                )
+            }),
+            proxy_auth_mode_select: cx.new(|cx| {
+                SelectState::new(
+                    proxy_auth_mode_options,
+                    Some(IndexPath::default().row(0)),
                     window,
                     cx,
                 )
@@ -879,6 +981,41 @@ impl SettingsController {
                 window,
                 cx,
             ),
+            proxy_name_input: new_input_state(
+                i18n::string("settings.proxies.placeholders.name"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            proxy_host_input: new_input_state(
+                i18n::string("settings.proxies.placeholders.host"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            proxy_port_input: new_input_state(
+                i18n::string("settings.proxies.placeholders.port"),
+                "1080",
+                false,
+                window,
+                cx,
+            ),
+            proxy_username_input: new_input_state(
+                i18n::string("settings.proxies.placeholders.username"),
+                "",
+                false,
+                window,
+                cx,
+            ),
+            proxy_password_input: new_input_state(
+                i18n::string("settings.proxies.placeholders.password"),
+                "",
+                true,
+                window,
+                cx,
+            ),
         };
 
         SettingsBootstrap {
@@ -1010,10 +1147,11 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn new(
         args: SettingsControllerArgs,
+        session_query: SessionQueryPort,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let bootstrap = Self::build_bootstrap(&args.settings_store, window, cx);
+        let bootstrap = Self::build_bootstrap(&args.settings_store, &args.proxies, window, cx);
         let forms = bootstrap.forms;
         let last_tab_close_behavior_select = forms.last_tab_close_behavior_select.clone();
         let local_vault_auto_lock_duration_select =
@@ -1030,6 +1168,9 @@ impl SettingsController {
         let font_fallbacks_input = forms.font_fallbacks_input.clone();
         let seed_color_picker = forms.seed_color_picker.clone();
         let web_search_kind_select = forms.web_search_kind_select.clone();
+        let proxy_management_query_input = forms.proxy_management_query_input.clone();
+        let proxy_protocol_select = forms.proxy_protocol_select.clone();
+        let proxy_auth_mode_select = forms.proxy_auth_mode_select.clone();
 
         let last_tab_close_behavior_subscription = cx.subscribe(
             &last_tab_close_behavior_select,
@@ -1202,12 +1343,57 @@ impl SettingsController {
                     this.on_web_search_kind_changed(kind, cx);
                 }
             });
+        let proxy_management_query_subscription = cx.subscribe(
+            &proxy_management_query_input,
+            |this: &mut Self, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    this.forms
+                        .proxy_management_scroll_handle
+                        .scroll_to_item(0, ScrollStrategy::Top);
+                    cx.notify();
+                }
+                InputEvent::Focus | InputEvent::Blur => cx.notify(),
+                _ => {}
+            },
+        );
+        let proxy_protocol_subscription =
+            cx.subscribe(&proxy_protocol_select, |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if this.editing_proxy_id.is_some()
+                    && let Some(protocol) = selected.as_ref().copied()
+                {
+                    let port_input = this.forms.proxy_port_input.clone();
+                    let current_port = port_input.read(cx).value().trim().to_string();
+                    if matches!(current_port.as_str(), "1080" | "8080")
+                        && let Some(window_handle) = cx.active_window()
+                    {
+                        let port = protocol.default_port().to_string();
+                        let _ = window_handle.update(cx, move |_, window, cx| {
+                            set_input_value(&port_input, port, window, cx);
+                        });
+                    }
+                    cx.notify();
+                }
+            });
+        let proxy_auth_mode_subscription =
+            cx.subscribe(&proxy_auth_mode_select, |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if this.editing_proxy_id.is_some() && selected.is_some() {
+                    cx.notify();
+                }
+            });
 
         Self {
             runtime: args.runtime,
             session_store: args.session_store,
             snippet_store: args.snippet_store,
             keychain_store: args.keychain_store,
+            proxy_store: args.proxy_store,
+            proxies: args.proxies,
+            session_query,
+            editing_proxy_id: None,
+            proxy_resolve_dns_through_proxy: true,
+            proxy_password_clear_requested: false,
             settings_store: args.settings_store,
             secrets: args.secrets,
             forms,
@@ -1234,6 +1420,7 @@ impl SettingsController {
             ai_provider_popup: None,
             web_search_config_popup: None,
             sync_provider_config_popup: None,
+            proxy_config_popup: None,
             local_vault_passphrase_popup: None,
             sync_provider_config_save_task: None,
             sync_passphrase_task: None,
@@ -1261,6 +1448,9 @@ impl SettingsController {
                 font_fallbacks_subscription,
                 seed_color_subscription,
                 web_search_kind_subscription,
+                proxy_management_query_subscription,
+                proxy_protocol_subscription,
+                proxy_auth_mode_subscription,
             ],
         }
     }
@@ -1281,6 +1471,7 @@ impl SettingsController {
         SyncService::new(
             self.runtime.clone(),
             self.session_store.clone(),
+            self.proxy_store.clone(),
             self.snippet_store.clone(),
             self.keychain_store.clone(),
             self.secrets.clone(),
@@ -1289,6 +1480,22 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn settings(&self) -> &AppSettings {
         self.settings_store.settings()
+    }
+
+    pub(in crate::ui::shell) fn proxies(&self) -> &[ProxyProfile] {
+        &self.proxies
+    }
+
+    pub(in crate::ui::shell) fn replace_proxies(
+        &mut self,
+        proxies: Vec<ProxyProfile>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_proxy_id = self.selected_proxy_management_id(cx);
+        self.proxies = proxies;
+        self.refresh_proxy_management_select(selected_proxy_id.as_deref(), window, cx);
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn persist_agent_mode_preference(
@@ -1564,6 +1771,10 @@ impl SettingsController {
         &self,
     ) -> Option<PendingSyncProviderConfigPopupState> {
         self.sync_provider_config_popup
+    }
+
+    pub(in crate::ui::shell) fn proxy_config_popup(&self) -> Option<PendingProxyConfigPopupState> {
+        self.proxy_config_popup.clone()
     }
 
     pub(in crate::ui::shell) fn local_vault_passphrase_popup(
@@ -2107,6 +2318,18 @@ impl SettingsController {
     ) {
         self.secrets = secrets;
         self.local_vault_status = local_vault_status;
+        if let Some(proxy_store) = &self.proxy_store {
+            match proxy_store.load(&self.secrets) {
+                Ok(proxies) if proxies != self.proxies => {
+                    self.proxies = proxies.clone();
+                    cx.emit(AppCommand::ProxiesChanged(proxies));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("failed to refresh proxies after credentials changed: {error:?}");
+                }
+            }
+        }
         cx.notify();
     }
 }

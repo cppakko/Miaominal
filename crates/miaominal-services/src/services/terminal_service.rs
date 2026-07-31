@@ -1,4 +1,5 @@
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_ssh::{self as ssh, SessionConnection};
 use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -24,6 +25,7 @@ impl TerminalService {
         &self,
         profile: SessionProfile,
         all_profiles: Vec<SessionProfile>,
+        all_proxies: Vec<ProxyProfile>,
         columns: usize,
         lines: usize,
         monitoring_enabled: bool,
@@ -32,6 +34,7 @@ impl TerminalService {
             &self.runtime,
             profile,
             all_profiles,
+            all_proxies,
             self.secrets.clone(),
             self.known_hosts.clone(),
             columns,

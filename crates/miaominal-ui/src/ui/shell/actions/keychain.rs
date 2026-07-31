@@ -1181,6 +1181,7 @@ impl KeychainController {
         let command =
             keychain_deploy_exec_command(&command_template, &location, &filename, &key_public_key);
         let all_profiles = profiles;
+        let all_proxies = self.session_query.proxies();
         let runtime = self.runtime.clone();
         let Some(service) = self.keychain_service() else {
             self.status_message = i18n::string("keychain.messages.storage_unavailable");
@@ -1200,8 +1201,12 @@ impl KeychainController {
         std::thread::Builder::new()
             .name(format!("key-deploy-{}", selected_profile_id))
             .spawn(move || {
-                let outcome =
-                    runtime.block_on(service.execute_deploy(profile, all_profiles, command));
+                let outcome = runtime.block_on(service.execute_deploy(
+                    profile,
+                    all_profiles,
+                    all_proxies,
+                    command,
+                ));
                 tx.send(outcome).ok();
             })
             .expect("failed to spawn key deploy thread");

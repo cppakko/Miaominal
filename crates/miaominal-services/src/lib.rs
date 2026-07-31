@@ -8,6 +8,8 @@ mod chat_service;
 mod keychain_service;
 #[path = "services/profile_service.rs"]
 mod profile_service;
+#[path = "services/proxy_service.rs"]
+mod proxy_service;
 #[path = "services/settings_service.rs"]
 mod settings_service;
 #[path = "services/sftp_service.rs"]
@@ -22,6 +24,7 @@ pub use app_services::{AppServices, LoadedAppData};
 pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
 pub use profile_service::{ImportedProfilesResult, ProfileService};
+pub use proxy_service::{ProxyPasswordUpdate, ProxyService, UpsertProxyOutcome};
 pub use settings_service::{
     LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService,
 };

@@ -20,24 +20,25 @@ use miaominal_sync::SyncProvider;
 pub(in crate::ui::shell) fn render_settings_page(
     settings: Entity<SettingsController>,
 ) -> gpui::AnyElement {
+    let pages = setting_pages(settings);
     Settings::new("app-settings")
         .with_size(Size::Large)
         .with_group_variant(GroupBoxVariant::Outline)
         .sidebar_width(px(220.0))
-        .pages(setting_pages(settings))
+        .pages(pages)
         .into_any_element()
 }
 
 fn setting_pages(settings: Entity<SettingsController>) -> Vec<SettingPage> {
-    vec![
-        appearance_page(settings.clone()),
-        connections_page(settings.clone()),
-        key_bindings_page(settings.clone()),
-        ai_providers_page(settings.clone()),
-        sync_page(settings.clone()),
-        vault_page(settings.clone()),
-        about_page(settings),
-    ]
+    let mut pages = Vec::with_capacity(7);
+    pages.push(appearance_page(settings.clone()));
+    pages.push(connections_page(settings.clone()));
+    pages.push(key_bindings_page(settings.clone()));
+    pages.push(ai_providers_page(settings.clone()));
+    pages.push(sync_page(settings.clone()));
+    pages.push(vault_page(settings.clone()));
+    pages.push(about_page(settings));
+    pages
 }
 
 fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
@@ -260,6 +261,17 @@ fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
                     )),
                 ]),
             SettingGroup::new()
+                .title(i18n::string("settings.proxies.group.title"))
+                .description(i18n::string("settings.proxies.group.description"))
+                .item(
+                    SettingItem::new(
+                        i18n::string("settings.proxies.saved.label"),
+                        SettingField::element(ProxyManagementField::new(settings.clone())),
+                    )
+                    .layout(Axis::Vertical)
+                    .description(i18n::string("settings.proxies.saved.description")),
+                ),
+            SettingGroup::new()
                 .title(i18n::string("settings.connections.import_group.title"))
                 .description(i18n::string(
                     "settings.connections.import_group.description",
@@ -281,6 +293,177 @@ fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
                     )),
                 ]),
         ])
+}
+
+#[derive(Clone)]
+struct ProxyManagementField {
+    controller: Entity<SettingsController>,
+}
+
+impl ProxyManagementField {
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
+    }
+}
+
+impl SettingFieldElement for ProxyManagementField {
+    type Element = AnyElement;
+
+    fn render_field(
+        &self,
+        options: &RenderOptions,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Self::Element {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let controller = self.controller.read(cx);
+        let forms = controller.forms();
+        let picker_options = controller.proxy_management_picker_options();
+        let selected_proxy_id = controller.selected_proxy_management_id(cx);
+        let has_proxies = !picker_options.is_empty();
+        let selected_label = selected_proxy_id
+            .as_ref()
+            .and_then(|selected_id| {
+                picker_options
+                    .iter()
+                    .find(|(proxy_id, _)| proxy_id == selected_id)
+                    .map(|(_, label)| label.clone())
+            })
+            .unwrap_or_default();
+        let picker_labels = picker_options
+            .iter()
+            .map(|(_, label)| label.clone())
+            .collect::<Vec<_>>();
+        let picker_options_for_select = picker_options;
+        let add_controller = self.controller.clone();
+        let select_controller = self.controller.clone();
+        let edit_controller = self.controller.clone();
+        let delete_controller = self.controller.clone();
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .child(if has_proxies {
+                div()
+                    .flex_1()
+                    .min_w(px(260.0))
+                    .child(font_family_picker(
+                        FontFamilyPickerState::new(
+                            "settings-proxy-management",
+                            forms.proxy_management_query_input,
+                            forms.proxy_management_scroll_handle,
+                        )
+                        .no_matches(i18n::string("settings.proxies.picker.no_matches")),
+                        selected_label,
+                        picker_labels,
+                        options.size,
+                        move |selected_label, window, cx| {
+                            let Some((proxy_id, _)) = picker_options_for_select
+                                .iter()
+                                .find(|(_, label)| label == &selected_label)
+                            else {
+                                return;
+                            };
+                            select_controller.update(cx, |controller, cx| {
+                                controller.select_proxy_management(proxy_id, window, cx);
+                            });
+                        },
+                        cx,
+                    ))
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_w(px(260.0))
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded(px(12.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .flex()
+                    .items_center()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                    .child(i18n::string("settings.proxies.empty"))
+                    .into_any_element()
+            })
+            .child(icon_button(
+                AppIcon::Plus,
+                34.0,
+                12.0,
+                None,
+                None,
+                Some(roles.outline_variant),
+                move |window, cx| {
+                    add_controller.update(cx, |controller, cx| {
+                        controller.begin_new_proxy(window, cx);
+                    });
+                },
+            ))
+            .child(if selected_proxy_id.is_some() {
+                icon_button(
+                    AppIcon::Edit,
+                    34.0,
+                    12.0,
+                    None,
+                    None,
+                    Some(roles.outline_variant),
+                    move |window, cx| {
+                        edit_controller.update(cx, |controller, cx| {
+                            if let Some(proxy_id) = controller.selected_proxy_management_id(cx) {
+                                controller.begin_edit_proxy(&proxy_id, window, cx);
+                            }
+                        });
+                    },
+                )
+                .into_any_element()
+            } else {
+                div()
+                    .size(px(34.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .border_color(rgb(roles.outline_variant))
+                    .opacity(0.45)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(Icon::new(AppIcon::Edit).small())
+                    .into_any_element()
+            })
+            .child(if selected_proxy_id.is_some() {
+                icon_button(
+                    AppIcon::Trash,
+                    34.0,
+                    12.0,
+                    Some(roles.error_container),
+                    Some(roles.on_error_container),
+                    None,
+                    move |window, cx| {
+                        delete_controller.update(cx, |controller, cx| {
+                            if let Some(proxy_id) = controller.selected_proxy_management_id(cx) {
+                                controller.delete_proxy(&proxy_id, window, cx);
+                            }
+                        });
+                    },
+                )
+                .into_any_element()
+            } else {
+                div()
+                    .size(px(34.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(roles.surface_container_low))
+                    .border_color(rgb(roles.outline_variant))
+                    .opacity(0.45)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(Icon::new(AppIcon::Trash).small())
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
 }
 
 fn about_page(settings: Entity<SettingsController>) -> SettingPage {

@@ -12,6 +12,7 @@ use miaominal_core::known_host::HostKeyCheck;
 use miaominal_core::profile::{
     AuthMethod, PortForwardRule, SessionEnvironmentVariable, SessionProfile, ShellType,
 };
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use miaominal_secrets::SecretStore;
 use miaominal_storage::KnownHostsStore;
@@ -180,7 +181,7 @@ pub mod connection {
 
         client::connect_stream(config, transport, handler)
             .await
-            .with_context(|| format!("failed to connect to {}:{} through ProxyJump", host, port))
+            .with_context(|| format!("failed to connect to {}:{} through transport", host, port))
     }
 }
 
@@ -290,6 +291,7 @@ pub fn start_session(
     runtime: &TokioHandle,
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     columns: usize,
@@ -310,6 +312,7 @@ pub fn start_session(
                 if let Err(error) = run_session(
                     profile,
                     all_profiles,
+                    all_proxies,
                     secrets,
                     known_hosts,
                     command_receiver,
@@ -340,6 +343,7 @@ pub fn start_session(
 pub async fn execute_profile_command(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     command: String,
@@ -399,6 +403,7 @@ pub async fn execute_profile_command(
         } = connect_authenticated_session_internal(
             profile,
             all_profiles,
+            all_proxies,
             secrets,
             known_hosts,
             &mut command_receiver,
@@ -451,6 +456,7 @@ fn take_non_interactive_exec_error(error: &Arc<Mutex<Option<String>>>) -> Option
 pub async fn execute_profile_pty_command(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     command: String,
@@ -512,6 +518,7 @@ pub async fn execute_profile_pty_command(
         } = connect_authenticated_session_internal(
             profile,
             all_profiles,
+            all_proxies,
             secrets,
             known_hosts,
             &mut command_receiver,
@@ -824,6 +831,7 @@ impl client::Handler for ClientHandler {
 async fn run_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
@@ -845,6 +853,7 @@ async fn run_session(
     } = connect_authenticated_session_internal(
         profile.clone(),
         all_profiles,
+        all_proxies,
         secrets,
         known_hosts,
         &mut command_receiver,
@@ -1133,6 +1142,7 @@ where
 pub(super) async fn connect_authenticated_session_internal(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
@@ -1140,6 +1150,9 @@ pub(super) async fn connect_authenticated_session_internal(
 ) -> Result<ConnectedSession> {
     let profile = hydrate_profile_from_secrets(profile, &secrets);
     let remote_label = profile.connection_label();
+    let entry_proxy =
+        crate::transport::resolve_entry_proxy(profile.entry_proxy_id.as_deref(), &all_proxies)?
+            .cloned();
     let proxy_jump_profiles = connection::resolve_proxy_jump_profiles(&profile, &all_profiles)?
         .into_iter()
         .map(|profile| hydrate_profile_from_secrets(profile, &secrets))
@@ -1162,8 +1175,10 @@ pub(super) async fn connect_authenticated_session_internal(
         let ConnectedClient {
             handle: mut current_session,
             remote_forward_targets: mut current_remote_forward_targets,
-        } = connect_profile_session(
+        } = connect_profile_with_optional_proxy(
             first_hop,
+            entry_proxy.as_ref(),
+            &secrets,
             config.clone(),
             known_hosts.clone(),
             command_receiver,
@@ -1262,8 +1277,10 @@ pub(super) async fn connect_authenticated_session_internal(
         let ConnectedClient {
             handle: mut session,
             remote_forward_targets,
-        } = connect_profile_session(
+        } = connect_profile_with_optional_proxy(
             &profile,
+            entry_proxy.as_ref(),
+            &secrets,
             config,
             known_hosts,
             command_receiver,
@@ -1307,6 +1324,63 @@ async fn connect_profile_session(
         client::connect(config, (host.clone(), port), handler)
             .await
             .with_context(|| format!("failed to connect to {}:{}", host, port))
+    };
+
+    let handle = await_session_connect(
+        connect_future,
+        command_receiver,
+        pending_decision,
+        configured_port_forward_rules,
+    )
+    .await?;
+
+    Ok(ConnectedClient {
+        handle,
+        remote_forward_targets,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn connect_profile_with_optional_proxy(
+    profile: &SessionProfile,
+    proxy: Option<&ProxyProfile>,
+    secrets: &SecretStore,
+    config: Arc<client::Config>,
+    known_hosts: KnownHostsStore,
+    command_receiver: &mut UnboundedReceiver<SessionCommand>,
+    event_sender: &SessionEventSender,
+    configured_port_forward_rules: &mut Vec<PortForwardRule>,
+) -> Result<ConnectedClient> {
+    let Some(proxy) = proxy else {
+        return connect_profile_session(
+            profile,
+            config,
+            known_hosts,
+            command_receiver,
+            event_sender,
+            configured_port_forward_rules,
+        )
+        .await;
+    };
+
+    let (handler, pending_decision, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender);
+    let host = profile.host.clone();
+    let port = profile.port;
+    let proxy = proxy.clone();
+    let secrets = secrets.clone();
+    let connect_future = async move {
+        let transport = crate::transport::connect_via_proxy(&proxy, &host, port, &secrets).await?;
+        client::connect_stream(config, transport, handler)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to connect to {}:{} through proxy {}",
+                    host,
+                    port,
+                    proxy.connection_label()
+                )
+            })
     };
 
     let handle = await_session_connect(

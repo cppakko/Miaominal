@@ -19,6 +19,7 @@ pub(crate) struct FontFamilyPickerState {
     id: SharedString,
     query_input: Entity<InputState>,
     scroll_handle: UniformListScrollHandle,
+    no_matches: Option<SharedString>,
 }
 
 impl FontFamilyPickerState {
@@ -31,7 +32,13 @@ impl FontFamilyPickerState {
             id: id.into(),
             query_input,
             scroll_handle,
+            no_matches: None,
         }
+    }
+
+    pub(crate) fn no_matches(mut self, no_matches: impl Into<SharedString>) -> Self {
+        self.no_matches = Some(no_matches.into());
+        self
     }
 }
 
@@ -47,6 +54,7 @@ pub(crate) fn font_family_picker(
         id,
         query_input,
         scroll_handle,
+        no_matches,
     } = state;
     let selected = selected.into();
     let roles = miaominal_settings::current_theme().material.roles;
@@ -57,6 +65,9 @@ pub(crate) fn font_family_picker(
     let content_id = id.clone();
     let trigger_id = SharedString::from(format!("{id}-trigger"));
     let on_select = Rc::new(on_select);
+    let no_matches = no_matches.unwrap_or_else(|| {
+        crate::ui::i18n::string("settings.appearance.font_picker.no_matches").into()
+    });
 
     let trigger = Button::new(trigger_id)
         .ghost()
@@ -103,6 +114,7 @@ pub(crate) fn font_family_picker(
                     let row_on_select = on_select.clone();
                     let row_query_input = query_input.clone();
                     let row_popover = popover.clone();
+                    let no_matches = no_matches.clone();
                     let option_list =
                         uniform_list(list_id, item_count, move |visible_range, _, _| {
                             visible_range
@@ -164,9 +176,7 @@ pub(crate) fn font_family_picker(
                             .items_center()
                             .justify_center()
                             .text_color(rgb(roles.on_surface_variant))
-                            .child(crate::ui::i18n::string(
-                                "settings.appearance.font_picker.no_matches",
-                            ))
+                            .child(no_matches)
                             .into_any_element()
                     } else {
                         div()

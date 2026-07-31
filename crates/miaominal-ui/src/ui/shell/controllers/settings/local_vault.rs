@@ -41,6 +41,7 @@ pub(in crate::ui::shell) struct LocalVaultEnableResult {
     pub(in crate::ui::shell) session_ids: Vec<String>,
     pub(in crate::ui::shell) managed_key_ids: Vec<String>,
     pub(in crate::ui::shell) ai_provider_ids: Vec<String>,
+    pub(in crate::ui::shell) proxy_ids: Vec<String>,
 }
 
 pub(in crate::ui::shell) struct LocalVaultChangePassphraseResult {
@@ -950,6 +951,12 @@ impl SettingsController {
         let worker_session_ids = session_ids.clone();
         let worker_managed_key_ids = managed_key_ids.clone();
         let worker_ai_provider_ids = ai_provider_ids.clone();
+        let proxy_ids = self
+            .proxies
+            .iter()
+            .map(|proxy| proxy.id.clone())
+            .collect::<Vec<_>>();
+        let worker_proxy_ids = proxy_ids.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("local-vault-enable".to_string())
@@ -959,6 +966,7 @@ impl SettingsController {
                     worker_session_ids,
                     worker_managed_key_ids,
                     worker_ai_provider_ids,
+                    worker_proxy_ids,
                     previous_secrets,
                     previous_sync_engine,
                 )
@@ -972,6 +980,7 @@ impl SettingsController {
                         session_ids,
                         managed_key_ids,
                         ai_provider_ids,
+                        proxy_ids,
                     }
                 });
                 tx.send(LocalVaultOperationResult::Enable(result)).ok();
@@ -992,6 +1001,11 @@ impl SettingsController {
 
         let previous_secrets = self.secrets.clone();
         let previous_sync_engine = self.sync.sync_engine.clone();
+        let proxy_ids = self
+            .proxies
+            .iter()
+            .map(|proxy| proxy.id.clone())
+            .collect::<Vec<_>>();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("local-vault-disable".to_string())
@@ -1002,6 +1016,7 @@ impl SettingsController {
                     &session_ids,
                     &managed_key_ids,
                     &ai_provider_ids,
+                    &proxy_ids,
                 );
                 tx.send(LocalVaultOperationResult::Disable(result)).ok();
             });
@@ -1143,6 +1158,7 @@ impl SettingsController {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
         source_secrets: &SecretStore,
         source_sync_engine: &SyncEngine,
     ) {
@@ -1150,6 +1166,7 @@ impl SettingsController {
             session_ids,
             managed_key_ids,
             ai_provider_ids,
+            proxy_ids,
             source_secrets,
             source_sync_engine,
         );

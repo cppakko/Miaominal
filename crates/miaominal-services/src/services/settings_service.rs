@@ -146,6 +146,7 @@ impl SettingsService {
         session_ids: Vec<String>,
         managed_key_ids: Vec<String>,
         ai_provider_ids: Vec<String>,
+        proxy_ids: Vec<String>,
         source_secrets: SecretStore,
         source_sync_engine: SyncEngine,
     ) -> Result<(SecretStore, SyncEngine)> {
@@ -159,6 +160,7 @@ impl SettingsService {
             &session_ids,
             &managed_key_ids,
             &ai_provider_ids,
+            &proxy_ids,
             &source_secrets,
             &source_sync_engine,
             &vault_secrets,
@@ -259,6 +261,7 @@ impl SettingsService {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
     ) -> Result<LocalVaultTransition> {
         if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
             anyhow::bail!("the local vault cannot be disabled in portable mode");
@@ -270,6 +273,7 @@ impl SettingsService {
             session_ids,
             managed_key_ids,
             ai_provider_ids,
+            proxy_ids,
             previous_secrets,
             previous_sync_engine,
             &keyring_secrets,
@@ -299,6 +303,7 @@ impl SettingsService {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
         source_secrets: &SecretStore,
         source_sync_engine: &SyncEngine,
     ) {
@@ -306,6 +311,7 @@ impl SettingsService {
             session_ids.iter().map(String::as_str),
             managed_key_ids.iter().map(String::as_str),
             ai_provider_ids,
+            proxy_ids,
             source_secrets,
             &source_sync_engine.config_store,
         );
@@ -319,6 +325,7 @@ impl SettingsService {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
     ) -> Result<()> {
         if paths::credential_policy()? == paths::CredentialPolicy::LocalVaultRequired {
             return paths::clear_active_data_dir();
@@ -331,6 +338,7 @@ impl SettingsService {
             session_ids,
             managed_key_ids,
             ai_provider_ids,
+            proxy_ids,
             &keyring_secrets,
             &keyring_sync_engine,
         );
@@ -344,6 +352,7 @@ impl SettingsService {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
         source_secrets: &SecretStore,
         source_sync_engine: &SyncEngine,
         target_secrets: &SecretStore,
@@ -353,6 +362,7 @@ impl SettingsService {
             session_ids.iter().map(String::as_str),
             managed_key_ids.iter().map(String::as_str),
             ai_provider_ids,
+            proxy_ids,
             source_secrets,
             &source_sync_engine.config_store,
             target_secrets,
@@ -387,6 +397,7 @@ impl SettingsService {
         session_ids: &[String],
         managed_key_ids: &[String],
         ai_provider_ids: &[String],
+        proxy_ids: &[String],
     ) -> Result<()> {
         match fs::remove_dir_all(config_dir) {
             Ok(()) => {}
@@ -401,6 +412,7 @@ impl SettingsService {
             session_ids,
             managed_key_ids,
             ai_provider_ids,
+            proxy_ids,
             keyring_secrets,
             keyring_sync_engine,
         );
@@ -701,6 +713,9 @@ mod tests {
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
             .expect("AI provider key should save");
         keyring_secrets
+            .set("proxy-1", SecretKind::ProxyPassword, "proxy-password")
+            .expect("proxy password should save");
+        keyring_secrets
             .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
             .expect("web search API key should save");
         keyring_sync_engine
@@ -727,6 +742,7 @@ mod tests {
             &["session-1".to_string()],
             &["managed-key-1".to_string()],
             &["provider-1".to_string()],
+            &["proxy-1".to_string()],
         )
         .expect("local data reset should succeed");
 
@@ -753,6 +769,12 @@ mod tests {
             keyring_secrets
                 .get("provider-1", SecretKind::AiProviderApiKey)
                 .expect("AI provider key should be readable after reset"),
+            None
+        );
+        assert_eq!(
+            keyring_secrets
+                .get("proxy-1", SecretKind::ProxyPassword)
+                .expect("proxy password should be readable after reset"),
             None
         );
         assert_eq!(
@@ -818,6 +840,7 @@ mod tests {
             &keyring_sync_engine,
             &chat_credentials,
             &["session-1".to_string()],
+            &[],
             &[],
             &[],
         );

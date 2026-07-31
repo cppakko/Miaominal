@@ -1,5 +1,6 @@
 use anyhow::Result;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_sftp::{
     self as sftp, SftpCommandSender, SftpConnection, SftpEntry, SftpEntryKind, TransferId,
@@ -41,11 +42,13 @@ impl SftpService {
         &self,
         profile: SessionProfile,
         all_profiles: Vec<SessionProfile>,
+        all_proxies: Vec<ProxyProfile>,
     ) -> SftpConnection {
         sftp::start_session(
             &self.runtime,
             profile,
             all_profiles,
+            all_proxies,
             self.secrets.clone(),
             self.known_hosts.clone(),
         )

@@ -48,7 +48,6 @@ impl SessionController {
             .selected_proxy_jump_hop
             .filter(|index| *index < proxy_jump_chain_profiles.len())
             .unwrap_or(proxy_jump_chain_profiles.len());
-
         let target_name = host_editor.name_input.read(cx).value().trim().to_string();
         let target_step_title = if target_name.is_empty() {
             SharedString::from(i18n::string("hosts.editor.proxy_jump.target"))
@@ -406,6 +405,25 @@ impl SessionController {
                                 .text_size(miaominal_settings::FontSize::Body.scaled())
                                 .text_color(rgb(roles.on_surface_variant))
                                 .child(i18n::string("hosts.editor.fields.host_chaining")),
+                        )
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                                        .text_color(rgb(roles.on_surface_variant))
+                                        .child(i18n::string("hosts.editor.entry_proxy.label")),
+                                )
+                                .child(
+                                    md3_select(&host_editor.entry_proxy_select)
+                                        .large()
+                                        .w_full()
+                                        .rounded(px(14.0))
+                                        .border_0()
+                                        .bg(rgb(roles.surface_container_low)),
+                                ),
                         )
                         .child(
                             v_flex()

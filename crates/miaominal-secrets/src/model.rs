@@ -5,6 +5,7 @@ pub enum SecretKind {
     ManagedPrivateKey,
     AiProviderApiKey,
     WebSearchApiKey,
+    ProxyPassword,
 }
 
 impl SecretKind {
@@ -15,6 +16,7 @@ impl SecretKind {
             SecretKind::ManagedPrivateKey => "managed-private-key",
             SecretKind::AiProviderApiKey => "ai-provider-api-key",
             SecretKind::WebSearchApiKey => "web-search-api-key",
+            SecretKind::ProxyPassword => "proxy-password",
         }
     }
 }

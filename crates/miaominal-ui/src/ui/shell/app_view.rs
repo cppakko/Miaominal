@@ -342,6 +342,7 @@ impl AppView {
             });
         SessionPortSnapshot::new(
             self.controllers.session.read(cx).profiles().clone(),
+            self.controllers.session.read(cx).proxies().clone(),
             sessions,
             active_profile_id,
             active_terminal_tab_id,
@@ -1137,6 +1138,13 @@ impl AppView {
             .settings
             .read(cx)
             .sync_provider_config_popup()
+    }
+
+    pub(in crate::ui::shell) fn pending_proxy_config_popup(
+        &self,
+        cx: &App,
+    ) -> Option<PendingProxyConfigPopupState> {
+        self.controllers.settings.read(cx).proxy_config_popup()
     }
 
     pub(in crate::ui::shell) fn pending_local_vault_passphrase_popup(

@@ -1,11 +1,12 @@
 use anyhow::{Result, anyhow};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::SecretStore;
-use miaominal_storage::SettingsStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
+use miaominal_storage::{ProxyStore, SettingsStore};
 use miaominal_sync::engine::SyncEngine;
 use miaominal_sync::{SyncConfig, SyncStatus};
 use tokio::runtime::Handle as TokioHandle;
@@ -21,6 +22,7 @@ pub struct SyncTaskResult {
 pub struct SyncReloadResult {
     pub settings: Result<SettingsStore, String>,
     pub sessions: Result<Vec<SessionProfile>, String>,
+    pub proxies: Result<Vec<ProxyProfile>, String>,
     pub snippets: Result<Vec<SnippetRecord>, String>,
     pub managed_keys: Result<Vec<ManagedKeyRecord>, String>,
 }
@@ -29,6 +31,7 @@ impl SyncReloadResult {
     pub fn any_failed(&self) -> bool {
         self.settings.is_err()
             || self.sessions.is_err()
+            || self.proxies.is_err()
             || self.snippets.is_err()
             || self.managed_keys.is_err()
     }
@@ -38,6 +41,7 @@ impl SyncReloadResult {
 pub struct SyncService {
     runtime: TokioHandle,
     session_store: SessionStore,
+    proxy_store: ProxyStore,
     snippet_store: SnippetStore,
     keychain_store: ManagedKeyStore,
     secrets: SecretStore,
@@ -47,6 +51,7 @@ impl SyncService {
     pub fn new(
         runtime: TokioHandle,
         session_store: Option<SessionStore>,
+        proxy_store: Option<ProxyStore>,
         snippet_store: Option<SnippetStore>,
         keychain_store: Option<ManagedKeyStore>,
         secrets: SecretStore,
@@ -54,6 +59,7 @@ impl SyncService {
         Ok(Self {
             runtime,
             session_store: session_store.ok_or_else(|| anyhow!("session store unavailable"))?,
+            proxy_store: proxy_store.ok_or_else(|| anyhow!("proxy store unavailable"))?,
             snippet_store: snippet_store.ok_or_else(|| anyhow!("snippet store unavailable"))?,
             keychain_store: keychain_store
                 .ok_or_else(|| anyhow!("managed key store unavailable"))?,
@@ -91,6 +97,7 @@ impl SyncService {
             engine
                 .push_force(
                     &self.session_store,
+                    &self.proxy_store,
                     &self.snippet_store,
                     &self.keychain_store,
                     &self.secrets,
@@ -101,6 +108,7 @@ impl SyncService {
             engine
                 .push(
                     &self.session_store,
+                    &self.proxy_store,
                     &self.snippet_store,
                     &self.keychain_store,
                     &self.secrets,
@@ -123,6 +131,7 @@ impl SyncService {
         let status = engine
             .pull(
                 &self.session_store,
+                &self.proxy_store,
                 &self.snippet_store,
                 &self.keychain_store,
                 &self.secrets,
@@ -141,6 +150,7 @@ impl SyncService {
         SyncReloadResult {
             settings: SettingsStore::load().map_err(|error| error.to_string()),
             sessions: self.reload_sessions().map_err(|error| error.to_string()),
+            proxies: self.reload_proxies().map_err(|error| error.to_string()),
             snippets: self.reload_snippets().map_err(|error| error.to_string()),
             managed_keys: self
                 .reload_managed_keys()
@@ -150,6 +160,10 @@ impl SyncService {
 
     pub fn reload_sessions(&self) -> Result<Vec<SessionProfile>> {
         self.session_store.load(&self.secrets)
+    }
+
+    pub fn reload_proxies(&self) -> Result<Vec<ProxyProfile>> {
+        self.proxy_store.load(&self.secrets)
     }
 
     pub fn reload_snippets(&self) -> Result<Vec<SnippetRecord>> {
@@ -170,6 +184,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
         let error = SyncService::new(
             runtime.handle().clone(),
+            None,
             None,
             None,
             None,

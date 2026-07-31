@@ -305,6 +305,7 @@ impl SessionController {
             runtime,
             connection_profile,
             self.profiles.borrow().clone(),
+            self.proxies.borrow().clone(),
             self.services.secrets.clone(),
             self.services.known_hosts.clone(),
         );

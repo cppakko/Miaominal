@@ -4,6 +4,7 @@ use miaominal_agent::{
     AgentToolCallResponse,
 };
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretKind;
 use miaominal_secrets::SecretStore;
 use miaominal_settings::WebSearchConfig;
@@ -71,9 +72,27 @@ impl AgentService {
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
     ) -> AgentExecChannel {
-        let mut channel = AgentExecChannel::for_profile_with_registries(
+        self.channel_for_profile_snapshot_with_stores_and_proxies(
+            profile,
+            sessions,
+            &[],
+            secrets,
+            known_hosts,
+        )
+    }
+
+    pub fn channel_for_profile_snapshot_with_stores_and_proxies(
+        &self,
+        profile: SessionProfile,
+        sessions: &[SessionProfile],
+        proxies: &[ProxyProfile],
+        secrets: SecretStore,
+        known_hosts: KnownHostsStore,
+    ) -> AgentExecChannel {
+        let mut channel = AgentExecChannel::for_profile_with_registries_and_proxies(
             profile,
             sessions.to_vec(),
+            proxies.to_vec(),
             secrets.clone(),
             known_hosts,
             self.jobs.clone(),

@@ -1,6 +1,8 @@
 use super::*;
+use crate::ui::components::md3_switch;
 use crate::ui::i18n;
 use gpui_component::Disableable;
+use miaominal_core::proxy::{ProxyAuthMode, ProxyProtocol};
 
 #[derive(Clone, Copy)]
 struct PageEditorSidebarRenderState {
@@ -133,6 +135,7 @@ impl Render for AppView {
         let pending_ai_provider_popup = self.pending_ai_provider_popup(cx);
         let pending_web_search_config_popup = self.pending_web_search_config_popup(cx);
         let pending_sync_provider_config_popup = self.pending_sync_provider_config_popup(cx);
+        let pending_proxy_config_popup = self.pending_proxy_config_popup(cx);
         let pending_local_vault_passphrase_popup = self.pending_local_vault_passphrase_popup(cx);
         let pending_sftp_prompt = self.pending_sftp_prompt(cx);
         let exiting_dialogs = self.active_exiting_dialogs(window);
@@ -390,6 +393,15 @@ impl Render for AppView {
             })
             .when_some(pending_sync_provider_config_popup, |this, popup| {
                 this.child(self.render_sync_provider_config_popup(
+                    entity.clone(),
+                    popup,
+                    None,
+                    bottom_popup_viewport_height,
+                    cx,
+                ))
+            })
+            .when_some(pending_proxy_config_popup, |this, popup| {
+                this.child(self.render_proxy_config_popup(
                     entity.clone(),
                     popup,
                     None,
@@ -3169,6 +3181,229 @@ impl AppView {
         )
     }
 
+    fn render_proxy_config_popup(
+        &self,
+        _entity: Entity<Self>,
+        popup: PendingProxyConfigPopupState,
+        exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let settings_controller = self.controllers.settings.clone();
+        let settings_forms = settings_controller.read(cx).forms();
+        let protocol = settings_controller.read(cx).selected_proxy_protocol(cx);
+        let auth_mode = settings_controller.read(cx).selected_proxy_auth_mode(cx);
+        let resolve_dns = settings_controller
+            .read(cx)
+            .proxy_resolve_dns_through_proxy();
+        let password_clear_requested = settings_controller
+            .read(cx)
+            .proxy_password_clear_requested();
+        let has_saved_password = settings_controller
+            .read(cx)
+            .proxies()
+            .iter()
+            .find(|proxy| proxy.id == popup.proxy_id)
+            .is_some_and(|proxy| proxy.has_stored_password);
+        let password_status = if password_clear_requested {
+            i18n::string("settings.proxies.password.clear_pending")
+        } else if has_saved_password {
+            i18n::string("settings.proxies.password.keep_hint")
+        } else {
+            i18n::string("settings.proxies.password.new_hint")
+        };
+        let title = if popup.is_new {
+            i18n::string("settings.proxies.editor.add_title")
+        } else {
+            i18n::string("settings.proxies.editor.edit_title")
+        };
+
+        let controller_dns = settings_controller.clone();
+        let controller_clear_password = settings_controller.clone();
+        let controller_cancel = settings_controller.clone();
+        let controller_submit = settings_controller.clone();
+        let controller_dismiss = settings_controller.clone();
+
+        let mut popup_body = v_flex()
+            .w_full()
+            .gap_5()
+            .child(surface_text_input_stack(
+                i18n::string("settings.proxies.fields.name"),
+                settings_forms.proxy_name_input.clone(),
+                TextInputSurface::Low,
+                true,
+            ))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(field_label(
+                        i18n::string("settings.proxies.fields.protocol"),
+                        true,
+                    ))
+                    .child(
+                        md3_select(&settings_forms.proxy_protocol_select)
+                            .large()
+                            .w_full()
+                            .bg(rgb(roles.surface_container_low)),
+                    ),
+            )
+            .child(surface_text_input_stack(
+                i18n::string("settings.proxies.fields.host"),
+                settings_forms.proxy_host_input.clone(),
+                TextInputSurface::Low,
+                true,
+            ))
+            .child(surface_text_input_stack(
+                i18n::string("settings.proxies.fields.port"),
+                settings_forms.proxy_port_input.clone(),
+                TextInputSurface::Low,
+                true,
+            ))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(field_label(
+                        i18n::string("settings.proxies.fields.auth_mode"),
+                        true,
+                    ))
+                    .child(
+                        md3_select(&settings_forms.proxy_auth_mode_select)
+                            .large()
+                            .w_full()
+                            .bg(rgb(roles.surface_container_low)),
+                    ),
+            );
+
+        if protocol == ProxyProtocol::Socks5 {
+            popup_body = popup_body.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(i18n::string("settings.proxies.fields.resolve_dns")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .child(i18n::string(
+                                        "settings.proxies.fields.resolve_dns_description",
+                                    )),
+                            ),
+                    )
+                    .child(
+                        md3_switch("proxy-config-popup-resolve-dns")
+                            .checked(resolve_dns)
+                            .on_click(move |_, _, cx| {
+                                controller_dns.update(cx, |controller, cx| {
+                                    controller.toggle_proxy_resolve_dns(cx);
+                                });
+                            }),
+                    ),
+            );
+        }
+
+        if auth_mode == ProxyAuthMode::UsernamePassword {
+            popup_body = popup_body
+                .child(surface_text_input_stack(
+                    i18n::string("settings.proxies.fields.username"),
+                    settings_forms.proxy_username_input.clone(),
+                    TextInputSurface::Low,
+                    true,
+                ))
+                .child(surface_text_input_stack(
+                    i18n::string("settings.proxies.fields.password"),
+                    settings_forms.proxy_password_input.clone(),
+                    TextInputSurface::Low,
+                    !has_saved_password,
+                ))
+                .child(
+                    div()
+                        .text_color(rgb(roles.on_surface_variant))
+                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                        .child(password_status),
+                );
+            if has_saved_password && !password_clear_requested {
+                popup_body = popup_body.child(
+                    Button::new("proxy-config-popup-clear-password")
+                        .ghost()
+                        .border_0()
+                        .rounded(px(20.0))
+                        .large()
+                        .text_color(rgb(roles.error))
+                        .label(i18n::string("settings.proxies.actions.clear_password"))
+                        .on_click(move |_, window, cx| {
+                            controller_clear_password.update(cx, |controller, cx| {
+                                controller.clear_proxy_password(window, cx);
+                            });
+                        }),
+                );
+            }
+        }
+
+        let actions = h_flex()
+            .w_full()
+            .justify_end()
+            .gap_3()
+            .child(
+                Button::new("proxy-config-popup-cancel")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .label(i18n::string("dialogs.common.cancel"))
+                    .on_click(move |_, window, cx| {
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.close_proxy_config_popup(window, cx);
+                        });
+                    }),
+            )
+            .child(
+                Button::new("proxy-config-popup-submit")
+                    .ghost()
+                    .border_0()
+                    .rounded(px(20.0))
+                    .large()
+                    .text_color(rgb(roles.primary))
+                    .label(i18n::string("settings.proxies.actions.save"))
+                    .on_click(move |_, window, cx| {
+                        controller_submit.update(cx, |controller, cx| {
+                            controller.save_proxy(window, cx);
+                        });
+                    }),
+            )
+            .into_any_element();
+
+        render_bottom_popup(
+            bottom_popup_panel(
+                title,
+                Some(i18n::string("settings.proxies.group.description")),
+                Some(popup_body.into_any_element()),
+                actions,
+                bottom_popup_viewport_height,
+            ),
+            "proxy-config",
+            exit_progress,
+            move |window, cx| {
+                controller_dismiss.update(cx, |controller, cx| {
+                    controller.close_proxy_config_popup(window, cx);
+                });
+            },
+        )
+    }
+
     fn render_sync_passphrase_clear_confirm_popup(
         &self,
         _entity: Entity<Self>,
@@ -3503,6 +3738,13 @@ impl AppView {
                     bottom_popup_viewport_height,
                     cx,
                 ),
+            DialogOverlaySnapshot::ProxyConfigPopup(popup) => self.render_proxy_config_popup(
+                entity,
+                popup,
+                Some(exit_progress),
+                bottom_popup_viewport_height,
+                cx,
+            ),
             DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode) => self
                 .render_local_vault_passphrase_popup(
                     entity,

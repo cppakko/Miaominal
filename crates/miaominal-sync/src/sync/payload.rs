@@ -1,18 +1,20 @@
 use super::encryption::{decrypt_with_aad, derive_key_with_params, encrypt_with_aad};
 use crate::{
-    AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret,
-    SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload, WebSearchSecret,
+    AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PREVIOUS_SYNC_PAYLOAD_VERSION,
+    PlaintextSecrets, ProfileSecret, ProxySecret, SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload,
+    SyncPlaintextPayload, WebSearchSecret,
 };
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_settings::{AppSettings, SyncedSettings};
-use miaominal_storage::SettingsStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
+use miaominal_storage::{ProxyStore, SettingsStore};
 use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -20,6 +22,7 @@ use std::collections::HashSet;
 pub fn build_payload(
     device_id: &str,
     sessions: &[SessionProfile],
+    proxies: &[ProxyProfile],
     snippets: &[SnippetRecord],
     managed_keys: &[ManagedKeyRecord],
     settings: &SyncedSettings,
@@ -34,10 +37,11 @@ pub fn build_payload(
     let kdf = SyncKdf::argon2id(base64::engine::general_purpose::STANDARD.encode(salt_bytes));
     let plaintext = SyncPlaintextPayload {
         sessions: sessions.to_vec(),
+        proxies: proxies.to_vec(),
         snippets: snippets.to_vec(),
         managed_keys: managed_keys.to_vec(),
         settings: settings.clone(),
-        secrets: collect_secrets(sessions, managed_keys, settings, secret_store)?,
+        secrets: collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?,
     };
 
     let mut payload = SyncPayload {
@@ -70,6 +74,7 @@ pub fn decrypt_remote_payload(
 pub fn apply_plaintext_payload(
     payload: &SyncPlaintextPayload,
     session_store: &SessionStore,
+    proxy_store: &ProxyStore,
     snippet_store: &SnippetStore,
     key_store: &ManagedKeyStore,
     secret_store: &SecretStore,
@@ -79,6 +84,7 @@ pub fn apply_plaintext_payload(
     let snapshot = PayloadSnapshot::capture(
         payload,
         session_store,
+        proxy_store,
         snippet_store,
         key_store,
         secret_store,
@@ -88,6 +94,7 @@ pub fn apply_plaintext_payload(
     let apply_result = apply_payload_changes(
         payload,
         session_store,
+        proxy_store,
         snippet_store,
         key_store,
         secret_store,
@@ -98,6 +105,7 @@ pub fn apply_plaintext_payload(
     if let Err(error) = apply_result {
         return match snapshot.restore(
             session_store,
+            proxy_store,
             snippet_store,
             key_store,
             secret_store,
@@ -116,14 +124,21 @@ pub fn apply_plaintext_payload(
 fn apply_payload_changes(
     payload: &SyncPlaintextPayload,
     session_store: &SessionStore,
+    proxy_store: &ProxyStore,
     snippet_store: &SnippetStore,
     key_store: &ManagedKeyStore,
     secret_store: &SecretStore,
     settings_store: &mut SettingsStore,
 ) -> Result<()> {
+    validate_payload_proxies(payload)?;
     let old_sessions = session_store
         .read_sessions_content()?
         .map(|content| session_store.parse_sessions(&content))
+        .transpose()?
+        .unwrap_or_default();
+    let old_proxies = proxy_store
+        .read_content()?
+        .map(|content| proxy_store.parse(&content))
         .transpose()?
         .unwrap_or_default();
     let old_keys = key_store.load()?;
@@ -163,7 +178,15 @@ fn apply_payload_changes(
             &web_search_secret.api_key,
         )?;
     }
+    for proxy_secret in &payload.secrets.proxy_secrets {
+        secret_store.set(
+            &proxy_secret.id,
+            SecretKind::ProxyPassword,
+            &proxy_secret.password,
+        )?;
+    }
 
+    proxy_store.save(&payload.proxies)?;
     session_store.save(&payload.sessions)?;
     snippet_store.save(&payload.snippets)?;
     key_store.save(&payload.managed_keys)?;
@@ -173,6 +196,7 @@ fn apply_payload_changes(
     cleanup_removed_secrets(
         payload,
         &old_sessions,
+        &old_proxies,
         &old_keys,
         &old_ai_provider_ids,
         secret_store,
@@ -184,6 +208,7 @@ fn apply_payload_changes(
 #[derive(Debug)]
 struct PayloadSnapshot {
     sessions: Vec<SessionProfile>,
+    proxies: Vec<ProxyProfile>,
     snippets: Vec<SnippetRecord>,
     managed_keys: Vec<ManagedKeyRecord>,
     settings: AppSettings,
@@ -194,6 +219,7 @@ impl PayloadSnapshot {
     fn capture(
         payload: &SyncPlaintextPayload,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -204,14 +230,26 @@ impl PayloadSnapshot {
             .map(|content| session_store.parse_sessions(&content))
             .transpose()?
             .unwrap_or_default();
+        let proxies = proxy_store
+            .read_content()?
+            .map(|content| proxy_store.parse(&content))
+            .transpose()?
+            .unwrap_or_default();
         let snippets = snippet_store.load()?;
         let managed_keys = key_store.load()?;
         let settings = settings_store.settings().clone();
-        let secrets =
-            capture_affected_secrets(payload, &sessions, &managed_keys, &settings, secret_store)?;
+        let secrets = capture_affected_secrets(
+            payload,
+            &sessions,
+            &proxies,
+            &managed_keys,
+            &settings,
+            secret_store,
+        )?;
 
         Ok(Self {
             sessions,
+            proxies,
             snippets,
             managed_keys,
             settings,
@@ -222,6 +260,7 @@ impl PayloadSnapshot {
     fn restore(
         self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -231,6 +270,9 @@ impl PayloadSnapshot {
 
         if let Err(error) = session_store.save(&self.sessions) {
             errors.push(format!("sessions: {error:#}"));
+        }
+        if let Err(error) = proxy_store.save(&self.proxies) {
+            errors.push(format!("proxies: {error:#}"));
         }
         if let Err(error) = snippet_store.save(&self.snippets) {
             errors.push(format!("snippets: {error:#}"));
@@ -278,6 +320,7 @@ impl SecretSnapshot {
 fn capture_affected_secrets(
     payload: &SyncPlaintextPayload,
     old_sessions: &[SessionProfile],
+    old_proxies: &[ProxyProfile],
     old_keys: &[ManagedKeyRecord],
     old_settings: &AppSettings,
     secret_store: &SecretStore,
@@ -291,6 +334,13 @@ fn capture_affected_secrets(
     for secret in &payload.secrets.profile_secrets {
         add_secret_target(&mut targets, &secret.id, SecretKind::Password);
         add_secret_target(&mut targets, &secret.id, SecretKind::Passphrase);
+    }
+
+    for proxy in old_proxies.iter().chain(&payload.proxies) {
+        add_secret_target(&mut targets, &proxy.id, SecretKind::ProxyPassword);
+    }
+    for secret in &payload.secrets.proxy_secrets {
+        add_secret_target(&mut targets, &secret.id, SecretKind::ProxyPassword);
     }
 
     for key in old_keys.iter().chain(&payload.managed_keys) {
@@ -338,11 +388,21 @@ fn secret_kind_label(kind: SecretKind) -> &'static str {
         SecretKind::ManagedPrivateKey => "managed-private-key",
         SecretKind::AiProviderApiKey => "ai-provider-api-key",
         SecretKind::WebSearchApiKey => "web-search-api-key",
+        SecretKind::ProxyPassword => "proxy-password",
     }
 }
 
 fn decrypt_payload(payload: &SyncPayload, passphrase: &str) -> Result<SyncPlaintextPayload> {
-    if payload.version != SYNC_PAYLOAD_VERSION && payload.version != LEGACY_SYNC_PAYLOAD_VERSION {
+    if payload.version != SYNC_PAYLOAD_VERSION
+        && payload.version != PREVIOUS_SYNC_PAYLOAD_VERSION
+        && payload.version != LEGACY_SYNC_PAYLOAD_VERSION
+    {
+        if payload.version > SYNC_PAYLOAD_VERSION {
+            anyhow::bail!(
+                "sync payload version {} requires a newer Miaominal version; upgrade this device before syncing",
+                payload.version
+            );
+        }
         anyhow::bail!("unsupported sync payload version: {}", payload.version);
     }
     let key = derive_key_for_kdf(passphrase, &payload.kdf)?;
@@ -358,11 +418,24 @@ fn deserialize_plaintext_payload(
     match version {
         SYNC_PAYLOAD_VERSION => serde_json::from_slice(plaintext_json)
             .context("failed to deserialize decrypted sync payload"),
+        PREVIOUS_SYNC_PAYLOAD_VERSION => {
+            let previous: PreviousSyncPlaintextPayload = serde_json::from_slice(plaintext_json)
+                .context("failed to deserialize v2 decrypted sync payload")?;
+            Ok(SyncPlaintextPayload {
+                sessions: previous.sessions,
+                proxies: Vec::new(),
+                snippets: previous.snippets,
+                managed_keys: previous.managed_keys,
+                settings: previous.settings,
+                secrets: previous.secrets,
+            })
+        }
         LEGACY_SYNC_PAYLOAD_VERSION => {
             let legacy: LegacySyncPlaintextPayload = serde_json::from_slice(plaintext_json)
                 .context("failed to deserialize legacy decrypted sync payload")?;
             Ok(SyncPlaintextPayload {
                 sessions: legacy.sessions,
+                proxies: Vec::new(),
                 snippets: legacy.snippets,
                 managed_keys: legacy.managed_keys,
                 settings: legacy.settings.synced_settings(),
@@ -439,6 +512,16 @@ struct LegacySyncPlaintextPayload {
     secrets: PlaintextSecrets,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PreviousSyncPlaintextPayload {
+    sessions: Vec<SessionProfile>,
+    snippets: Vec<SnippetRecord>,
+    managed_keys: Vec<ManagedKeyRecord>,
+    settings: SyncedSettings,
+    #[serde(default)]
+    secrets: PlaintextSecrets,
+}
+
 fn associated_data(payload: &SyncPayload) -> Result<Vec<u8>> {
     serde_json::to_vec(&SyncPayloadAssociatedData {
         version: payload.version,
@@ -451,6 +534,7 @@ fn associated_data(payload: &SyncPayload) -> Result<Vec<u8>> {
 
 fn collect_secrets(
     sessions: &[SessionProfile],
+    proxies: &[ProxyProfile],
     managed_keys: &[ManagedKeyRecord],
     settings: &SyncedSettings,
     secret_store: &SecretStore,
@@ -498,17 +582,32 @@ fn collect_secrets(
         None
     };
 
+    let mut proxy_secrets = Vec::new();
+    for proxy in proxies {
+        if proxy.auth_mode != ProxyAuthMode::UsernamePassword || !proxy.has_stored_password {
+            continue;
+        }
+        if let Some(password) = secret_store.get(&proxy.id, SecretKind::ProxyPassword)? {
+            proxy_secrets.push(ProxySecret {
+                id: proxy.id.clone(),
+                password,
+            });
+        }
+    }
+
     Ok(PlaintextSecrets {
         profile_secrets,
         key_secrets,
         ai_provider_secrets,
         web_search_secret,
+        proxy_secrets,
     })
 }
 
 fn cleanup_removed_secrets(
     payload: &SyncPlaintextPayload,
     old_sessions: &[SessionProfile],
+    old_proxies: &[ProxyProfile],
     old_keys: &[ManagedKeyRecord],
     old_ai_provider_ids: &[String],
     secret_store: &SecretStore,
@@ -518,10 +617,54 @@ fn cleanup_removed_secrets(
         .iter()
         .map(|session| session.id.as_str())
         .collect();
+    let profile_password_ids: HashSet<&str> = payload
+        .secrets
+        .profile_secrets
+        .iter()
+        .filter(|secret| secret.password.is_some())
+        .map(|secret| secret.id.as_str())
+        .collect();
+    let profile_passphrase_ids: HashSet<&str> = payload
+        .secrets
+        .profile_secrets
+        .iter()
+        .filter(|secret| secret.passphrase.is_some())
+        .map(|secret| secret.id.as_str())
+        .collect();
+    for session in &payload.sessions {
+        if !profile_password_ids.contains(session.id.as_str()) {
+            secret_store.delete(&session.id, SecretKind::Password)?;
+        }
+        if !profile_passphrase_ids.contains(session.id.as_str()) {
+            secret_store.delete(&session.id, SecretKind::Passphrase)?;
+        }
+    }
     for session in old_sessions {
         if !profile_ids.contains(session.id.as_str()) {
             secret_store.delete(&session.id, SecretKind::Password)?;
             secret_store.delete(&session.id, SecretKind::Passphrase)?;
+        }
+    }
+
+    let proxy_ids: HashSet<&str> = payload
+        .proxies
+        .iter()
+        .map(|proxy| proxy.id.as_str())
+        .collect();
+    let proxy_secret_ids: HashSet<&str> = payload
+        .secrets
+        .proxy_secrets
+        .iter()
+        .map(|secret| secret.id.as_str())
+        .collect();
+    for proxy in &payload.proxies {
+        if !proxy_secret_ids.contains(proxy.id.as_str()) {
+            secret_store.delete(&proxy.id, SecretKind::ProxyPassword)?;
+        }
+    }
+    for proxy in old_proxies {
+        if !proxy_ids.contains(proxy.id.as_str()) {
+            secret_store.delete(&proxy.id, SecretKind::ProxyPassword)?;
         }
     }
 
@@ -557,6 +700,64 @@ fn cleanup_removed_secrets(
         secret_store.delete("web_search", SecretKind::WebSearchApiKey)?;
     }
 
+    Ok(())
+}
+
+fn validate_payload_proxies(payload: &SyncPlaintextPayload) -> Result<()> {
+    let mut ids = HashSet::new();
+    let mut names = HashSet::new();
+    let mut secret_ids = HashSet::new();
+    for secret in &payload.secrets.proxy_secrets {
+        if secret.password.is_empty() || !secret_ids.insert(secret.id.as_str()) {
+            anyhow::bail!("sync payload contains an invalid or duplicate proxy secret");
+        }
+    }
+
+    for proxy in &payload.proxies {
+        if proxy.id.trim().is_empty() || !ids.insert(proxy.id.as_str()) {
+            anyhow::bail!("sync payload contains an empty or duplicate proxy id");
+        }
+        let normalized_name = proxy.name.trim().to_ascii_lowercase();
+        if normalized_name.is_empty() || !names.insert(normalized_name) {
+            anyhow::bail!("sync payload contains an empty or duplicate proxy name");
+        }
+        if proxy.host.trim().is_empty()
+            || proxy.host.chars().any(char::is_control)
+            || proxy.host.chars().any(char::is_whitespace)
+            || proxy.port == 0
+        {
+            anyhow::bail!("sync payload contains an invalid proxy endpoint");
+        }
+        match proxy.auth_mode {
+            ProxyAuthMode::None => {
+                if secret_ids.contains(proxy.id.as_str()) {
+                    anyhow::bail!("sync payload contains a password for an unauthenticated proxy");
+                }
+            }
+            ProxyAuthMode::UsernamePassword => {
+                if proxy.username.trim().is_empty() {
+                    anyhow::bail!("sync payload proxy authentication username is missing");
+                }
+                if proxy.protocol == ProxyProtocol::HttpConnect && proxy.username.contains(':') {
+                    anyhow::bail!("sync payload HTTP proxy username contains a colon");
+                }
+            }
+        }
+    }
+    if secret_ids.iter().any(|id| !ids.contains(id)) {
+        anyhow::bail!("sync payload contains a secret for a missing proxy");
+    }
+    for session in &payload.sessions {
+        if let Some(proxy_id) = session.entry_proxy_id.as_deref()
+            && !ids.contains(proxy_id)
+        {
+            anyhow::bail!(
+                "sync payload host {} references missing proxy {}",
+                session.connection_label(),
+                proxy_id
+            );
+        }
+    }
     Ok(())
 }
 
@@ -603,6 +804,16 @@ mod tests {
     }
 
     #[test]
+    fn payload_rejects_unknown_version_before_decryption() {
+        let mut payload = encrypted_payload("correct horse", &sample_plaintext());
+        payload.version = SYNC_PAYLOAD_VERSION + 1;
+
+        let error = decrypt_payload(&payload, "correct horse")
+            .expect_err("unknown sync versions should be rejected");
+        assert!(error.to_string().contains("upgrade this device"));
+    }
+
+    #[test]
     fn payload_reads_legacy_v1_plaintext() {
         let settings = AppSettings {
             theme_id: miaominal_settings::ThemeId::Dark,
@@ -626,6 +837,7 @@ mod tests {
                 key_secrets: Vec::new(),
                 ai_provider_secrets: Vec::new(),
                 web_search_secret: None,
+                proxy_secrets: Vec::new(),
             },
         };
 
@@ -636,11 +848,286 @@ mod tests {
         .expect("legacy payload should decrypt");
 
         assert_eq!(decrypted.sessions.len(), 1);
+        assert!(decrypted.proxies.is_empty());
         assert_eq!(decrypted.settings, settings.synced_settings());
         assert_eq!(
             decrypted.secrets.profile_secrets[0].password.as_deref(),
             Some("password")
         );
+    }
+
+    #[test]
+    fn payload_reads_v2_plaintext_with_empty_proxies() {
+        let sample = sample_plaintext();
+        let previous = PreviousSyncPlaintextPayload {
+            sessions: sample.sessions,
+            snippets: sample.snippets,
+            managed_keys: sample.managed_keys,
+            settings: sample.settings,
+            secrets: sample.secrets,
+        };
+        let decrypted = decrypt_payload(
+            &encrypted_payload_with_version(
+                "correct horse",
+                PREVIOUS_SYNC_PAYLOAD_VERSION,
+                &previous,
+            ),
+            "correct horse",
+        )
+        .expect("v2 payload should decrypt");
+
+        assert!(decrypted.proxies.is_empty());
+        assert_eq!(decrypted.sessions.len(), 1);
+    }
+
+    #[test]
+    fn v3_payload_round_trips_proxy_metadata_and_password() {
+        let plaintext = sample_proxy_plaintext();
+        let decrypted = decrypt_payload(
+            &encrypted_payload("correct horse", &plaintext),
+            "correct horse",
+        )
+        .expect("v3 proxy payload should decrypt");
+
+        assert_eq!(decrypted.proxies.len(), 1);
+        assert_eq!(decrypted.proxies[0].id, "proxy-1");
+        assert_eq!(
+            decrypted.sessions[0].entry_proxy_id.as_deref(),
+            Some("proxy-1")
+        );
+        assert_eq!(decrypted.secrets.proxy_secrets.len(), 1);
+        assert_eq!(
+            decrypted.secrets.proxy_secrets[0].password,
+            "proxy-password"
+        );
+    }
+
+    #[test]
+    fn v3_payload_rejects_dangling_proxy_reference() {
+        let mut plaintext = sample_plaintext();
+        plaintext.sessions[0].entry_proxy_id = Some("missing-proxy".into());
+
+        let error = validate_payload_proxies(&plaintext)
+            .expect_err("dangling proxy references should reject the full payload");
+        assert!(error.to_string().contains("missing proxy"));
+    }
+
+    #[test]
+    fn v3_payload_allows_an_explicitly_cleared_proxy_password() {
+        let mut plaintext = sample_proxy_plaintext();
+        plaintext.secrets.proxy_secrets.clear();
+        plaintext.proxies[0].has_stored_password = false;
+
+        validate_payload_proxies(&plaintext)
+            .expect("cleared proxy password should remain a valid synced configuration");
+    }
+
+    #[test]
+    fn pull_clears_stale_password_for_proxy_that_remains_in_payload() {
+        set_vault_test_parameters();
+        let vault_path = std::env::temp_dir().join(format!(
+            "miaominal-payload-cleared-proxy-secret-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                vault_path.clone(),
+                ProtectedPassphrase::try_from_string("proxy-secret-test".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
+        );
+        credentials
+            .initialize()
+            .expect("test credential store should initialize");
+        let secret_store = SecretStore::with_credentials(credentials);
+        secret_store
+            .set("proxy-1", SecretKind::ProxyPassword, "stale-password")
+            .expect("stale proxy password should save");
+        let mut payload = sample_proxy_plaintext();
+        payload.secrets.proxy_secrets.clear();
+        payload.proxies[0].has_stored_password = false;
+
+        cleanup_removed_secrets(&payload, &[], &payload.proxies, &[], &[], &secret_store)
+            .expect("cleared proxy password should be removed locally");
+
+        assert_eq!(
+            secret_store
+                .get("proxy-1", SecretKind::ProxyPassword)
+                .expect("proxy password state should read"),
+            None
+        );
+        assert!(
+            collect_secrets(
+                &payload.sessions,
+                &payload.proxies,
+                &payload.managed_keys,
+                &payload.settings,
+                &secret_store,
+            )
+            .expect("secrets should collect after clearing")
+            .proxy_secrets
+            .is_empty(),
+            "the cleared password must not be resurrected by the next push"
+        );
+        cleanup_test_vault(&vault_path);
+    }
+
+    #[test]
+    fn collect_secrets_ignores_stale_proxy_passwords_disallowed_by_metadata() {
+        set_vault_test_parameters();
+        let vault_path = std::env::temp_dir().join(format!(
+            "miaominal-payload-unauthenticated-proxy-secret-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                vault_path.clone(),
+                ProtectedPassphrase::try_from_string("proxy-secret-test".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
+        );
+        credentials
+            .initialize()
+            .expect("test credential store should initialize");
+        let secret_store = SecretStore::with_credentials(credentials);
+        secret_store
+            .set("proxy-1", SecretKind::ProxyPassword, "stale-password")
+            .expect("stale proxy password should save");
+        let mut payload = sample_proxy_plaintext();
+        payload.proxies[0].auth_mode = ProxyAuthMode::None;
+        payload.proxies[0].username.clear();
+        payload.proxies[0].has_stored_password = true;
+
+        payload.secrets = collect_secrets(
+            &payload.sessions,
+            &payload.proxies,
+            &payload.managed_keys,
+            &payload.settings,
+            &secret_store,
+        )
+        .expect("secrets should collect");
+
+        assert!(payload.secrets.proxy_secrets.is_empty());
+        validate_payload_proxies(&payload)
+            .expect("an unauthenticated proxy must not produce a poisoned payload");
+
+        payload.proxies[0].auth_mode = ProxyAuthMode::UsernamePassword;
+        payload.proxies[0].username = "alice".into();
+        payload.proxies[0].has_stored_password = false;
+        payload.secrets = collect_secrets(
+            &payload.sessions,
+            &payload.proxies,
+            &payload.managed_keys,
+            &payload.settings,
+            &secret_store,
+        )
+        .expect("secrets should collect after an explicit password clear");
+
+        assert!(payload.secrets.proxy_secrets.is_empty());
+        validate_payload_proxies(&payload)
+            .expect("an explicitly cleared proxy password must stay cleared");
+        cleanup_test_vault(&vault_path);
+    }
+
+    #[test]
+    fn pull_reconciles_cleared_and_missing_profile_secrets() {
+        set_vault_test_parameters();
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-payload-cleared-profile-secrets-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let session_store = SessionStore::with_path(root.join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(root.join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(root.join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(root.join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(root.join("settings.toml"))
+            .expect("settings store should load");
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                root.join("secret_vault.json"),
+                ProtectedPassphrase::try_from_string("profile-secret-test".to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
+        );
+        credentials
+            .initialize()
+            .expect("test credential store should initialize");
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let mut payload = sample_plaintext();
+        payload.secrets.profile_secrets[0].password = None;
+        payload.secrets.profile_secrets[0].passphrase = Some("new-passphrase".into());
+        let mut session_without_secrets = SessionProfile::blank("session-2", 2);
+        session_without_secrets.host = "second.example.com".into();
+        payload.sessions.push(session_without_secrets);
+        session_store
+            .save(&payload.sessions)
+            .expect("existing sessions should save");
+
+        for session_id in ["session-1", "session-2"] {
+            secret_store
+                .set(session_id, SecretKind::Password, "stale-password")
+                .expect("stale password should save");
+            secret_store
+                .set(session_id, SecretKind::Passphrase, "stale-passphrase")
+                .expect("stale passphrase should save");
+        }
+
+        apply_plaintext_payload(
+            &payload,
+            &session_store,
+            &proxy_store,
+            &snippet_store,
+            &key_store,
+            &secret_store,
+            &mut settings_store,
+            || Ok(()),
+        )
+        .expect("profile secret reconciliation should succeed");
+
+        assert_eq!(
+            secret_store
+                .get("session-1", SecretKind::Password)
+                .expect("cleared password state should read"),
+            None
+        );
+        assert_eq!(
+            secret_store
+                .get("session-1", SecretKind::Passphrase)
+                .expect("updated passphrase should read")
+                .as_deref(),
+            Some("new-passphrase")
+        );
+        for kind in [SecretKind::Password, SecretKind::Passphrase] {
+            assert_eq!(
+                secret_store
+                    .get("session-2", kind)
+                    .expect("missing profile secret state should read"),
+                None
+            );
+        }
+
+        let collected = collect_secrets(
+            &payload.sessions,
+            &payload.proxies,
+            &payload.managed_keys,
+            &payload.settings,
+            &secret_store,
+        )
+        .expect("secrets should collect after reconciliation");
+        assert_eq!(collected.profile_secrets.len(), 1);
+        assert_eq!(collected.profile_secrets[0].id, "session-1");
+        assert_eq!(collected.profile_secrets[0].password, None);
+        assert_eq!(
+            collected.profile_secrets[0].passphrase.as_deref(),
+            Some("new-passphrase")
+        );
+
+        drop(secret_store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -686,8 +1173,8 @@ mod tests {
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
             .expect("provider api key should save");
 
-        let secrets =
-            collect_secrets(&[], &[], &settings, &secret_store).expect("secrets should collect");
+        let secrets = collect_secrets(&[], &[], &[], &settings, &secret_store)
+            .expect("secrets should collect");
 
         assert_eq!(secrets.ai_provider_secrets.len(), 1);
         assert_eq!(secrets.ai_provider_secrets[0].id, "provider-1");
@@ -703,6 +1190,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let session_store = SessionStore::with_path(root.join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(root.join("proxies.toml"));
         let snippet_store = SnippetStore::with_path(root.join("snippets.toml"));
         let key_store = ManagedKeyStore::with_path(root.join("managed_keys.toml"));
         let mut settings_store = SettingsStore::load_with_path(root.join("settings.toml"))
@@ -757,6 +1245,7 @@ mod tests {
         let result = apply_plaintext_payload(
             &sample_plaintext(),
             &session_store,
+            &proxy_store,
             &snippet_store,
             &key_store,
             &secret_store,
@@ -850,6 +1339,7 @@ mod tests {
 
         SyncPlaintextPayload {
             sessions: vec![session],
+            proxies: Vec::new(),
             snippets: Vec::new(),
             managed_keys: Vec::new(),
             settings: AppSettings::default().synced_settings(),
@@ -862,8 +1352,26 @@ mod tests {
                 key_secrets: Vec::new(),
                 ai_provider_secrets: Vec::new(),
                 web_search_secret: None,
+                proxy_secrets: Vec::new(),
             },
         }
+    }
+
+    fn sample_proxy_plaintext() -> SyncPlaintextPayload {
+        let mut payload = sample_plaintext();
+        let mut proxy = ProxyProfile::blank("proxy-1", 1);
+        proxy.name = "Shared proxy".into();
+        proxy.host = "127.0.0.1".into();
+        proxy.auth_mode = ProxyAuthMode::UsernamePassword;
+        proxy.username = "akko".into();
+        proxy.has_stored_password = true;
+        payload.sessions[0].entry_proxy_id = Some(proxy.id.clone());
+        payload.proxies.push(proxy);
+        payload.secrets.proxy_secrets.push(ProxySecret {
+            id: "proxy-1".into(),
+            password: "proxy-password".into(),
+        });
+        payload
     }
 
     fn cleanup_test_vault(path: &std::path::Path) {

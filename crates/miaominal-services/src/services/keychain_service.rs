@@ -1,6 +1,7 @@
 use anyhow::Result;
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeyRecord, ManagedKeySource};
 use miaominal_core::profile::{AuthMethod, SessionProfile, ShellType};
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_ssh::{self as ssh, AgentIdentitySummary};
 use miaominal_storage::keychain_store::ManagedKeyStore;
@@ -171,11 +172,13 @@ impl KeychainService {
         &self,
         profile: SessionProfile,
         all_profiles: Vec<SessionProfile>,
+        all_proxies: Vec<ProxyProfile>,
         command: String,
     ) -> Result<String> {
         ssh::execute_profile_command(
             profile,
             all_profiles,
+            all_proxies,
             self.secrets.clone(),
             self.known_hosts.clone(),
             command,

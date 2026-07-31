@@ -142,6 +142,12 @@ impl SettingsController {
         self.local_data_reset_in_progress = true;
         cx.notify();
 
+        let proxy_ids = self
+            .proxies
+            .iter()
+            .map(|proxy| proxy.id.clone())
+            .collect::<Vec<_>>();
+
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("local-data-reset".to_string())
@@ -150,6 +156,7 @@ impl SettingsController {
                     &session_ids,
                     &managed_key_ids,
                     &ai_provider_ids,
+                    &proxy_ids,
                 );
                 tx.send(result).ok();
             });

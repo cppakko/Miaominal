@@ -251,6 +251,11 @@ impl LocalVaultRootExt for AppView {
                         controller.continue_save_web_search_after_unlock(draft, cx);
                     });
                 }
+                SettingsDeferredCommand::SaveProxy(draft) => {
+                    self.controllers.settings.update(cx, |controller, cx| {
+                        controller.continue_save_proxy_after_unlock(draft, window, cx);
+                    });
+                }
                 SettingsDeferredCommand::ClearSyncPassphrase => {
                     self.controllers.settings.update(cx, |controller, cx| {
                         controller.continue_clear_sync_passphrase_after_unlock(cx);
@@ -656,6 +661,7 @@ impl LocalVaultRootExt for AppView {
                     session_ids,
                     managed_key_ids,
                     ai_provider_ids,
+                    proxy_ids,
                 } = enable_result;
 
                 let previous_secrets = self.controllers.settings.read(cx).secrets();
@@ -675,6 +681,7 @@ impl LocalVaultRootExt for AppView {
                             &session_ids,
                             &managed_key_ids,
                             &ai_provider_ids,
+                            &proxy_ids,
                             &previous_secrets,
                             &previous_sync_engine,
                         );
@@ -712,6 +719,7 @@ impl LocalVaultRootExt for AppView {
                     session_ids,
                     managed_key_ids,
                     ai_provider_ids,
+                    proxy_ids,
                 } = enable_result;
 
                 let previous_secrets = self.controllers.settings.read(cx).secrets();
@@ -732,6 +740,7 @@ impl LocalVaultRootExt for AppView {
                             &session_ids,
                             &managed_key_ids,
                             &ai_provider_ids,
+                            &proxy_ids,
                             &previous_secrets,
                             &previous_sync_engine,
                         );

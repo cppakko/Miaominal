@@ -32,6 +32,7 @@ pub(in crate::ui::shell) enum DialogOverlaySnapshot {
     AiProviderPopup(PendingAiProviderPopupState),
     WebSearchConfigPopup(PendingWebSearchConfigPopupState),
     SyncProviderConfigPopup(PendingSyncProviderConfigPopupState),
+    ProxyConfigPopup(PendingProxyConfigPopupState),
     LocalVaultPassphrasePopup(LocalVaultPassphrasePopupMode),
     SftpPrompt {
         tab_id: TabId,
@@ -67,6 +68,7 @@ impl DialogOverlaySnapshot {
                 SyncProvider::GithubGist => "sync-provider-gist".to_string(),
                 SyncProvider::WebDav => "sync-provider-webdav".to_string(),
             },
+            Self::ProxyConfigPopup(_) => "proxy-config".to_string(),
             Self::LocalVaultPassphrasePopup(_) => "local-vault-passphrase".to_string(),
             Self::SftpPrompt { tab_id, .. } => format!("sftp-prompt-{tab_id}"),
         }

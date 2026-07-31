@@ -10,6 +10,9 @@ mod forwarding;
 #[path = "ssh/monitor.rs"]
 mod monitor;
 
+#[path = "ssh/transport.rs"]
+pub mod transport;
+
 pub use auth::{authenticate, hydrate_profile_from_secrets, list_local_agent_identities};
 pub use forwarding::start_port_forward_session;
 pub use miaominal_core::forwarding::{

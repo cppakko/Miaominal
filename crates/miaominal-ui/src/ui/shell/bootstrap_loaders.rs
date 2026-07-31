@@ -13,6 +13,7 @@ pub(in crate::ui::shell) fn load_app_data(
         chat_service,
         chat_sessions,
         sessions,
+        proxies,
         snippets,
         selected_profile,
         status_message,
@@ -20,6 +21,7 @@ pub(in crate::ui::shell) fn load_app_data(
 
     LoadedAppData {
         profiles: sessions,
+        proxies,
         selected_profile,
         known_hosts_entries,
         snippets,
@@ -64,6 +66,7 @@ pub(in crate::ui::shell) fn initial_profile_selection(
 pub(in crate::ui::shell) struct LoadedAppData {
     pub(in crate::ui::shell) services: AppServices,
     pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
+    pub(in crate::ui::shell) proxies: Vec<miaominal_core::proxy::ProxyProfile>,
     pub(in crate::ui::shell) selected_profile: Option<usize>,
     pub(in crate::ui::shell) known_hosts_entries: Vec<miaominal_core::known_host::KnownHostEntry>,
     pub(in crate::ui::shell) snippets: Vec<SnippetRecord>,

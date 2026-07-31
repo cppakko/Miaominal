@@ -3382,7 +3382,9 @@ impl SftpController {
             owner.and_then(|owner| self.session_query.resolved_profile_for_session(owner));
         let profile = Self::resolve_start_profile(profile, owner, owner_profile)?;
         let profiles = self.session_query.profiles();
-        let connection = self.service.start_session(profile.clone(), profiles);
+        let connection =
+            self.service
+                .start_session(profile.clone(), profiles, self.session_query.proxies());
         let mut tab = SftpTabState::new(&profile);
         tab.commands = Some(connection.commands);
         self.insert_tab(tab_id, tab);

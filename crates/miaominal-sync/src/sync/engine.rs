@@ -6,9 +6,9 @@ use super::store::SyncConfigStore;
 use crate::{SyncPayload, SyncProvider, SyncStatus};
 use anyhow::{Context, Result};
 use miaominal_secrets::{CredentialStore, ProtectedPassphrase, SecretStore};
-use miaominal_storage::SettingsStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
+use miaominal_storage::{ProxyStore, SettingsStore};
 
 enum RemotePayloadState {
     BindingRequired(SyncProvider),
@@ -74,6 +74,7 @@ impl SyncEngine {
     pub async fn push(
         &mut self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -81,6 +82,7 @@ impl SyncEngine {
     ) -> Result<SyncStatus> {
         self.push_internal(
             session_store,
+            proxy_store,
             snippet_store,
             key_store,
             secret_store,
@@ -93,6 +95,7 @@ impl SyncEngine {
     pub async fn push_force(
         &mut self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -100,6 +103,7 @@ impl SyncEngine {
     ) -> Result<SyncStatus> {
         self.push_internal(
             session_store,
+            proxy_store,
             snippet_store,
             key_store,
             secret_store,
@@ -112,6 +116,7 @@ impl SyncEngine {
     async fn push_internal(
         &mut self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -135,6 +140,7 @@ impl SyncEngine {
             .map(|c| session_store.parse_sessions(&c))
             .transpose()?
             .unwrap_or_default();
+        let proxies = proxy_store.load(secret_store)?;
         let snippets = snippet_store.load()?;
         let managed_keys = key_store.load()?;
         let settings = settings_store.settings().synced_settings();
@@ -142,6 +148,7 @@ impl SyncEngine {
         let payload = build_payload(
             &self.config_store.config.device_id,
             &sessions,
+            &proxies,
             &snippets,
             &managed_keys,
             &settings,
@@ -173,6 +180,7 @@ impl SyncEngine {
     pub async fn pull(
         &mut self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -180,6 +188,7 @@ impl SyncEngine {
     ) -> Result<SyncStatus> {
         self.pull_internal(
             session_store,
+            proxy_store,
             snippet_store,
             key_store,
             secret_store,
@@ -191,6 +200,7 @@ impl SyncEngine {
     async fn pull_internal(
         &mut self,
         session_store: &SessionStore,
+        proxy_store: &ProxyStore,
         snippet_store: &SnippetStore,
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
@@ -220,6 +230,7 @@ impl SyncEngine {
         apply_plaintext_payload(
             &plaintext,
             session_store,
+            proxy_store,
             snippet_store,
             key_store,
             secret_store,

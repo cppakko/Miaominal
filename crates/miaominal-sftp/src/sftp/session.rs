@@ -14,6 +14,7 @@ use futures::channel::mpsc::{
 };
 use miaominal_core::known_host::HostKeyCheck;
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::sftp::{SftpEntry, TransferDirection, TransferId};
 use miaominal_secrets::SecretStore;
 use miaominal_ssh as ssh;
@@ -383,14 +384,21 @@ pub struct ResolvedRemotePath {
 pub async fn resolve_profile_paths(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     paths: Vec<String>,
 ) -> Result<Vec<ResolvedRemotePath>> {
     let (event_sender, _event_receiver) = sftp_event_channel();
-    let connected_session =
-        connect_authenticated_session(profile, all_profiles, secrets, known_hosts, &event_sender)
-            .await?;
+    let connected_session = connect_authenticated_session(
+        profile,
+        all_profiles,
+        all_proxies,
+        secrets,
+        known_hosts,
+        &event_sender,
+    )
+    .await?;
 
     let result = async {
         let sftp = open_sftp_session(&connected_session).await?;
@@ -430,6 +438,7 @@ pub fn start_session(
     runtime: &TokioHandle,
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SftpConnection {
@@ -446,6 +455,7 @@ pub fn start_session(
             let result = runtime.block_on(run_session(
                 profile,
                 all_profiles,
+                all_proxies,
                 secrets,
                 known_hosts,
                 command_receiver,
@@ -483,6 +493,7 @@ pub fn start_session(
 async fn run_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SftpCommand>,
@@ -493,6 +504,7 @@ async fn run_session(
     let connected_session = connect_authenticated_session(
         profile.clone(),
         all_profiles,
+        all_proxies,
         secrets,
         known_hosts,
         &event_sender,
@@ -895,12 +907,16 @@ impl client::Handler for SftpClientHandler {
 async fn connect_authenticated_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     event_sender: &SftpEventSender,
 ) -> Result<SftpConnectedSession> {
     let profile = ssh::hydrate_profile_from_secrets(profile, &secrets);
     let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
+    let entry_proxy =
+        ssh::transport::resolve_entry_proxy(profile.entry_proxy_id.as_deref(), &all_proxies)?
+            .cloned();
     let proxy_jump_profiles =
         ssh::connection::resolve_proxy_jump_profiles(&profile, &all_profiles)?
             .into_iter()
@@ -920,8 +936,14 @@ async fn connect_authenticated_session(
         )
         .await?;
 
-        let mut current_session =
-            connect_profile_session(first_hop, config.clone(), known_hosts.clone()).await?;
+        let mut current_session = connect_profile_with_optional_proxy(
+            first_hop,
+            entry_proxy.as_ref(),
+            &secrets,
+            config.clone(),
+            known_hosts.clone(),
+        )
+        .await?;
         emit_status(
             event_sender,
             format!(
@@ -995,7 +1017,14 @@ async fn connect_authenticated_session(
         current_session
     } else {
         emit_status(event_sender, format!("Connecting SFTP to {remote}")).await?;
-        let mut session = connect_profile_session(&profile, config, known_hosts).await?;
+        let mut session = connect_profile_with_optional_proxy(
+            &profile,
+            entry_proxy.as_ref(),
+            &secrets,
+            config,
+            known_hosts,
+        )
+        .await?;
         emit_status(event_sender, format!("Authenticating SFTP to {remote}")).await?;
         ssh::authenticate(&mut session, profile, &secrets).await?;
         Arc::new(session)
@@ -1018,6 +1047,21 @@ async fn connect_profile_session(
         port: profile.port,
     };
     ssh::connection::connect_profile_session(profile, config, handler).await
+}
+
+async fn connect_profile_with_optional_proxy(
+    profile: &SessionProfile,
+    proxy: Option<&ProxyProfile>,
+    secrets: &SecretStore,
+    config: Arc<client::Config>,
+    known_hosts: KnownHostsStore,
+) -> Result<client::Handle<SftpClientHandler>> {
+    let Some(proxy) = proxy else {
+        return connect_profile_session(profile, config, known_hosts).await;
+    };
+    let transport =
+        ssh::transport::connect_via_proxy(proxy, &profile.host, profile.port, secrets).await?;
+    connect_profile_stream(profile, transport, config, known_hosts).await
 }
 
 async fn connect_profile_stream<R>(

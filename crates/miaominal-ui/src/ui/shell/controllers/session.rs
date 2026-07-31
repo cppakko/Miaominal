@@ -21,6 +21,7 @@ use miaominal_core::profile::{
     AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssue, ImportSourceKind, ImportedBatch,
     PortForwardKind, PortForwardRule, SessionEnvironmentVariable, ShellType,
 };
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_services::{ImportedProfilesResult, ProfileService, TerminalService};
@@ -40,8 +41,8 @@ use crate::ui::{
     i18n,
     shell::{
         AppIcon, DialogOverlaySnapshot, ForwardProfileSelectItem, LocalVaultStatus,
-        ManagedKeySelectItem, ProfileViewMode, ProxyJumpCandidateSelectItem, SessionProfile, TabId,
-        TabKindTag, TabState, TerminalSearchAnimation, ValidationFailure,
+        ManagedKeySelectItem, ProfileViewMode, ProxyJumpCandidateSelectItem, SelectOption,
+        SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation, ValidationFailure,
         WorkspaceSidePanelTransition, error_notification, localized_secret_placeholder,
         new_input_state, set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
         validation_notification,
@@ -341,6 +342,8 @@ pub(in crate::ui::shell) struct HostEditorForms {
         Entity<SelectState<SearchableVec<ManagedKeySelectItem>>>,
     pub(in crate::ui::shell) proxy_jump_select:
         Entity<SelectState<SearchableVec<ProxyJumpCandidateSelectItem>>>,
+    pub(in crate::ui::shell) entry_proxy_select:
+        Entity<SelectState<SearchableVec<SelectOption<Option<String>>>>>,
     pub(in crate::ui::shell) charset_select: Entity<SelectState<SearchableVec<String>>>,
     pub(in crate::ui::shell) creating_new_group: bool,
     pub(in crate::ui::shell) tags_input: Entity<InputState>,
@@ -521,6 +524,7 @@ pub(in crate::ui::shell) struct SessionController {
     host_password_visible: bool,
     services: SessionControllerServices,
     profiles: RefCell<Vec<SessionProfile>>,
+    proxies: RefCell<Vec<ProxyProfile>>,
     selected_profile: Cell<Option<usize>>,
     forms: Option<RefCell<SessionWorkspaceForms>>,
     host_editor_forms: Option<RefCell<HostEditorForms>>,
@@ -552,6 +556,7 @@ pub(in crate::ui::shell) struct SessionControllerArgs {
     pub(in crate::ui::shell) secrets: SecretStore,
     pub(in crate::ui::shell) known_hosts: KnownHostsStore,
     pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
+    pub(in crate::ui::shell) proxies: Vec<ProxyProfile>,
     pub(in crate::ui::shell) selected_profile: Option<usize>,
     pub(in crate::ui::shell) managed_keys: Vec<ManagedKeyRecord>,
     pub(in crate::ui::shell) snippets: Vec<SnippetRecord>,
@@ -639,8 +644,36 @@ impl SessionController {
         .collect()
     }
 
+    fn entry_proxy_select_options(
+        proxies: &[ProxyProfile],
+        selected_proxy_id: Option<&str>,
+    ) -> Vec<SelectOption<Option<String>>> {
+        let mut options = vec![SelectOption::new(
+            None,
+            i18n::string("hosts.editor.entry_proxy.direct"),
+        )];
+        options.extend(
+            proxies
+                .iter()
+                .map(|proxy| SelectOption::new(Some(proxy.id.clone()), proxy.connection_label())),
+        );
+        if let Some(selected_proxy_id) = selected_proxy_id
+            && !proxies.iter().any(|proxy| proxy.id == selected_proxy_id)
+        {
+            options.push(SelectOption::new(
+                Some(selected_proxy_id.to_string()),
+                i18n::string_args(
+                    "hosts.editor.entry_proxy.missing_option",
+                    &[("id", selected_proxy_id)],
+                ),
+            ));
+        }
+        options
+    }
+
     fn build_forms(
         profiles: &[SessionProfile],
+        proxies: &[ProxyProfile],
         selected_profile: Option<usize>,
         managed_keys: &[ManagedKeyRecord],
         snippets: &[SnippetRecord],
@@ -795,6 +828,9 @@ impl SessionController {
             .as_ref()
             .map(|profile| profile.proxy_jump_profile_ids.clone())
             .unwrap_or_default();
+        let selected_entry_proxy_id = selected_profile_data
+            .as_ref()
+            .and_then(|profile| profile.entry_proxy_id.clone());
         let environment_variable_rows = selected_profile_data
             .as_ref()
             .map(|profile| {
@@ -859,6 +895,21 @@ impl SessionController {
             )
             .searchable(true)
         });
+        let entry_proxy_options =
+            Self::entry_proxy_select_options(proxies, selected_entry_proxy_id.as_deref());
+        let selected_entry_proxy = entry_proxy_options
+            .iter()
+            .position(|option| option.value() == &selected_entry_proxy_id)
+            .map(|index| gpui_component::IndexPath::default().row(index));
+        let entry_proxy_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(entry_proxy_options),
+                selected_entry_proxy,
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
         let snippet_script_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("bash")
@@ -911,6 +962,7 @@ impl SessionController {
                 group_select,
                 managed_key_select,
                 proxy_jump_select,
+                entry_proxy_select,
                 charset_select,
                 creating_new_group: !selected_group.is_empty() && selected_existing_group.is_none(),
                 tags_input,
@@ -1200,6 +1252,7 @@ impl SessionController {
     ) -> Self {
         let forms = Self::build_forms(
             &args.profiles,
+            &args.proxies,
             args.selected_profile,
             &args.managed_keys,
             &args.snippets,
@@ -1220,6 +1273,7 @@ impl SessionController {
         let group_select = forms.host_editor.group_select.clone();
         let managed_key_select = forms.host_editor.managed_key_select.clone();
         let proxy_jump_select = forms.host_editor.proxy_jump_select.clone();
+        let entry_proxy_select = forms.host_editor.entry_proxy_select.clone();
         let session_snippets_filter_input = forms.workspace.snippets_panel.filter_input.clone();
         let snippets_filter_input = forms.snippets.filter_input.clone();
         let snippet_package_select = forms.snippets.package_select.clone();
@@ -1296,6 +1350,16 @@ impl SessionController {
                     }
                 },
             ),
+            cx.subscribe(
+                &entry_proxy_select,
+                |_controller,
+                 _,
+                 event: &SelectEvent<SearchableVec<SelectOption<Option<String>>>>,
+                 cx| {
+                    let SelectEvent::Confirm(_) = event;
+                    cx.notify();
+                },
+            ),
             subscribe_to_change!(hosts_filter_input),
             subscribe_to_change!(trusted_filter_input),
             subscribe_to_change!(forwarding_filter_input),
@@ -1340,6 +1404,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(args.auto_collect_session_monitoring),
             },
             args.profiles,
+            args.proxies,
             args.selected_profile,
             Some(forms.workspace),
             Some(forms.host_editor),
@@ -1364,6 +1429,7 @@ impl SessionController {
     fn with_subscriptions(
         services: SessionControllerServices,
         profiles: Vec<SessionProfile>,
+        proxies: Vec<ProxyProfile>,
         selected_profile: Option<usize>,
         forms: Option<SessionWorkspaceForms>,
         host_editor_forms: Option<HostEditorForms>,
@@ -1375,10 +1441,12 @@ impl SessionController {
         subscriptions: Vec<Subscription>,
     ) -> Self {
         let port_profiles = profiles.clone();
+        let port_proxies = proxies.clone();
         Self {
             host_password_visible: false,
             services,
             profiles: RefCell::new(profiles),
+            proxies: RefCell::new(proxies),
             selected_profile: Cell::new(selected_profile),
             forms: forms.map(RefCell::new),
             host_editor_forms: host_editor_forms.map(RefCell::new),
@@ -1414,7 +1482,13 @@ impl SessionController {
             panel: RefCell::new(SessionPanelState::default()),
             pending_dialogs: RefCell::new(SessionPendingDialogs::default()),
             ports: Rc::new(RefCell::new(SessionPortState {
-                snapshot: SessionPortSnapshot::new(port_profiles, Vec::new(), None, None),
+                snapshot: SessionPortSnapshot::new(
+                    port_profiles,
+                    port_proxies,
+                    Vec::new(),
+                    None,
+                    None,
+                ),
                 ..SessionPortState::default()
             })),
             terminal_focus_subscriptions: RefCell::new(None),
@@ -1457,6 +1531,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(false),
             },
             profiles,
+            Vec::new(),
             None,
             None,
             None,
@@ -1486,6 +1561,15 @@ impl SessionController {
     pub(in crate::ui::shell) fn replace_profiles(&self, profiles: Vec<SessionProfile>) {
         *self.profiles.borrow_mut() = profiles;
         self.sync_port_profiles();
+    }
+
+    pub(in crate::ui::shell) fn proxies(&self) -> Ref<'_, Vec<ProxyProfile>> {
+        self.proxies.borrow()
+    }
+
+    pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
+        *self.proxies.borrow_mut() = proxies;
+        self.sync_port_proxies();
     }
 
     pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {
@@ -1525,6 +1609,7 @@ impl SessionController {
         self.terminal_service().start_session(
             profile,
             self.profiles.borrow().clone(),
+            self.proxies.borrow().clone(),
             columns,
             lines,
             monitoring_enabled,
@@ -2068,6 +2153,36 @@ impl SessionController {
         });
     }
 
+    fn sync_entry_proxy_select(
+        &self,
+        selected_proxy_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let options =
+            Self::entry_proxy_select_options(&self.proxies.borrow(), selected_proxy_id.as_deref());
+        let select = self.host_editor_forms().entry_proxy_select;
+        select.update(cx, |select, cx| {
+            select.set_items(SearchableVec::new(options), window, cx);
+            select.set_selected_value(&selected_proxy_id, window, cx);
+        });
+    }
+
+    pub(in crate::ui::shell) fn refresh_entry_proxy_select(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_proxy_id = self
+            .host_editor_forms()
+            .entry_proxy_select
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .flatten();
+        self.sync_entry_proxy_select(selected_proxy_id, window, cx);
+    }
+
     pub(in crate::ui::shell) fn sync_managed_key_select_in_active_window(
         &self,
         options: Vec<ManagedKeySelectItem>,
@@ -2227,6 +2342,7 @@ impl SessionController {
         forms.charset_select.update(cx, |select, cx| {
             select.set_selected_value(&selected_charset, window, cx);
         });
+        self.sync_entry_proxy_select(profile.entry_proxy_id.clone(), window, cx);
         {
             let mut forms = self.host_editor_forms_mut();
             forms.proxy_jump_profile_ids = profile.proxy_jump_profile_ids.clone();
@@ -2278,6 +2394,7 @@ impl SessionController {
         forms.charset_select.update(cx, |select, cx| {
             select.set_selected_value(&DEFAULT_SESSION_CHARSET.to_string(), window, cx);
         });
+        self.sync_entry_proxy_select(None, window, cx);
         {
             let mut forms = self.host_editor_forms_mut();
             forms.proxy_jump_profile_ids.clear();
@@ -2678,6 +2795,25 @@ impl SessionController {
         };
         let environment_variables = self.read_environment_variables(cx)?;
         let proxy_jump_profile_ids = self.read_proxy_jump_profile_ids(&profile_id)?;
+        let entry_proxy_id = forms
+            .entry_proxy_select
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .flatten();
+        if let Some(entry_proxy_id) = entry_proxy_id.as_deref()
+            && !self
+                .proxies
+                .borrow()
+                .iter()
+                .any(|proxy| proxy.id == entry_proxy_id)
+        {
+            return Err(ValidationFailure::invalid(i18n::string_args(
+                "errors.profile.validation.entry_proxy_missing",
+                &[("id", entry_proxy_id)],
+            ))
+            .into());
+        }
 
         if purpose.requires_name() && name.is_empty() {
             return Err(ValidationFailure::required(i18n::string(
@@ -2795,6 +2931,7 @@ impl SessionController {
             environment_variables,
             shell_type: forms.shell_type,
             proxy_jump_profile_ids,
+            entry_proxy_id,
             has_stored_password: has_password || prior_password,
             has_stored_passphrase,
             port_forwarding_rules: existing
@@ -5383,6 +5520,10 @@ impl SessionController {
         self.ports.borrow_mut().snapshot.profiles = self.profiles.borrow().clone();
     }
 
+    fn sync_port_proxies(&self) {
+        self.ports.borrow_mut().snapshot.proxies = self.proxies.borrow().clone();
+    }
+
     pub(in crate::ui::shell) fn query_port(&self) -> SessionQueryPort {
         SessionQueryPort {
             state: self.ports.clone(),
@@ -5401,6 +5542,7 @@ impl EventEmitter<AppCommand> for SessionController {}
 #[derive(Clone, Default)]
 pub(in crate::ui::shell) struct SessionPortSnapshot {
     profiles: Vec<SessionProfile>,
+    proxies: Vec<ProxyProfile>,
     sessions: HashMap<TabId, SessionPortSession>,
     terminal_order: Vec<TabId>,
     active_profile_id: Option<String>,
@@ -5410,6 +5552,7 @@ pub(in crate::ui::shell) struct SessionPortSnapshot {
 impl SessionPortSnapshot {
     pub(in crate::ui::shell) fn new(
         profiles: Vec<SessionProfile>,
+        proxies: Vec<ProxyProfile>,
         sessions: Vec<SessionPortSession>,
         active_profile_id: Option<String>,
         active_terminal_tab_id: Option<TabId>,
@@ -5425,6 +5568,7 @@ impl SessionPortSnapshot {
             .collect();
         Self {
             profiles,
+            proxies,
             sessions,
             terminal_order,
             active_profile_id,
@@ -5481,6 +5625,10 @@ impl SessionQueryPort {
             .iter()
             .find(|profile| profile.id == profile_id)
             .cloned()
+    }
+
+    pub(in crate::ui::shell) fn proxies(&self) -> Vec<ProxyProfile> {
+        self.state.borrow().snapshot.proxies.clone()
     }
 
     pub(in crate::ui::shell) fn active_profile(&self) -> Option<SessionProfile> {
@@ -5806,6 +5954,7 @@ mod tests {
         let controller = SessionController::new_for_test();
         controller.sync_port_snapshot(SessionPortSnapshot::new(
             vec![profile("profile-a", "A"), profile("profile-b", "B")],
+            Vec::new(),
             vec![
                 terminal(TabId::new(7), "profile-a", "terminal-a"),
                 terminal(TabId::new(9), "profile-b", "terminal-b"),

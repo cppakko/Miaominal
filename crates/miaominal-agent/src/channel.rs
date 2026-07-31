@@ -12,6 +12,7 @@ use crate::web::{
 };
 use anyhow::anyhow;
 use miaominal_core::profile::{AuthMethod, SessionProfile, ShellType};
+use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use serde::{Deserialize, Serialize};
@@ -768,8 +769,12 @@ impl AgentShellRegistry {
         Self::default()
     }
 
-    fn detected_shell_for_profile(&self, profile: &SessionProfile) -> Arc<AtomicU8> {
-        let fingerprint = shell_connection_fingerprint(profile);
+    fn detected_shell_for_profile(
+        &self,
+        profile: &SessionProfile,
+        proxies: &[ProxyProfile],
+    ) -> Arc<AtomicU8> {
+        let fingerprint = shell_connection_fingerprint(profile, proxies);
         let Ok(mut entries) = self.entries.lock() else {
             return Arc::new(AtomicU8::new(0));
         };
@@ -789,20 +794,38 @@ impl AgentShellRegistry {
     }
 }
 
-fn shell_connection_fingerprint(profile: &SessionProfile) -> String {
+fn shell_connection_fingerprint(profile: &SessionProfile, proxies: &[ProxyProfile]) -> String {
     let configured_shell = match profile.shell_type {
         ShellType::Posix => 1,
         ShellType::Fish => 2,
         ShellType::PowerShell => 3,
         ShellType::Cmd => 4,
     };
+    let proxy_fingerprint = profile
+        .entry_proxy_id
+        .as_deref()
+        .and_then(|proxy_id| proxies.iter().find(|proxy| proxy.id == proxy_id))
+        .map(|proxy| {
+            format!(
+                "{}\0{:?}\0{}\0{}\0{:?}\0{}\0{}",
+                proxy.id,
+                proxy.protocol,
+                proxy.host.trim().to_ascii_lowercase(),
+                proxy.port,
+                proxy.auth_mode,
+                proxy.username,
+                proxy.resolve_dns_through_proxy
+            )
+        })
+        .unwrap_or_else(|| profile.entry_proxy_id.clone().unwrap_or_default());
     format!(
-        "{}\0{}\0{}\0{}\0{}",
+        "{}\0{}\0{}\0{}\0{}\0{}",
         profile.host.trim().to_ascii_lowercase(),
         profile.port,
         profile.username,
         configured_shell,
         profile.proxy_jump_profile_ids.join("\0"),
+        proxy_fingerprint,
     )
 }
 
@@ -810,6 +833,7 @@ fn shell_connection_fingerprint(profile: &SessionProfile) -> String {
 pub struct AgentExecChannel {
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     policy: AgentPolicy,
@@ -854,6 +878,7 @@ impl AgentExecChannel {
         Self::for_profile_with_state(
             profile,
             all_profiles,
+            Vec::new(),
             secrets,
             known_hosts,
             jobs,
@@ -869,10 +894,31 @@ impl AgentExecChannel {
         jobs: AgentJobRegistry,
         shells: AgentShellRegistry,
     ) -> Self {
-        let detected_shell = shells.detected_shell_for_profile(&profile);
+        Self::for_profile_with_registries_and_proxies(
+            profile,
+            all_profiles,
+            Vec::new(),
+            secrets,
+            known_hosts,
+            jobs,
+            shells,
+        )
+    }
+
+    pub fn for_profile_with_registries_and_proxies(
+        profile: SessionProfile,
+        all_profiles: Vec<SessionProfile>,
+        all_proxies: Vec<ProxyProfile>,
+        secrets: SecretStore,
+        known_hosts: KnownHostsStore,
+        jobs: AgentJobRegistry,
+        shells: AgentShellRegistry,
+    ) -> Self {
+        let detected_shell = shells.detected_shell_for_profile(&profile, &all_proxies);
         Self::for_profile_with_state(
             profile,
             all_profiles,
+            all_proxies,
             secrets,
             known_hosts,
             jobs,
@@ -883,6 +929,7 @@ impl AgentExecChannel {
     fn for_profile_with_state(
         profile: SessionProfile,
         all_profiles: Vec<SessionProfile>,
+        all_proxies: Vec<ProxyProfile>,
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
         jobs: AgentJobRegistry,
@@ -891,6 +938,7 @@ impl AgentExecChannel {
         Self {
             profile,
             all_profiles,
+            all_proxies,
             secrets,
             known_hosts,
             policy: AgentPolicy,
@@ -1038,6 +1086,7 @@ impl AgentExecChannel {
         let mut resolved = miaominal_sftp::resolve_profile_paths(
             self.profile.clone(),
             self.all_profiles.clone(),
+            self.all_proxies.clone(),
             self.secrets.clone(),
             self.known_hosts.clone(),
             vec![normalized.clone()],
@@ -1209,6 +1258,7 @@ impl AgentExecChannel {
                 SshExecRequest {
                     profile: self.profile.clone(),
                     all_profiles: self.all_profiles.clone(),
+                    all_proxies: self.all_proxies.clone(),
                     secrets: self.secrets.clone(),
                     known_hosts: self.known_hosts.clone(),
                     command: command.into(),
@@ -1369,6 +1419,23 @@ mod tests {
         profile.username = "akko".into();
         profile.shell_type = shell_type;
         profile
+    }
+
+    #[test]
+    fn proxy_configuration_changes_agent_shell_connection_fingerprint() {
+        let mut profile = profile(ShellType::Posix);
+        profile.entry_proxy_id = Some("proxy-1".into());
+        let mut proxy = ProxyProfile::blank("proxy-1", 1);
+        proxy.host = "127.0.0.1".into();
+        let registry = AgentShellRegistry::new();
+
+        let first = registry.detected_shell_for_profile(&profile, &[proxy.clone()]);
+        let unchanged = registry.detected_shell_for_profile(&profile, &[proxy.clone()]);
+        assert!(Arc::ptr_eq(&first, &unchanged));
+
+        proxy.port = 1081;
+        let changed = registry.detected_shell_for_profile(&profile, &[proxy]);
+        assert!(!Arc::ptr_eq(&first, &changed));
     }
 
     #[tokio::test]

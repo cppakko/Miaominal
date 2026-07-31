@@ -7,6 +7,7 @@ pub fn copy_secrets_between_backends<S, K>(
     session_ids: S,
     managed_key_ids: K,
     ai_provider_ids: &[String],
+    proxy_ids: &[String],
     source_secrets: &SecretStore,
     source_sync_config: &SyncConfigStore,
     target_secrets: &SecretStore,
@@ -45,6 +46,11 @@ where
     if let Some(api_key) = source_secrets.get("web_search", SecretKind::WebSearchApiKey)? {
         target_secrets.set("web_search", SecretKind::WebSearchApiKey, &api_key)?;
     }
+    for proxy_id in proxy_ids {
+        if let Some(password) = source_secrets.get(proxy_id, SecretKind::ProxyPassword)? {
+            target_secrets.set(proxy_id, SecretKind::ProxyPassword, &password)?;
+        }
+    }
 
     let sync_secrets = source_sync_config.get_secrets()?;
 
@@ -65,6 +71,7 @@ pub fn delete_keyring_secrets<S, K>(
     session_ids: S,
     managed_key_ids: K,
     ai_provider_ids: &[String],
+    proxy_ids: &[String],
     source_secrets: &SecretStore,
     source_sync_config: &SyncConfigStore,
 ) where
@@ -85,6 +92,9 @@ pub fn delete_keyring_secrets<S, K>(
         source_secrets.delete_ai_provider_api_key(provider_id);
     }
     source_secrets.delete_web_search_api_key();
+    for proxy_id in proxy_ids {
+        source_secrets.delete_proxy_password(proxy_id);
+    }
 
     if let Err(error) = source_sync_config.delete_github_token() {
         log::warn!("failed to delete migrated GitHub token from keyring: {error:?}");
@@ -226,6 +236,9 @@ mod tests {
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
             .unwrap();
         source_secrets
+            .set("proxy-1", SecretKind::ProxyPassword, "proxy-password")
+            .unwrap();
+        source_secrets
             .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
             .unwrap();
         source_sync.set_github_token("gh-token").unwrap();
@@ -236,6 +249,7 @@ mod tests {
             ["session-1", "session-2"],
             ["key-1"],
             &["provider-1".to_string()],
+            &["proxy-1".to_string()],
             &source_secrets,
             &source_sync,
             &target_secrets,
@@ -297,6 +311,13 @@ mod tests {
         );
         assert_eq!(
             persisted_secrets
+                .get("proxy-1", SecretKind::ProxyPassword)
+                .unwrap()
+                .as_deref(),
+            Some("proxy-password"),
+        );
+        assert_eq!(
+            persisted_secrets
                 .get("web_search", SecretKind::WebSearchApiKey)
                 .unwrap()
                 .as_deref(),
@@ -339,6 +360,7 @@ mod tests {
         copy_secrets_between_backends(
             ["session-no-secrets"],
             std::iter::empty::<&str>(),
+            &[],
             &[],
             &source_secrets,
             &source_sync,
@@ -392,6 +414,9 @@ mod tests {
             .set("provider-1", SecretKind::AiProviderApiKey, "sk-test")
             .unwrap();
         source_secrets
+            .set("proxy-1", SecretKind::ProxyPassword, "proxy-password")
+            .unwrap();
+        source_secrets
             .set("web_search", SecretKind::WebSearchApiKey, "web-search-key")
             .unwrap();
         source_sync.set_github_token("gh").unwrap();
@@ -402,6 +427,7 @@ mod tests {
             ["session-1"],
             ["key-1"],
             &["provider-1".to_string()],
+            &["proxy-1".to_string()],
             &source_secrets,
             &source_sync,
         );
@@ -427,6 +453,12 @@ mod tests {
         assert_eq!(
             source_secrets
                 .get("provider-1", SecretKind::AiProviderApiKey)
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            source_secrets
+                .get("proxy-1", SecretKind::ProxyPassword)
                 .unwrap(),
             None,
         );

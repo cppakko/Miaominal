@@ -330,6 +330,12 @@ impl SecretStore {
         }
     }
 
+    pub fn delete_proxy_password(&self, proxy_id: &str) {
+        if let Err(error) = self.delete(proxy_id, SecretKind::ProxyPassword) {
+            log::warn!("{error:?}");
+        }
+    }
+
     pub fn is_locked_error(error: &anyhow::Error) -> bool {
         error.chain().any(|cause| {
             let message = cause.to_string();
