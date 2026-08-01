@@ -2,13 +2,16 @@ use super::custom_glyphs;
 use crate::ui::shell::{
     AppView, PaneId, SessionController, TabId, TerminalHoveredLink, WorkspaceTerminalInputExt,
 };
+use alacritty_terminal::index::Side;
 use gpui::{
     Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
     InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
     StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
     Window, canvas, fill, px, quad, rgba, size,
 };
-use miaominal_terminal::{SearchMatchKind, TerminalSnapshot, terminal_font, terminal_font_size};
+use miaominal_terminal::{
+    SearchMatchKind, TerminalFreeTypeTarget, TerminalSnapshot, terminal_font, terminal_font_size,
+};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -18,12 +21,14 @@ use std::{
 
 const TERMINAL_SCROLLBAR_TRACK_WIDTH: f32 = 6.0;
 const TERMINAL_SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 20.0;
+const TERMINAL_FREE_TYPE_DROP_LINE_ALPHA: f32 = 0.08;
 
 pub(in crate::ui::shell) struct TerminalCanvasPrepaint {
     snapshot: Arc<TerminalSnapshot>,
     focus: FocusHandle,
     input_controller: WeakEntity<SessionController>,
     tab_id: TabId,
+    drop_target: Option<TerminalFreeTypeTarget>,
 }
 
 struct TerminalImeHandler {
@@ -75,11 +80,11 @@ impl InputHandler for TerminalImeHandler {
         if text.is_empty() {
             return;
         }
-        let bytes = text.as_bytes().to_vec();
         let tab_id = self.tab_id;
+        let text = text.to_string();
         self.controller
             .update(cx, |controller, cx| {
-                controller.send_terminal_input(tab_id, bytes, cx);
+                controller.send_terminal_text_input(tab_id, text, cx);
             })
             .ok();
     }
@@ -157,6 +162,7 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane<V: TerminalCanvasHos
                 bounds,
                 &prepaint.snapshot,
                 hovered_link.as_ref(),
+                prepaint.drop_target,
                 cell_width,
                 line_height,
                 window,
@@ -278,7 +284,7 @@ impl TerminalCanvasHost for AppView {
             return;
         }
         let pane = &self.workspace.workspace.active_pane;
-        if pane.terminal_dragging
+        if pane.terminal_mouse_gesture.is_some()
             || pane.terminal_mouse_reporting_active
             || pane.terminal_scrollbar_drag.is_some()
         {
@@ -296,7 +302,7 @@ impl TerminalCanvasHost for AppView {
             return;
         }
         let pane = &self.workspace.workspace.active_pane;
-        if pane.terminal_dragging
+        if pane.terminal_mouse_gesture.is_some()
             || pane.terminal_mouse_reporting_active
             || pane.terminal_scrollbar_drag.is_some()
         {
@@ -314,7 +320,7 @@ fn prepare_terminal_canvas_prepaint(
     window: &mut gpui::Window,
     cx: &mut gpui::Context<AppView>,
 ) -> Option<TerminalCanvasPrepaint> {
-    let (active_tab_id, focus, metrics_changed) = if pane_id
+    let (active_tab_id, focus, local_drop_target, metrics_changed) = if pane_id
         == this.workspace.workspace.active_pane_id
     {
         let metrics_changed = this.workspace.workspace.active_pane.terminal_bounds != Some(bounds)
@@ -327,6 +333,11 @@ fn prepare_terminal_canvas_prepaint(
         (
             this.workspace.workspace.active_tab,
             this.workspace.workspace.active_pane.terminal_focus.clone(),
+            this.workspace
+                .workspace
+                .active_pane
+                .terminal_mouse_gesture
+                .and_then(|gesture| gesture.drop_target()),
             metrics_changed,
         )
     } else {
@@ -341,9 +352,19 @@ fn prepare_terminal_canvas_prepaint(
         (
             parked.active_tab,
             parked.terminal_focus.clone(),
+            parked
+                .terminal_mouse_gesture
+                .and_then(|gesture| gesture.drop_target()),
             metrics_changed,
         )
     };
+
+    let drop_target = this
+        .workspace
+        .terminal_free_type_drop_target
+        .filter(|drop| drop.pane_id == pane_id)
+        .map(|drop| drop.target)
+        .or(local_drop_target);
 
     let resized = active_tab_id
         .and_then(|tab_id| this.workspace.tabs.index_of(tab_id))
@@ -376,6 +397,7 @@ fn prepare_terminal_canvas_prepaint(
         focus,
         input_controller,
         tab_id,
+        drop_target,
     })
 }
 
@@ -450,10 +472,12 @@ pub(in crate::ui::shell) fn terminal_scrollbar_offset_for_pointer(
         .clamp(0.0, metrics.history_size as f32) as usize
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_snapshot(
     bounds: Bounds<Pixels>,
     snapshot: &TerminalSnapshot,
     hovered_link: Option<&TerminalHoveredLink>,
+    drop_target: Option<TerminalFreeTypeTarget>,
     cell_width: f32,
     line_height: f32,
     window: &mut gpui::Window,
@@ -470,6 +494,16 @@ fn paint_snapshot(
     let cursor_unfocused = !snapshot.focused_cursor;
 
     window.paint_quad(fill(bounds, Background::from(snapshot.default_bg)));
+    if let Some(target) = drop_target {
+        paint_free_type_drop_line_highlight(
+            snapshot,
+            target,
+            origin,
+            cell_width_px,
+            line_height_px,
+            window,
+        );
+    }
     paint_backgrounds(snapshot, origin, cell_width_px, line_height_px, window);
     paint_search_highlights(snapshot, origin, cell_width_px, line_height_px, window);
     custom_glyphs::paint_custom_glyphs(snapshot, origin, cell_width_px, line_height_px, window);
@@ -510,6 +544,88 @@ fn paint_snapshot(
     if cursor_unfocused {
         paint_unfocused_cursor(snapshot, origin, cell_width_px, line_height_px, window);
     }
+    if let Some(target) = drop_target {
+        paint_free_type_drop_caret(
+            snapshot,
+            target,
+            origin,
+            cell_width_px,
+            line_height_px,
+            window,
+        );
+    }
+}
+
+fn paint_free_type_drop_line_highlight(
+    snapshot: &TerminalSnapshot,
+    target: TerminalFreeTypeTarget,
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    window: &mut gpui::Window,
+) {
+    let Some(row) = terminal_free_type_drop_line_row(target, snapshot.cells.len()) else {
+        return;
+    };
+
+    let scale_factor = window.scale_factor();
+    let bounds = snapped_cell_bounds(
+        origin,
+        cell_width,
+        line_height,
+        0,
+        snapshot.columns,
+        row,
+        scale_factor,
+    );
+    let color = Hsla {
+        a: TERMINAL_FREE_TYPE_DROP_LINE_ALPHA,
+        ..snapshot.default_fg
+    };
+    window.paint_quad(fill(bounds, Background::from(color)));
+}
+
+fn terminal_free_type_drop_line_row(
+    target: TerminalFreeTypeTarget,
+    visible_rows: usize,
+) -> Option<usize> {
+    let row = usize::try_from(target.line).ok()?;
+    (row < visible_rows).then_some(row)
+}
+
+fn paint_free_type_drop_caret(
+    snapshot: &TerminalSnapshot,
+    target: TerminalFreeTypeTarget,
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    window: &mut gpui::Window,
+) {
+    let Ok(row) = usize::try_from(target.line) else {
+        return;
+    };
+    let Some(cell) = snapshot
+        .cells
+        .get(row)
+        .and_then(|cells| cells.get(target.column))
+    else {
+        return;
+    };
+    let boundary_column = target.column
+        + if target.side == Side::Right {
+            if cell.wide { 2 } else { 1 }
+        } else {
+            0
+        };
+    let caret_width = px(2.0);
+    let caret_bounds = Bounds {
+        origin: Point {
+            x: origin.x + cell_width * boundary_column as f32 - caret_width / 2.0,
+            y: origin.y + line_height * row as f32,
+        },
+        size: size(caret_width, line_height),
+    };
+    window.paint_quad(fill(caret_bounds, Background::from(snapshot.default_fg)));
 }
 
 fn paint_backgrounds(
@@ -903,6 +1019,22 @@ mod tests {
 
         assert_eq!(top_offset, 80);
         assert_eq!(bottom_offset, 0);
+    }
+
+    #[test]
+    fn free_type_drop_line_highlight_requires_a_visible_target_row() {
+        assert_eq!(
+            terminal_free_type_drop_line_row(TerminalFreeTypeTarget::new(2, 4, Side::Left), 3),
+            Some(2)
+        );
+        assert_eq!(
+            terminal_free_type_drop_line_row(TerminalFreeTypeTarget::new(-1, 4, Side::Left), 3),
+            None
+        );
+        assert_eq!(
+            terminal_free_type_drop_line_row(TerminalFreeTypeTarget::new(3, 4, Side::Left), 3),
+            None
+        );
     }
 
     #[test]

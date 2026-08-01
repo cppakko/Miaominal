@@ -1,7 +1,11 @@
+use super::panes::TerminalPaneFreeTypeDropTarget;
 use super::*;
 use crate::ui::i18n;
 use alacritty_terminal::index::Side;
 use miaominal_settings::TerminalRightClickBehavior;
+use miaominal_terminal::TerminalFreeTypeTarget;
+
+const TERMINAL_FREE_TYPE_DRAG_THRESHOLD: f32 = 4.0;
 
 fn terminal_scrollbar_is_visible(
     last_interaction_at: Option<Instant>,
@@ -141,6 +145,317 @@ fn active_terminal_has_selection(this: &AppView, cx: &App) -> bool {
             .read(cx)
             .terminal_has_selection(tab_id)
     })
+}
+
+fn active_terminal_has_free_type_selection(this: &AppView, cx: &App) -> bool {
+    this.workspace.workspace.active_tab.is_some_and(|tab_id| {
+        this.controllers
+            .session
+            .read(cx)
+            .terminal_has_free_type_selection(tab_id)
+    })
+}
+
+fn clear_active_terminal_free_type_selection(this: &mut AppView, cx: &mut Context<AppView>) {
+    let Some(tab_id) = this.workspace.workspace.active_tab else {
+        return;
+    };
+    if this
+        .controllers
+        .session
+        .read(cx)
+        .clear_terminal_free_type_selection(tab_id)
+    {
+        cx.notify();
+    }
+}
+
+fn terminal_pointer_drag_threshold_exceeded(
+    origin: Point<Pixels>,
+    position: Point<Pixels>,
+) -> bool {
+    let dx = f32::from(position.x) - f32::from(origin.x);
+    let dy = f32::from(position.y) - f32::from(origin.y);
+    dx * dx + dy * dy >= TERMINAL_FREE_TYPE_DRAG_THRESHOLD.powi(2)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalLeftMouseRoute {
+    Application,
+    FreeType,
+    TraditionalSelection,
+}
+
+fn terminal_left_mouse_route(
+    free_type_enabled: bool,
+    mouse_reporting_enabled: bool,
+    modifiers: &gpui::Modifiers,
+) -> TerminalLeftMouseRoute {
+    if modifiers.shift {
+        TerminalLeftMouseRoute::TraditionalSelection
+    } else if free_type_enabled && (!mouse_reporting_enabled || modifiers.alt) {
+        TerminalLeftMouseRoute::FreeType
+    } else if mouse_reporting_enabled {
+        TerminalLeftMouseRoute::Application
+    } else {
+        TerminalLeftMouseRoute::TraditionalSelection
+    }
+}
+
+fn terminal_invalid_free_type_target_is_consumed(
+    route: TerminalLeftMouseRoute,
+    mouse_reporting_enabled: bool,
+    modifiers: &gpui::Modifiers,
+) -> bool {
+    route == TerminalLeftMouseRoute::FreeType && mouse_reporting_enabled && modifiers.alt
+}
+
+fn terminal_traditional_selection_is_block(
+    free_type_enabled: bool,
+    modifiers: &gpui::Modifiers,
+) -> bool {
+    modifiers.alt && (!free_type_enabled || modifiers.shift)
+}
+
+fn terminal_mouse_motion_reporting_allowed(
+    modifiers: &gpui::Modifiers,
+    free_type_gesture_active: bool,
+) -> bool {
+    !modifiers.shift && !free_type_gesture_active
+}
+
+fn terminal_link_open_requested(modifiers: &gpui::Modifiers) -> bool {
+    modifiers.control || modifiers.platform
+}
+
+fn clear_terminal_suppressed_key_releases(
+    releases: &mut std::collections::HashSet<String>,
+) -> bool {
+    let changed = !releases.is_empty();
+    releases.clear();
+    changed
+}
+
+#[derive(Clone, Copy)]
+struct TerminalPaneMetrics {
+    tab_id: TabId,
+    bounds: Bounds<Pixels>,
+    cell_width: f32,
+    line_height: f32,
+}
+
+fn terminal_pane_metrics(this: &AppView, pane_id: PaneId) -> Option<TerminalPaneMetrics> {
+    if pane_id == this.workspace.workspace.active_pane_id {
+        return Some(TerminalPaneMetrics {
+            tab_id: this.workspace.workspace.active_tab?,
+            bounds: this.workspace.workspace.active_pane.terminal_bounds?,
+            cell_width: this.workspace.workspace.active_pane.terminal_cell_width,
+            line_height: this.workspace.workspace.active_pane.terminal_line_height,
+        });
+    }
+
+    let pane = this.workspace.workspace.parked_panes.get(&pane_id)?;
+    Some(TerminalPaneMetrics {
+        tab_id: pane.active_tab?,
+        bounds: pane.terminal_bounds?,
+        cell_width: pane.terminal_cell_width,
+        line_height: pane.terminal_line_height,
+    })
+}
+
+fn terminal_pane_at_position(this: &AppView, position: Point<Pixels>) -> Option<PaneId> {
+    let active_pane_id = this.workspace.workspace.active_pane_id;
+    if this
+        .workspace
+        .workspace
+        .active_pane
+        .terminal_bounds
+        .is_some_and(|bounds| bounds.contains(&position))
+    {
+        return Some(active_pane_id);
+    }
+
+    this.workspace
+        .workspace
+        .parked_panes
+        .iter()
+        .find_map(|(pane_id, pane)| {
+            pane.terminal_bounds
+                .is_some_and(|bounds| bounds.contains(&position))
+                .then_some(*pane_id)
+        })
+}
+
+fn terminal_position_to_cell_and_side_for_pane(
+    this: &AppView,
+    pane_id: PaneId,
+    position: Point<Pixels>,
+    clamp_to_bounds: bool,
+    cx: &App,
+) -> Option<(i32, usize, Side)> {
+    let metrics = terminal_pane_metrics(this, pane_id)?;
+    let position = if clamp_to_bounds {
+        clamp_terminal_pointer_position(position, metrics.bounds)
+    } else {
+        metrics.bounds.contains(&position).then_some(position)?
+    };
+    let viewport = this
+        .controllers
+        .session
+        .read(cx)
+        .terminal_viewport_state(metrics.tab_id)?;
+    let rel_x = (f32::from(position.x) - f32::from(metrics.bounds.origin.x)).max(0.0);
+    let rel_y = (f32::from(position.y) - f32::from(metrics.bounds.origin.y)).max(0.0);
+    let cell_width = metrics.cell_width.max(1.0);
+    let line_height = metrics.line_height.max(1.0);
+    let side = terminal_selection_side(position, position, metrics.bounds, cell_width);
+    let column = ((rel_x / cell_width).floor() as i32).max(0) as usize;
+    let column = column.min(viewport.columns.saturating_sub(1));
+    let row = (rel_y / line_height).floor() as i32;
+    let row = row.min(viewport.screen_lines.saturating_sub(1) as i32);
+    Some((row - viewport.display_offset as i32, column, side))
+}
+
+fn terminal_free_type_drop_target_at_position(
+    this: &AppView,
+    position: Point<Pixels>,
+    cx: &App,
+) -> Option<TerminalPaneFreeTypeDropTarget> {
+    let pane_id = terminal_pane_at_position(this, position)?;
+    let metrics = terminal_pane_metrics(this, pane_id)?;
+    let (line, column, side) =
+        terminal_position_to_cell_and_side_for_pane(this, pane_id, position, false, cx)?;
+    let target = this
+        .controllers
+        .session
+        .read(cx)
+        .terminal_free_type_target(metrics.tab_id, line, column, side)?;
+    Some(TerminalPaneFreeTypeDropTarget { pane_id, target })
+}
+
+fn terminal_free_type_drop_target_for_drag(
+    this: &AppView,
+    source_pane_id: PaneId,
+    position: Point<Pixels>,
+    cx: &App,
+) -> Option<TerminalPaneFreeTypeDropTarget> {
+    if terminal_pane_at_position(this, position).is_some() {
+        return terminal_free_type_drop_target_at_position(this, position, cx);
+    }
+
+    let metrics = terminal_pane_metrics(this, source_pane_id)?;
+    let (line, column, side) =
+        terminal_position_to_cell_and_side_for_pane(this, source_pane_id, position, true, cx)?;
+    let target = this
+        .controllers
+        .session
+        .read(cx)
+        .terminal_free_type_target(metrics.tab_id, line, column, side)?;
+    Some(TerminalPaneFreeTypeDropTarget {
+        pane_id: source_pane_id,
+        target,
+    })
+}
+
+fn split_terminal_free_type_drop_target(
+    source_pane_id: PaneId,
+    drop_target: Option<TerminalPaneFreeTypeDropTarget>,
+) -> (
+    Option<TerminalFreeTypeTarget>,
+    Option<TerminalPaneFreeTypeDropTarget>,
+) {
+    match drop_target {
+        Some(drop) if drop.pane_id == source_pane_id => (Some(drop.target), None),
+        Some(drop) => (None, Some(drop)),
+        None => (None, None),
+    }
+}
+
+fn compute_free_type_drop_target(
+    this: &AppView,
+    source_pane_id: PaneId,
+    position: Point<Pixels>,
+    cx: &App,
+) -> (
+    Option<TerminalFreeTypeTarget>,
+    Option<TerminalPaneFreeTypeDropTarget>,
+) {
+    split_terminal_free_type_drop_target(
+        source_pane_id,
+        terminal_free_type_drop_target_for_drag(this, source_pane_id, position, cx),
+    )
+}
+
+fn terminal_free_type_selection_kind(click_count: usize) -> Option<TerminalSelectionKind> {
+    match click_count {
+        1 => None,
+        2 => Some(TerminalSelectionKind::Semantic),
+        _ => Some(TerminalSelectionKind::Lines),
+    }
+}
+
+fn terminal_copy_selection_kind(click_count: usize, block: bool) -> TerminalSelectionKind {
+    if block {
+        return TerminalSelectionKind::Block;
+    }
+
+    match click_count {
+        2 => TerminalSelectionKind::Semantic,
+        3.. => TerminalSelectionKind::Lines,
+        _ => TerminalSelectionKind::Simple,
+    }
+}
+
+fn suppress_terminal_key_release(this: &mut AppView, keystroke: &gpui::Keystroke) {
+    this.workspace
+        .workspace
+        .active_pane
+        .terminal_suppressed_key_releases
+        .insert(keystroke.key.to_string());
+}
+
+impl AppView {
+    pub(in crate::ui::shell) fn clear_terminal_free_type_interactions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let active_was_free_type = self
+            .workspace
+            .workspace
+            .active_pane
+            .terminal_mouse_gesture
+            .is_some_and(TerminalMouseGesture::is_free_type);
+        if active_was_free_type {
+            self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
+        }
+        let mut changed = active_was_free_type;
+        changed |= clear_terminal_suppressed_key_releases(
+            &mut self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_suppressed_key_releases,
+        );
+
+        for pane in self.workspace.workspace.parked_panes.values_mut() {
+            if pane
+                .terminal_mouse_gesture
+                .is_some_and(TerminalMouseGesture::is_free_type)
+            {
+                pane.terminal_mouse_gesture = None;
+                changed = true;
+            }
+            changed |=
+                clear_terminal_suppressed_key_releases(&mut pane.terminal_suppressed_key_releases);
+        }
+
+        if active_was_free_type {
+            self.clear_terminal_originated_selection_drag(cx);
+        }
+        if changed {
+            cx.notify();
+        }
+    }
 }
 
 fn clear_terminal_selection(this: &mut AppView, cx: &mut Context<AppView>) {
@@ -361,6 +676,44 @@ impl WorkspaceTerminalInputExt for AppView {
             return;
         };
 
+        if miaominal_settings::current_settings().terminal_free_type_mode
+            && active_terminal_has_free_type_selection(self, cx)
+        {
+            let modifiers = event.keystroke.modifiers;
+            let plain_key =
+                !modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.platform;
+            let tab_id = self.workspace.workspace.active_tab;
+            let handled =
+                if plain_key && matches!(event.keystroke.key.as_str(), "backspace" | "delete") {
+                    tab_id.is_some_and(|tab_id| {
+                        let controller = self.controllers.session.clone();
+                        controller.update(cx, |controller, cx| {
+                            controller.send_terminal_free_type_delete(tab_id, cx)
+                        })
+                    })
+                } else if plain_key && matches!(event.keystroke.key.as_str(), "left" | "right") {
+                    let collapse_to_end = event.keystroke.key == "right";
+                    tab_id.is_some_and(|tab_id| {
+                        let controller = self.controllers.session.clone();
+                        controller.update(cx, |controller, cx| {
+                            controller.send_terminal_free_type_collapse(tab_id, collapse_to_end, cx)
+                        })
+                    })
+                } else {
+                    false
+                };
+
+            if handled {
+                suppress_terminal_key_release(self, &event.keystroke);
+                return;
+            }
+
+            if !matches!(action, TerminalKeyAction::Copy | TerminalKeyAction::Paste) {
+                clear_active_terminal_free_type_selection(self, cx);
+            }
+        }
+
+        let handled_locally = !matches!(&action, TerminalKeyAction::Bytes(_));
         match action {
             TerminalKeyAction::Bytes(bytes) => send_terminal_bytes(self, bytes, cx),
             TerminalKeyAction::Scroll(scroll) => self.scroll_active_terminal(scroll, cx),
@@ -371,6 +724,10 @@ impl WorkspaceTerminalInputExt for AppView {
             TerminalKeyAction::OpenSearch => self.open_terminal_search(window, cx),
             TerminalKeyAction::Split(direction) => self.split_active_pane(direction, window, cx),
             TerminalKeyAction::ClosePane => self.close_active_pane(window, cx),
+        }
+
+        if handled_locally {
+            suppress_terminal_key_release(self, &event.keystroke);
         }
 
         if should_preserve_focus {
@@ -386,6 +743,19 @@ impl WorkspaceTerminalInputExt for AppView {
         cx: &mut Context<Self>,
     ) {
         let should_preserve_focus = should_keep_terminal_focus_on_tab(&event.keystroke);
+        if self
+            .workspace
+            .workspace
+            .active_pane
+            .terminal_suppressed_key_releases
+            .remove(event.keystroke.key.as_str())
+        {
+            if should_preserve_focus {
+                window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         let Some(input_modes) = active_terminal_input_modes(self, cx) else {
             if should_preserve_focus {
                 window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
@@ -527,7 +897,7 @@ impl WorkspaceTerminalInputExt for AppView {
             {
                 return;
             }
-            self.workspace.workspace.active_pane.terminal_dragging = false;
+            self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
             self.set_terminal_hover_state(None, false, cx);
             self.workspace.workspace.active_pane.terminal_scrollbar_drag =
                 Some(TerminalScrollbarDrag { thumb_grab_offset });
@@ -536,8 +906,15 @@ impl WorkspaceTerminalInputExt for AppView {
             return;
         }
 
+        let free_type_enabled = miaominal_settings::current_settings().terminal_free_type_mode;
+        let mouse_reporting_enabled =
+            active_terminal_mouse_mode(self, cx).is_some_and(|(protocol, _)| protocol.is_enabled());
+        let left_mouse_route = (event.button == MouseButton::Left).then(|| {
+            terminal_left_mouse_route(free_type_enabled, mouse_reporting_enabled, &event.modifiers)
+        });
+
         if event.button == MouseButton::Left
-            && (event.modifiers.control || event.modifiers.platform)
+            && terminal_link_open_requested(&event.modifiers)
             && let Some(link) = self.terminal_link_at_position(event.position, cx)
         {
             let uri = link.uri.clone();
@@ -557,7 +934,32 @@ impl WorkspaceTerminalInputExt for AppView {
             return;
         }
 
+        if event.button == MouseButton::Left
+            && event.click_count == 1
+            && left_mouse_route == Some(TerminalLeftMouseRoute::FreeType)
+            && let Some((line, column, _side)) =
+                self.event_position_to_cell_and_side(event.position, cx)
+            && let Some(tab_id) = self.workspace.workspace.active_tab
+            && self
+                .controllers
+                .session
+                .read(cx)
+                .terminal_selection_contains(tab_id, line, column)
+        {
+            self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                Some(TerminalMouseGesture::FreeTypePendingDrop {
+                    origin: event.position,
+                });
+            self.start_terminal_originated_selection_drag(cx);
+            self.set_terminal_hover_state(None, false, cx);
+            self.workspace.workspace.active_pane.terminal_scrollbar_drag = None;
+            cx.notify();
+            return;
+        }
+
         if !event.modifiers.shift
+            && (event.button != MouseButton::Left
+                || left_mouse_route == Some(TerminalLeftMouseRoute::Application))
             && let Some(button) = mouse_report_button_from(event.button)
             && let Some((protocol, encoding)) = active_terminal_mouse_mode(self, cx)
             && protocol.is_enabled()
@@ -585,7 +987,7 @@ impl WorkspaceTerminalInputExt for AppView {
                     .workspace
                     .active_pane
                     .last_reported_mouse_cell = Some((line, column));
-                self.workspace.workspace.active_pane.terminal_dragging = false;
+                self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
                 self.set_terminal_hover_state(None, false, cx);
                 self.workspace.workspace.active_pane.terminal_scrollbar_drag = None;
                 return;
@@ -599,19 +1001,67 @@ impl WorkspaceTerminalInputExt for AppView {
                 else {
                     return;
                 };
-                let block = event.modifiers.alt;
                 let Some(tab_id) = self.workspace.workspace.active_tab else {
                     return;
                 };
-                if !self
-                    .controllers
-                    .session
-                    .read(cx)
-                    .start_terminal_selection(tab_id, line, column, side, block)
-                {
+
+                if left_mouse_route == Some(TerminalLeftMouseRoute::FreeType) {
+                    if let Some(target) = self
+                        .controllers
+                        .session
+                        .read(cx)
+                        .terminal_free_type_target(tab_id, line, column, side)
+                    {
+                        let selection_kind = terminal_free_type_selection_kind(event.click_count);
+                        let gesture = if let Some(kind) = selection_kind {
+                            if !self
+                                .controllers
+                                .session
+                                .read(cx)
+                                .start_terminal_free_type_selection(tab_id, target, kind)
+                            {
+                                return;
+                            }
+                            TerminalMouseGesture::FreeTypeSelection
+                        } else {
+                            TerminalMouseGesture::FreeTypePendingCursor {
+                                origin: event.position,
+                                target,
+                            }
+                        };
+                        self.workspace.workspace.active_pane.terminal_mouse_gesture = Some(gesture);
+                        self.start_terminal_originated_selection_drag(cx);
+                        self.set_terminal_hover_state(None, false, cx);
+                        self.workspace.workspace.active_pane.terminal_scrollbar_drag = None;
+                        cx.notify();
+                        return;
+                    }
+
+                    if terminal_invalid_free_type_target_is_consumed(
+                        TerminalLeftMouseRoute::FreeType,
+                        mouse_reporting_enabled,
+                        &event.modifiers,
+                    ) {
+                        self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
+                        self.set_terminal_hover_state(None, false, cx);
+                        self.workspace.workspace.active_pane.terminal_scrollbar_drag = None;
+                        return;
+                    }
+                }
+
+                let block =
+                    terminal_traditional_selection_is_block(free_type_enabled, &event.modifiers);
+                if !self.controllers.session.read(cx).start_terminal_selection(
+                    tab_id,
+                    line,
+                    column,
+                    side,
+                    terminal_copy_selection_kind(event.click_count, block),
+                ) {
                     return;
                 }
-                self.workspace.workspace.active_pane.terminal_dragging = true;
+                self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                    Some(TerminalMouseGesture::TraditionalSelection);
                 self.start_terminal_originated_selection_drag(cx);
                 self.set_terminal_hover_state(None, false, cx);
                 self.workspace.workspace.active_pane.terminal_scrollbar_drag = None;
@@ -657,7 +1107,12 @@ impl WorkspaceTerminalInputExt for AppView {
         }
 
         if event.pressed_button == Some(MouseButton::Left)
-            && !self.workspace.workspace.active_pane.terminal_dragging
+            && self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_mouse_gesture
+                .is_none()
             && !self
                 .workspace
                 .workspace
@@ -668,7 +1123,12 @@ impl WorkspaceTerminalInputExt for AppView {
             return;
         }
 
-        if !self.workspace.workspace.active_pane.terminal_dragging
+        if self
+            .workspace
+            .workspace
+            .active_pane
+            .terminal_mouse_gesture
+            .is_none()
             && !self
                 .workspace
                 .workspace
@@ -680,7 +1140,13 @@ impl WorkspaceTerminalInputExt for AppView {
             self.set_terminal_hover_state(None, open_modifier, cx);
         }
 
-        if !event.modifiers.shift
+        let free_type_gesture_active = self
+            .workspace
+            .workspace
+            .active_pane
+            .terminal_mouse_gesture
+            .is_some_and(TerminalMouseGesture::is_free_type);
+        if terminal_mouse_motion_reporting_allowed(&event.modifiers, free_type_gesture_active)
             && let Some((protocol, encoding)) = active_terminal_mouse_mode(self, cx)
             && protocol.reports_motion()
         {
@@ -718,6 +1184,8 @@ impl WorkspaceTerminalInputExt for AppView {
                     modifiers,
                 ) {
                     send_terminal_bytes_no_scroll(self, bytes, cx);
+                    self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
+                    self.clear_terminal_originated_selection_drag(cx);
                     self.workspace
                         .workspace
                         .active_pane
@@ -727,53 +1195,111 @@ impl WorkspaceTerminalInputExt for AppView {
             }
         }
 
-        if !self.workspace.workspace.active_pane.terminal_dragging {
-            return;
-        }
-
-        let drag_scroll_delta = self
-            .workspace
-            .workspace
-            .active_pane
-            .terminal_bounds
-            .and_then(|bounds| {
-                terminal_drag_scroll_delta(
-                    event.position,
-                    bounds,
-                    self.workspace.workspace.active_pane.terminal_line_height,
-                )
-            });
-
-        if let Some(delta) = drag_scroll_delta {
-            let Some(tab_id) = self.workspace.workspace.active_tab else {
-                return;
-            };
-            if !self
-                .controllers
-                .session
-                .read(cx)
-                .scroll_terminal_display_offset_by(tab_id, delta)
-            {
-                return;
-            }
-        }
-
-        let Some((line, column, side)) =
-            self.event_position_to_cell_and_side_clamped(event.position, cx)
-        else {
+        let Some(gesture) = self.workspace.workspace.active_pane.terminal_mouse_gesture else {
             return;
         };
 
         let Some(tab_id) = self.workspace.workspace.active_tab else {
             return;
         };
-        if !self
-            .controllers
-            .session
-            .read(cx)
-            .update_terminal_selection(tab_id, line, column, side)
-        {
-            return;
+
+        match gesture {
+            TerminalMouseGesture::TraditionalSelection => {
+                let drag_scroll_delta = self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_bounds
+                    .and_then(|bounds| {
+                        terminal_drag_scroll_delta(
+                            event.position,
+                            bounds,
+                            self.workspace.workspace.active_pane.terminal_line_height,
+                        )
+                    });
+                if let Some(delta) = drag_scroll_delta
+                    && !self
+                        .controllers
+                        .session
+                        .read(cx)
+                        .scroll_terminal_display_offset_by(tab_id, delta)
+                {
+                    return;
+                }
+                let Some((line, column, side)) =
+                    self.event_position_to_cell_and_side_clamped(event.position, cx)
+                else {
+                    return;
+                };
+                self.controllers
+                    .session
+                    .read(cx)
+                    .update_terminal_selection(tab_id, line, column, side);
+            }
+            TerminalMouseGesture::FreeTypePendingCursor { origin, target } => {
+                if !terminal_pointer_drag_threshold_exceeded(origin, event.position) {
+                    return;
+                }
+                if !self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .start_terminal_free_type_selection(
+                        tab_id,
+                        target,
+                        TerminalSelectionKind::Simple,
+                    )
+                {
+                    self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
+                    self.clear_terminal_originated_selection_drag(cx);
+                    return;
+                }
+                self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                    Some(TerminalMouseGesture::FreeTypeSelection);
+                if let Some((line, column, side)) =
+                    self.event_position_to_cell_and_side_clamped(event.position, cx)
+                {
+                    self.controllers
+                        .session
+                        .read(cx)
+                        .update_terminal_selection(tab_id, line, column, side);
+                }
+            }
+            TerminalMouseGesture::FreeTypeSelection => {
+                let Some((line, column, side)) =
+                    self.event_position_to_cell_and_side_clamped(event.position, cx)
+                else {
+                    return;
+                };
+                self.controllers
+                    .session
+                    .read(cx)
+                    .update_terminal_selection(tab_id, line, column, side);
+            }
+            TerminalMouseGesture::FreeTypePendingDrop { origin, .. } => {
+                if !terminal_pointer_drag_threshold_exceeded(origin, event.position) {
+                    return;
+                }
+                let source_pane_id = self.workspace.workspace.active_pane_id;
+                let (target, cross_pane_target) =
+                    compute_free_type_drop_target(self, source_pane_id, event.position, cx);
+                self.workspace.terminal_free_type_drop_target = cross_pane_target;
+                self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                    Some(TerminalMouseGesture::FreeTypeDrop { target });
+            }
+            TerminalMouseGesture::FreeTypeDrop { target: previous } => {
+                let source_pane_id = self.workspace.workspace.active_pane_id;
+                let (target, cross_pane_target) =
+                    compute_free_type_drop_target(self, source_pane_id, event.position, cx);
+                if target == previous
+                    && cross_pane_target == self.workspace.terminal_free_type_drop_target
+                {
+                    return;
+                }
+                self.workspace.terminal_free_type_drop_target = cross_pane_target;
+                self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                    Some(TerminalMouseGesture::FreeTypeDrop { target });
+            }
         }
         cx.notify();
     }
@@ -832,6 +1358,8 @@ impl WorkspaceTerminalInputExt for AppView {
                 .workspace
                 .active_pane
                 .last_reported_mouse_cell = None;
+            self.workspace.workspace.active_pane.terminal_mouse_gesture = None;
+            self.clear_terminal_originated_selection_drag(cx);
             return;
         }
         self.workspace
@@ -866,7 +1394,13 @@ impl WorkspaceTerminalInputExt for AppView {
             self.clear_terminal_originated_selection_drag(cx);
             return;
         }
-        if !self.workspace.workspace.active_pane.terminal_dragging {
+        let Some(gesture) = self
+            .workspace
+            .workspace
+            .active_pane
+            .terminal_mouse_gesture
+            .take()
+        else {
             self.set_terminal_hover_state(
                 Some(event.position),
                 event.modifiers.control || event.modifiers.platform,
@@ -874,20 +1408,79 @@ impl WorkspaceTerminalInputExt for AppView {
             );
             self.clear_terminal_originated_selection_drag(cx);
             return;
-        }
-        self.workspace.workspace.active_pane.terminal_dragging = false;
+        };
         self.defer_clear_terminal_originated_selection_drag(cx);
 
         let Some(tab_id) = self.workspace.workspace.active_tab else {
             return;
         };
-        let has_selection = self
-            .controllers
-            .session
-            .read(cx)
-            .terminal_has_selection(tab_id);
-        if !has_selection {
-            clear_terminal_selection(self, cx);
+        let cross_pane_drop_target = self.workspace.terminal_free_type_drop_target.take();
+
+        match gesture {
+            TerminalMouseGesture::TraditionalSelection => {
+                let has_selection = self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .terminal_has_selection(tab_id);
+                if !has_selection {
+                    clear_terminal_selection(self, cx);
+                }
+            }
+            TerminalMouseGesture::FreeTypePendingCursor { target, .. } => {
+                let controller = self.controllers.session.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.send_terminal_free_type_cursor(tab_id, target, cx);
+                });
+            }
+            TerminalMouseGesture::FreeTypePendingDrop { .. } => {}
+            TerminalMouseGesture::FreeTypeSelection => {
+                if !self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .terminal_has_free_type_selection(tab_id)
+                    && let Some((line, column, side)) =
+                        self.event_position_to_cell_and_side_clamped(event.position, cx)
+                    && let Some(target) = self
+                        .controllers
+                        .session
+                        .read(cx)
+                        .terminal_free_type_target(tab_id, line, column, side)
+                {
+                    let controller = self.controllers.session.clone();
+                    controller.update(cx, |controller, cx| {
+                        controller.send_terminal_free_type_cursor(tab_id, target, cx);
+                    });
+                }
+            }
+            TerminalMouseGesture::FreeTypeDrop {
+                target: Some(target),
+            } => {
+                let duplicate = event.modifiers.control || event.modifiers.platform;
+                let controller = self.controllers.session.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.send_terminal_selection_drop(tab_id, target, duplicate, cx);
+                });
+            }
+            TerminalMouseGesture::FreeTypeDrop { target: None } => {
+                if let Some(drop) = cross_pane_drop_target
+                    && let Some(target_tab_id) =
+                        terminal_pane_metrics(self, drop.pane_id).map(|metrics| metrics.tab_id)
+                {
+                    let duplicate = event.modifiers.control || event.modifiers.platform;
+                    let controller = self.controllers.session.clone();
+                    controller.update(cx, |controller, cx| {
+                        controller.send_terminal_selection_cross_pane_drop(
+                            tab_id,
+                            target_tab_id,
+                            drop.target,
+                            duplicate,
+                            cx,
+                        );
+                    });
+                }
+            }
         }
         self.set_terminal_hover_state(
             Some(event.position),
@@ -946,19 +1539,29 @@ impl WorkspaceTerminalInputExt for AppView {
 
     fn start_terminal_originated_selection_drag(&mut self, cx: &mut Context<Self>) {
         let pane_id = self.workspace.workspace.active_pane_id;
-        if self.workspace.terminal_originated_selection_drag != Some(pane_id) {
+        let target_changed = self
+            .workspace
+            .terminal_free_type_drop_target
+            .take()
+            .is_some();
+        if self.workspace.terminal_originated_selection_drag != Some(pane_id) || target_changed {
             self.workspace.terminal_originated_selection_drag = Some(pane_id);
             cx.notify();
         }
     }
 
     fn clear_terminal_originated_selection_drag(&mut self, cx: &mut Context<Self>) {
-        if self
+        let source_cleared = self
             .workspace
             .terminal_originated_selection_drag
             .take()
-            .is_some()
-        {
+            .is_some();
+        let target_cleared = self
+            .workspace
+            .terminal_free_type_drop_target
+            .take()
+            .is_some();
+        if source_cleared || target_cleared {
             cx.notify();
         }
     }
@@ -975,7 +1578,12 @@ impl WorkspaceTerminalInputExt for AppView {
 
             this.update(cx, |this, cx| {
                 if this.workspace.terminal_originated_selection_drag == Some(pane_id)
-                    && !this.workspace.workspace.active_pane.terminal_dragging
+                    && this
+                        .workspace
+                        .workspace
+                        .active_pane
+                        .terminal_mouse_gesture
+                        .is_none()
                 {
                     this.clear_terminal_originated_selection_drag(cx);
                 }
@@ -1007,50 +1615,13 @@ impl WorkspaceTerminalInputExt for AppView {
         clamp_to_bounds: bool,
         cx: &App,
     ) -> Option<(i32, usize, Side)> {
-        let bounds = self.workspace.workspace.active_pane.terminal_bounds?;
-        let position = if clamp_to_bounds {
-            clamp_terminal_pointer_position(position, bounds)
-        } else {
-            if !bounds.contains(&position) {
-                return None;
-            }
-            position
-        };
-
-        let tab_id = self.workspace.workspace.active_tab?;
-        let viewport = self
-            .controllers
-            .session
-            .read(cx)
-            .terminal_viewport_state(tab_id)?;
-        let columns = viewport.columns;
-        let screen_lines = viewport.screen_lines;
-
-        let rel_x = (f32::from(position.x) - f32::from(bounds.origin.x)).max(0.0);
-        let rel_y = (f32::from(position.y) - f32::from(bounds.origin.y)).max(0.0);
-        let cell_width = self
-            .workspace
-            .workspace
-            .active_pane
-            .terminal_cell_width
-            .max(1.0);
-        let line_height = self
-            .workspace
-            .workspace
-            .active_pane
-            .terminal_line_height
-            .max(1.0);
-        let side = terminal_selection_side(position, position, bounds, cell_width);
-
-        let column = ((rel_x / cell_width).floor() as i32).max(0) as usize;
-        let column = column.min(columns.saturating_sub(1));
-        let row = (rel_y / line_height).floor() as i32;
-        let row = row.min(screen_lines.saturating_sub(1) as i32);
-
-        let display_offset = viewport.display_offset as i32;
-
-        let line = row - display_offset;
-        Some((line, column, side))
+        terminal_position_to_cell_and_side_for_pane(
+            self,
+            self.workspace.workspace.active_pane_id,
+            position,
+            clamp_to_bounds,
+            cx,
+        )
     }
 
     fn event_position_to_viewport_cell(
@@ -1334,6 +1905,15 @@ impl WorkspaceTerminalInputExt for AppView {
 
     fn clear_terminal_focus_reporting(&mut self, cx: &mut Context<Self>) {
         self.clear_terminal_originated_selection_drag(cx);
+        if clear_terminal_suppressed_key_releases(
+            &mut self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_suppressed_key_releases,
+        ) {
+            cx.notify();
+        }
         self.release_reported_terminal_focus(cx);
     }
 
@@ -1462,6 +2042,211 @@ mod tests {
         };
 
         assert_ne!(previous, current);
+    }
+
+    #[test]
+    fn free_type_drag_starts_only_after_threshold() {
+        let origin = gpui::point(px(10.0), px(10.0));
+
+        assert!(!terminal_pointer_drag_threshold_exceeded(
+            origin,
+            gpui::point(px(13.0), px(10.0)),
+        ));
+        assert!(terminal_pointer_drag_threshold_exceeded(
+            origin,
+            gpui::point(px(14.0), px(10.0)),
+        ));
+    }
+
+    #[test]
+    fn free_type_click_count_selects_semantic_then_lines() {
+        assert_eq!(terminal_free_type_selection_kind(1), None);
+        assert_eq!(
+            terminal_free_type_selection_kind(2),
+            Some(TerminalSelectionKind::Semantic)
+        );
+        assert_eq!(
+            terminal_free_type_selection_kind(3),
+            Some(TerminalSelectionKind::Lines)
+        );
+    }
+
+    #[test]
+    fn copy_click_count_selects_words_lines_and_blocks() {
+        assert_eq!(
+            terminal_copy_selection_kind(1, false),
+            TerminalSelectionKind::Simple
+        );
+        assert_eq!(
+            terminal_copy_selection_kind(2, false),
+            TerminalSelectionKind::Semantic
+        );
+        assert_eq!(
+            terminal_copy_selection_kind(3, false),
+            TerminalSelectionKind::Lines
+        );
+        assert_eq!(
+            terminal_copy_selection_kind(2, true),
+            TerminalSelectionKind::Block
+        );
+    }
+
+    #[test]
+    fn left_mouse_route_uses_alt_to_override_application_mouse_reporting() {
+        let plain = gpui::Modifiers::default();
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let shift = gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let shift_alt = gpui::Modifiers {
+            shift: true,
+            alt: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            terminal_left_mouse_route(true, true, &plain),
+            TerminalLeftMouseRoute::Application
+        );
+        assert_eq!(
+            terminal_left_mouse_route(true, true, &alt),
+            TerminalLeftMouseRoute::FreeType
+        );
+        assert_eq!(
+            terminal_left_mouse_route(true, true, &shift),
+            TerminalLeftMouseRoute::TraditionalSelection
+        );
+        assert_eq!(
+            terminal_left_mouse_route(true, true, &shift_alt),
+            TerminalLeftMouseRoute::TraditionalSelection
+        );
+        assert_eq!(
+            terminal_left_mouse_route(true, false, &plain),
+            TerminalLeftMouseRoute::FreeType
+        );
+        assert_eq!(
+            terminal_left_mouse_route(true, false, &alt),
+            TerminalLeftMouseRoute::FreeType
+        );
+        assert_eq!(
+            terminal_left_mouse_route(false, true, &alt),
+            TerminalLeftMouseRoute::Application
+        );
+        assert_eq!(
+            terminal_left_mouse_route(false, false, &alt),
+            TerminalLeftMouseRoute::TraditionalSelection
+        );
+    }
+
+    #[test]
+    fn alt_target_miss_is_consumed_only_for_mouse_reporting_override() {
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+
+        assert!(terminal_invalid_free_type_target_is_consumed(
+            TerminalLeftMouseRoute::FreeType,
+            true,
+            &alt,
+        ));
+        assert!(!terminal_invalid_free_type_target_is_consumed(
+            TerminalLeftMouseRoute::FreeType,
+            false,
+            &alt,
+        ));
+        assert!(!terminal_invalid_free_type_target_is_consumed(
+            TerminalLeftMouseRoute::Application,
+            true,
+            &alt,
+        ));
+    }
+
+    #[test]
+    fn shift_alt_keeps_block_selection_while_free_type_is_enabled() {
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let shift_alt = gpui::Modifiers {
+            shift: true,
+            alt: true,
+            ..Default::default()
+        };
+
+        assert!(!terminal_traditional_selection_is_block(true, &alt));
+        assert!(terminal_traditional_selection_is_block(true, &shift_alt));
+        assert!(terminal_traditional_selection_is_block(false, &alt));
+    }
+
+    #[test]
+    fn active_free_type_gesture_suppresses_application_mouse_motion() {
+        let plain = gpui::Modifiers::default();
+        let shift = gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+
+        assert!(terminal_mouse_motion_reporting_allowed(&plain, false));
+        assert!(!terminal_mouse_motion_reporting_allowed(&plain, true));
+        assert!(!terminal_mouse_motion_reporting_allowed(&shift, false));
+    }
+
+    #[test]
+    fn control_or_platform_modifier_requests_link_opening() {
+        let control = gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let platform = gpui::Modifiers {
+            platform: true,
+            ..Default::default()
+        };
+
+        assert!(terminal_link_open_requested(&control));
+        assert!(terminal_link_open_requested(&platform));
+    }
+
+    #[test]
+    fn focus_loss_clears_suppressed_terminal_key_releases() {
+        let mut releases = std::collections::HashSet::from(["enter".to_string()]);
+
+        assert!(clear_terminal_suppressed_key_releases(&mut releases));
+        assert!(releases.is_empty());
+        assert!(!clear_terminal_suppressed_key_releases(&mut releases));
+    }
+
+    #[test]
+    fn free_type_drop_target_splits_local_and_cross_pane_destinations() {
+        let target = TerminalFreeTypeTarget::new(1, 2, Side::Right);
+        let source_pane_id = PaneId(1);
+
+        assert_eq!(
+            split_terminal_free_type_drop_target(
+                source_pane_id,
+                Some(TerminalPaneFreeTypeDropTarget {
+                    pane_id: source_pane_id,
+                    target,
+                }),
+            ),
+            (Some(target), None)
+        );
+        let cross_pane = TerminalPaneFreeTypeDropTarget {
+            pane_id: PaneId(2),
+            target,
+        };
+        assert_eq!(
+            split_terminal_free_type_drop_target(source_pane_id, Some(cross_pane)),
+            (None, Some(cross_pane))
+        );
+        assert_eq!(
+            split_terminal_free_type_drop_target(source_pane_id, None),
+            (None, None)
+        );
     }
 
     fn key(

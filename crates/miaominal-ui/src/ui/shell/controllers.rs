@@ -320,10 +320,19 @@ impl ControllerSet {
             let next_settings = controller.read(cx).settings().clone();
             let mut previous_settings = observed_settings.borrow_mut();
             let metrics_changed = terminal_metrics_changed(&previous_settings, &next_settings);
+            let free_type_disabled =
+                previous_settings.terminal_free_type_mode && !next_settings.terminal_free_type_mode;
             *previous_settings = next_settings;
             drop(previous_settings);
             if metrics_changed {
                 this.invalidate_terminal_metrics();
+            }
+            if free_type_disabled {
+                this.clear_terminal_free_type_interactions(cx);
+                this.controllers
+                    .session
+                    .read(cx)
+                    .clear_all_terminal_free_type_selections();
             }
             cx.notify();
         }));

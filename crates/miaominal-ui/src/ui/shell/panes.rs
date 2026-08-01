@@ -5,7 +5,9 @@ use super::workspace::{
 };
 use crate::ui::i18n;
 use gpui::{Bounds, Context, FocusHandle, Pixels, Point};
-use miaominal_terminal::{terminal_cell_width_default, terminal_line_height_default};
+use miaominal_terminal::{
+    TerminalFreeTypeTarget, terminal_cell_width_default, terminal_line_height_default,
+};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -85,6 +87,41 @@ pub(in crate::ui::shell) struct TerminalScrollbarDrag {
     pub thumb_grab_offset: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) enum TerminalMouseGesture {
+    TraditionalSelection,
+    FreeTypePendingCursor {
+        origin: Point<Pixels>,
+        target: TerminalFreeTypeTarget,
+    },
+    FreeTypeSelection,
+    FreeTypePendingDrop {
+        origin: Point<Pixels>,
+    },
+    FreeTypeDrop {
+        target: Option<TerminalFreeTypeTarget>,
+    },
+}
+
+impl TerminalMouseGesture {
+    pub(in crate::ui::shell) fn is_free_type(self) -> bool {
+        !matches!(self, Self::TraditionalSelection)
+    }
+
+    pub(in crate::ui::shell) fn drop_target(self) -> Option<TerminalFreeTypeTarget> {
+        match self {
+            Self::FreeTypeDrop { target } => target,
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::shell) struct TerminalPaneFreeTypeDropTarget {
+    pub pane_id: PaneId,
+    pub target: TerminalFreeTypeTarget,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) struct TerminalHoveredLink {
     pub tab_id: TabId,
@@ -122,7 +159,8 @@ pub(in crate::ui::shell) struct PaneViewState {
     pub terminal_bounds: Option<Bounds<Pixels>>,
     pub terminal_cell_width: f32,
     pub terminal_line_height: f32,
-    pub terminal_dragging: bool,
+    pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
+    pub terminal_suppressed_key_releases: HashSet<String>,
     pub terminal_mouse_reporting_active: bool,
     pub last_reported_mouse_cell: Option<(usize, usize)>,
     pub terminal_pointer_position: Option<Point<Pixels>>,
@@ -141,7 +179,8 @@ impl PaneViewState {
             terminal_bounds: None,
             terminal_cell_width: terminal_cell_width_default(),
             terminal_line_height: terminal_line_height_default(),
-            terminal_dragging: false,
+            terminal_mouse_gesture: None,
+            terminal_suppressed_key_releases: HashSet::new(),
             terminal_mouse_reporting_active: false,
             last_reported_mouse_cell: None,
             terminal_pointer_position: None,
@@ -160,7 +199,8 @@ pub(in crate::ui::shell) struct ParkedPane {
     pub terminal_bounds: Option<Bounds<Pixels>>,
     pub terminal_cell_width: f32,
     pub terminal_line_height: f32,
-    pub terminal_dragging: bool,
+    pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
+    pub terminal_suppressed_key_releases: HashSet<String>,
     pub terminal_mouse_reporting_active: bool,
     pub last_reported_mouse_cell: Option<(usize, usize)>,
     pub terminal_pointer_position: Option<Point<Pixels>>,
@@ -180,7 +220,8 @@ impl ParkedPane {
             terminal_bounds: None,
             terminal_cell_width: terminal_cell_width_default(),
             terminal_line_height: terminal_line_height_default(),
-            terminal_dragging: false,
+            terminal_mouse_gesture: None,
+            terminal_suppressed_key_releases: HashSet::new(),
             terminal_mouse_reporting_active: false,
             last_reported_mouse_cell: None,
             terminal_pointer_position: None,
@@ -210,8 +251,18 @@ impl AppView {
                 terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
                 terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
                 terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
-                terminal_dragging: std::mem::take(
-                    &mut self.workspace.workspace.active_pane.terminal_dragging,
+                terminal_mouse_gesture: self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_mouse_gesture
+                    .take(),
+                terminal_suppressed_key_releases: std::mem::take(
+                    &mut self
+                        .workspace
+                        .workspace
+                        .active_pane
+                        .terminal_suppressed_key_releases,
                 ),
                 terminal_mouse_reporting_active: std::mem::take(
                     &mut self
@@ -286,8 +337,13 @@ impl AppView {
             workspace.active_pane.terminal_cell_width;
         self.workspace.workspace.active_pane.terminal_line_height =
             workspace.active_pane.terminal_line_height;
-        self.workspace.workspace.active_pane.terminal_dragging =
-            workspace.active_pane.terminal_dragging;
+        self.workspace.workspace.active_pane.terminal_mouse_gesture =
+            workspace.active_pane.terminal_mouse_gesture;
+        self.workspace
+            .workspace
+            .active_pane
+            .terminal_suppressed_key_releases =
+            workspace.active_pane.terminal_suppressed_key_releases;
         self.workspace
             .workspace
             .active_pane

@@ -1,5 +1,6 @@
 use super::panes::{
     PaneId, PaneSplitAnimation, PaneSplitDragState, PaneTabDropTarget, PaneViewState, ParkedPane,
+    TerminalPaneFreeTypeDropTarget,
 };
 use super::{
     ClosedSessionTabState, PrimaryViewKind, PrimaryViewTransition, SessionProfile,
@@ -166,6 +167,7 @@ pub(in crate::ui::shell) struct WorkspaceModel {
     pub(in crate::ui::shell) primary_view_transition: Option<PrimaryViewTransition>,
     pub(in crate::ui::shell) visible_primary_view: Option<PrimaryViewKind>,
     pub(in crate::ui::shell) terminal_originated_selection_drag: Option<PaneId>,
+    pub(in crate::ui::shell) terminal_free_type_drop_target: Option<TerminalPaneFreeTypeDropTarget>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,6 +372,7 @@ impl WorkspaceModel {
             primary_view_transition: None,
             visible_primary_view: None,
             terminal_originated_selection_drag: None,
+            terminal_free_type_drop_target: None,
         }
     }
 

@@ -383,8 +383,18 @@ impl AppView {
             terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
             terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
             terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
-            terminal_dragging: std::mem::take(
-                &mut self.workspace.workspace.active_pane.terminal_dragging,
+            terminal_mouse_gesture: self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_mouse_gesture
+                .take(),
+            terminal_suppressed_key_releases: std::mem::take(
+                &mut self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_suppressed_key_releases,
             ),
             terminal_mouse_reporting_active: std::mem::take(
                 &mut self
@@ -449,7 +459,12 @@ impl AppView {
             self.workspace.workspace.active_pane.terminal_cell_width = incoming.terminal_cell_width;
             self.workspace.workspace.active_pane.terminal_line_height =
                 incoming.terminal_line_height;
-            self.workspace.workspace.active_pane.terminal_dragging = incoming.terminal_dragging;
+            self.workspace.workspace.active_pane.terminal_mouse_gesture =
+                incoming.terminal_mouse_gesture;
+            self.workspace
+                .workspace
+                .active_pane
+                .terminal_suppressed_key_releases = incoming.terminal_suppressed_key_releases;
             self.workspace
                 .workspace
                 .active_pane
@@ -518,8 +533,18 @@ impl AppView {
             terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
             terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
             terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
-            terminal_dragging: std::mem::take(
-                &mut self.workspace.workspace.active_pane.terminal_dragging,
+            terminal_mouse_gesture: self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_mouse_gesture
+                .take(),
+            terminal_suppressed_key_releases: std::mem::take(
+                &mut self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_suppressed_key_releases,
             ),
             terminal_mouse_reporting_active: std::mem::take(
                 &mut self

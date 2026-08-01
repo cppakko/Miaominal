@@ -34,7 +34,7 @@ use miaominal_storage::SettingsStore;
 use miaominal_sync::{SyncProvider, SyncStatus};
 use miaominal_terminal::{
     MouseEncoding, MouseProtocol, MouseReportButton, MouseReportKind, MouseReportModifiers,
-    TerminalInputModes, TerminalScroll, TerminalState, encode_mouse_report,
+    TerminalInputModes, TerminalScroll, TerminalSelectionKind, TerminalState, encode_mouse_report,
     terminal_cell_width_default, terminal_line_height_default,
 };
 use tokio::runtime::Handle as TokioHandle;
@@ -136,7 +136,7 @@ pub(in crate::ui::shell) use miaominal_services::AppServices;
 pub(in crate::ui::shell) use navigation::SidebarSection;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
 pub(in crate::ui::shell) use panes::{
-    PaneId, TerminalHoveredLink, TerminalLinkQuery, TerminalScrollbarDrag,
+    PaneId, TerminalHoveredLink, TerminalLinkQuery, TerminalMouseGesture, TerminalScrollbarDrag,
 };
 pub(in crate::ui::shell) use settings_labels::*;
 pub(in crate::ui::shell) use sftp_browser::{
