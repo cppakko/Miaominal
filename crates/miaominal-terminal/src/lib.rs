@@ -1,7 +1,7 @@
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
-use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{
@@ -21,8 +21,8 @@ use std::thread;
 mod input;
 
 pub use input::{
-    SearchMatchKind, TerminalInputModes, TerminalKeyEvent, TerminalKeyPhase, encode_terminal_input,
-    sanitize_paste,
+    SearchMatchKind, TerminalInputModes, TerminalKeyEvent, TerminalKeyPhase, TerminalNamedKey,
+    encode_terminal_input, encode_terminal_named_key, sanitize_paste,
 };
 use miaominal_settings as settings;
 
@@ -172,6 +172,95 @@ pub struct TerminalLink {
     pub uri: Arc<str>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalSelectionKind {
+    Simple,
+    Block,
+    Semantic,
+    Lines,
+}
+
+impl TerminalSelectionKind {
+    fn into_alacritty(self) -> SelectionType {
+        match self {
+            Self::Simple => SelectionType::Simple,
+            Self::Block => SelectionType::Block,
+            Self::Semantic => SelectionType::Semantic,
+            Self::Lines => SelectionType::Lines,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalSelectionPurpose {
+    Copy,
+    FreeType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalFreeTypeTarget {
+    pub line: i32,
+    pub column: usize,
+    pub side: Side,
+}
+
+impl TerminalFreeTypeTarget {
+    pub const fn new(line: i32, column: usize, side: Side) -> Self {
+        Self { line, column, side }
+    }
+
+    fn point(self) -> Point {
+        Point::new(Line(self.line), Column(self.column))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalEditStep {
+    Left(usize),
+    Right(usize),
+    Up(usize),
+    Down(usize),
+    Delete(usize),
+}
+
+impl TerminalEditStep {
+    pub const fn count(self) -> usize {
+        match self {
+            Self::Left(count)
+            | Self::Right(count)
+            | Self::Up(count)
+            | Self::Down(count)
+            | Self::Delete(count) => count,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFreeTypeDropPlan {
+    pub steps: Vec<TerminalEditStep>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFreeTypeDragPlan {
+    pub delete_steps: Vec<TerminalEditStep>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSelectionDragPlan {
+    pub delete_steps: Option<Vec<TerminalEditStep>>,
+    pub text: String,
+}
+
+/// A plan tied to the terminal generation and input modes it was computed from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFreeTypePlan<T> {
+    pub generation: u64,
+    pub input_modes: TerminalInputModes,
+    pub value: T,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TerminalScroll {
     Lines(i32),
@@ -190,6 +279,8 @@ struct TerminalCore {
     screen_lines: usize,
     events: Receiver<TerminalEvent>,
     search: Mutex<SearchState>,
+    selection_purpose: Option<TerminalSelectionPurpose>,
+    free_type_selection_bounds: Option<SelectionRange>,
 }
 
 struct ParserInput {
@@ -199,6 +290,7 @@ struct ParserInput {
 
 struct TerminalShared {
     core: Mutex<TerminalCore>,
+    input_sequence: Mutex<()>,
     dirty_generation: AtomicU64,
     pending_inputs: AtomicU64,
     snapshot_cache: Mutex<Option<CachedTerminalSnapshot>>,
@@ -280,6 +372,8 @@ impl TerminalCore {
             screen_lines,
             events: receiver,
             search: Mutex::new(SearchState::default()),
+            selection_purpose: None,
+            free_type_selection_bounds: None,
         }
     }
 
@@ -293,6 +387,10 @@ impl TerminalCore {
         }
 
         self.parser.advance(&mut self.term, bytes);
+        if self.term.selection.is_none() {
+            self.selection_purpose = None;
+            self.free_type_selection_bounds = None;
+        }
     }
 
     pub fn resize(&mut self, columns: usize, screen_lines: usize) -> bool {
@@ -411,6 +509,9 @@ impl TerminalCore {
             TerminalScroll::Bottom => Scroll::Bottom,
         };
         self.term.scroll_display(scroll);
+        if self.display_offset() != 0 {
+            self.clear_free_type_selection();
+        }
     }
 
     pub fn scroll_to_display_offset(&mut self, target_offset: usize) {
@@ -428,6 +529,9 @@ impl TerminalCore {
         };
 
         self.term.scroll_display(Scroll::Delta(delta));
+        if self.display_offset() != 0 {
+            self.clear_free_type_selection();
+        }
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -487,25 +591,79 @@ impl TerminalCore {
     }
 
     pub fn start_selection(&mut self, line: i32, column: usize, side: Side, block: bool) {
-        let point = Point::new(Line(line), Column(column));
-        let ty = if block {
-            SelectionType::Block
+        let kind = if block {
+            TerminalSelectionKind::Block
         } else {
-            SelectionType::Simple
+            TerminalSelectionKind::Simple
         };
-        self.term.selection = Some(Selection::new(ty, point, side));
+        self.start_selection_with_kind(line, column, side, kind);
+    }
+
+    pub fn start_selection_with_kind(
+        &mut self,
+        line: i32,
+        column: usize,
+        side: Side,
+        kind: TerminalSelectionKind,
+    ) {
+        self.start_selection_with_purpose(
+            TerminalFreeTypeTarget::new(line, column, side),
+            kind,
+            TerminalSelectionPurpose::Copy,
+        );
+    }
+
+    fn start_selection_with_purpose(
+        &mut self,
+        target: TerminalFreeTypeTarget,
+        kind: TerminalSelectionKind,
+        purpose: TerminalSelectionPurpose,
+    ) {
+        self.term.selection = Some(Selection::new(
+            kind.into_alacritty(),
+            target.point(),
+            target.side,
+        ));
+        self.selection_purpose = Some(purpose);
+        self.free_type_selection_bounds = None;
+    }
+
+    pub fn start_free_type_selection(
+        &mut self,
+        line: i32,
+        column: usize,
+        side: Side,
+        kind: TerminalSelectionKind,
+    ) -> bool {
+        let Some(target) = self.free_type_target(line, column, side) else {
+            return false;
+        };
+        let Some(bounds) = self.free_type_bounds_for_target(target) else {
+            return false;
+        };
+
+        self.start_selection_with_purpose(target, kind, TerminalSelectionPurpose::FreeType);
+        self.free_type_selection_bounds = Some(bounds);
+        true
     }
 
     pub fn update_selection(&mut self, line: i32, column: usize, side: Side) {
         let Some(selection) = self.term.selection.as_mut() else {
             return;
         };
-        let point = Point::new(Line(line), Column(column));
+        let mut point = Point::new(Line(line), Column(column));
+        if self.selection_purpose == Some(TerminalSelectionPurpose::FreeType)
+            && let Some(bounds) = self.free_type_selection_bounds
+        {
+            point = point.clamp(bounds.start, bounds.end);
+        }
         selection.update(point, side);
     }
 
     pub fn clear_selection(&mut self) {
         self.term.selection = None;
+        self.selection_purpose = None;
+        self.free_type_selection_bounds = None;
     }
 
     pub fn has_selection(&self) -> bool {
@@ -518,6 +676,373 @@ impl TerminalCore {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string()
+    }
+
+    pub fn selection_purpose(&self) -> Option<TerminalSelectionPurpose> {
+        self.term.selection.as_ref()?;
+        self.selection_purpose
+    }
+
+    pub fn has_free_type_selection(&self) -> bool {
+        self.selection_purpose() == Some(TerminalSelectionPurpose::FreeType) && self.has_selection()
+    }
+
+    pub fn free_type_selection_contains(&self, line: i32, column: usize) -> bool {
+        let Some(range) = self.free_type_selection_range() else {
+            return false;
+        };
+        range.contains(Point::new(Line(line), Column(column)))
+    }
+
+    pub fn selection_contains(&self, line: i32, column: usize) -> bool {
+        let Some(range) = self
+            .term
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(&self.term))
+        else {
+            return false;
+        };
+        range.contains(Point::new(Line(line), Column(column)))
+    }
+
+    pub fn clear_free_type_selection(&mut self) -> bool {
+        if self.selection_purpose() != Some(TerminalSelectionPurpose::FreeType) {
+            return false;
+        }
+        self.clear_selection();
+        true
+    }
+
+    pub fn free_type_target(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+    ) -> Option<TerminalFreeTypeTarget> {
+        if !self.free_type_editing_available()
+            || line < 0
+            || line >= self.screen_lines as i32
+            || column >= self.columns
+        {
+            return None;
+        }
+
+        let mut target = TerminalFreeTypeTarget::new(line, column, side);
+        let flags = self.term.grid()[target.point()].flags;
+        if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+            if target.line + 1 >= self.screen_lines as i32 {
+                return None;
+            }
+            target.line += 1;
+            target.column = 0;
+            target.side = Side::Left;
+        } else if flags.contains(Flags::WIDE_CHAR_SPACER) && target.column > 0 {
+            target.column -= 1;
+            target.side = Side::Right;
+        }
+
+        let cursor = self.term.grid().cursor.point;
+        let start = self.term.line_search_left(cursor);
+        let end = self.term.line_search_right(cursor);
+        (target.point() >= start && target.point() <= end).then_some(target)
+    }
+
+    fn free_type_editing_available(&self) -> bool {
+        self.display_offset() == 0 && self.term.mode().contains(TermMode::SHOW_CURSOR)
+    }
+
+    pub fn free_type_cursor_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+    ) -> Option<Vec<TerminalEditStep>> {
+        let target = self.free_type_target(line, column, side)?;
+        self.navigation_steps_to(target)
+    }
+
+    pub fn free_type_delete_plan(&self) -> Option<Vec<TerminalEditStep>> {
+        Some(self.free_type_drag_plan()?.delete_steps)
+    }
+
+    pub fn free_type_drag_plan(&self) -> Option<TerminalFreeTypeDragPlan> {
+        if self.selection_purpose() != Some(TerminalSelectionPurpose::FreeType) {
+            return None;
+        }
+        let (range, delete_count, text) = self.free_type_selection_details()?;
+        let target =
+            TerminalFreeTypeTarget::new(range.start.line.0, range.start.column.0, Side::Left);
+        let mut delete_steps = self.navigation_steps_to(target)?;
+        if delete_count != 0 {
+            delete_steps.push(TerminalEditStep::Delete(delete_count));
+        }
+        Some(TerminalFreeTypeDragPlan { delete_steps, text })
+    }
+
+    pub fn selection_drag_plan(&self) -> Option<TerminalSelectionDragPlan> {
+        match self.selection_purpose()? {
+            TerminalSelectionPurpose::Copy => {
+                let text = self
+                    .selection_text()?
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string();
+                (!text.is_empty()).then_some(TerminalSelectionDragPlan {
+                    delete_steps: None,
+                    text,
+                })
+            }
+            TerminalSelectionPurpose::FreeType => {
+                let plan = self.free_type_drag_plan()?;
+                Some(TerminalSelectionDragPlan {
+                    delete_steps: Some(plan.delete_steps),
+                    text: plan.text,
+                })
+            }
+        }
+    }
+
+    pub fn free_type_collapse_plan(&self, collapse_to_end: bool) -> Option<Vec<TerminalEditStep>> {
+        if self.selection_purpose() != Some(TerminalSelectionPurpose::FreeType) {
+            return None;
+        }
+        let range = self.free_type_selection_range()?;
+        let target = if collapse_to_end {
+            TerminalFreeTypeTarget::new(range.end.line.0, range.end.column.0, Side::Right)
+        } else {
+            TerminalFreeTypeTarget::new(range.start.line.0, range.start.column.0, Side::Left)
+        };
+        self.navigation_steps_to(target)
+    }
+
+    pub fn free_type_drop_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+        duplicate: bool,
+    ) -> Option<TerminalFreeTypeDropPlan> {
+        if self.selection_purpose() != Some(TerminalSelectionPurpose::FreeType) {
+            return None;
+        }
+        let target = self.free_type_target(line, column, side)?;
+        let bounds = self.free_type_selection_bounds?;
+        if target.point() < bounds.start || target.point() > bounds.end {
+            return None;
+        }
+
+        let (range, delete_count, text) = self.free_type_selection_details()?;
+        if text.is_empty() {
+            return None;
+        }
+
+        let line_start = bounds.start;
+        let source_start = self.boundary_index(line_start, range.start, Side::Left);
+        let source_end = self.boundary_index(line_start, range.end, Side::Right);
+        let target_index = self.boundary_index(line_start, target.point(), target.side);
+        if target_index > source_start && target_index < source_end {
+            return None;
+        }
+
+        if duplicate {
+            let steps = self.navigation_steps_to(target)?;
+            return Some(TerminalFreeTypeDropPlan { steps, text });
+        }
+
+        if target_index == source_start || target_index == source_end {
+            return None;
+        }
+
+        let source_target =
+            TerminalFreeTypeTarget::new(range.start.line.0, range.start.column.0, Side::Left);
+        let mut steps = self.navigation_steps_to(source_target)?;
+        if delete_count != 0 {
+            steps.push(TerminalEditStep::Delete(delete_count));
+        }
+        if target_index < source_start {
+            steps.push(TerminalEditStep::Left(source_start - target_index));
+        } else if target_index > source_end {
+            steps.push(TerminalEditStep::Right(target_index - source_end));
+        }
+        Some(TerminalFreeTypeDropPlan { steps, text })
+    }
+
+    pub fn selection_drop_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+        duplicate: bool,
+    ) -> Option<TerminalFreeTypeDropPlan> {
+        match self.selection_purpose()? {
+            TerminalSelectionPurpose::Copy => {
+                let target = self.free_type_target(line, column, side)?;
+                if self.selection_contains(target.line, target.column) {
+                    return None;
+                }
+                let plan = self.selection_drag_plan()?;
+                let steps = self.navigation_steps_to(target)?;
+                Some(TerminalFreeTypeDropPlan {
+                    steps,
+                    text: plan.text,
+                })
+            }
+            TerminalSelectionPurpose::FreeType => {
+                self.free_type_drop_plan(line, column, side, duplicate)
+            }
+        }
+    }
+
+    fn free_type_bounds_for_target(
+        &self,
+        target: TerminalFreeTypeTarget,
+    ) -> Option<SelectionRange> {
+        let target = target.point();
+        let origin = self.term.grid().cursor.point;
+        let start = self.term.line_search_left(origin);
+        let end = self.term.line_search_right(origin);
+        (target >= start && target <= end).then(|| SelectionRange::new(start, end, false))
+    }
+
+    fn free_type_selection_range(&self) -> Option<SelectionRange> {
+        if self.selection_purpose() != Some(TerminalSelectionPurpose::FreeType)
+            || !self.free_type_editing_available()
+        {
+            return None;
+        }
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        let bounds = self.free_type_selection_bounds?;
+        if range.start < bounds.start || range.end > bounds.end {
+            return None;
+        }
+        let cursor = self.term.grid().cursor.point;
+        let start = self.term.line_search_left(cursor);
+        let end = self.term.line_search_right(cursor);
+        if range.start < start || range.end > end {
+            return None;
+        }
+        Some(range)
+    }
+
+    fn free_type_selection_details(&self) -> Option<(SelectionRange, usize, String)> {
+        let mut range = self.free_type_selection_range()?;
+        let selection = self.term.selection.as_ref()?;
+        if selection.ty == SelectionType::Lines {
+            while range.end > range.start && self.cell_is_trimmable_blank(range.end) {
+                range.end = self.previous_point(range.end)?;
+            }
+        }
+
+        let delete_count = self.edit_units_inclusive(range.start, range.end);
+        let mut text = if selection.ty == SelectionType::Lines {
+            self.term.bounds_to_string(range.start, range.end)
+        } else {
+            self.term.selection_to_string()?
+        };
+        while text.ends_with(['\r', '\n']) {
+            text.pop();
+        }
+        Some((range, delete_count, text))
+    }
+
+    fn navigation_steps_to(&self, target: TerminalFreeTypeTarget) -> Option<Vec<TerminalEditStep>> {
+        let cursor = self.term.grid().cursor.point;
+        self.navigation_steps_from(
+            TerminalFreeTypeTarget::new(cursor.line.0, cursor.column.0, Side::Left),
+            target,
+        )
+    }
+
+    fn navigation_steps_from(
+        &self,
+        origin: TerminalFreeTypeTarget,
+        target: TerminalFreeTypeTarget,
+    ) -> Option<Vec<TerminalEditStep>> {
+        let start = self.term.line_search_left(origin.point());
+        let end = self.term.line_search_right(origin.point());
+        if target.point() < start
+            || target.point() > end
+            || origin.point() < start
+            || origin.point() > end
+        {
+            return None;
+        }
+        let cursor_index = self.boundary_index(start, origin.point(), origin.side);
+        let target_index = self.boundary_index(start, target.point(), target.side);
+        Some(match target_index.cmp(&cursor_index) {
+            std::cmp::Ordering::Less => {
+                vec![TerminalEditStep::Left(cursor_index - target_index)]
+            }
+            std::cmp::Ordering::Greater => {
+                vec![TerminalEditStep::Right(target_index - cursor_index)]
+            }
+            std::cmp::Ordering::Equal => Vec::new(),
+        })
+    }
+
+    fn boundary_index(&self, start: Point, point: Point, side: Side) -> usize {
+        let mut current = start;
+        let mut count = 0;
+        while current < point {
+            count += usize::from(self.cell_is_edit_unit(current));
+            let Some(next) = self.next_point(current) else {
+                return count;
+            };
+            current = next;
+        }
+        if current == point && side == Side::Right {
+            count += usize::from(self.cell_is_edit_unit(current));
+        }
+        count
+    }
+
+    fn edit_units_inclusive(&self, start: Point, end: Point) -> usize {
+        let mut current = start;
+        let mut count = 0;
+        loop {
+            count += usize::from(self.cell_is_edit_unit(current));
+            if current == end {
+                break;
+            }
+            let Some(next) = self.next_point(current) else {
+                break;
+            };
+            current = next;
+        }
+        count
+    }
+
+    fn cell_is_edit_unit(&self, point: Point) -> bool {
+        !self.term.grid()[point]
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+    }
+
+    fn cell_is_trimmable_blank(&self, point: Point) -> bool {
+        let cell = &self.term.grid()[point];
+        cell.c == ' '
+            && cell.zerowidth().is_none_or(|chars| chars.is_empty())
+            && !cell.flags.contains(Flags::WRAPLINE)
+    }
+
+    fn next_point(&self, point: Point) -> Option<Point> {
+        if point.column.0 + 1 < self.columns {
+            Some(Point::new(point.line, point.column + 1))
+        } else if point.line.0 + 1 < self.screen_lines as i32 {
+            Some(Point::new(point.line + 1, Column(0)))
+        } else {
+            None
+        }
+    }
+
+    fn previous_point(&self, point: Point) -> Option<Point> {
+        if point.column.0 > 0 {
+            Some(Point::new(point.line, point.column - 1))
+        } else if point.line.0 > 0 {
+            Some(Point::new(point.line - 1, Column(self.columns - 1)))
+        } else {
+            None
+        }
     }
 
     /// Look up the hyperlink at a viewport-relative cell position directly in
@@ -839,6 +1364,7 @@ impl TerminalState {
     pub fn new(columns: usize, screen_lines: usize) -> Self {
         let shared = Arc::new(TerminalShared {
             core: Mutex::new(TerminalCore::new(columns, screen_lines)),
+            input_sequence: Mutex::new(()),
             dirty_generation: AtomicU64::new(0),
             pending_inputs: AtomicU64::new(0),
             snapshot_cache: Mutex::new(None),
@@ -872,6 +1398,11 @@ impl TerminalState {
             return;
         }
 
+        let _input_sequence = self
+            .shared
+            .input_sequence
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
         let input = ParserInput {
             bytes: bytes.to_vec(),
@@ -888,13 +1419,20 @@ impl TerminalState {
         }
 
         let (completion, completed) = mpsc::sync_channel(1);
-        self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
-        let input = ParserInput {
-            bytes: text.as_bytes().to_vec(),
-            completion: Some(completion),
-        };
-        if let Err(error) = self.parser.sender.send(input) {
-            parse_input(&self.shared, error.0);
+        {
+            let _input_sequence = self
+                .shared
+                .input_sequence
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
+            let input = ParserInput {
+                bytes: text.as_bytes().to_vec(),
+                completion: Some(completion),
+            };
+            if let Err(error) = self.parser.sender.send(input) {
+                parse_input(&self.shared, error.0);
+            }
         }
         let _ = completed.recv();
     }
@@ -964,8 +1502,30 @@ impl TerminalState {
         self.with_core_mut_and_mark(|core| core.start_selection(line, column, side, block));
     }
 
+    pub fn start_selection_with_kind(
+        &mut self,
+        line: i32,
+        column: usize,
+        side: Side,
+        kind: TerminalSelectionKind,
+    ) {
+        self.with_core_mut_and_mark(|core| {
+            core.start_selection_with_kind(line, column, side, kind)
+        });
+    }
+
     pub fn update_selection(&mut self, line: i32, column: usize, side: Side) {
         self.with_core_mut_and_mark(|core| core.update_selection(line, column, side));
+    }
+
+    pub fn start_free_type_selection(
+        &mut self,
+        line: i32,
+        column: usize,
+        side: Side,
+        kind: TerminalSelectionKind,
+    ) -> bool {
+        self.with_core_mut_and_mark(|core| core.start_free_type_selection(line, column, side, kind))
     }
 
     pub fn clear_selection(&mut self) {
@@ -978,6 +1538,118 @@ impl TerminalState {
 
     pub fn selection_text(&self) -> Option<String> {
         self.with_core(TerminalCore::selection_text)
+    }
+
+    pub fn selection_purpose(&self) -> Option<TerminalSelectionPurpose> {
+        self.with_core(TerminalCore::selection_purpose)
+    }
+
+    pub fn has_free_type_selection(&self) -> bool {
+        self.with_core(TerminalCore::has_free_type_selection)
+    }
+
+    pub fn free_type_selection_contains(&self, line: i32, column: usize) -> bool {
+        self.with_core(|core| core.free_type_selection_contains(line, column))
+    }
+
+    pub fn selection_contains(&self, line: i32, column: usize) -> bool {
+        self.with_core(|core| core.selection_contains(line, column))
+    }
+
+    pub fn clear_free_type_selection(&mut self) -> bool {
+        self.with_core_mut_and_mark(TerminalCore::clear_free_type_selection)
+    }
+
+    pub fn free_type_target(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+    ) -> Option<TerminalFreeTypeTarget> {
+        self.with_core(|core| core.free_type_target(line, column, side))
+    }
+
+    pub fn free_type_cursor_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+    ) -> Option<TerminalFreeTypePlan<Vec<TerminalEditStep>>> {
+        self.stable_free_type_plan(|core| core.free_type_cursor_plan(line, column, side))
+    }
+
+    pub fn free_type_delete_plan(&self) -> Option<TerminalFreeTypePlan<Vec<TerminalEditStep>>> {
+        self.stable_free_type_plan(TerminalCore::free_type_delete_plan)
+    }
+
+    pub fn free_type_drag_plan(&self) -> Option<TerminalFreeTypePlan<TerminalFreeTypeDragPlan>> {
+        self.stable_free_type_plan(TerminalCore::free_type_drag_plan)
+    }
+
+    pub fn selection_drag_plan(&self) -> Option<TerminalFreeTypePlan<TerminalSelectionDragPlan>> {
+        self.stable_free_type_plan(TerminalCore::selection_drag_plan)
+    }
+
+    pub fn free_type_collapse_plan(
+        &self,
+        collapse_to_end: bool,
+    ) -> Option<TerminalFreeTypePlan<Vec<TerminalEditStep>>> {
+        self.stable_free_type_plan(|core| core.free_type_collapse_plan(collapse_to_end))
+    }
+
+    pub fn free_type_drop_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+        duplicate: bool,
+    ) -> Option<TerminalFreeTypePlan<TerminalFreeTypeDropPlan>> {
+        self.stable_free_type_plan(|core| core.free_type_drop_plan(line, column, side, duplicate))
+    }
+
+    pub fn selection_drop_plan(
+        &self,
+        line: i32,
+        column: usize,
+        side: Side,
+        duplicate: bool,
+    ) -> Option<TerminalFreeTypePlan<TerminalFreeTypeDropPlan>> {
+        self.stable_free_type_plan(|core| core.selection_drop_plan(line, column, side, duplicate))
+    }
+
+    /// Runs `commit` only while the planned generation is still current and no
+    /// parser input can be inserted between validation and the outbound write.
+    /// Returns `Ok(None)` when the caller should recompute the plan.
+    pub fn commit_free_type_plan<R, E>(
+        &mut self,
+        expected_generation: u64,
+        clear_selection: bool,
+        commit: impl FnOnce() -> Result<R, E>,
+    ) -> Result<Option<R>, E> {
+        let _input_sequence = self
+            .shared
+            .input_sequence
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.has_pending_input() {
+            return Ok(None);
+        }
+
+        let mut core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.has_pending_input() || self.generation() != expected_generation {
+            return Ok(None);
+        }
+
+        let result = commit()?;
+        if clear_selection && core.term.selection.is_some() {
+            core.clear_selection();
+            self.mark_dirty_locked();
+        }
+        Ok(Some(result))
     }
 
     pub fn link_at(&self, viewport_line: usize, column: usize) -> Option<TerminalLink> {
@@ -1039,6 +1711,36 @@ impl TerminalState {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         f(&core)
+    }
+
+    fn stable_free_type_plan<R>(
+        &self,
+        plan: impl FnOnce(&TerminalCore) -> Option<R>,
+    ) -> Option<TerminalFreeTypePlan<R>> {
+        let _input_sequence = self
+            .shared
+            .input_sequence
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.has_pending_input() {
+            return None;
+        }
+
+        let core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.has_pending_input() {
+            return None;
+        }
+
+        let value = plan(&core)?;
+        Some(TerminalFreeTypePlan {
+            generation: self.generation(),
+            input_modes: core.input_modes(),
+            value,
+        })
     }
 
     fn with_core_mut_and_mark<R>(&self, f: impl FnOnce(&mut TerminalCore) -> R) -> R {
@@ -1764,6 +2466,374 @@ mod tests {
         wait_for_parser(&terminal);
 
         assert!(terminal.alternate_scroll_active());
+    }
+
+    #[test]
+    fn free_type_target_is_limited_to_cursor_wrapped_line_on_main_screen() {
+        let width = MIN_TERMINAL_COLUMNS;
+        let mut core = TerminalCore::new(width, 4);
+        core.push_bytes("a".repeat(width + 1).as_bytes());
+
+        assert!(core.free_type_target(0, 2, Side::Left).is_some());
+        assert!(core.free_type_target(1, 0, Side::Left).is_some());
+        assert_eq!(core.free_type_target(2, 0, Side::Left), None);
+        assert_eq!(
+            core.free_type_cursor_plan(0, 2, Side::Left),
+            Some(vec![TerminalEditStep::Left(width - 1)])
+        );
+    }
+
+    #[test]
+    fn free_type_is_unavailable_in_scrollback_but_available_with_mouse_reporting() {
+        let mut core = TerminalCore::new(8, 3);
+        core.push_bytes(b"one\r\ntwo\r\nthree\r\nfour");
+        let cursor = core.term.grid().cursor.point;
+        assert!(core.start_free_type_selection(
+            cursor.line.0,
+            cursor.column.0.saturating_sub(1),
+            Side::Left,
+            TerminalSelectionKind::Simple,
+        ));
+        core.update_selection(
+            cursor.line.0,
+            cursor.column.0.saturating_sub(1),
+            Side::Right,
+        );
+        assert!(core.has_free_type_selection());
+        core.scroll(TerminalScroll::Top);
+        assert!(core.display_offset() > 0);
+        assert!(!core.has_free_type_selection());
+        assert_eq!(core.free_type_target(0, 0, Side::Left), None);
+
+        core.scroll(TerminalScroll::Bottom);
+        core.push_bytes(b"\x1b[?1000h");
+        assert!(core.mouse_protocol().is_enabled());
+        let cursor = core.term.grid().cursor.point;
+        assert_eq!(
+            core.free_type_target(cursor.line.0, cursor.column.0, Side::Left),
+            Some(TerminalFreeTypeTarget::new(
+                cursor.line.0,
+                cursor.column.0,
+                Side::Left,
+            ))
+        );
+
+        core.push_bytes(b"\x1b[?25l");
+        assert_eq!(
+            core.free_type_target(cursor.line.0, cursor.column.0, Side::Left),
+            None
+        );
+    }
+
+    #[test]
+    fn copy_selection_supports_words_and_lines_in_scrollback() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"alpha beta\r\nsecond line\r\nthird\r\nfourth");
+        core.scroll(TerminalScroll::Top);
+
+        let history_line = -(core.display_offset() as i32);
+        assert!(history_line < 0);
+        assert!(terminal_grid_row_text(&core, history_line).starts_with("alpha beta"));
+
+        core.start_selection_with_kind(
+            history_line,
+            7,
+            Side::Left,
+            TerminalSelectionKind::Semantic,
+        );
+        assert_eq!(
+            core.selection_purpose(),
+            Some(TerminalSelectionPurpose::Copy)
+        );
+        assert_eq!(core.selection_text().as_deref(), Some("beta"));
+        assert!(!core.has_free_type_selection());
+        assert!(core.selection_contains(history_line, 7));
+        assert_eq!(
+            core.selection_drag_plan(),
+            Some(TerminalSelectionDragPlan {
+                delete_steps: None,
+                text: "beta".to_string(),
+            })
+        );
+
+        core.scroll(TerminalScroll::Bottom);
+        let cursor = core.term.grid().cursor.point;
+        let drop = core
+            .selection_drop_plan(cursor.line.0, cursor.column.0, Side::Left, false)
+            .expect("history copy selection should be insertable at the editable cursor line");
+        assert_eq!(drop.text, "beta");
+        assert_eq!(
+            core.selection_purpose(),
+            Some(TerminalSelectionPurpose::Copy)
+        );
+
+        core.start_selection_with_kind(history_line, 2, Side::Left, TerminalSelectionKind::Lines);
+        assert_eq!(
+            core.selection_text()
+                .as_deref()
+                .map(|text| text.trim_end_matches(['\r', '\n'])),
+            Some("alpha beta")
+        );
+        assert_eq!(
+            core.selection_purpose(),
+            Some(TerminalSelectionPurpose::Copy)
+        );
+        assert_eq!(
+            core.selection_drag_plan(),
+            Some(TerminalSelectionDragPlan {
+                delete_steps: None,
+                text: "alpha beta".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn free_type_wide_and_combining_cells_count_as_single_edit_units() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes("a界e\u{301}b".as_bytes());
+
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 3, Side::Right);
+
+        assert_eq!(core.selection_text().as_deref(), Some("界e\u{301}"));
+        assert_eq!(
+            core.free_type_delete_plan(),
+            Some(vec![TerminalEditStep::Left(3), TerminalEditStep::Delete(2)])
+        );
+    }
+
+    #[test]
+    fn free_type_semantic_selection_selects_words_and_matching_brackets() {
+        let mut core = TerminalCore::new(24, 3);
+        core.push_bytes(b"echo (alpha) omega");
+
+        assert!(core.start_free_type_selection(0, 7, Side::Left, TerminalSelectionKind::Semantic,));
+        assert_eq!(core.selection_text().as_deref(), Some("alpha"));
+
+        assert!(core.start_free_type_selection(0, 5, Side::Left, TerminalSelectionKind::Semantic,));
+        assert_eq!(core.selection_text().as_deref(), Some("(alpha)"));
+    }
+
+    #[test]
+    fn free_type_lines_selection_uses_wrapped_logical_line() {
+        let width = MIN_TERMINAL_COLUMNS;
+        let text = "a".repeat(width + 1);
+        let mut core = TerminalCore::new(width, 4);
+        core.push_bytes(text.as_bytes());
+
+        assert!(core.start_free_type_selection(0, 2, Side::Left, TerminalSelectionKind::Lines,));
+        let range = core
+            .free_type_selection_range()
+            .expect("lines selection should have a range");
+
+        assert_eq!(range.start, Point::new(Line(0), Column(0)));
+        assert_eq!(range.end.line, Line(1));
+        assert_eq!(
+            core.free_type_selection_details()
+                .map(|(_, delete_count, text)| (delete_count, text)),
+            Some((width + 1, text))
+        );
+    }
+
+    #[test]
+    fn free_type_lines_selection_trims_text_and_delete_range_together() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"abc   ");
+
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Lines,));
+        assert_eq!(
+            core.free_type_selection_details()
+                .map(|(_, delete_count, text)| (delete_count, text)),
+            Some((3, "abc".to_string()))
+        );
+    }
+
+    #[test]
+    fn free_type_target_maps_leading_wide_spacer_to_next_row() {
+        let width = MIN_TERMINAL_COLUMNS;
+        let mut core = TerminalCore::new(width, 3);
+        core.push_bytes(b"\x1b[?1049h\x1b[2;2H");
+        core.term.grid_mut()[Line(0)][Column(width - 1)]
+            .flags
+            .insert(Flags::LEADING_WIDE_CHAR_SPACER | Flags::WRAPLINE);
+        core.term.grid_mut()[Line(1)][Column(0)]
+            .flags
+            .insert(Flags::WIDE_CHAR);
+
+        assert_eq!(
+            core.free_type_target(0, width - 1, Side::Right),
+            Some(TerminalFreeTypeTarget::new(1, 0, Side::Left))
+        );
+    }
+
+    #[test]
+    fn alternate_screen_free_type_is_limited_to_cursor_wrapped_line() {
+        let width = MIN_TERMINAL_COLUMNS;
+        let mut core = TerminalCore::new(width, 5);
+        core.push_bytes(b"\x1b[?1049h");
+        core.push_bytes("a".repeat(width + 2).as_bytes());
+
+        assert!(core.free_type_target(0, 1, Side::Left).is_some());
+        assert!(core.free_type_target(1, 1, Side::Left).is_some());
+        assert_eq!(core.free_type_target(2, 1, Side::Left), None);
+        assert_eq!(
+            core.free_type_cursor_plan(0, 1, Side::Left),
+            Some(vec![TerminalEditStep::Left(width + 1)])
+        );
+    }
+
+    #[test]
+    fn alternate_screen_drop_uses_wrapped_line_edit_unit_indexes() {
+        let width = MIN_TERMINAL_COLUMNS;
+        let mut core = TerminalCore::new(width, 4);
+        core.push_bytes(b"\x1b[?1049h");
+        core.push_bytes("a".repeat(width + 2).as_bytes());
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 2, Side::Right);
+
+        let moved = core
+            .free_type_drop_plan(1, 1, Side::Left, false)
+            .expect("wrapped-line move should be planned");
+        assert_eq!(
+            moved.steps,
+            vec![
+                TerminalEditStep::Left(width + 1),
+                TerminalEditStep::Delete(2),
+                TerminalEditStep::Right(width - 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn free_type_drop_plans_move_copy_and_reject_internal_targets() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"abcdef");
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 2, Side::Right);
+        assert_eq!(core.selection_text().as_deref(), Some("bc"));
+
+        assert_eq!(core.free_type_drop_plan(0, 1, Side::Right, false), None);
+        assert!(core.has_free_type_selection());
+
+        let duplicate = core
+            .free_type_drop_plan(0, 0, Side::Left, true)
+            .expect("copy before selection should be allowed");
+        assert_eq!(duplicate.steps, vec![TerminalEditStep::Left(6)]);
+        assert_eq!(duplicate.text, "bc");
+        assert!(core.has_free_type_selection());
+
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 2, Side::Right);
+        let duplicate_after = core
+            .free_type_drop_plan(0, 2, Side::Right, true)
+            .expect("copy at the trailing boundary should be allowed");
+        assert_eq!(duplicate_after.steps, vec![TerminalEditStep::Left(3)]);
+        assert_eq!(duplicate_after.text, "bc");
+
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 2, Side::Right);
+        let moved = core
+            .free_type_drop_plan(0, 5, Side::Right, false)
+            .expect("move after selection should be planned");
+        assert_eq!(
+            moved.steps,
+            vec![
+                TerminalEditStep::Left(5),
+                TerminalEditStep::Delete(2),
+                TerminalEditStep::Right(3),
+            ]
+        );
+        assert_eq!(moved.text, "bc");
+
+        assert!(core.start_free_type_selection(0, 2, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 3, Side::Right);
+        let moved_before = core
+            .free_type_drop_plan(0, 0, Side::Left, false)
+            .expect("move before selection should be planned");
+        assert_eq!(
+            moved_before.steps,
+            vec![
+                TerminalEditStep::Left(4),
+                TerminalEditStep::Delete(2),
+                TerminalEditStep::Left(2),
+            ]
+        );
+        assert_eq!(moved_before.text, "cd");
+    }
+
+    #[test]
+    fn free_type_drag_plan_keeps_source_text_and_delete_steps_together() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"abcdef");
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 2, Side::Right);
+
+        assert_eq!(
+            core.free_type_drag_plan(),
+            Some(TerminalFreeTypeDragPlan {
+                delete_steps: vec![TerminalEditStep::Left(5), TerminalEditStep::Delete(2)],
+                text: "bc".to_string(),
+            })
+        );
+        assert_eq!(
+            core.selection_drag_plan(),
+            Some(TerminalSelectionDragPlan {
+                delete_steps: Some(vec![TerminalEditStep::Left(5), TerminalEditStep::Delete(2),]),
+                text: "bc".to_string(),
+            })
+        );
+        assert!(core.has_free_type_selection());
+    }
+
+    #[test]
+    fn free_type_plan_commit_rejects_changed_or_pending_terminal_state() {
+        let mut terminal = TerminalState::new(12, 3);
+        terminal.push_text("abcdef");
+        assert!(terminal.start_free_type_selection(
+            0,
+            1,
+            Side::Left,
+            TerminalSelectionKind::Simple,
+        ));
+        terminal.update_selection(0, 2, Side::Right);
+
+        let plan = terminal
+            .free_type_delete_plan()
+            .expect("stable selection should produce a plan");
+        terminal.push_text("g");
+        let mut committed = false;
+        let result: Result<Option<()>, ()> =
+            terminal.commit_free_type_plan(plan.generation, true, || {
+                committed = true;
+                Ok(())
+            });
+        assert_eq!(result, Ok(None));
+        assert!(!committed);
+
+        terminal.shared.pending_inputs.store(1, Ordering::Release);
+        assert!(terminal.free_type_delete_plan().is_none());
+        terminal.shared.pending_inputs.store(0, Ordering::Release);
+    }
+
+    #[test]
+    fn successful_free_type_plan_commit_clears_selection() {
+        let mut terminal = TerminalState::new(12, 3);
+        terminal.push_text("abcdef");
+        assert!(terminal.start_free_type_selection(
+            0,
+            1,
+            Side::Left,
+            TerminalSelectionKind::Simple,
+        ));
+        terminal.update_selection(0, 2, Side::Right);
+        let plan = terminal
+            .free_type_delete_plan()
+            .expect("stable selection should produce a plan");
+
+        let result: Result<Option<()>, ()> =
+            terminal.commit_free_type_plan(plan.generation, true, || Ok(()));
+        assert_eq!(result, Ok(Some(())));
+        assert!(!terminal.has_free_type_selection());
     }
 
     #[test]

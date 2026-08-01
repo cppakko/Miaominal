@@ -79,6 +79,49 @@ pub enum TerminalKeyPhase {
     Release,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalNamedKey {
+    Left,
+    Right,
+    Up,
+    Down,
+    Delete,
+}
+
+impl TerminalNamedKey {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+pub fn encode_terminal_named_key(
+    key: TerminalNamedKey,
+    input_modes: TerminalInputModes,
+) -> Option<Vec<u8>> {
+    let keystroke = gpui::Keystroke {
+        modifiers: gpui::Modifiers::default(),
+        key: key.as_str().into(),
+        key_char: None,
+    };
+    let mut bytes = encode_terminal_input(
+        TerminalKeyEvent::new(&keystroke, TerminalKeyPhase::Press),
+        input_modes,
+    )?;
+    if input_modes.kitty_report_event_types {
+        bytes.extend(encode_terminal_input(
+            TerminalKeyEvent::new(&keystroke, TerminalKeyPhase::Release),
+            input_modes,
+        )?);
+    }
+    Some(bytes)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalKeyEvent<'a> {
     pub keystroke: &'a gpui::Keystroke,
@@ -1267,6 +1310,33 @@ mod tests {
             },
         );
         assert_eq!(bytes, None);
+    }
+
+    #[test]
+    fn generated_named_key_includes_kitty_release_when_requested() {
+        let modes = TerminalInputModes {
+            kitty_keyboard_protocol: true,
+            kitty_report_event_types: true,
+            ..TerminalInputModes::default()
+        };
+        let binding = key("left", None, false, false, false, false);
+        let mut expected = encode_terminal_input(
+            TerminalKeyEvent::new(&binding, TerminalKeyPhase::Press),
+            modes,
+        )
+        .unwrap();
+        expected.extend(
+            encode_terminal_input(
+                TerminalKeyEvent::new(&binding, TerminalKeyPhase::Release),
+                modes,
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            encode_terminal_named_key(TerminalNamedKey::Left, modes),
+            Some(expected)
+        );
     }
 }
 
