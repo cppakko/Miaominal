@@ -458,6 +458,10 @@ fn default_terminal_shift_right_click_context_menu() -> bool {
     true
 }
 
+fn default_terminal_free_type_mode() -> bool {
+    false
+}
+
 fn default_auto_collect_session_monitoring() -> bool {
     false
 }
@@ -697,6 +701,8 @@ pub struct AppSettings {
     pub terminal_right_click_behavior: TerminalRightClickBehavior,
     #[serde(default = "default_terminal_shift_right_click_context_menu")]
     pub terminal_shift_right_click_context_menu: bool,
+    #[serde(default = "default_terminal_free_type_mode")]
+    pub terminal_free_type_mode: bool,
     #[serde(default = "default_auto_collect_session_monitoring")]
     pub auto_collect_session_monitoring: bool,
     #[serde(default = "default_last_tab_close_behavior")]
@@ -733,6 +739,8 @@ pub struct SyncedSettings {
     pub terminal_right_click_behavior: TerminalRightClickBehavior,
     #[serde(default = "default_terminal_shift_right_click_context_menu")]
     pub terminal_shift_right_click_context_menu: bool,
+    #[serde(default = "default_terminal_free_type_mode")]
+    pub terminal_free_type_mode: bool,
     #[serde(default = "default_auto_collect_session_monitoring")]
     pub auto_collect_session_monitoring: bool,
     #[serde(default = "default_last_tab_close_behavior")]
@@ -865,6 +873,7 @@ impl Default for AppSettings {
             terminal_right_click_behavior: default_terminal_right_click_behavior(),
             terminal_shift_right_click_context_menu:
                 default_terminal_shift_right_click_context_menu(),
+            terminal_free_type_mode: default_terminal_free_type_mode(),
             auto_collect_session_monitoring: default_auto_collect_session_monitoring(),
             last_tab_close_behavior: default_last_tab_close_behavior(),
             monitor_history_duration: default_monitor_history_duration(),
@@ -944,6 +953,7 @@ impl AppSettings {
         self.terminal_right_click_behavior = synced.terminal_right_click_behavior;
         self.terminal_shift_right_click_context_menu =
             synced.terminal_shift_right_click_context_menu;
+        self.terminal_free_type_mode = synced.terminal_free_type_mode;
         self.auto_collect_session_monitoring = synced.auto_collect_session_monitoring;
         self.last_tab_close_behavior = synced.last_tab_close_behavior;
         self.monitor_history_duration = synced.monitor_history_duration;
@@ -966,6 +976,7 @@ impl From<&AppSettings> for SyncedSettings {
             terminal_right_click_behavior: settings.terminal_right_click_behavior,
             terminal_shift_right_click_context_menu: settings
                 .terminal_shift_right_click_context_menu,
+            terminal_free_type_mode: settings.terminal_free_type_mode,
             auto_collect_session_monitoring: settings.auto_collect_session_monitoring,
             last_tab_close_behavior: settings.last_tab_close_behavior,
             monitor_history_duration: settings.monitor_history_duration,
@@ -1029,6 +1040,7 @@ mod tests {
             theme_id: ThemeId::Light,
             seed_color: "#abcdef".into(),
             recent_connections_count: 8,
+            terminal_free_type_mode: true,
             auto_collect_session_monitoring: true,
             last_tab_close_behavior: LastTabCloseBehavior::OpenNewHomeTab,
             monitor_history_duration: MonitorHistoryDuration::ThirtyMinutes,
@@ -1064,6 +1076,7 @@ mod tests {
         assert_eq!(local.theme_id, ThemeId::Dark);
         assert_eq!(local.seed_color, "#123456");
         assert_eq!(local.recent_connections_count, 8);
+        assert!(local.terminal_free_type_mode);
         assert!(local.auto_collect_session_monitoring);
         assert_eq!(
             local.last_tab_close_behavior,
@@ -1206,5 +1219,28 @@ model = "gpt-4o"
             toml::to_string(&settings.synced_settings()).expect("synced settings should serialize");
 
         assert!(!serialized.contains("local_vault_enabled"));
+    }
+
+    #[test]
+    fn synced_settings_round_trip_preserves_terminal_free_type_mode() {
+        let settings = AppSettings {
+            terminal_free_type_mode: true,
+            ..AppSettings::default()
+        };
+
+        let serialized =
+            toml::to_string(&settings.synced_settings()).expect("synced settings should serialize");
+        let restored: SyncedSettings =
+            toml::from_str(&serialized).expect("synced settings should deserialize");
+
+        assert!(restored.terminal_free_type_mode);
+    }
+
+    #[test]
+    fn legacy_synced_settings_default_terminal_free_type_mode_to_false() {
+        let restored: SyncedSettings =
+            toml::from_str("").expect("legacy synced settings should deserialize");
+
+        assert!(!restored.terminal_free_type_mode);
     }
 }

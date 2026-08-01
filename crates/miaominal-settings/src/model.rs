@@ -98,6 +98,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.key_bindings != b.key_bindings
         || a.terminal_right_click_behavior != b.terminal_right_click_behavior
         || a.terminal_shift_right_click_context_menu != b.terminal_shift_right_click_context_menu
+        || a.terminal_free_type_mode != b.terminal_free_type_mode
         || a.auto_collect_session_monitoring != b.auto_collect_session_monitoring
         || a.last_tab_close_behavior != b.last_tab_close_behavior
         || a.monitor_history_duration != b.monitor_history_duration
@@ -185,6 +186,7 @@ mod tests {
         );
         assert_eq!(settings.local_sftp_hidden_columns, vec![4, 5]);
         assert_eq!(settings.remote_sftp_hidden_columns, vec![4, 5]);
+        assert!(!settings.terminal_free_type_mode);
     }
 
     #[test]
@@ -236,6 +238,17 @@ mod tests {
 
         modified = original.clone();
         modified.font_fallbacks = vec!["Noto Sans CJK SC".into()];
+
+        assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn changed_detects_terminal_free_type_mode() {
+        let original = AppSettings::default();
+        let modified = AppSettings {
+            terminal_free_type_mode: true,
+            ..AppSettings::default()
+        };
 
         assert!(changed(&original, &modified));
     }
