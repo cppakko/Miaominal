@@ -633,6 +633,21 @@ impl WorkspacePanesAppViewExt for AppView {
                     this.set_active_pane(pane_id, window, cx);
                 }),
             )
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                if this.terminal_originated_selection_drag_active() {
+                    this.handle_terminal_mouse_move(event, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseUpEvent, _, cx| {
+                    if this.terminal_originated_selection_drag_active() {
+                        this.handle_terminal_mouse_up(event, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {

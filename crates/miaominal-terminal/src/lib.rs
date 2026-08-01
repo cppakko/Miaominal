@@ -743,6 +743,9 @@ impl TerminalCore {
         }
 
         let cursor = self.term.grid().cursor.point;
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return Some(target);
+        }
         let start = self.term.line_search_left(cursor);
         let end = self.term.line_search_right(cursor);
         (target.point() >= start && target.point() <= end).then_some(target)
@@ -827,7 +830,9 @@ impl TerminalCore {
         }
         let target = self.free_type_target(line, column, side)?;
         let bounds = self.free_type_selection_bounds?;
-        if target.point() < bounds.start || target.point() > bounds.end {
+        let target_in_selection_line =
+            target.point() >= bounds.start && target.point() <= bounds.end;
+        if !target_in_selection_line && !self.term.mode().contains(TermMode::ALT_SCREEN) {
             return None;
         }
 
@@ -846,6 +851,17 @@ impl TerminalCore {
 
         if duplicate {
             let steps = self.navigation_steps_to(target)?;
+            return Some(TerminalFreeTypeDropPlan { steps, text });
+        }
+
+        if !target_in_selection_line {
+            let source_target =
+                TerminalFreeTypeTarget::new(range.start.line.0, range.start.column.0, Side::Left);
+            let mut steps = self.navigation_steps_to(source_target)?;
+            if delete_count != 0 {
+                steps.push(TerminalEditStep::Delete(delete_count));
+            }
+            steps.extend(self.navigation_steps_from(source_target, target)?);
             return Some(TerminalFreeTypeDropPlan { steps, text });
         }
 
@@ -898,7 +914,11 @@ impl TerminalCore {
         target: TerminalFreeTypeTarget,
     ) -> Option<SelectionRange> {
         let target = target.point();
-        let origin = self.term.grid().cursor.point;
+        let origin = if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            target
+        } else {
+            self.term.grid().cursor.point
+        };
         let start = self.term.line_search_left(origin);
         let end = self.term.line_search_right(origin);
         (target >= start && target <= end).then(|| SelectionRange::new(start, end, false))
@@ -914,6 +934,9 @@ impl TerminalCore {
         let bounds = self.free_type_selection_bounds?;
         if range.start < bounds.start || range.end > bounds.end {
             return None;
+        }
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return Some(range);
         }
         let cursor = self.term.grid().cursor.point;
         let start = self.term.line_search_left(cursor);
@@ -960,24 +983,45 @@ impl TerminalCore {
     ) -> Option<Vec<TerminalEditStep>> {
         let start = self.term.line_search_left(origin.point());
         let end = self.term.line_search_right(origin.point());
-        if target.point() < start
-            || target.point() > end
-            || origin.point() < start
-            || origin.point() > end
+        if target.point() >= start
+            && target.point() <= end
+            && origin.point() >= start
+            && origin.point() <= end
         {
-            return None;
+            let cursor_index = self.boundary_index(start, origin.point(), origin.side);
+            let target_index = self.boundary_index(start, target.point(), target.side);
+            return Some(match target_index.cmp(&cursor_index) {
+                std::cmp::Ordering::Less => {
+                    vec![TerminalEditStep::Left(cursor_index - target_index)]
+                }
+                std::cmp::Ordering::Greater => {
+                    vec![TerminalEditStep::Right(target_index - cursor_index)]
+                }
+                std::cmp::Ordering::Equal => Vec::new(),
+            });
         }
-        let cursor_index = self.boundary_index(start, origin.point(), origin.side);
-        let target_index = self.boundary_index(start, target.point(), target.side);
-        Some(match target_index.cmp(&cursor_index) {
-            std::cmp::Ordering::Less => {
-                vec![TerminalEditStep::Left(cursor_index - target_index)]
+
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            let origin_start = Point::new(Line(origin.line), Column(0));
+            let target_start = Point::new(Line(target.line), Column(0));
+            let origin_index = self.boundary_index(origin_start, origin.point(), origin.side);
+            let target_index = self.boundary_index(target_start, target.point(), target.side);
+            let mut steps = Vec::with_capacity(3);
+            if origin_index != 0 {
+                steps.push(TerminalEditStep::Left(origin_index));
             }
-            std::cmp::Ordering::Greater => {
-                vec![TerminalEditStep::Right(target_index - cursor_index)]
+            if target.line < origin.line {
+                steps.push(TerminalEditStep::Up((origin.line - target.line) as usize));
+            } else {
+                steps.push(TerminalEditStep::Down((target.line - origin.line) as usize));
             }
-            std::cmp::Ordering::Equal => Vec::new(),
-        })
+            if target_index != 0 {
+                steps.push(TerminalEditStep::Right(target_index));
+            }
+            return Some(steps);
+        }
+
+        None
     }
 
     fn boundary_index(&self, start: Point, point: Point, side: Side) -> usize {
@@ -2484,6 +2528,38 @@ mod tests {
     }
 
     #[test]
+    fn free_type_target_and_selection_support_other_rows_on_alternate_screen() {
+        let mut core = TerminalCore::new(12, 4);
+        core.push_bytes(b"\x1b[?1049h\x1b[1;1Halpha\x1b[3;4H");
+
+        assert_eq!(
+            core.free_type_target(0, 2, Side::Left),
+            Some(TerminalFreeTypeTarget::new(0, 2, Side::Left))
+        );
+        assert_eq!(
+            core.free_type_cursor_plan(0, 2, Side::Left),
+            Some(vec![
+                TerminalEditStep::Left(3),
+                TerminalEditStep::Up(2),
+                TerminalEditStep::Right(2),
+            ])
+        );
+
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 3, Side::Right);
+        assert_eq!(core.selection_text().as_deref(), Some("lph"));
+        assert_eq!(
+            core.free_type_delete_plan(),
+            Some(vec![
+                TerminalEditStep::Left(3),
+                TerminalEditStep::Up(2),
+                TerminalEditStep::Right(1),
+                TerminalEditStep::Delete(3),
+            ])
+        );
+    }
+
+    #[test]
     fn free_type_is_unavailable_in_scrollback_but_available_with_mouse_reporting() {
         let mut core = TerminalCore::new(8, 3);
         core.push_bytes(b"one\r\ntwo\r\nthree\r\nfour");
@@ -2667,7 +2743,7 @@ mod tests {
     }
 
     #[test]
-    fn alternate_screen_free_type_is_limited_to_cursor_wrapped_line() {
+    fn alternate_screen_free_type_supports_other_rows_and_preserves_wrapped_navigation() {
         let width = MIN_TERMINAL_COLUMNS;
         let mut core = TerminalCore::new(width, 5);
         core.push_bytes(b"\x1b[?1049h");
@@ -2675,7 +2751,7 @@ mod tests {
 
         assert!(core.free_type_target(0, 1, Side::Left).is_some());
         assert!(core.free_type_target(1, 1, Side::Left).is_some());
-        assert_eq!(core.free_type_target(2, 1, Side::Left), None);
+        assert!(core.free_type_target(2, 1, Side::Left).is_some());
         assert_eq!(
             core.free_type_cursor_plan(0, 1, Side::Left),
             Some(vec![TerminalEditStep::Left(width + 1)])
@@ -2700,6 +2776,37 @@ mod tests {
                 TerminalEditStep::Left(width + 1),
                 TerminalEditStep::Delete(2),
                 TerminalEditStep::Right(width - 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn alternate_screen_free_type_drop_moves_and_copies_selection_to_another_row() {
+        let mut core = TerminalCore::new(12, 4);
+        core.push_bytes(b"\x1b[?1049h\x1b[1;1Halpha\x1b[3;4H");
+        assert!(core.start_free_type_selection(0, 1, Side::Left, TerminalSelectionKind::Simple,));
+        core.update_selection(0, 3, Side::Right);
+
+        let duplicate = core
+            .free_type_drop_plan(2, 1, Side::Left, true)
+            .expect("cross-row copy should be planned on the alternate screen");
+        assert_eq!(duplicate.text, "lph");
+        assert_eq!(duplicate.steps, vec![TerminalEditStep::Left(2)]);
+
+        let moved = core
+            .free_type_drop_plan(2, 1, Side::Left, false)
+            .expect("cross-row move should be planned on the alternate screen");
+        assert_eq!(moved.text, "lph");
+        assert_eq!(
+            moved.steps,
+            vec![
+                TerminalEditStep::Left(3),
+                TerminalEditStep::Up(2),
+                TerminalEditStep::Right(1),
+                TerminalEditStep::Delete(3),
+                TerminalEditStep::Left(1),
+                TerminalEditStep::Down(2),
+                TerminalEditStep::Right(1),
             ]
         );
     }
