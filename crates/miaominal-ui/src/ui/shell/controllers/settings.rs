@@ -2290,6 +2290,25 @@ impl SettingsController {
         }
     }
 
+    pub(in crate::ui::shell) fn set_terminal_free_type_mode(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self
+            .settings_store
+            .update(|settings| settings.terminal_free_type_mode = enabled);
+        if changed {
+            let message = if enabled {
+                i18n::string("status.free_type_mode_enabled")
+            } else {
+                i18n::string("status.free_type_mode_disabled")
+            };
+            cx.emit(AppCommand::Feedback(message));
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui::shell) fn persist_sftp_browser_hidden_columns(
         &mut self,
         side: SftpBrowserSide,

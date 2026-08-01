@@ -1651,6 +1651,26 @@ fn key_bindings_page(entity: Entity<SettingsController>) -> SettingPage {
                 ))
                 .items(vec![
                     SettingItem::new(
+                        i18n::string("settings.key_bindings.free_type_mode.label"),
+                        SettingField::switch(
+                            {
+                                let entity = entity.clone();
+                                move |cx: &App| entity.read(cx).settings().terminal_free_type_mode
+                            },
+                            {
+                                let entity = entity.clone();
+                                move |enabled: bool, cx: &mut App| {
+                                    entity.update(cx, |this, cx| {
+                                        this.set_terminal_free_type_mode(enabled, cx);
+                                    });
+                                }
+                            },
+                        ),
+                    )
+                    .description(i18n::string(
+                        "settings.key_bindings.free_type_mode.description",
+                    )),
+                    SettingItem::new(
                         i18n::string("settings.key_bindings.right_click.label"),
                         SettingField::element(TerminalRightClickBehaviorField::new(entity.clone())),
                     )

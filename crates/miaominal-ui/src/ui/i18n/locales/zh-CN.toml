@@ -292,7 +292,11 @@ description = "这些快捷键会在输入到达终端之前被拦截。"
 
 [settings.key_bindings.mouse_group]
 title = "鼠标"
-description = "选择本地终端鼠标处理启用时，右键应执行的动作。"
+description = "配置本地终端选择、编辑和右键行为。"
+
+[settings.key_bindings.free_type_mode]
+label = "自由输入模式"
+description = "点击可移动终端光标并选择可编辑文本；可在当前或其他终端分屏中拖动移动文本，按住 Ctrl/Cmd 拖动可复制文本。启用鼠标上报时普通鼠标由终端程序处理，按住 Alt 可临时使用自由输入；Shift 强制传统选择，Shift+Alt 使用块选择。"
 
 [settings.key_bindings.right_click]
 label = "右键"
@@ -1826,6 +1830,8 @@ right_click_context_menu = "终端右键将打开上下文菜单"
 right_click_copy_paste = "终端右键将复制选区或粘贴剪贴板"
 shift_right_click_enabled = "Shift + 右键将打开终端上下文菜单"
 shift_right_click_disabled = "Shift + 右键不再打开终端上下文菜单"
+free_type_mode_enabled = "自由输入模式已启用"
+free_type_mode_disabled = "自由输入模式已关闭"
 auto_collect_session_monitoring_enabled = "会话监控将在连接后自动开始采集"
 auto_collect_session_monitoring_disabled = "会话监控自动采集已关闭"
 last_tab_close_behavior_exit = "关闭最后一个标签页时将退出应用"

@@ -296,7 +296,11 @@ description = "These shortcuts are intercepted before input reaches the terminal
 
 [settings.key_bindings.mouse_group]
 title = "Mouse"
-description = "Choose what terminal right click does when local terminal mouse handling is active."
+description = "Configure local terminal selection, editing, and right-click behavior."
+
+[settings.key_bindings.free_type_mode]
+label = "Free Type Mode"
+description = "Click to move the terminal cursor, select editable text, and drag within or between terminal panes to move it, or Ctrl/Cmd-drag to copy it. With mouse reporting enabled, normal mouse input goes to the terminal application and Alt temporarily enables Free Type. Shift forces traditional selection, while Shift+Alt uses block selection."
 
 [settings.key_bindings.right_click]
 label = "Right-click"
@@ -1963,6 +1967,8 @@ right_click_context_menu = "Terminal right click opens the context menu"
 right_click_copy_paste = "Terminal right click copies selection or pastes clipboard"
 shift_right_click_enabled = "Shift + right-click opens the terminal context menu"
 shift_right_click_disabled = "Shift + right-click no longer opens the terminal context menu"
+free_type_mode_enabled = "Free Type Mode enabled"
+free_type_mode_disabled = "Free Type Mode disabled"
 auto_collect_session_monitoring_enabled = "Session monitoring will start collecting on connect"
 auto_collect_session_monitoring_disabled = "Session monitoring auto-collection disabled"
 last_tab_close_behavior_exit = "Closing the last tab will quit the application"
