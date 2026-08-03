@@ -10,10 +10,11 @@ pub use crate::data::{
     AiAgentMode, AiProviderConfig, AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings,
     CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX,
     LINE_HEIGHT_MIN, LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
-    PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX, RECENT_CONNECTIONS_COUNT_MIN, STEP,
-    SyncedSettings, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
-    WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
-    ai_provider_kind_label, default_font_fallbacks, default_font_family,
+    OpenSshIntegrationMode, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
+    RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalKeyBindings,
+    TerminalRightClickBehavior, ThemeId, WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN,
+    WebSearchConfig, WebSearchProviderKind, ai_provider_kind_label, default_font_fallbacks,
+    default_font_family,
 };
 
 impl AppLanguage {
@@ -111,6 +112,8 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.selected_ai_provider_id != b.selected_ai_provider_id
         || a.agent_mode != b.agent_mode
         || a.web_search != b.web_search
+        || a.open_ssh_integration_mode != b.open_ssh_integration_mode
+        || a.ssh_bridge != b.ssh_bridge
 }
 
 #[cfg(test)]
@@ -251,6 +254,41 @@ mod tests {
         };
 
         assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn bridge_settings_are_local_only_and_detect_changes() {
+        let original = AppSettings::default();
+        let mut modified = original.clone();
+        modified.open_ssh_integration_mode = OpenSshIntegrationMode::Bridge;
+        modified.ssh_bridge.max_connections = 32;
+
+        assert!(changed(&original, &modified));
+
+        let serialized = toml::to_string(&modified.synced_settings()).expect("sync settings");
+        assert!(!serialized.contains("open_ssh_integration_mode"));
+        assert!(!serialized.contains("ssh_bridge"));
+        assert!(!serialized.contains("managed_open_ssh_integration_enabled"));
+    }
+
+    #[test]
+    fn bridge_settings_default_disabled_and_sanitize_limits() {
+        let mut settings: AppSettings = toml::from_str(
+            r#"
+[ssh_bridge]
+max_connections = 0
+max_channels_per_connection = 1000
+"#,
+        )
+        .expect("settings");
+        settings.sanitize();
+
+        assert_eq!(
+            settings.open_ssh_integration_mode,
+            OpenSshIntegrationMode::Disabled
+        );
+        assert_eq!(settings.ssh_bridge.max_connections, 1);
+        assert_eq!(settings.ssh_bridge.max_channels_per_connection, 256);
     }
 
     #[test]

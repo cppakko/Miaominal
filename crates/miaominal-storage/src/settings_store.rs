@@ -28,12 +28,16 @@ impl SettingsStore {
         let settings_file_exists = settings_file.exists();
         let existing_app_data = has_existing_app_data(&settings_file)?;
 
-        let (mut settings, has_onboarding_field, migrated_terminal_font_family) =
-            if settings_file_exists {
-                read_settings_file(&settings_file)?
-            } else {
-                (AppSettings::default_for_system(), false, false)
-            };
+        let (
+            mut settings,
+            has_onboarding_field,
+            migrated_terminal_font_family,
+            migrated_open_ssh_integration,
+        ) = if settings_file_exists {
+            read_settings_file(&settings_file)?
+        } else {
+            (AppSettings::default_for_system(), false, false, false)
+        };
 
         let migrated_legacy_onboarding = if settings_file_exists {
             !has_onboarding_field
@@ -53,7 +57,9 @@ impl SettingsStore {
             settings,
         };
 
-        if (migrated_legacy_onboarding || migrated_terminal_font_family)
+        if (migrated_legacy_onboarding
+            || migrated_terminal_font_family
+            || migrated_open_ssh_integration)
             && let Err(error) = store.persist()
         {
             log::warn!("failed to persist settings migration: {error:?}");
@@ -119,12 +125,12 @@ impl SettingsStore {
     }
 }
 
-fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool)> {
+fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, bool)> {
     let content = fs::read_to_string(settings_file)
         .with_context(|| format!("failed to read {}", settings_file.display()))?;
 
     if content.trim().is_empty() {
-        return Ok((AppSettings::default_for_system(), false, false));
+        return Ok((AppSettings::default_for_system(), false, false, false));
     }
 
     let raw: toml::Value = toml::from_str(&content)
@@ -134,17 +140,26 @@ fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool)>
         table.is_some_and(|table| table.contains_key("completed_onboarding_version"));
     let has_terminal_font_family =
         table.is_some_and(|table| table.contains_key("terminal_font_family"));
+    let has_open_ssh_integration_mode =
+        table.is_some_and(|table| table.contains_key("open_ssh_integration_mode"));
     let mut settings: AppSettings = toml::from_str(&content)
         .with_context(|| format!("failed to parse {}", settings_file.display()))?;
     let migrated_terminal_font_family = !has_terminal_font_family;
     if migrated_terminal_font_family {
         settings.terminal_font_family = settings.font_family.clone();
     }
+    let migrated_open_ssh_integration =
+        !has_open_ssh_integration_mode && settings.managed_open_ssh_integration_enabled;
+    if migrated_open_ssh_integration {
+        settings.open_ssh_integration_mode = miaominal_settings::OpenSshIntegrationMode::Direct;
+    }
+    settings.managed_open_ssh_integration_enabled = false;
 
     Ok((
         settings,
         has_onboarding_field,
         migrated_terminal_font_family,
+        migrated_open_ssh_integration,
     ))
 }
 
@@ -274,6 +289,57 @@ mod tests {
 
         assert_eq!(store.settings().font_family, "Segoe UI");
         assert_eq!(store.settings().terminal_font_family, "JetBrains Mono");
+    }
+
+    #[test]
+    fn legacy_managed_openssh_boolean_migrates_once_to_direct_mode() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            concat!(
+                "completed_onboarding_version = 1\n",
+                "managed_open_ssh_integration_enabled = true\n",
+            ),
+        )
+        .expect("legacy settings file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("legacy OpenSSH settings should load");
+
+        assert_eq!(
+            store.settings().open_ssh_integration_mode,
+            miaominal_settings::OpenSshIntegrationMode::Direct
+        );
+        assert!(!store.settings().managed_open_ssh_integration_enabled);
+        let persisted = fs::read_to_string(&paths.settings_file)
+            .expect("migrated settings file should be readable");
+        assert!(persisted.contains("open_ssh_integration_mode = \"direct\""));
+        assert!(!persisted.contains("managed_open_ssh_integration_enabled"));
+    }
+
+    #[test]
+    fn explicit_openssh_mode_takes_precedence_over_legacy_boolean() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            concat!(
+                "completed_onboarding_version = 1\n",
+                "open_ssh_integration_mode = \"disabled\"\n",
+                "managed_open_ssh_integration_enabled = true\n",
+            ),
+        )
+        .expect("settings file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("OpenSSH settings should load");
+
+        assert_eq!(
+            store.settings().open_ssh_integration_mode,
+            miaominal_settings::OpenSshIntegrationMode::Disabled
+        );
+        assert!(!store.settings().managed_open_ssh_integration_enabled);
     }
 
     #[test]

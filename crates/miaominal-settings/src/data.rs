@@ -669,6 +669,47 @@ pub enum ThemeId {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenSshIntegrationMode {
+    #[default]
+    Disabled,
+    Direct,
+    Bridge,
+}
+
+fn default_ssh_bridge_max_connections() -> u16 {
+    16
+}
+
+fn default_ssh_bridge_max_channels_per_connection() -> u16 {
+    64
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshBridgeConfig {
+    #[serde(default = "default_ssh_bridge_max_connections")]
+    pub max_connections: u16,
+    #[serde(default = "default_ssh_bridge_max_channels_per_connection")]
+    pub max_channels_per_connection: u16,
+}
+
+impl Default for SshBridgeConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: default_ssh_bridge_max_connections(),
+            max_channels_per_connection: default_ssh_bridge_max_channels_per_connection(),
+        }
+    }
+}
+
+impl SshBridgeConfig {
+    pub fn sanitize(&mut self) {
+        self.max_connections = self.max_connections.clamp(1, 128);
+        self.max_channels_per_connection = self.max_channels_per_connection.clamp(1, 256);
+    }
+}
+
 impl ThemeId {
     pub const fn is_dark(self) -> bool {
         matches!(self, ThemeId::Dark)
@@ -727,6 +768,15 @@ pub struct AppSettings {
     pub agent_mode: AiAgentMode,
     #[serde(default)]
     pub web_search: WebSearchConfig,
+    #[serde(default)]
+    pub open_ssh_integration_mode: OpenSshIntegrationMode,
+    #[serde(default)]
+    pub ssh_bridge: SshBridgeConfig,
+    /// Deserialize-only compatibility field for settings written before
+    /// `open_ssh_integration_mode` replaced the legacy boolean. SettingsStore consumes it during
+    /// migration and it must never become persisted or runtime state again.
+    #[serde(default, skip_serializing)]
+    pub managed_open_ssh_integration_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -886,6 +936,9 @@ impl Default for AppSettings {
             selected_ai_provider_id: None,
             agent_mode: AiAgentMode::default(),
             web_search: WebSearchConfig::default(),
+            open_ssh_integration_mode: OpenSshIntegrationMode::Disabled,
+            ssh_bridge: SshBridgeConfig::default(),
+            managed_open_ssh_integration_enabled: false,
         }
     }
 }
@@ -913,6 +966,8 @@ impl AppSettings {
         sanitize_sftp_browser_hidden_columns(&mut self.remote_sftp_hidden_columns);
         sanitize_ai_providers(&mut self.ai_providers);
         self.web_search.sanitize();
+        self.ssh_bridge.sanitize();
+        self.managed_open_ssh_integration_enabled = false;
     }
 
     pub fn effective_font_family(&self) -> &str {
