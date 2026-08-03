@@ -72,3 +72,4 @@ windows = { version = "0.62.2", features = [
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

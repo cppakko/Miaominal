@@ -114,7 +114,44 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
     .expect("failed to open main window");
 }
 
+fn run_hidden_ssh_bridge_helper() -> Option<i32> {
+    let arguments = match miaominal_ssh::parse_ssh_bridge_helper_args(std::env::args_os()) {
+        Ok(Some(arguments)) => arguments,
+        Ok(None) => return None,
+        Err(error) => {
+            eprintln!("miaominal ssh-bridge-helper: {error:#}");
+            return Some(2);
+        }
+    };
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("miaominal ssh-bridge-helper: failed to start runtime: {error}");
+            return Some(1);
+        }
+    };
+    match runtime.block_on(miaominal_ssh::run_ssh_bridge_helper(arguments)) {
+        Ok(()) => Some(0),
+        Err(error) => {
+            eprintln!("miaominal ssh-bridge-helper: {error:#}");
+            Some(1)
+        }
+    }
+}
+
 fn main() {
+    if let Some(exit_code) = run_hidden_ssh_bridge_helper() {
+        if exit_code != 0 {
+            std::process::exit(exit_code);
+        }
+        return;
+    }
+
     init_logging();
 
     let runtime_context = match miaominal_paths::initialize_runtime() {

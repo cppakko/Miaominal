@@ -121,6 +121,7 @@ winresource = "0.1"
 [dependencies]
 miaominal-core = { path = "crates/miaominal-core" }
 miaominal-paths = { path = "crates/miaominal-paths" }
+miaominal-ssh = { path = "crates/miaominal-ssh" }
 miaominal-ui = { path = "crates/miaominal-ui" }
 aes-gcm.workspace = true
 alacritty_terminal.workspace = true
@@ -165,6 +166,20 @@ resvg.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
+
+[dev-dependencies]
+miaominal-secrets = { path = "crates/miaominal-secrets" }
+miaominal-services = { path = "crates/miaominal-services" }
+miaominal-settings = { path = "crates/miaominal-settings", default-features = false }
+miaominal-storage = { path = "crates/miaominal-storage" }
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
 
 [package.metadata.bundle]
 identifier = "dev.akko.miaominal"

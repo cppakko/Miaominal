@@ -15,6 +15,7 @@ use gpui_component::{
     },
 };
 use miaominal_settings::{self, KeyBinding, ThemeId};
+use miaominal_ssh::SshBridgeStatus;
 use miaominal_sync::SyncProvider;
 
 pub(in crate::ui::shell) fn render_settings_page(
@@ -261,6 +262,132 @@ fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
                     )),
                 ]),
             SettingGroup::new()
+                .title(i18n::string("settings.connections.ssh_bridge.group.title"))
+                .description(i18n::string(
+                    "settings.connections.ssh_bridge.group.description",
+                ))
+                .items(vec![
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.mode.label"),
+                        SettingField::element(OpenSshIntegrationModeField::new(settings.clone())),
+                    )
+                    .description(i18n::string(
+                        "settings.connections.ssh_bridge.mode.description",
+                    )),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.status.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                render_text_action_field(
+                                    ssh_bridge_status_label(entity.read(cx).ssh_bridge_status()),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.endpoint.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                render_text_action_field(
+                                    entity.read(cx).ssh_bridge_endpoint(),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.config_path.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                render_text_action_field(
+                                    entity.read(cx).open_ssh_config_path(),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.profiles.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                let (exported, skipped) =
+                                    ssh_bridge_profile_counts(entity.read(cx));
+                                let exported = exported.to_string();
+                                let skipped = skipped.to_string();
+                                render_text_action_field(
+                                    i18n::string_args(
+                                        "settings.connections.ssh_bridge.profiles.value",
+                                        &[("exported", &exported), ("skipped", &skipped)],
+                                    ),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.active_clients.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                render_text_action_field(
+                                    ssh_bridge_active_clients(entity.read(cx).ssh_bridge_status())
+                                        .to_string(),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.credentials.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                let key = ssh_bridge_credentials_key(
+                                    entity.read(cx).local_vault_status(),
+                                );
+                                render_text_action_field(i18n::string(key), None)
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.validation.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                let diagnostics =
+                                    entity.read(cx).ssh_bridge_validation_diagnostics();
+                                let value = if diagnostics.is_empty() {
+                                    i18n::string("settings.connections.ssh_bridge.validation.ready")
+                                } else {
+                                    let count = diagnostics.len().to_string();
+                                    i18n::string_args(
+                                        "settings.connections.ssh_bridge.validation.skipped",
+                                        &[("count", &count), ("error", &diagnostics[0])],
+                                    )
+                                };
+                                render_text_action_field(value, None)
+                            }
+                        }),
+                    ),
+                    SettingItem::new(
+                        i18n::string("settings.connections.ssh_bridge.last_error.label"),
+                        SettingField::render({
+                            let entity = settings.clone();
+                            move |_, _, cx| {
+                                render_text_action_field(
+                                    ssh_bridge_last_error(entity.read(cx).ssh_bridge_status()),
+                                    None,
+                                )
+                            }
+                        }),
+                    ),
+                ]),
+            SettingGroup::new()
                 .title(i18n::string("settings.proxies.group.title"))
                 .description(i18n::string("settings.proxies.group.description"))
                 .item(
@@ -293,6 +420,161 @@ fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
                     )),
                 ]),
         ])
+}
+
+#[derive(Clone)]
+struct OpenSshIntegrationModeField {
+    controller: Entity<SettingsController>,
+}
+
+impl OpenSshIntegrationModeField {
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
+    }
+}
+
+impl SettingFieldElement for OpenSshIntegrationModeField {
+    type Element = AnyElement;
+
+    fn render_field(
+        &self,
+        options: &RenderOptions,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Self::Element {
+        let select = self
+            .controller
+            .read(cx)
+            .forms
+            .open_ssh_integration_mode_select
+            .clone();
+        md3_select(&select)
+            .with_size(options.size)
+            .w_full()
+            .into_any_element()
+    }
+}
+
+fn ssh_bridge_status_label(status: &SshBridgeStatus) -> String {
+    i18n::string(ssh_bridge_status_key(status))
+}
+
+fn ssh_bridge_status_key(status: &SshBridgeStatus) -> &'static str {
+    match status {
+        SshBridgeStatus::Disabled => "settings.connections.ssh_bridge.states.disabled",
+        SshBridgeStatus::Starting => "settings.connections.ssh_bridge.states.starting",
+        SshBridgeStatus::Running { .. } => "settings.connections.ssh_bridge.states.running",
+        SshBridgeStatus::Stopping => "settings.connections.ssh_bridge.states.stopping",
+        SshBridgeStatus::Error { .. } => "settings.connections.ssh_bridge.states.error",
+    }
+}
+
+fn ssh_bridge_profile_counts(controller: &SettingsController) -> (usize, usize) {
+    ssh_bridge_profile_counts_from(
+        controller.ssh_bridge_status(),
+        controller.ssh_bridge_sync_result(),
+    )
+}
+
+fn ssh_bridge_profile_counts_from(
+    status: &SshBridgeStatus,
+    sync_result: Option<&miaominal_ssh::SshBridgeSyncResult>,
+) -> (usize, usize) {
+    match status {
+        SshBridgeStatus::Running {
+            exported_profile_count,
+            skipped_profile_count,
+            ..
+        } => (*exported_profile_count, *skipped_profile_count),
+        _ => sync_result
+            .map(|result| (result.exported_profile_count, result.skipped_profile_count))
+            .unwrap_or((0, 0)),
+    }
+}
+
+fn ssh_bridge_credentials_key(status: LocalVaultStatus) -> &'static str {
+    match status {
+        LocalVaultStatus::Locked => "settings.connections.ssh_bridge.credentials.locked",
+        LocalVaultStatus::Disabled | LocalVaultStatus::Unlocked => {
+            "settings.connections.ssh_bridge.credentials.ready"
+        }
+    }
+}
+
+fn ssh_bridge_active_clients(status: &SshBridgeStatus) -> usize {
+    match status {
+        SshBridgeStatus::Running {
+            active_connection_count,
+            ..
+        } => *active_connection_count,
+        _ => 0,
+    }
+}
+
+fn ssh_bridge_last_error(status: &SshBridgeStatus) -> String {
+    match status {
+        SshBridgeStatus::Running {
+            last_error: Some(error),
+            ..
+        }
+        | SshBridgeStatus::Error { message: error, .. } => error.clone(),
+        _ => i18n::string("settings.connections.ssh_bridge.last_error.none"),
+    }
+}
+
+#[cfg(test)]
+mod ssh_bridge_tests {
+    use super::*;
+    use miaominal_ssh::{SshBridgeEndpoint, SshBridgeSyncResult};
+    use std::path::PathBuf;
+
+    fn running_status() -> SshBridgeStatus {
+        SshBridgeStatus::Running {
+            endpoint: SshBridgeEndpoint::WindowsNamedPipe(r"\\.\pipe\miaominal-test".into()),
+            exported_profile_count: 3,
+            skipped_profile_count: 2,
+            active_connection_count: 4,
+            last_error: Some("upstream unavailable".into()),
+        }
+    }
+
+    #[test]
+    fn bridge_status_render_helpers_map_counts_clients_and_errors() {
+        let status = running_status();
+        assert_eq!(
+            ssh_bridge_status_key(&status),
+            "settings.connections.ssh_bridge.states.running"
+        );
+        assert_eq!(ssh_bridge_profile_counts_from(&status, None), (3, 2));
+        assert_eq!(ssh_bridge_active_clients(&status), 4);
+        assert_eq!(ssh_bridge_last_error(&status), "upstream unavailable");
+
+        let sync = SshBridgeSyncResult {
+            config_path: PathBuf::from("config"),
+            known_hosts_path: PathBuf::from("known_hosts"),
+            exported_profile_count: 7,
+            skipped_profile_count: 1,
+        };
+        assert_eq!(
+            ssh_bridge_profile_counts_from(&SshBridgeStatus::Starting, Some(&sync)),
+            (7, 1)
+        );
+        assert_eq!(ssh_bridge_active_clients(&SshBridgeStatus::Stopping), 0);
+    }
+
+    #[test]
+    fn bridge_credential_readiness_distinguishes_locked_vaults() {
+        assert_eq!(
+            ssh_bridge_credentials_key(LocalVaultStatus::Locked),
+            "settings.connections.ssh_bridge.credentials.locked"
+        );
+        for status in [LocalVaultStatus::Disabled, LocalVaultStatus::Unlocked] {
+            assert_eq!(
+                ssh_bridge_credentials_key(status),
+                "settings.connections.ssh_bridge.credentials.ready"
+            );
+        }
+    }
 }
 
 #[derive(Clone)]

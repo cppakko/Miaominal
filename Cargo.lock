@@ -5263,6 +5263,11 @@ dependencies = [
  "material-colors",
  "miaominal-core",
  "miaominal-paths",
+ "miaominal-secrets",
+ "miaominal-services",
+ "miaominal-settings",
+ "miaominal-ssh",
+ "miaominal-storage",
  "miaominal-ui",
  "notify 8.2.0",
  "open",
@@ -5277,11 +5282,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sys-locale",
+ "tempfile",
  "time",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "unicode-segmentation",
  "uuid",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 
@@ -5358,6 +5365,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64",
+ "directories",
  "log",
  "miaominal-agent",
  "miaominal-core",
@@ -5369,10 +5377,12 @@ dependencies = [
  "miaominal-storage",
  "miaominal-sync",
  "rand 0.10.1",
+ "russh",
  "tempfile",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5417,13 +5427,18 @@ dependencies = [
  "httparse",
  "log",
  "miaominal-core",
+ "miaominal-paths",
  "miaominal-secrets",
  "miaominal-storage",
+ "rand 0.10.1",
  "russh",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tokio-socks",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5514,6 +5529,7 @@ dependencies = [
  "rust-embed",
  "serde_json",
  "settings",
+ "tempfile",
  "theme",
  "theme_settings",
  "time",

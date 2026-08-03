@@ -108,6 +108,60 @@ description = "Choose what happens when closing the last remaining tab in the to
 label = "When the last tab closes"
 description = "Either quit the application immediately or open a fresh Hosts home tab."
 
+[settings.connections.ssh_bridge.group]
+title = "OpenSSH integration"
+description = "Connect from VS Code Remote-SSH, scp, rsync, and other OpenSSH-based tools. Bridge is recommended when profiles use saved passwords, Miaominal jump chains, or SOCKS/HTTP proxies. Miaominal must remain running. Any permitted process running as the same OS user can request an exported profile connection while Bridge is enabled."
+
+[settings.connections.ssh_bridge.mode]
+label = "Integration mode"
+description = "Off removes this instance's generated include. Direct exports ordinary OpenSSH host settings. Bridge routes the complete SSH connection through Miaominal without exporting passwords or private keys."
+
+[settings.connections.ssh_bridge.modes]
+disabled = "Off"
+direct = "Direct"
+bridge = "Bridge (Recommended)"
+
+[settings.connections.ssh_bridge.status]
+label = "Bridge status"
+
+[settings.connections.ssh_bridge.states]
+disabled = "Disabled"
+starting = "Starting"
+running = "Running"
+stopping = "Stopping"
+error = "Error"
+
+[settings.connections.ssh_bridge.endpoint]
+label = "Private endpoint"
+
+[settings.connections.ssh_bridge.config_path]
+label = "Generated config"
+
+[settings.connections.ssh_bridge.profiles]
+label = "Exported profiles"
+value = "{exported} exported, {skipped} skipped"
+
+[settings.connections.ssh_bridge.active_clients]
+label = "Active clients"
+
+[settings.connections.ssh_bridge.credentials]
+label = "Credential readiness"
+ready = "Available credentials are checked when a new Bridge connection starts."
+locked = "The local vault is locked; profiles that require stored credentials will fail until it is unlocked."
+
+[settings.connections.ssh_bridge.validation]
+label = "Route validation"
+ready = "All saved SSH profile topologies are structurally valid."
+skipped = "{count} profile(s) skipped. First issue: {error}"
+
+[settings.connections.ssh_bridge.last_error]
+label = "Recent error"
+none = "No recent Bridge error."
+
+[settings.connections.ssh_bridge.notifications]
+mode_changed = "OpenSSH integration changed to {mode}."
+sync_failed = "Could not update the managed OpenSSH integration: {error}"
+
 [settings.connections.import_group]
 title = "Import profiles"
 description = "Import SSH profiles from other clients. Unsupported protocols such as RDP are detected and skipped automatically."

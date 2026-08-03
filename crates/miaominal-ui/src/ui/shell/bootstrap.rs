@@ -363,6 +363,8 @@ impl AppView {
                 terminal_focus,
                 local_vault_status,
                 auto_collect_session_monitoring,
+                ssh_bridge_service: services.ssh_bridge_service.clone(),
+                open_ssh_integration_service: services.open_ssh_integration_service.clone(),
             },
             AgentControllerArgs {
                 task_runtime: services.runtime.clone(),
@@ -399,6 +401,8 @@ impl AppView {
                 proxies: proxies.clone(),
                 settings_store,
                 secrets: services.secrets.clone(),
+                ssh_bridge_service: services.ssh_bridge_service.clone(),
+                open_ssh_integration_service: services.open_ssh_integration_service.clone(),
             },
             window,
             cx,

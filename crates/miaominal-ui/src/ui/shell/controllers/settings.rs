@@ -9,7 +9,7 @@ use crate::ui::shell::{
     monitor_history_duration_label, new_input_state, set_input_placeholder, set_input_value,
     theme_id_label, web_search_endpoint_placeholder, web_search_provider_kind_label_key,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
     UniformListScrollHandle, Window, rgb,
@@ -24,14 +24,15 @@ use miaominal_core::profile::ImportSourceKind;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
 use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
-    LocalVaultPassphraseChangeOutcome, LocalVaultTransition, ProxyPasswordUpdate, ProxyService,
-    SettingsService, SyncService,
+    LocalVaultPassphraseChangeOutcome, LocalVaultTransition, OpenSshIntegrationService,
+    ProxyPasswordUpdate, ProxyService, SettingsService, SshBridgeService, SyncService,
 };
 use miaominal_settings::{
     AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
-    LocalVaultAutoLockDuration, MonitorHistoryDuration, TerminalKeyBindings,
-    TerminalRightClickBehavior, ThemeId, WebSearchProviderKind,
+    LocalVaultAutoLockDuration, MonitorHistoryDuration, OpenSshIntegrationMode,
+    TerminalKeyBindings, TerminalRightClickBehavior, ThemeId, WebSearchProviderKind,
 };
+use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::{
     ProxyStore, SettingsStore,
     config_store::store::{SessionStore, SnippetStore},
@@ -40,6 +41,51 @@ use miaominal_storage::{
 use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus, engine::SyncEngine};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle as TokioHandle;
+
+fn open_ssh_integration_mode_label(mode: OpenSshIntegrationMode) -> String {
+    i18n::string(match mode {
+        OpenSshIntegrationMode::Disabled => "settings.connections.ssh_bridge.modes.disabled",
+        OpenSshIntegrationMode::Direct => "settings.connections.ssh_bridge.modes.direct",
+        OpenSshIntegrationMode::Bridge => "settings.connections.ssh_bridge.modes.bridge",
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SshBridgeLifecycleAction {
+    Enable,
+    Disable,
+}
+
+fn ssh_bridge_lifecycle_action(mode: OpenSshIntegrationMode) -> SshBridgeLifecycleAction {
+    match mode {
+        OpenSshIntegrationMode::Bridge => SshBridgeLifecycleAction::Enable,
+        OpenSshIntegrationMode::Disabled | OpenSshIntegrationMode::Direct => {
+            SshBridgeLifecycleAction::Disable
+        }
+    }
+}
+
+fn apply_open_ssh_integration_mode_change(
+    settings_store: &mut SettingsStore,
+    integration_service: &OpenSshIntegrationService,
+    mode: OpenSshIntegrationMode,
+) -> Result<SshBridgeSyncResult> {
+    let previous = settings_store.settings().open_ssh_integration_mode;
+    let result = integration_service.set_mode(mode)?;
+    let mut next = settings_store.settings().clone();
+    next.open_ssh_integration_mode = mode;
+    if let Err(error) = settings_store.replace(next) {
+        return match integration_service.set_mode(previous) {
+            Ok(_) => Err(anyhow!(
+                "failed to persist OpenSSH integration mode; restored {previous:?}: {error}"
+            )),
+            Err(rollback_error) => Err(anyhow!(
+                "failed to persist OpenSSH integration mode: {error}; failed to restore {previous:?}: {rollback_error}"
+            )),
+        };
+    }
+    Ok(result)
+}
 
 fn select_ai_provider_setting(settings: &mut AppSettings, provider_id: &str) -> bool {
     let is_available = settings.ai_providers.iter().any(|provider| {
@@ -383,6 +429,8 @@ pub(in crate::ui::shell) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<MonitorHistoryDuration>>>>,
     pub(in crate::ui::shell) terminal_right_click_behavior_select:
         Entity<SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>>,
+    pub(in crate::ui::shell) open_ssh_integration_mode_select:
+        Entity<SelectState<Vec<SelectOption<OpenSshIntegrationMode>>>>,
     pub(in crate::ui::shell) profile_import_source_select:
         Entity<SelectState<Vec<SelectOption<ImportSourceKind>>>>,
     pub(in crate::ui::shell) sync_provider_select:
@@ -445,6 +493,8 @@ pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub proxies: Vec<ProxyProfile>,
     pub settings_store: SettingsStore,
     pub secrets: SecretStore,
+    pub ssh_bridge_service: SshBridgeService,
+    pub open_ssh_integration_service: OpenSshIntegrationService,
 }
 
 struct SettingsBootstrap {
@@ -467,6 +517,11 @@ pub(in crate::ui::shell) struct SettingsController {
     proxy_password_clear_requested: bool,
     settings_store: SettingsStore,
     secrets: SecretStore,
+    ssh_bridge_service: SshBridgeService,
+    open_ssh_integration_service: OpenSshIntegrationService,
+    ssh_bridge_status: SshBridgeStatus,
+    ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
+    ssh_bridge_status_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) forms: SettingsForms,
     sync: SyncUiState,
     onboarding: OnboardingState,
@@ -611,6 +666,18 @@ impl SettingsController {
             .iter()
             .position(|behavior| *behavior.value() == settings.terminal_right_click_behavior)
             .map(|index| IndexPath::default().row(index));
+        let open_ssh_integration_mode_options = [
+            OpenSshIntegrationMode::Disabled,
+            OpenSshIntegrationMode::Direct,
+            OpenSshIntegrationMode::Bridge,
+        ]
+        .into_iter()
+        .map(|mode| SelectOption::new(mode, open_ssh_integration_mode_label(mode)))
+        .collect::<Vec<_>>();
+        let selected_open_ssh_integration_mode = open_ssh_integration_mode_options
+            .iter()
+            .position(|mode| *mode.value() == settings.open_ssh_integration_mode)
+            .map(|index| IndexPath::default().row(index));
         let profile_import_source_options = [
             ImportSourceKind::OpenSshConfig,
             ImportSourceKind::PuttyRegistry,
@@ -724,6 +791,14 @@ impl SettingsController {
                 SelectState::new(
                     terminal_right_click_behavior_options,
                     selected_terminal_right_click_behavior,
+                    window,
+                    cx,
+                )
+            }),
+            open_ssh_integration_mode_select: cx.new(|cx| {
+                SelectState::new(
+                    open_ssh_integration_mode_options,
+                    selected_open_ssh_integration_mode,
                     window,
                     cx,
                 )
@@ -1159,6 +1234,7 @@ impl SettingsController {
         let monitor_history_select = forms.monitor_history_select.clone();
         let terminal_right_click_behavior_select =
             forms.terminal_right_click_behavior_select.clone();
+        let open_ssh_integration_mode_select = forms.open_ssh_integration_mode_select.clone();
         let sync_provider_select = forms.sync_provider_select.clone();
         let ai_provider_select = forms.ai_provider_select.clone();
         let ai_provider_kind_select = forms.ai_provider_kind_select.clone();
@@ -1252,6 +1328,15 @@ impl SettingsController {
                     };
                     cx.emit(AppCommand::Feedback(message));
                     cx.notify();
+                }
+            },
+        );
+        let open_ssh_integration_mode_subscription = cx.subscribe(
+            &open_ssh_integration_mode_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(mode) = selected.as_ref().copied() {
+                    this.set_open_ssh_integration_mode(mode, cx);
                 }
             },
         );
@@ -1383,7 +1468,9 @@ impl SettingsController {
                 }
             });
 
-        Self {
+        let ssh_bridge_status = args.ssh_bridge_service.status();
+        let ssh_bridge_sync_result = args.open_ssh_integration_service.last_sync_result();
+        let mut controller = Self {
             runtime: args.runtime,
             session_store: args.session_store,
             snippet_store: args.snippet_store,
@@ -1396,6 +1483,11 @@ impl SettingsController {
             proxy_password_clear_requested: false,
             settings_store: args.settings_store,
             secrets: args.secrets,
+            ssh_bridge_service: args.ssh_bridge_service,
+            open_ssh_integration_service: args.open_ssh_integration_service,
+            ssh_bridge_status,
+            ssh_bridge_sync_result,
+            ssh_bridge_status_task: None,
             forms,
             sync: bootstrap.sync,
             onboarding: bootstrap.onboarding,
@@ -1439,6 +1531,7 @@ impl SettingsController {
                 local_vault_auto_lock_duration_subscription,
                 monitor_history_subscription,
                 terminal_right_click_behavior_subscription,
+                open_ssh_integration_mode_subscription,
                 sync_provider_select_subscription,
                 ai_provider_select_subscription,
                 ai_provider_kind_subscription,
@@ -1452,7 +1545,32 @@ impl SettingsController {
                 proxy_protocol_subscription,
                 proxy_auth_mode_subscription,
             ],
-        }
+        };
+        controller.ssh_bridge_status_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                if this
+                    .update(cx, |controller, cx| {
+                        let status = controller.ssh_bridge_service.status();
+                        let sync_result =
+                            controller.open_ssh_integration_service.last_sync_result();
+                        if status != controller.ssh_bridge_status
+                            || sync_result != controller.ssh_bridge_sync_result
+                        {
+                            controller.ssh_bridge_status = status;
+                            controller.ssh_bridge_sync_result = sync_result;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+        controller
     }
 
     pub(in crate::ui::shell) fn settings_store(&self) -> SettingsStore {
@@ -1480,6 +1598,87 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn settings(&self) -> &AppSettings {
         self.settings_store.settings()
+    }
+
+    pub(in crate::ui::shell) fn ssh_bridge_status(&self) -> &SshBridgeStatus {
+        &self.ssh_bridge_status
+    }
+
+    pub(in crate::ui::shell) fn ssh_bridge_sync_result(&self) -> Option<&SshBridgeSyncResult> {
+        self.ssh_bridge_sync_result.as_ref()
+    }
+
+    pub(in crate::ui::shell) fn ssh_bridge_endpoint(&self) -> String {
+        self.ssh_bridge_service.endpoint().to_string()
+    }
+
+    pub(in crate::ui::shell) fn open_ssh_config_path(&self) -> String {
+        self.ssh_bridge_sync_result
+            .as_ref()
+            .map(|result| result.config_path.display().to_string())
+            .unwrap_or_else(|| {
+                self.open_ssh_integration_service
+                    .config_path()
+                    .display()
+                    .to_string()
+            })
+    }
+
+    pub(in crate::ui::shell) fn ssh_bridge_validation_diagnostics(&self) -> Vec<String> {
+        self.ssh_bridge_service.route_refresh().diagnostics
+    }
+
+    pub(in crate::ui::shell) fn set_open_ssh_integration_mode(
+        &mut self,
+        mode: OpenSshIntegrationMode,
+        cx: &mut Context<Self>,
+    ) {
+        let previous = self.settings_store.settings().open_ssh_integration_mode;
+        if previous == mode {
+            return;
+        }
+        let result = match apply_open_ssh_integration_mode_change(
+            &mut self.settings_store,
+            &self.open_ssh_integration_service,
+            mode,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                self.ssh_bridge_sync_result = self.open_ssh_integration_service.last_sync_result();
+                let message = error.to_string();
+                cx.emit(AppCommand::Feedback(i18n::string_args(
+                    "settings.connections.ssh_bridge.notifications.sync_failed",
+                    &[("error", &message)],
+                )));
+                if let Some(window_handle) = cx.active_window() {
+                    let select = self.forms.open_ssh_integration_mode_select.clone();
+                    let _ = window_handle.update(cx, move |_, window, cx| {
+                        select.update(cx, |select, cx| {
+                            select.set_selected_value(&previous, window, cx);
+                        });
+                    });
+                }
+                cx.notify();
+                return;
+            }
+        };
+
+        self.ssh_bridge_sync_result = Some(result);
+        let bridge = self.ssh_bridge_service.clone();
+        bridge.set_desired_enabled(matches!(
+            ssh_bridge_lifecycle_action(mode),
+            SshBridgeLifecycleAction::Enable
+        ));
+        self.runtime.spawn(async move {
+            if let Err(error) = bridge.reconcile_desired_state().await {
+                log::warn!("failed to reconcile SSH Bridge lifecycle: {error:?}");
+            }
+        });
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "settings.connections.ssh_bridge.notifications.mode_changed",
+            &[("mode", &open_ssh_integration_mode_label(mode))],
+        )));
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn proxies(&self) -> &[ProxyProfile] {
@@ -2336,6 +2535,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         self.secrets = secrets;
+        self.ssh_bridge_service
+            .replace_secrets(self.secrets.clone());
         self.local_vault_status = local_vault_status;
         if let Some(proxy_store) = &self.proxy_store {
             match proxy_store.load(&self.secrets) {
@@ -2358,7 +2559,11 @@ impl EventEmitter<AppCommand> for SettingsController {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_settings::AiProviderConfig;
+    use miaominal_core::profile::SessionProfile;
+    use miaominal_settings::{AiProviderConfig, SshBridgeConfig};
+    use miaominal_ssh::SshBridgeEndpoint;
+    use miaominal_storage::KnownHostsStore;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn portable_onboarding_inserts_security_before_import() {
@@ -2426,6 +2631,135 @@ mod tests {
             LocalVaultStatus::Unlocked,
             OnboardingStep::Security
         ));
+    }
+
+    #[test]
+    fn bridge_lifecycle_follows_open_ssh_integration_mode() {
+        assert_eq!(
+            ssh_bridge_lifecycle_action(OpenSshIntegrationMode::Bridge),
+            SshBridgeLifecycleAction::Enable
+        );
+        for mode in [
+            OpenSshIntegrationMode::Disabled,
+            OpenSshIntegrationMode::Direct,
+        ] {
+            assert_eq!(
+                ssh_bridge_lifecycle_action(mode),
+                SshBridgeLifecycleAction::Disable
+            );
+        }
+    }
+
+    #[test]
+    fn failed_mode_persistence_rolls_back_projection_and_in_memory_settings() {
+        let runtime = Runtime::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let settings_directory = tempfile::tempdir().unwrap();
+        let endpoint = SshBridgeEndpoint::derive(root.path()).unwrap();
+        let instance_id = SshBridgeEndpoint::instance_id(root.path()).unwrap();
+        let bridge = SshBridgeService::new(
+            runtime.handle().clone(),
+            endpoint,
+            instance_id.clone(),
+            ssh.path()
+                .join("miaominal")
+                .join(&instance_id)
+                .join("bridge_known_hosts"),
+            SshBridgeConfig::default(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
+        );
+        let integration =
+            OpenSshIntegrationService::new(bridge, ssh.path().to_path_buf(), instance_id);
+        let mut profile = SessionProfile::blank("production", 1);
+        profile.name = "Production".into();
+        profile.host = "example.com".into();
+        profile.username = "akko".into();
+        integration
+            .sync(OpenSshIntegrationMode::Disabled, vec![profile], vec![])
+            .unwrap();
+
+        let settings_path = settings_directory.path().join("settings.toml");
+        let mut settings_store = SettingsStore::load_with_path(settings_path.clone()).unwrap();
+        std::fs::create_dir(&settings_path).unwrap();
+        let error = apply_open_ssh_integration_mode_change(
+            &mut settings_store,
+            &integration,
+            OpenSshIntegrationMode::Bridge,
+        )
+        .expect_err("a settings path occupied by a directory must fail persistence");
+
+        assert!(error.to_string().contains("restored Disabled"));
+        assert_eq!(
+            settings_store.settings().open_ssh_integration_mode,
+            OpenSshIntegrationMode::Disabled
+        );
+        assert_eq!(integration.mode(), OpenSshIntegrationMode::Disabled);
+        assert!(!integration.config_path().exists());
+        assert_eq!(
+            std::fs::read_to_string(ssh.path().join("config")).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn failed_bridge_disable_persistence_restores_running_host_key_sidecar() {
+        let runtime = Runtime::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let settings_directory = tempfile::tempdir().unwrap();
+        let endpoint = SshBridgeEndpoint::derive(root.path()).unwrap();
+        let instance_id = SshBridgeEndpoint::instance_id(root.path()).unwrap();
+        let known_hosts_path = ssh
+            .path()
+            .join("miaominal")
+            .join(&instance_id)
+            .join("bridge_known_hosts");
+        let bridge = SshBridgeService::new(
+            runtime.handle().clone(),
+            endpoint,
+            instance_id.clone(),
+            known_hosts_path.clone(),
+            SshBridgeConfig::default(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
+        );
+        let integration =
+            OpenSshIntegrationService::new(bridge.clone(), ssh.path().to_path_buf(), instance_id);
+        let mut profile = SessionProfile::blank("production", 1);
+        profile.name = "Production".into();
+        profile.host = "example.com".into();
+        profile.username = "akko".into();
+        integration
+            .sync(OpenSshIntegrationMode::Bridge, vec![profile], vec![])
+            .unwrap();
+        runtime.block_on(bridge.enable()).unwrap();
+        let original_sidecar = std::fs::read(&known_hosts_path).unwrap();
+
+        let settings_path = settings_directory.path().join("settings.toml");
+        let mut settings_store = SettingsStore::load_with_path(settings_path.clone()).unwrap();
+        let mut bridge_settings = settings_store.settings().clone();
+        bridge_settings.open_ssh_integration_mode = OpenSshIntegrationMode::Bridge;
+        settings_store.replace(bridge_settings).unwrap();
+        std::fs::remove_file(&settings_path).unwrap();
+        std::fs::create_dir(&settings_path).unwrap();
+
+        let error = apply_open_ssh_integration_mode_change(
+            &mut settings_store,
+            &integration,
+            OpenSshIntegrationMode::Disabled,
+        )
+        .expect_err("a settings path occupied by a directory must fail persistence");
+
+        assert!(error.to_string().contains("restored Bridge"));
+        assert_eq!(
+            settings_store.settings().open_ssh_integration_mode,
+            OpenSshIntegrationMode::Bridge
+        );
+        assert_eq!(integration.mode(), OpenSshIntegrationMode::Bridge);
+        assert_eq!(std::fs::read(&known_hosts_path).unwrap(), original_sidecar);
+        runtime.block_on(bridge.disable());
     }
 
     #[test]

@@ -24,7 +24,10 @@ use miaominal_core::profile::{
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::{SecretKind, SecretStore};
-use miaominal_services::{ImportedProfilesResult, ProfileService, TerminalService};
+use miaominal_services::{
+    ImportedProfilesResult, OpenSshIntegrationService, ProfileService, SshBridgeService,
+    TerminalService,
+};
 use miaominal_ssh::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionConnection,
     SessionEventReceiver, SessionMonitorSnapshot,
@@ -565,6 +568,8 @@ pub(in crate::ui::shell) struct SessionControllerArgs {
     pub(in crate::ui::shell) terminal_focus: FocusHandle,
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
     pub(in crate::ui::shell) auto_collect_session_monitoring: bool,
+    pub(in crate::ui::shell) ssh_bridge_service: SshBridgeService,
+    pub(in crate::ui::shell) open_ssh_integration_service: OpenSshIntegrationService,
 }
 
 struct SessionFormsBundle {
@@ -582,6 +587,8 @@ struct SessionControllerServices {
     known_hosts: KnownHostsStore,
     local_vault_status: LocalVaultStatus,
     auto_collect_session_monitoring: Cell<bool>,
+    ssh_bridge_service: Option<SshBridgeService>,
+    open_ssh_integration_service: Option<OpenSshIntegrationService>,
 }
 
 #[derive(Default)]
@@ -1402,6 +1409,8 @@ impl SessionController {
                 known_hosts: args.known_hosts,
                 local_vault_status: args.local_vault_status,
                 auto_collect_session_monitoring: Cell::new(args.auto_collect_session_monitoring),
+                ssh_bridge_service: Some(args.ssh_bridge_service),
+                open_ssh_integration_service: Some(args.open_ssh_integration_service),
             },
             args.profiles,
             args.proxies,
@@ -1529,6 +1538,8 @@ impl SessionController {
                 ),
                 local_vault_status: LocalVaultStatus::Locked,
                 auto_collect_session_monitoring: Cell::new(false),
+                ssh_bridge_service: None,
+                open_ssh_integration_service: None,
             },
             profiles,
             Vec::new(),
@@ -1554,13 +1565,22 @@ impl SessionController {
         self.profiles.borrow()
     }
 
-    pub(in crate::ui::shell) fn profiles_mut(&self) -> RefMut<'_, Vec<SessionProfile>> {
-        self.profiles.borrow_mut()
+    pub(in crate::ui::shell) fn clear_managed_key_profile_references(&self, key_id: &str) -> bool {
+        let changed = {
+            let mut profiles = self.profiles.borrow_mut();
+            super::clear_managed_key_profile_references(&mut profiles, key_id)
+        };
+        if changed {
+            self.sync_port_profiles();
+            self.refresh_ssh_bridge_routes();
+        }
+        changed
     }
 
     pub(in crate::ui::shell) fn replace_profiles(&self, profiles: Vec<SessionProfile>) {
         *self.profiles.borrow_mut() = profiles;
         self.sync_port_profiles();
+        self.refresh_ssh_bridge_routes();
     }
 
     pub(in crate::ui::shell) fn proxies(&self) -> Ref<'_, Vec<ProxyProfile>> {
@@ -1570,6 +1590,7 @@ impl SessionController {
     pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
         *self.proxies.borrow_mut() = proxies;
         self.sync_port_proxies();
+        self.refresh_ssh_bridge_routes();
     }
 
     pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {
@@ -2637,7 +2658,10 @@ impl SessionController {
         batch: ImportedBatch,
     ) -> anyhow::Result<ImportedProfilesResult> {
         let service = self.profile_service();
-        service.import_profiles(&mut self.profiles.borrow_mut(), batch)
+        let result = service.import_profiles(&mut self.profiles.borrow_mut(), batch)?;
+        self.sync_port_profiles();
+        self.refresh_ssh_bridge_routes();
+        Ok(result)
     }
 
     fn group_value(&self, cx: &App) -> String {
@@ -3314,7 +3338,21 @@ impl SessionController {
     pub(in crate::ui::shell) fn persist_profiles(&self) -> anyhow::Result<()> {
         self.sync_port_profiles();
         self.profile_service()
-            .persist_sessions(&self.profiles.borrow())
+            .persist_sessions(&self.profiles.borrow())?;
+        self.refresh_ssh_bridge_routes();
+        Ok(())
+    }
+
+    fn refresh_ssh_bridge_routes(&self) {
+        let profiles = self.profiles.borrow().clone();
+        let proxies = self.proxies.borrow().clone();
+        if let Some(service) = &self.services.open_ssh_integration_service {
+            if let Err(error) = service.refresh(profiles, proxies) {
+                log::warn!("failed to refresh managed OpenSSH config: {error:?}");
+            }
+        } else if let Some(service) = &self.services.ssh_bridge_service {
+            service.refresh_routes(profiles, proxies);
+        }
     }
 
     pub(in crate::ui::shell) fn duplicate_port_forward_rule(
@@ -5485,6 +5523,9 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         self.services.secrets = secrets;
+        if let Some(service) = &self.services.ssh_bridge_service {
+            service.replace_secrets(self.services.secrets.clone());
+        }
         self.services.local_vault_status = local_vault_status;
         cx.notify();
     }

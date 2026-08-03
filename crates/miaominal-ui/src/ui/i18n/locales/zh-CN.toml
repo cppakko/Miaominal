@@ -104,6 +104,60 @@ description = "选择关闭顶部栏最后一个标签页时应用应执行的�
 label = "关闭最后一个标签页时"
 description = "可以直接退出应用，或者自动打开一个新的 Hosts 主页标签页。"
 
+[settings.connections.ssh_bridge.group]
+title = "OpenSSH 集成"
+description = "可从 VS Code Remote-SSH、scp、rsync 等 OpenSSH 工具连接。当配置使用已保存密码、Miaominal 跳板链或 SOCKS/HTTP 代理时，推荐使用 Bridge。Miaominal 必须保持运行。启用 Bridge 后，同一操作系统用户下获准访问本地端点的进程可以请求使用已导出的主机配置建立连接。"
+
+[settings.connections.ssh_bridge.mode]
+label = "集成模式"
+description = "关闭会移除当前实例生成的 Include；Direct 导出普通 OpenSSH 主机配置；Bridge 让完整 SSH 连接经过 Miaominal，且不会导出密码或私钥。"
+
+[settings.connections.ssh_bridge.modes]
+disabled = "关闭"
+direct = "Direct"
+bridge = "Bridge（推荐）"
+
+[settings.connections.ssh_bridge.status]
+label = "Bridge 状态"
+
+[settings.connections.ssh_bridge.states]
+disabled = "已关闭"
+starting = "启动中"
+running = "运行中"
+stopping = "停止中"
+error = "错误"
+
+[settings.connections.ssh_bridge.endpoint]
+label = "私有端点"
+
+[settings.connections.ssh_bridge.config_path]
+label = "生成的配置"
+
+[settings.connections.ssh_bridge.profiles]
+label = "导出的配置"
+value = "已导出 {exported} 个，跳过 {skipped} 个"
+
+[settings.connections.ssh_bridge.active_clients]
+label = "活动客户端"
+
+[settings.connections.ssh_bridge.credentials]
+label = "凭据就绪状态"
+ready = "每次建立新的 Bridge 连接时会检查所需凭据。"
+locked = "本地 Vault 已锁定；需要已保存凭据的配置会失败，直到 Vault 解锁。"
+
+[settings.connections.ssh_bridge.validation]
+label = "路由校验"
+ready = "所有已保存 SSH 配置的拓扑结构均有效。"
+skipped = "已跳过 {count} 个配置。首个问题：{error}"
+
+[settings.connections.ssh_bridge.last_error]
+label = "最近错误"
+none = "最近没有 Bridge 错误。"
+
+[settings.connections.ssh_bridge.notifications]
+mode_changed = "OpenSSH 集成已切换为 {mode}。"
+sync_failed = "无法更新托管的 OpenSSH 集成：{error}"
+
 [settings.connections.import_group]
 title = "导入配置"
 description = "从其他客户端导入 SSH 配置。像 RDP 这样的不支持协议会被自动识别并跳过。"

@@ -1037,8 +1037,10 @@ impl AppView {
     fn handle_managed_keys_change(&mut self, change: &ManagedKeysChange, cx: &mut Context<Self>) {
         if let ManagedKeysChange::Removed { key_id } = change {
             let sessions_changed = {
-                let mut profiles = self.controllers.session.read(cx).profiles_mut();
-                clear_managed_key_profile_references(&mut profiles, key_id)
+                self.controllers
+                    .session
+                    .read(cx)
+                    .clear_managed_key_profile_references(key_id)
             };
             let host_editor_forms = self.controllers.session.read(cx).host_editor_forms();
 
