@@ -4,13 +4,15 @@ use miaominal_core::profile::SessionProfile;
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::SecretStore;
+use miaominal_settings::{OpenSshIntegrationMode, SshBridgeConfig};
+use miaominal_ssh::SshBridgeEndpoint;
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, known_hosts_store::KnownHostsStore};
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::{AgentService, ChatService};
+use crate::{AgentService, ChatService, OpenSshIntegrationService, SshBridgeService};
 
 pub struct AppServices {
     pub runtime: TokioHandle,
@@ -21,6 +23,8 @@ pub struct AppServices {
     pub known_hosts: KnownHostsStore,
     pub keychain_store: Option<ManagedKeyStore>,
     pub agent_service: AgentService,
+    pub ssh_bridge_service: SshBridgeService,
+    pub open_ssh_integration_service: OpenSshIntegrationService,
 }
 
 pub struct LoadedAppData {
@@ -37,6 +41,7 @@ pub struct LoadedAppData {
 }
 
 impl AppServices {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: TokioHandle,
         session_store: Option<SessionStore>,
@@ -45,9 +50,44 @@ impl AppServices {
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
         keychain_store: Option<ManagedKeyStore>,
+        ssh_bridge_config: SshBridgeConfig,
     ) -> Self {
         let agent_service =
             AgentService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
+        let config_root = miaominal_paths::config_dir().unwrap_or_else(|_| {
+            std::env::temp_dir().join(format!("miaominal-{}", std::process::id()))
+        });
+        let endpoint = SshBridgeEndpoint::derive(&config_root).unwrap_or_else(|error| {
+            log::warn!("failed to derive SSH Bridge endpoint: {error:?}");
+            SshBridgeEndpoint::derive(
+                &std::env::temp_dir().join(format!("miaominal-bridge-{}", std::process::id())),
+            )
+            .expect("temporary SSH Bridge endpoint should be derivable")
+        });
+        let instance_id = SshBridgeEndpoint::instance_id(&config_root)
+            .unwrap_or_else(|_| format!("process-{}", std::process::id()));
+        let ssh_dir = OpenSshIntegrationService::current_user_ssh_dir().unwrap_or_else(|error| {
+            log::warn!("failed to locate OpenSSH config directory: {error:?}");
+            config_root.join("openssh")
+        });
+        let bridge_known_hosts_path = ssh_dir
+            .join("miaominal")
+            .join(&instance_id)
+            .join("bridge_known_hosts");
+        let ssh_bridge_service = SshBridgeService::new(
+            runtime.clone(),
+            endpoint,
+            instance_id.clone(),
+            bridge_known_hosts_path,
+            ssh_bridge_config,
+            secrets.clone(),
+            known_hosts.clone(),
+        );
+        let open_ssh_integration_service = OpenSshIntegrationService::new(
+            ssh_bridge_service.clone(),
+            ssh_dir,
+            instance_id.clone(),
+        );
         Self {
             runtime,
             session_store,
@@ -57,10 +97,17 @@ impl AppServices {
             known_hosts,
             keychain_store,
             agent_service,
+            ssh_bridge_service,
+            open_ssh_integration_service,
         }
     }
 
-    pub fn load(runtime: TokioHandle, local_vault_enabled: bool) -> LoadedAppData {
+    pub fn load(
+        runtime: TokioHandle,
+        local_vault_enabled: bool,
+        open_ssh_integration_mode: OpenSshIntegrationMode,
+        ssh_bridge_config: SshBridgeConfig,
+    ) -> LoadedAppData {
         let secrets = if local_vault_enabled {
             SecretStore::new_locked_vault()
         } else {
@@ -176,16 +223,38 @@ impl AppServices {
             .map(|warning| format!("{status_message} {warning}"))
             .unwrap_or(status_message);
 
+        let services = Self::new(
+            runtime,
+            session_store,
+            proxy_store,
+            snippet_store,
+            secrets,
+            known_hosts,
+            keychain_store,
+            ssh_bridge_config,
+        );
+        services
+            .ssh_bridge_service
+            .refresh_routes(sessions.clone(), proxies.clone());
+        if let Err(error) = services.open_ssh_integration_service.sync(
+            open_ssh_integration_mode,
+            sessions.clone(),
+            proxies.clone(),
+        ) {
+            log::warn!("failed to synchronize managed OpenSSH config: {error:?}");
+        }
+        if open_ssh_integration_mode == OpenSshIntegrationMode::Bridge {
+            let service = services.ssh_bridge_service.clone();
+            service.set_desired_enabled(true);
+            services.runtime.spawn(async move {
+                if let Err(error) = service.reconcile_desired_state().await {
+                    log::warn!("failed to restore SSH Bridge: {error:?}");
+                }
+            });
+        }
+
         LoadedAppData {
-            services: Self::new(
-                runtime,
-                session_store,
-                proxy_store,
-                snippet_store,
-                secrets,
-                known_hosts,
-                keychain_store,
-            ),
+            services,
             known_hosts_entries,
             managed_keys,
             chat_service,

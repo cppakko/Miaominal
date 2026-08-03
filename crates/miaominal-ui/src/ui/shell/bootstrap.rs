@@ -277,6 +277,8 @@ impl AppView {
         crate::ui::i18n::set_language(settings_store.settings().language);
         miaominal_settings::sync_component_theme(cx);
         let local_vault_enabled = settings_store.settings().local_vault_enabled;
+        let open_ssh_integration_mode = settings_store.settings().open_ssh_integration_mode;
+        let ssh_bridge_config = settings_store.settings().ssh_bridge.clone();
         let LoadedAppData {
             services,
             profiles,
@@ -289,7 +291,12 @@ impl AppView {
             chat_service,
             chat_sessions,
             mut status_message,
-        } = load_app_data(runtime, local_vault_enabled);
+        } = load_app_data(
+            runtime,
+            local_vault_enabled,
+            open_ssh_integration_mode,
+            ssh_bridge_config,
+        );
         let initialization_warning =
             miaominal_paths::initialization_outcome()
                 .ok()

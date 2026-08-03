@@ -5,6 +5,8 @@ use miaominal_storage::chat_store::ChatSessionRecord;
 pub(in crate::ui::shell) fn load_app_data(
     runtime: TokioHandle,
     local_vault_enabled: bool,
+    open_ssh_integration_mode: miaominal_settings::OpenSshIntegrationMode,
+    ssh_bridge_config: miaominal_settings::SshBridgeConfig,
 ) -> LoadedAppData {
     let LoadedServiceData {
         services,
@@ -17,7 +19,12 @@ pub(in crate::ui::shell) fn load_app_data(
         snippets,
         selected_profile,
         status_message,
-    } = AppServices::load(runtime, local_vault_enabled);
+    } = AppServices::load(
+        runtime,
+        local_vault_enabled,
+        open_ssh_integration_mode,
+        ssh_bridge_config,
+    );
 
     LoadedAppData {
         profiles: sessions,
