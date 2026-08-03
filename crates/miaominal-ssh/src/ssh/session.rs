@@ -1,9 +1,10 @@
-use super::auth::{authenticate_full, connect_local_agent_stream, hydrate_profile_from_secrets};
+use super::auth::connect_local_agent_stream;
 use super::forwarding::{
     ActiveLocalForward, ActiveRemoteForward, RemoteForwardTargets, emit_port_forward_notice,
     sync_port_forward_rules,
 };
 use super::monitor::{run_exec_command, run_exec_pty_command, run_monitor_loop};
+use super::profile_connector::{ConnectedSshRoute, ProfileConnector};
 use anyhow::{Context, Result, anyhow, bail};
 use miaominal_core::forwarding::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot,
@@ -274,16 +275,11 @@ impl SessionConnection {
     }
 }
 
-pub(super) struct ConnectedSession {
-    pub session: Arc<client::Handle<ClientHandler>>,
-    pub configured_port_forward_rules: Vec<PortForwardRule>,
-    pub remote_forward_targets: RemoteForwardTargets,
-    pub jump_sessions: Vec<Arc<client::Handle<ClientHandler>>>,
-}
+pub(super) type ConnectedSession = ConnectedSshRoute;
 
-struct ConnectedClient {
-    handle: client::Handle<ClientHandler>,
-    remote_forward_targets: RemoteForwardTargets,
+pub(super) struct ConnectedClient {
+    pub(super) handle: client::Handle<ClientHandler>,
+    pub(super) remote_forward_targets: RemoteForwardTargets,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,6 +395,7 @@ pub async fn execute_profile_command(
         let ConnectedSession {
             session,
             jump_sessions,
+            cleanup: _route_cleanup,
             ..
         } = connect_authenticated_session_internal(
             profile,
@@ -515,6 +512,7 @@ pub async fn execute_profile_pty_command(
         let ConnectedSession {
             session,
             jump_sessions,
+            cleanup: _route_cleanup,
             ..
         } = connect_authenticated_session_internal(
             profile,
@@ -573,6 +571,7 @@ pub(super) struct ClientHandler {
     pub(super) decision_inbox: Arc<Mutex<Option<oneshot::Receiver<HostKeyDecision>>>>,
     pub(super) remote_forward_targets: RemoteForwardTargets,
     pub(super) agent_forwarding_allowed: bool,
+    pub(super) strict_host_keys: bool,
 }
 
 async fn connect_agent_if_authorized<C, F, T, E>(
@@ -608,6 +607,23 @@ impl client::Handler for ClientHandler {
         let check = self
             .known_hosts
             .check(&self.host, self.port, server_public_key)?;
+
+        if self.strict_host_keys {
+            return match check {
+                HostKeyCheck::Match => Ok(true),
+                HostKeyCheck::Unknown => bail!(
+                    "host key for {}:{} is not trusted; connect once inside Miaominal to review and save it before using SSH Bridge",
+                    self.host,
+                    self.port
+                ),
+                HostKeyCheck::Mismatch { line } => bail!(
+                    "host key for {}:{} has changed (known_hosts line {}); SSH Bridge refuses to override a mismatched key",
+                    self.host,
+                    self.port,
+                    line
+                ),
+            };
+        }
 
         let prompt = match check {
             HostKeyCheck::Match => return Ok(true),
@@ -851,6 +867,7 @@ async fn run_session(
         mut configured_port_forward_rules,
         remote_forward_targets,
         jump_sessions,
+        cleanup: _route_cleanup,
     } = connect_authenticated_session_internal(
         profile.clone(),
         all_profiles,
@@ -1089,8 +1106,33 @@ fn build_client_handler(
             decision_inbox,
             remote_forward_targets: remote_forward_targets.clone(),
             agent_forwarding_allowed: profile.agent_forwarding,
+            strict_host_keys: false,
         },
         pending_decision,
+        remote_forward_targets,
+    )
+}
+
+pub(super) fn build_strict_client_handler(
+    profile: &SessionProfile,
+    known_hosts: KnownHostsStore,
+) -> (ClientHandler, RemoteForwardTargets) {
+    let (_decision_sender, decision_receiver) = oneshot::channel();
+    let (event_sender, event_receiver) = channel(1);
+    drop(event_receiver);
+    let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
+
+    (
+        ClientHandler {
+            known_hosts,
+            host: profile.host.clone(),
+            port: profile.port,
+            event_sender,
+            decision_inbox: Arc::new(Mutex::new(Some(decision_receiver))),
+            remote_forward_targets: remote_forward_targets.clone(),
+            agent_forwarding_allowed: false,
+            strict_host_keys: true,
+        },
         remote_forward_targets,
     )
 }
@@ -1149,167 +1191,12 @@ pub(super) async fn connect_authenticated_session_internal(
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
 ) -> Result<ConnectedSession> {
-    let profile = hydrate_profile_from_secrets(profile, &secrets);
-    let remote_label = profile.connection_label();
-    let entry_proxy =
-        crate::transport::resolve_entry_proxy(profile.entry_proxy_id.as_deref(), &all_proxies)?
-            .cloned();
-    let proxy_jump_profiles = connection::resolve_proxy_jump_profiles(&profile, &all_profiles)?
-        .into_iter()
-        .map(|profile| hydrate_profile_from_secrets(profile, &secrets))
-        .collect::<Vec<_>>();
-    let mut configured_port_forward_rules = profile.port_forwarding_rules.clone();
-    let config = connection::default_client_config();
-    let mut jump_sessions = Vec::new();
-
-    let (session, remote_forward_targets) = if let Some(first_hop) = proxy_jump_profiles.first() {
-        emit_status(
-            event_sender,
-            format!(
-                "Connecting to jump host 1/{}: {}",
-                proxy_jump_profiles.len(),
-                first_hop.connection_label()
-            ),
-        )
-        .await?;
-
-        let ConnectedClient {
-            handle: mut current_session,
-            remote_forward_targets: mut current_remote_forward_targets,
-        } = connect_profile_with_optional_proxy(
-            first_hop,
-            entry_proxy.as_ref(),
-            &secrets,
-            config.clone(),
-            known_hosts.clone(),
-            command_receiver,
-            event_sender,
-            &mut configured_port_forward_rules,
-        )
-        .await?;
-        emit_status(
-            event_sender,
-            format!("Authenticating jump host 1/{}", proxy_jump_profiles.len()),
-        )
-        .await?;
-        authenticate_full(
-            &mut current_session,
-            first_hop.clone(),
-            &secrets,
-            command_receiver,
-            event_sender,
-        )
-        .await?;
-        let mut current_session = Arc::new(current_session);
-
-        let mut remaining_chain: Vec<_> = proxy_jump_profiles.iter().skip(1).cloned().collect();
-        remaining_chain.push(profile);
-        let total_hops = proxy_jump_profiles.len();
-
-        for (index, next_profile) in remaining_chain.into_iter().enumerate() {
-            let is_target = index + 1 == total_hops;
-            let status = if is_target {
-                format!("Connecting to {remote_label} through ProxyJump")
-            } else {
-                format!(
-                    "Connecting to jump host {}/{}: {}",
-                    index + 2,
-                    total_hops,
-                    next_profile.connection_label()
-                )
-            };
-            emit_status(event_sender, status).await?;
-
-            let transport = current_session
-                .channel_open_direct_tcpip(
-                    next_profile.host.clone(),
-                    u32::from(next_profile.port),
-                    "127.0.0.1".to_string(),
-                    0,
-                )
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to open ProxyJump channel to {}:{}",
-                        next_profile.host, next_profile.port
-                    )
-                })?
-                .into_stream();
-
-            let ConnectedClient {
-                handle: mut next_session,
-                remote_forward_targets: next_remote_forward_targets,
-            } = connect_profile_stream(
-                &next_profile,
-                transport,
-                config.clone(),
-                known_hosts.clone(),
-                command_receiver,
-                event_sender,
-                &mut configured_port_forward_rules,
-            )
-            .await?;
-            emit_status(
-                event_sender,
-                if is_target {
-                    format!("Authenticating {remote_label}")
-                } else {
-                    format!("Authenticating jump host {}/{}", index + 2, total_hops)
-                },
-            )
-            .await?;
-            authenticate_full(
-                &mut next_session,
-                next_profile,
-                &secrets,
-                command_receiver,
-                event_sender,
-            )
-            .await?;
-
-            jump_sessions.push(current_session);
-            current_session = Arc::new(next_session);
-            current_remote_forward_targets = next_remote_forward_targets;
-        }
-
-        (current_session, current_remote_forward_targets)
-    } else {
-        emit_status(event_sender, format!("Connecting to {remote_label}")).await?;
-        let ConnectedClient {
-            handle: mut session,
-            remote_forward_targets,
-        } = connect_profile_with_optional_proxy(
-            &profile,
-            entry_proxy.as_ref(),
-            &secrets,
-            config,
-            known_hosts,
-            command_receiver,
-            event_sender,
-            &mut configured_port_forward_rules,
-        )
-        .await?;
-        emit_status(event_sender, format!("Authenticating {remote_label}")).await?;
-        authenticate_full(
-            &mut session,
-            profile,
-            &secrets,
-            command_receiver,
-            event_sender,
-        )
-        .await?;
-        (Arc::new(session), remote_forward_targets)
-    };
-
-    Ok(ConnectedSession {
-        session,
-        configured_port_forward_rules,
-        remote_forward_targets,
-        jump_sessions,
-    })
+    ProfileConnector::new(all_profiles, all_proxies, secrets, known_hosts)
+        .connect_interactive(profile, command_receiver, event_sender)
+        .await
 }
 
-async fn connect_profile_session(
+pub(super) async fn connect_profile_session(
     profile: &SessionProfile,
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
@@ -1342,7 +1229,7 @@ async fn connect_profile_session(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn connect_profile_with_optional_proxy(
+pub(super) async fn connect_profile_with_optional_proxy(
     profile: &SessionProfile,
     proxy: Option<&ProxyProfile>,
     secrets: &SecretStore,
@@ -1399,7 +1286,7 @@ async fn connect_profile_with_optional_proxy(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn connect_profile_stream<R>(
+pub(super) async fn connect_profile_stream<R>(
     profile: &SessionProfile,
     transport: R,
     config: Arc<client::Config>,
@@ -1435,7 +1322,7 @@ where
     })
 }
 
-async fn emit_status(event_sender: &SessionEventSender, message: String) -> Result<()> {
+pub(super) async fn emit_status(event_sender: &SessionEventSender, message: String) -> Result<()> {
     if event_sender
         .send(SessionEvent::Status(message))
         .await

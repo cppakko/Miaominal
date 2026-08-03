@@ -334,6 +334,7 @@ async fn run_port_forward_session(
         mut configured_port_forward_rules,
         remote_forward_targets,
         jump_sessions,
+        cleanup: _route_cleanup,
     } = connect_authenticated_session_internal(
         profile,
         all_profiles,

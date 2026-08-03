@@ -80,6 +80,56 @@ pub fn hydrate_profile_from_secrets(
     profile
 }
 
+pub(crate) fn validate_bridge_auth_material(
+    profile: &SessionProfile,
+    secrets: &SecretStore,
+) -> Result<()> {
+    match profile.effective_auth_method() {
+        AuthMethod::Password | AuthMethod::KeyboardInteractive => {
+            if profile.password.is_empty() {
+                if profile.has_stored_password {
+                    bail!("saved password is unavailable because the local vault is locked");
+                }
+                bail!("SSH Bridge requires an available password for this profile");
+            }
+        }
+        AuthMethod::KeyFile => {
+            let path = profile.private_key_path.trim();
+            if path.is_empty() {
+                bail!("SSH key file authentication requires a private key path");
+            }
+            if !Path::new(path).is_file() {
+                bail!("SSH private key file is unavailable: {path}");
+            }
+            if profile.passphrase.is_empty() && profile.has_stored_passphrase {
+                bail!(
+                    "saved private-key passphrase is unavailable because the local vault is locked"
+                );
+            }
+        }
+        AuthMethod::ManagedKey => {
+            let id = profile.managed_key_id.trim();
+            if id.is_empty() {
+                bail!("managed key authentication requires a managed key id");
+            }
+            match secrets.get(id, SecretKind::ManagedPrivateKey) {
+                Ok(Some(_)) => {}
+                Ok(None) => bail!("managed key {id} is missing from the local credential store"),
+                Err(error) if SecretStore::is_locked_error(&error) => {
+                    bail!("managed key {id} is unavailable because the local vault is locked")
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        AuthMethod::Agent => {
+            if profile.agent_identity.trim().is_empty() {
+                bail!("SSH agent authentication requires an agent identity");
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn authenticate<H>(
     session: &mut client::Handle<H>,
     profile: SessionProfile,
@@ -194,6 +244,81 @@ where
     } else {
         authenticate(session, profile, secrets).await
     }
+}
+
+pub(crate) async fn authenticate_bridge<H>(
+    session: &mut client::Handle<H>,
+    profile: SessionProfile,
+    secrets: &SecretStore,
+) -> Result<()>
+where
+    H: client::Handler<Error = anyhow::Error> + Send,
+{
+    if profile.effective_auth_method() != AuthMethod::KeyboardInteractive {
+        return authenticate(session, profile, secrets).await;
+    }
+
+    let username = profile.username.clone();
+    let password = profile.password.clone();
+    if password.is_empty() {
+        if profile.has_stored_password {
+            bail!("saved password is unavailable because the local vault is locked");
+        }
+        bail!("keyboard-interactive authentication requires a saved password for SSH Bridge");
+    }
+
+    authenticate_bridge_keyboard_interactive(session, username, password).await
+}
+
+async fn authenticate_bridge_keyboard_interactive<H>(
+    session: &mut client::Handle<H>,
+    username: String,
+    password: String,
+) -> Result<()>
+where
+    H: client::Handler<Error = anyhow::Error> + Send,
+{
+    use russh::client::KeyboardInteractiveAuthResponse;
+
+    let mut answered = false;
+    let mut response = session
+        .authenticate_keyboard_interactive_start(username, None)
+        .await
+        .context("SSH keyboard-interactive authentication failed")?;
+
+    loop {
+        match response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            KeyboardInteractiveAuthResponse::Failure { .. } => {
+                bail!("keyboard-interactive authentication was rejected by the server");
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                validate_bridge_keyboard_interactive_prompts(
+                    prompts.iter().map(|prompt| prompt.echo),
+                    answered,
+                )?;
+                answered = true;
+                response = session
+                    .authenticate_keyboard_interactive_respond(vec![password.clone()])
+                    .await
+                    .context("SSH keyboard-interactive authentication response failed")?;
+            }
+        }
+    }
+}
+
+fn validate_bridge_keyboard_interactive_prompts(
+    echoes: impl IntoIterator<Item = bool>,
+    already_answered: bool,
+) -> Result<()> {
+    let echoes = echoes.into_iter().collect::<Vec<_>>();
+    if already_answered || echoes.len() != 1 || echoes[0] {
+        bail!(
+            "SSH Bridge only supports one non-echoing keyboard-interactive password prompt; \
+             OTP and multi-question challenges are not supported"
+        );
+    }
+    Ok(())
 }
 
 async fn authenticate_keyboard_interactive_flow<H>(
@@ -450,4 +575,29 @@ pub(super) async fn connect_local_agent_stream() -> Result<LocalAgentTransport> 
 #[cfg(not(any(unix, windows)))]
 pub(super) async fn connect_local_agent_stream() -> Result<LocalAgentTransport> {
     bail!("local SSH agent access is not supported on this platform")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_bridge_keyboard_interactive_prompts;
+
+    #[test]
+    fn bridge_keyboard_interactive_accepts_one_hidden_prompt() {
+        validate_bridge_keyboard_interactive_prompts([false], false)
+            .expect("one hidden prompt should be accepted");
+    }
+
+    #[test]
+    fn bridge_keyboard_interactive_rejects_complex_challenges() {
+        for (echoes, already_answered) in [
+            (Vec::<bool>::new(), false),
+            (vec![true], false),
+            (vec![false, false], false),
+            (vec![false], true),
+        ] {
+            let error = validate_bridge_keyboard_interactive_prompts(echoes, already_answered)
+                .expect_err("complex keyboard-interactive challenge should fail");
+            assert!(error.to_string().contains("only supports one non-echoing"));
+        }
+    }
 }

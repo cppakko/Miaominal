@@ -11,10 +11,23 @@ futures.workspace = true
 httparse.workspace = true
 log.workspace = true
 miaominal-core = { path = "../miaominal-core" }
+miaominal-paths = { path = "../miaominal-paths" }
 miaominal-secrets = { path = "../miaominal-secrets" }
 miaominal-storage = { path = "../miaominal-storage" }
 russh.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util", "net"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util", "net"] }
 tokio-socks.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
