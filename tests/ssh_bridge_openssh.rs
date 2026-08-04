@@ -7,7 +7,7 @@ use miaominal_secrets::{
 use miaominal_services::{OpenSshIntegrationService, SshBridgeService};
 use miaominal_settings::{OpenSshIntegrationMode, SshBridgeConfig};
 use miaominal_ssh::SshBridgeEndpoint;
-use miaominal_storage::KnownHostsStore;
+use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
 use russh::server::{self, Auth};
 use russh::{Channel, ChannelId, Pty};
@@ -338,7 +338,7 @@ impl BridgeFixture {
             .join("miaominal")
             .join(&instance_id)
             .join("bridge_known_hosts");
-        let service = SshBridgeService::new(
+        let service = SshBridgeService::new_with_stores(
             TokioHandle::current(),
             endpoint,
             instance_id.clone(),
@@ -346,6 +346,10 @@ impl BridgeFixture {
             SshBridgeConfig::default(),
             secrets,
             known_hosts,
+            BridgeSecurityStore::open(&root.path().join("ssh_bridge_security.db"))
+                .map_err(|error| format!("{error:#}")),
+            BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
+                .map_err(|error| format!("{error:#}")),
         );
         let integration = OpenSshIntegrationService::new_with_executable(
             service.clone(),

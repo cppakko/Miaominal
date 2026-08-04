@@ -477,7 +477,7 @@ mod tests {
     use miaominal_secrets::SecretStore;
     use miaominal_settings::SshBridgeConfig;
     use miaominal_ssh::SshBridgeEndpoint;
-    use miaominal_storage::KnownHostsStore;
+    use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
     use tokio::runtime::Runtime;
 
     #[cfg(windows)]
@@ -550,7 +550,7 @@ mod tests {
     fn service(runtime: &Runtime, root: &Path, ssh_dir: &Path) -> OpenSshIntegrationService {
         let endpoint = SshBridgeEndpoint::derive(root).unwrap();
         let instance_id = SshBridgeEndpoint::instance_id(root).unwrap();
-        let bridge = SshBridgeService::new(
+        let bridge = SshBridgeService::new_with_stores(
             runtime.handle().clone(),
             endpoint,
             instance_id.clone(),
@@ -561,6 +561,10 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.join("upstream_known_hosts")),
+            BridgeSecurityStore::open(&root.join("ssh_bridge_security.db"))
+                .map_err(|error| format!("{error:#}")),
+            BridgeAuditLog::open(&root.join("ssh_bridge_audit.log"))
+                .map_err(|error| format!("{error:#}")),
         );
         OpenSshIntegrationService::new(bridge, ssh_dir.to_path_buf(), instance_id)
     }
