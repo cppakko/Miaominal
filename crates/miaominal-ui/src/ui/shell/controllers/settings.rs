@@ -1408,11 +1408,12 @@ impl SettingsController {
             return;
         }
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let Some(model) = self.ssh_bridge_notification_state.reconcile(snapshot, now) else {
+        let Some(mut model) = self.ssh_bridge_notification_state.reconcile(snapshot, now) else {
             self.close_bridge_security_notification_window(cx);
             self.ssh_bridge_notification_state.clear();
             return;
         };
+        model.vault_locked = self.local_vault_status == LocalVaultStatus::Locked;
 
         if app_foreground {
             self.close_bridge_security_notification_window(cx);
@@ -1474,10 +1475,18 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         self.ssh_bridge_notification_window = None;
-        cx.activate(true);
-        let _ = self
-            .ssh_bridge_notification_main_window
-            .update(cx, |_, window, _| window.activate_window());
+        let activates_main_window = matches!(
+            action,
+            BridgeSecurityNotificationAction::OpenSecurity
+                | BridgeSecurityNotificationAction::UnlockVault
+                | BridgeSecurityNotificationAction::ApproveAndUnlock
+        );
+        if activates_main_window {
+            cx.activate(true);
+            let _ = self
+                .ssh_bridge_notification_main_window
+                .update(cx, |_, window, _| window.activate_window());
+        }
         let request_still_pending = self
             .ssh_bridge_service
             .security_snapshot()
@@ -1502,10 +1511,22 @@ impl SettingsController {
             BridgeSecurityNotificationAction::UnlockVault => {
                 self.unlock_ssh_bridge_vault(cx);
             }
+            BridgeSecurityNotificationAction::Approve => {
+                self.approve_ssh_bridge_request(key.request_id, cx);
+            }
+            BridgeSecurityNotificationAction::ApproveAndUnlock => {
+                self.approve_ssh_bridge_request(key.request_id, cx);
+                self.unlock_ssh_bridge_vault(cx);
+            }
+            BridgeSecurityNotificationAction::Reject => {
+                self.reject_ssh_bridge_request(key.request_id, cx);
+            }
         }
-        cx.emit(AppCommand::SidebarSectionRequested(
-            SidebarSection::Settings,
-        ));
+        if activates_main_window {
+            cx.emit(AppCommand::SidebarSectionRequested(
+                SidebarSection::Settings,
+            ));
+        }
         cx.notify();
     }
 
@@ -2160,8 +2181,12 @@ impl SettingsController {
             )));
             return;
         };
-        let source =
-            bridge_security_display_text(request.peer.source_path().unwrap_or("unknown process"));
+        let source = bridge_security_display_text(
+            request
+                .peer
+                .application_source_path()
+                .unwrap_or("unknown process"),
+        );
         let profile_name = bridge_security_display_text(&request.profile_name);
         let reason = format!(
             "Allow SSH Bridge request {} to profile {} from {}",

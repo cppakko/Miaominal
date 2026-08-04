@@ -81,6 +81,86 @@ impl BridgePeerIdentity {
             .rev()
             .find_map(|process| process.executable_path.as_deref())
     }
+
+    pub fn application_source_path(&self) -> Option<&str> {
+        let mut processes = self
+            .process_chain
+            .iter()
+            .filter_map(|process| process.executable_path.as_deref());
+        let first = processes.next()?;
+        let mut candidates = Vec::with_capacity(self.process_chain.len());
+        if !is_bridge_helper_process(first) {
+            candidates.push(first);
+        }
+        candidates.extend(processes);
+
+        let mut shell_fallback = None;
+        let mut transport_fallback = None;
+        for path in candidates {
+            let name = executable_name(path);
+            if is_desktop_launcher(name) {
+                continue;
+            }
+            if is_ssh_transport(name) {
+                transport_fallback.get_or_insert(path);
+                continue;
+            }
+            if is_command_shell(name) {
+                shell_fallback.get_or_insert(path);
+                continue;
+            }
+            return Some(path);
+        }
+
+        shell_fallback
+            .or(transport_fallback)
+            .or_else(|| self.source_path())
+    }
+}
+
+fn executable_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+fn is_bridge_helper_process(path: &str) -> bool {
+    matches!(
+        executable_name(path).to_ascii_lowercase().as_str(),
+        "miaominal" | "miaominal.exe" | "miaominal-ssh-bridge-helper"
+    )
+}
+
+fn is_ssh_transport(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "ssh" | "ssh.exe" | "plink" | "plink.exe" | "dbclient" | "dbclient.exe"
+    )
+}
+
+fn is_command_shell(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "bash"
+            | "cmd"
+            | "cmd.exe"
+            | "fish"
+            | "nu"
+            | "nushell"
+            | "powershell"
+            | "powershell.exe"
+            | "pwsh"
+            | "pwsh.exe"
+            | "sh"
+            | "wsl"
+            | "wsl.exe"
+            | "zsh"
+    )
+}
+
+fn is_desktop_launcher(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "explorer" | "explorer.exe" | "init" | "launchd" | "systemd" | "userinit.exe"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,5 +337,68 @@ mod tests {
             ..BridgePeerIdentity::default()
         };
         assert_eq!(peer.source_path(), Some("outer-client"));
+    }
+
+    #[test]
+    fn application_source_prefers_vscode_over_ssh_and_explorer() {
+        let peer = peer_with_processes(&[
+            r"C:\Program Files\Miaominal\miaominal.exe",
+            r"C:\Windows\System32\OpenSSH\ssh.exe",
+            r"C:\Program Files\Microsoft VS Code\Code.exe",
+            r"C:\Windows\explorer.exe",
+        ]);
+        assert_eq!(
+            peer.application_source_path(),
+            Some(r"C:\Program Files\Microsoft VS Code\Code.exe")
+        );
+    }
+
+    #[test]
+    fn application_source_prefers_terminal_over_its_shell() {
+        let peer = peer_with_processes(&[
+            r"C:\Miaominal\miaominal.exe",
+            r"C:\Windows\System32\OpenSSH\ssh.exe",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\Program Files\WindowsApps\WindowsTerminal.exe",
+            r"C:\Windows\explorer.exe",
+        ]);
+        assert_eq!(
+            peer.application_source_path(),
+            Some(r"C:\Program Files\WindowsApps\WindowsTerminal.exe")
+        );
+    }
+
+    #[test]
+    fn application_source_falls_back_to_a_direct_shell_or_ssh() {
+        let shell =
+            peer_with_processes(&["miaominal", "/usr/bin/ssh", "/usr/bin/zsh", "/sbin/launchd"]);
+        assert_eq!(shell.application_source_path(), Some("/usr/bin/zsh"));
+
+        let ssh = peer_with_processes(&[
+            r"C:\Miaominal\miaominal.exe",
+            r"C:\Windows\System32\OpenSSH\ssh.exe",
+            r"C:\Windows\explorer.exe",
+        ]);
+        assert_eq!(
+            ssh.application_source_path(),
+            Some(r"C:\Windows\System32\OpenSSH\ssh.exe")
+        );
+    }
+
+    fn peer_with_processes(paths: &[&str]) -> BridgePeerIdentity {
+        BridgePeerIdentity {
+            process_chain: paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| BridgeProcessIdentity {
+                    pid: index as u32 + 1,
+                    parent_pid: None,
+                    started_at: None,
+                    executable_path: Some((*path).to_string()),
+                    capture_status: BridgeProcessCaptureStatus::Captured,
+                })
+                .collect(),
+            ..BridgePeerIdentity::default()
+        }
     }
 }

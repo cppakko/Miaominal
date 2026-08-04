@@ -92,7 +92,7 @@ pub fn configure_notification_window(window: &gpui::Window) -> anyhow::Result<()
         } else {
             let width = bounds.right.saturating_sub(bounds.left);
             let height = bounds.bottom.saturating_sub(bounds.top);
-            let corner_diameter = height.saturating_mul(40).checked_div(168).unwrap_or(40);
+            let corner_diameter = height.saturating_mul(40).checked_div(184).unwrap_or(40);
             let region = CreateRoundRectRgn(
                 0,
                 0,

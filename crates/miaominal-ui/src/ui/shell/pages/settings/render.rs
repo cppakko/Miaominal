@@ -943,7 +943,7 @@ fn render_ssh_bridge_pending(entity: Entity<SettingsController>, cx: &App) -> An
         .children(pending.into_iter().map(|request| {
             let source = request
                 .peer
-                .source_path()
+                .application_source_path()
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| {
                     i18n::string("settings.openssh_integration.security.unknown_source")

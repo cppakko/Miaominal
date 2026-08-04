@@ -154,7 +154,9 @@ pub(in crate::ui::shell) use state::{
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime};
-pub(in crate::ui::shell) use system_file_icons::render_system_file_icon;
+pub(in crate::ui::shell) use system_file_icons::{
+    render_system_file_icon, render_system_path_icon,
+};
 pub(in crate::ui::shell) use terminal::WorkspaceTerminalInputExt;
 use workspace::{
     ClosePlanStep, ClosedSftpTabState, ClosedTabBundle, PaneLayout, SplitAxis, SplitDirection,

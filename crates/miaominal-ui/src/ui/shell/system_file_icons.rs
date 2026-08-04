@@ -8,6 +8,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 pub(in crate::ui::shell) struct SystemFileIconKey {
     kind: SystemFileIconKind,
     extension: Option<String>,
+    path: Option<String>,
     is_directory: bool,
     size_px: u16,
     scale_bucket: u16,
@@ -34,7 +35,19 @@ impl SystemFileIconKey {
         Self {
             kind: SystemFileIconKind::from(row.kind),
             extension,
+            path: None,
             is_directory: row.is_directory,
+            size_px,
+            scale_bucket: scale_bucket(scale_factor),
+        }
+    }
+
+    fn for_path(path: &str, size_px: u16, scale_factor: f32) -> Self {
+        Self {
+            kind: SystemFileIconKind::File,
+            extension: extension_for_name(path),
+            path: Some(path.to_string()),
+            is_directory: false,
             size_px,
             scale_bucket: scale_bucket(scale_factor),
         }
@@ -105,6 +118,31 @@ pub(in crate::ui::shell) fn render_system_file_icon(
         .into_any_element()
 }
 
+pub(in crate::ui::shell) fn render_system_path_icon<T: 'static>(
+    path: &str,
+    icon_size: Pixels,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> Option<AnyElement> {
+    let key = SystemFileIconKey::for_path(
+        path,
+        f32::from(icon_size).round() as u16,
+        window.scale_factor(),
+    );
+
+    if let Some(icon) = cached_system_file_icon(&key) {
+        return Some(
+            img(icon.image)
+                .size(icon_size)
+                .flex_none()
+                .into_any_element(),
+        );
+    }
+
+    queue_system_path_icon_load(key, cx);
+    None
+}
+
 fn cached_system_file_icon(key: &SystemFileIconKey) -> Option<SystemFileIcon> {
     let cache = SYSTEM_FILE_ICON_CACHE.lock().ok()?;
     match cache.get(key) {
@@ -154,6 +192,47 @@ fn queue_system_file_icon_load(
             let _ = table.update(cx, |table, cx| {
                 table.refresh(cx);
             });
+        }
+    })
+    .detach();
+}
+
+fn queue_system_path_icon_load<T: 'static>(key: SystemFileIconKey, cx: &mut Context<T>) {
+    let should_load = {
+        let Ok(mut cache) = SYSTEM_FILE_ICON_CACHE.lock() else {
+            return;
+        };
+        match cache.entry(key.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(CacheEntry::Loading);
+                true
+            }
+            Entry::Occupied(_) => false,
+        }
+    };
+
+    if !should_load {
+        return;
+    }
+
+    cx.spawn(async move |entity, cx| {
+        let load_key = key.clone();
+        let icon = cx
+            .background_executor()
+            .spawn(async move { load_system_file_icon(&load_key) })
+            .await;
+
+        if let Ok(mut cache) = SYSTEM_FILE_ICON_CACHE.lock() {
+            cache.insert(
+                key,
+                icon.clone()
+                    .map(CacheEntry::Loaded)
+                    .unwrap_or(CacheEntry::Missing),
+            );
+        }
+
+        if icon.is_some() {
+            let _ = entity.update(cx, |_, cx| cx.notify());
         }
     })
     .detach();
@@ -216,7 +295,10 @@ mod platform {
     }
 
     fn query_shell_icon(key: &SystemFileIconKey, large: bool) -> Option<HICON> {
-        let mut path = if key.is_directory {
+        let exact_path = key.path.as_deref();
+        let mut path = if let Some(path) = exact_path {
+            path.to_string()
+        } else if key.is_directory {
             String::from("folder")
         } else if let Some(extension) = &key.extension {
             format!(".{extension}")
@@ -231,7 +313,10 @@ mod platform {
             FILE_ATTRIBUTE_NORMAL
         };
         let mut info = SHFILEINFOW::default();
-        let mut flags = SHGFI_ICON | SHGFI_USEFILEATTRIBUTES;
+        let mut flags = SHGFI_ICON;
+        if exact_path.is_none() {
+            flags |= SHGFI_USEFILEATTRIBUTES;
+        }
         flags |= if large {
             SHGFI_LARGEICON
         } else {
