@@ -269,6 +269,8 @@ mod tests {
         assert!(!serialized.contains("open_ssh_integration_mode"));
         assert!(!serialized.contains("ssh_bridge"));
         assert!(!serialized.contains("managed_open_ssh_integration_enabled"));
+        assert!(!serialized.contains("bridge_security_policy"));
+        assert!(!serialized.contains("bridge_audit_records"));
     }
 
     #[test]

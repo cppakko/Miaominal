@@ -5458,8 +5458,11 @@ dependencies = [
  "russh",
  "serde",
  "serde_json",
+ "tempfile",
+ "time",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5525,6 +5528,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "open",
+ "raw-window-handle",
  "rfd",
  "rust-embed",
  "serde_json",
