@@ -62,10 +62,15 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 mime_guess = "2.0.5"
 
 [target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6.2"
 windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Security_Credentials_UI",
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
+    "Win32_System_WinRT",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

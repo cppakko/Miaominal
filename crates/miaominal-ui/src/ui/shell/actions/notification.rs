@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::ui::i18n;
 use gpui_component::notification::Notification;
+use std::rc::Rc;
 
 const NOTIFICATION_CORNER_RADIUS: f32 = 20.0;
 const NOTIFICATION_ICON_SIZE: f32 = 28.0;
@@ -96,6 +97,104 @@ pub(in crate::ui::shell) fn warning_notification(
     message: impl Into<SharedString>,
 ) -> Notification {
     custom_notification(NotificationTone::Warning, title, message)
+}
+
+pub(in crate::ui::shell) fn warning_action_notification(
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+    action_label: impl Into<SharedString>,
+    on_action: impl Fn(&mut Window, &mut App) + 'static,
+) -> Notification {
+    let title = title.into();
+    let message = message.into();
+    let action_label = action_label.into();
+    let on_action: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(on_action);
+    let material = miaominal_settings::current_theme().material;
+    let roles = material.roles;
+    let accent = material.extended.warning.color;
+
+    style_notification(Notification::new().content(move |_, _, cx| {
+        let dismiss_entity = cx.entity().clone();
+        let dismiss_after_action = dismiss_entity.clone();
+        let on_action = on_action.clone();
+
+        v_flex()
+            .w_full()
+            .min_w(px(0.0))
+            .gap_3()
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .items_start()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(40.0))
+                            .rounded(px(999.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(color_with_alpha(accent, 0x20))
+                            .child(
+                                Icon::new(IconName::TriangleAlert)
+                                    .size(px(24.0))
+                                    .text_color(rgb(accent)),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .line_height(miaominal_settings::scaled_line_height(20.0))
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .line_height(miaominal_settings::scaled_line_height(20.0))
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(message.clone()),
+                            ),
+                    )
+                    .child(div().flex_none().child(icon_button(
+                        AppIcon::Close,
+                        NOTIFICATION_CLOSE_BUTTON_SIZE,
+                        NOTIFICATION_CLOSE_BUTTON_RADIUS,
+                        Some(roles.surface_container_low),
+                        Some(roles.on_surface_variant),
+                        None,
+                        move |window, cx| {
+                            dismiss_entity.update(cx, |this, cx| {
+                                this.dismiss(window, cx);
+                            });
+                        },
+                    ))),
+            )
+            .child(
+                h_flex().w_full().justify_end().child(
+                    basic_dialog_action_button(
+                        "ssh-bridge-security-notification-action",
+                        action_label.clone(),
+                        BasicDialogActionTone::Default,
+                    )
+                    .on_click(move |_, window, cx| {
+                        on_action(window, cx);
+                        dismiss_after_action.update(cx, |this, cx| {
+                            this.dismiss(window, cx);
+                        });
+                    }),
+                ),
+            )
+            .into_any_element()
+    }))
 }
 
 pub(in crate::ui::shell) fn validation_notification(

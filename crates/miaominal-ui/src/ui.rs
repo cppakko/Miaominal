@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod bridge_security_platform;
 pub(crate) mod components;
 pub mod i18n;
 mod shell;

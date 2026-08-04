@@ -45,6 +45,7 @@ mod app_view;
 mod bootstrap;
 mod bootstrap_loaders;
 mod bootstrap_subscriptions;
+mod bridge_security_notification;
 mod containers;
 mod controllers;
 mod forms;
@@ -86,7 +87,13 @@ pub(crate) use crate::ui::utils::{
 pub(in crate::ui::shell) use actions::{
     ValidationFailure, ValidationNotificationKind, ai_provider_kind_label_key,
     ai_provider_select_options, error_notification, success_notification, validation_notification,
-    warning_notification, web_search_endpoint_placeholder, web_search_provider_kind_label_key,
+    warning_action_notification, warning_notification, web_search_endpoint_placeholder,
+    web_search_provider_kind_label_key,
+};
+pub(in crate::ui::shell) use bridge_security_notification::{
+    BridgeSecurityNotificationAction, BridgeSecurityNotificationKey,
+    BridgeSecurityNotificationModel, BridgeSecurityNotificationState,
+    BridgeSecurityNotificationView, bridge_security_notification_window_options,
 };
 use containers::{AppViewSubscriptions, RootSubscriptions};
 use controllers::ControllerSet;
