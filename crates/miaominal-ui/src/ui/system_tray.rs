@@ -454,6 +454,7 @@ mod platform {
         }
         available.store(true, Ordering::Release);
 
+        let timer_available = Arc::clone(&available);
         gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
             for command in command_rx.try_iter() {
                 match command {
@@ -465,7 +466,7 @@ mod platform {
                         }
                     }
                     ThreadCommand::Shutdown => {
-                        available.store(false, Ordering::Release);
+                        timer_available.store(false, Ordering::Release);
                         gtk::main_quit();
                         return ControlFlow::Break;
                     }
