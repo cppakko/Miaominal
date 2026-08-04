@@ -32,11 +32,8 @@ impl BridgeAuditLog {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .with_context(|| format!("failed to open {}", path.display()))?;
+        let file = open_audit_file(path)?;
+        secure_rotated_audit_files(path)?;
         Ok(Self {
             state: std::sync::Arc::new(Mutex::new(AuditLogState {
                 path: path.to_path_buf(),
@@ -97,10 +94,7 @@ impl BridgeAuditLog {
             .map_err(|_| anyhow!("SSH Bridge audit log lock is poisoned"))?;
         if should_rotate(&state.file, line.len() as u64)? {
             rotate_logs(&state.path)?;
-            state.file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&state.path)
+            state.file = open_audit_file(&state.path)
                 .with_context(|| format!("failed to reopen {}", state.path.display()))?;
         }
         state
@@ -113,6 +107,149 @@ impl BridgeAuditLog {
             .context("failed to flush SSH Bridge audit log")?;
         Ok(())
     }
+}
+
+fn open_audit_file(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_APPEND_DATA, READ_CONTROL, WRITE_DAC};
+        options.access_mode(FILE_APPEND_DATA | READ_CONTROL | WRITE_DAC);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    secure_audit_file(&file, path)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn secure_audit_file(file: &File, path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to secure {}", path.display()))
+}
+
+#[cfg(windows)]
+fn secure_audit_file(file: &File, path: &Path) -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+        SetSecurityInfo,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    let sddl = "D:P(A;;FA;;;OW)(A;;FA;;;SY)"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut descriptor = std::ptr::null_mut();
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        )
+    };
+    if converted == 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!("failed to build security descriptor for {}", path.display())
+        });
+    }
+
+    let mut dacl_present = 0;
+    let mut dacl_defaulted = 0;
+    let mut dacl = std::ptr::null_mut();
+    let extracted = unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor,
+            &mut dacl_present,
+            &mut dacl,
+            &mut dacl_defaulted,
+        )
+    };
+    if extracted == 0 || dacl_present == 0 || dacl.is_null() {
+        unsafe {
+            LocalFree(descriptor);
+        }
+        let error = if extracted == 0 {
+            std::io::Error::last_os_error()
+        } else {
+            std::io::Error::other("security descriptor did not contain a DACL")
+        };
+        return Err(error).with_context(|| {
+            format!(
+                "failed to inspect security descriptor for {}",
+                path.display()
+            )
+        });
+    }
+
+    let status = unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null_mut(),
+        )
+    };
+    unsafe {
+        LocalFree(descriptor);
+    }
+    if status != ERROR_SUCCESS {
+        return Err(std::io::Error::from_raw_os_error(status as i32))
+            .with_context(|| format!("failed to secure {}", path.display()));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn secure_audit_file(_file: &File, _path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn secure_rotated_audit_files(path: &Path) -> Result<()> {
+    for index in 1..=AUDIT_LOG_MAX_ROTATED_FILES {
+        let rotated = rotated_path(path, index);
+        match open_audit_file_for_security(&rotated) {
+            Ok(file) => secure_audit_file(&file, &rotated)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to open {}", rotated.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn open_audit_file_for_security(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+
+    OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_audit_file_for_security(path: &Path) -> std::io::Result<File> {
+    File::open(path)
 }
 
 fn should_rotate(file: &File, incoming: u64) -> Result<bool> {
@@ -330,6 +467,92 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("request=after-rotation"));
         assert_eq!(content.lines().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_logs_remain_owner_only_after_open_and_rotation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audit.log");
+        std::fs::write(&path, "x".repeat(AUDIT_LOG_MAX_BYTES as usize)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let log = BridgeAuditLog::open(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        log.write_finished(&record("after-secure-rotation"))
+            .unwrap();
+
+        for secured_path in [&path, &rotated_path(&path, 1)] {
+            assert_eq!(
+                std::fs::metadata(secured_path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "{} must remain owner-only",
+                secured_path.display()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn audit_logs_use_a_protected_minimal_dacl_after_open_and_rotation() {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+        use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+        use windows_sys::Win32::Security::{
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl, SE_DACL_PROTECTED,
+        };
+
+        fn assert_restricted(path: &Path) {
+            let file = File::open(path).unwrap();
+            let mut dacl = std::ptr::null_mut();
+            let mut descriptor = std::ptr::null_mut();
+            let status = unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut dacl,
+                    std::ptr::null_mut(),
+                    &mut descriptor,
+                )
+            };
+            assert_eq!(status, ERROR_SUCCESS, "query ACL for {}", path.display());
+            assert!(!dacl.is_null(), "{} must have a DACL", path.display());
+            assert_eq!(unsafe { (*dacl).AceCount }, 2, "{}", path.display());
+
+            let mut control = 0;
+            let mut revision = 0;
+            let valid =
+                unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) };
+            assert_ne!(valid, 0, "query ACL protection for {}", path.display());
+            assert_ne!(control & SE_DACL_PROTECTED, 0, "{}", path.display());
+            unsafe {
+                LocalFree(descriptor);
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audit.log");
+        std::fs::write(&path, "x".repeat(AUDIT_LOG_MAX_BYTES as usize)).unwrap();
+
+        let log = BridgeAuditLog::open(&path).unwrap();
+        assert_restricted(&path);
+        log.write_finished(&record("after-secure-rotation"))
+            .unwrap();
+
+        assert_restricted(&path);
+        assert_restricted(&rotated_path(&path, 1));
     }
 
     #[test]

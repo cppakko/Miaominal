@@ -5,11 +5,13 @@ use miaominal_core::proxy::ProxyProfile;
 use miaominal_settings::OpenSshIntegrationMode;
 use miaominal_ssh::{SshBridgeRoute, SshBridgeSyncResult};
 use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 const INCLUDE_BEGIN_PREFIX: &str = "# BEGIN MIAOMINAL OPENSSH ";
 const INCLUDE_END_PREFIX: &str = "# END MIAOMINAL OPENSSH ";
+const ROOT_CONFIG_LOCK_FILE_NAME: &str = ".miaominal-config.lock";
 
 #[derive(Clone)]
 pub struct OpenSshIntegrationService {
@@ -185,41 +187,111 @@ impl OpenSshIntegrationService {
         }
         std::fs::create_dir_all(&self.ssh_dir)
             .with_context(|| format!("failed to create {}", self.ssh_dir.display()))?;
-        let existing = match std::fs::read_to_string(&root_config) {
-            Ok(existing) => existing,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(error).context("failed to read the OpenSSH config"),
-        };
+        let _update_lock = lock_root_config_updates(&self.ssh_dir)?;
         let begin = format!("{INCLUDE_BEGIN_PREFIX}{}", self.instance_id);
         let end = format!("{INCLUDE_END_PREFIX}{}", self.instance_id);
-        let mut lines = remove_managed_include_block(&existing, &begin, &end)?;
-        while lines.last().is_some_and(|line| line.trim().is_empty()) {
-            lines.pop();
-        }
-        if enabled {
-            let mut managed = vec![
-                begin,
-                format!(
-                    "Include {}",
-                    openssh_quote(&normalize_path(&self.config_path()))?
-                ),
-                "Host *".to_string(),
-                end,
-            ];
-            if !lines.is_empty() {
-                managed.push(String::new());
-                managed.extend(lines);
-            }
-            lines = managed;
-        }
-        let contents = if lines.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", lines.join("\n"))
-        };
-        miaominal_paths::atomic_write(root_config, contents.as_bytes())?;
-        Ok(())
+        update_root_config_atomically(&root_config, |existing| {
+            render_root_include_update(existing, &begin, &end, enabled, &self.config_path())
+        })
     }
+}
+
+fn lock_root_config_updates(ssh_dir: &Path) -> Result<File> {
+    let lock_path = ssh_dir.join(ROOT_CONFIG_LOCK_FILE_NAME);
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(&lock_path)
+        .with_context(|| format!("failed to open OpenSSH config lock {}", lock_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        lock.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to secure {}", lock_path.display()))?;
+    }
+    lock.lock().with_context(|| {
+        format!(
+            "failed to lock OpenSSH config update {}",
+            lock_path.display()
+        )
+    })?;
+    Ok(lock)
+}
+
+fn read_root_config(root_config: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(root_config) {
+        Ok(existing) => Ok(Some(existing)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("failed to read the OpenSSH config"),
+    }
+}
+
+fn update_root_config_atomically(
+    root_config: &Path,
+    mut render: impl FnMut(&str) -> Result<String>,
+) -> Result<()> {
+    update_root_config_with(root_config, &mut render, |path, contents| {
+        miaominal_paths::atomic_replace_and_read_previous(path, contents.as_bytes())
+    })
+}
+
+fn update_root_config_with(
+    root_config: &Path,
+    render: &mut impl FnMut(&str) -> Result<String>,
+    mut replace: impl FnMut(&Path, &str) -> Result<Option<Vec<u8>>>,
+) -> Result<()> {
+    let mut render_base = read_root_config(root_config)?;
+    let mut expected_at_path = render_base.clone();
+    loop {
+        let contents = render(render_base.as_deref().unwrap_or_default())?;
+        let previous = replace(root_config, &contents)?
+            .map(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("{} is not valid UTF-8", root_config.display()))
+            })
+            .transpose()?;
+        if previous == expected_at_path {
+            return Ok(());
+        }
+        render_base = previous;
+        expected_at_path = Some(contents);
+    }
+}
+
+fn render_root_include_update(
+    existing: &str,
+    begin: &str,
+    end: &str,
+    enabled: bool,
+    config_path: &Path,
+) -> Result<String> {
+    let mut lines = remove_managed_include_block(existing, begin, end)?;
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    if enabled {
+        let mut managed = vec![
+            begin.to_string(),
+            format!("Include {}", openssh_quote(&normalize_path(config_path))?),
+            "Host *".to_string(),
+            end.to_string(),
+        ];
+        if !lines.is_empty() {
+            managed.push(String::new());
+            managed.extend(lines);
+        }
+        lines = managed;
+    }
+    Ok(if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    })
 }
 
 fn remove_managed_include_block(existing: &str, begin: &str, end: &str) -> Result<Vec<String>> {
@@ -627,6 +699,73 @@ mod tests {
         assert_eq!(remaining.matches(INCLUDE_BEGIN_PREFIX).count(), 1);
         assert!(service_b.config_path().exists());
         assert!(!service_a.config_path().exists());
+    }
+
+    #[test]
+    fn concurrent_instances_preserve_both_managed_include_blocks() {
+        let runtime = Runtime::new().unwrap();
+        let root_a = tempfile::tempdir().unwrap();
+        let root_b = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let service_a = service(&runtime, root_a.path(), ssh.path());
+        let service_b = service(&runtime, root_b.path(), ssh.path());
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+
+        std::thread::scope(|scope| {
+            let barrier_a = barrier.clone();
+            let worker_a = service_a.clone();
+            scope.spawn(move || {
+                barrier_a.wait();
+                worker_a
+                    .sync(
+                        OpenSshIntegrationMode::Bridge,
+                        vec![profile("a", "A")],
+                        vec![],
+                    )
+                    .unwrap();
+            });
+            let barrier_b = barrier.clone();
+            let worker_b = service_b.clone();
+            scope.spawn(move || {
+                barrier_b.wait();
+                worker_b
+                    .sync(
+                        OpenSshIntegrationMode::Bridge,
+                        vec![profile("b", "B")],
+                        vec![],
+                    )
+                    .unwrap();
+            });
+            barrier.wait();
+        });
+
+        let root_config = std::fs::read_to_string(ssh.path().join("config")).unwrap();
+        assert_eq!(root_config.matches(INCLUDE_BEGIN_PREFIX).count(), 2);
+        assert!(root_config.contains(&service_a.instance_id));
+        assert!(root_config.contains(&service_b.instance_id));
+    }
+
+    #[test]
+    fn root_config_exchange_retries_from_the_version_written_during_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let root_config = directory.path().join("config");
+        std::fs::write(&root_config, "Host original\n").unwrap();
+        let mut injected = false;
+        let mut render = |existing: &str| Ok(format!("# managed\n{existing}"));
+        update_root_config_with(&root_config, &mut render, |path, contents| {
+            if !injected {
+                injected = true;
+                std::fs::write(path, "Host user-edit\n")?;
+            }
+            miaominal_paths::atomic_replace_and_read_previous(path, contents.as_bytes())
+        })
+        .unwrap();
+
+        assert!(injected);
+        assert_eq!(
+            std::fs::read_to_string(&root_config).unwrap(),
+            "# managed\nHost user-edit\n"
+        );
     }
 
     #[test]

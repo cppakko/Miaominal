@@ -532,13 +532,8 @@ impl SshBridgeService {
             return Err(error);
         }
         self.inner.status.send_replace(SshBridgeStatus::Starting);
-        let identity = match SshBridgeServerIdentity::generate(
-            &self.inner.instance_id,
-            self.inner.known_hosts_path.clone(),
-        )
-        .context("failed to initialize SSH Bridge host identity")
-        {
-            Ok(identity) => Arc::new(identity),
+        let listener = match SshBridgeListener::bind(&self.inner.endpoint).await {
+            Ok(listener) => listener,
             Err(error) => {
                 self.inner.status.send_replace(SshBridgeStatus::Error {
                     endpoint: Some(self.inner.endpoint.clone()),
@@ -547,8 +542,13 @@ impl SshBridgeService {
                 return Err(error);
             }
         };
-        let listener = match SshBridgeListener::bind(&self.inner.endpoint).await {
-            Ok(listener) => listener,
+        let identity = match SshBridgeServerIdentity::generate(
+            &self.inner.instance_id,
+            self.inner.known_hosts_path.clone(),
+        )
+        .context("failed to initialize SSH Bridge host identity")
+        {
+            Ok(identity) => Arc::new(identity),
             Err(error) => {
                 self.inner.status.send_replace(SshBridgeStatus::Error {
                     endpoint: Some(self.inner.endpoint.clone()),
@@ -1610,6 +1610,8 @@ fn classify_bridge_error(error: &anyhow::Error) -> &'static str {
     let message = error.to_string();
     if message.contains("unknown SSH Bridge route token") {
         "unknown_route"
+    } else if message.contains("SSH Bridge control frame timed out") {
+        "control_frame_timeout"
     } else if message.contains("malformed SSH Bridge")
         || message.contains("unsupported SSH Bridge protocol")
         || message.contains("control frame")
@@ -2717,12 +2719,14 @@ mod tests {
         service.enable().await.unwrap();
         service.enable().await.unwrap();
         assert!(matches!(service.status(), SshBridgeStatus::Running { .. }));
+        let known_hosts_path = directory.path().join("known_hosts");
+        let original_host_identity = std::fs::read(&known_hosts_path).unwrap();
 
         let competing = SshBridgeService::new_with_stores(
             runtime,
             endpoint,
             instance_id,
-            directory.path().join("other_known_hosts"),
+            known_hosts_path.clone(),
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("other_upstream_known_hosts")),
@@ -2731,6 +2735,11 @@ mod tests {
         );
         assert!(competing.enable().await.is_err());
         assert!(matches!(competing.status(), SshBridgeStatus::Error { .. }));
+        assert_eq!(
+            std::fs::read(&known_hosts_path).unwrap(),
+            original_host_identity,
+            "a competing instance must not replace the running bridge host key"
+        );
 
         service.disable().await;
         service.disable().await;

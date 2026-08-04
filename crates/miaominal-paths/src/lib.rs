@@ -1128,6 +1128,265 @@ pub fn atomic_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
     Ok(())
 }
 
+/// Atomically replace `path` and return the exact bytes that occupied the path
+/// at the replacement linearization point.
+///
+/// `None` means the destination did not exist and was created without
+/// overwriting another file. Callers can compare the returned value with the
+/// version used to produce `contents` and retry from the returned version when
+/// another process changed the file concurrently.
+pub fn atomic_replace_and_read_previous(
+    path: impl AsRef<Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<Option<Vec<u8>>> {
+    let path = path.as_ref();
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+
+    let temporary = prepare_atomic_replacement(path, contents.as_ref())?;
+    match temporary.persist_noclobber(path) {
+        Ok(file) => {
+            file.sync_all()
+                .with_context(|| format!("failed to sync {}", path.display()))?;
+            sync_parent_directory(parent)?;
+            Ok(None)
+        }
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let (file, replacement) = error
+                .file
+                .keep()
+                .map_err(|error| error.error)
+                .with_context(|| format!("failed to retain replacement for {}", path.display()))?;
+            drop(file);
+            exchange_existing_file(path, &replacement)
+        }
+        Err(error) => Err(error.error)
+            .with_context(|| format!("failed to create {} without overwriting it", path.display())),
+    }
+}
+
+fn prepare_atomic_replacement(path: &Path, contents: &[u8]) -> Result<tempfile::NamedTempFile> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+    let mut temporary = Builder::new()
+        .prefix(ATOMIC_TEMP_PREFIX)
+        .suffix(ATOMIC_TEMP_SUFFIX)
+        .tempfile_in(parent)
+        .with_context(|| format!("failed to create temporary file in {}", parent.display()))?;
+
+    if let Ok(metadata) = fs::metadata(path) {
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())
+            .with_context(|| format!("failed to copy permissions for {}", path.display()))?;
+    }
+    restrict_temporary_file_permissions(temporary.as_file(), path)?;
+    temporary
+        .write_all(contents)
+        .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
+    temporary
+        .flush()
+        .with_context(|| format!("failed to flush temporary file for {}", path.display()))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .with_context(|| format!("failed to sync temporary file for {}", path.display()))?;
+    Ok(temporary)
+}
+
+#[cfg(windows)]
+fn exchange_existing_file(path: &Path, replacement: &Path) -> Result<Option<Vec<u8>>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+    let backup = Builder::new()
+        .prefix(".miaominal-previous-")
+        .suffix(".backup")
+        .tempfile_in(parent)
+        .with_context(|| format!("failed to reserve a backup path in {}", parent.display()))?;
+    let (backup_file, backup_path) = backup
+        .keep()
+        .map_err(|error| error.error)
+        .context("failed to retain OpenSSH config backup path")?;
+    drop(backup_file);
+    fs::remove_file(&backup_path)
+        .with_context(|| format!("failed to prepare backup path {}", backup_path.display()))?;
+
+    let path_wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let replacement_wide = replacement
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let backup_wide = backup_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let replaced = unsafe {
+        ReplaceFileW(
+            path_wide.as_ptr(),
+            replacement_wide.as_ptr(),
+            backup_wide.as_ptr(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = fs::remove_file(replacement);
+        return Err(error).with_context(|| {
+            if backup_path.exists() {
+                format!(
+                    "failed to exchange {}; a recovery copy was retained at {}",
+                    path.display(),
+                    backup_path.display()
+                )
+            } else {
+                format!("failed to exchange {}", path.display())
+            }
+        });
+    }
+
+    let previous = fs::read(&backup_path)
+        .with_context(|| format!("failed to read replaced file {}", backup_path.display()))?;
+    fs::remove_file(&backup_path)
+        .with_context(|| format!("failed to remove backup {}", backup_path.display()))?;
+    sync_parent_directory(parent)?;
+    Ok(Some(previous))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn exchange_existing_file(path: &Path, replacement: &Path) -> Result<Option<Vec<u8>>> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path_c = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", path.display()))?;
+    let replacement_c = CString::new(replacement.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", replacement.display()))?;
+    let exchanged = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            replacement_c.as_ptr(),
+            libc::AT_FDCWD,
+            path_c.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    };
+    if exchanged != 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = fs::remove_file(replacement);
+        return Err(error).with_context(|| format!("failed to exchange {}", path.display()));
+    }
+    finish_exchanged_file(path, replacement)
+}
+
+#[cfg(target_os = "macos")]
+fn exchange_existing_file(path: &Path, replacement: &Path) -> Result<Option<Vec<u8>>> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path_c = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", path.display()))?;
+    let replacement_c = CString::new(replacement.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", replacement.display()))?;
+    let exchanged =
+        unsafe { libc::renamex_np(replacement_c.as_ptr(), path_c.as_ptr(), libc::RENAME_SWAP) };
+    if exchanged != 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = fs::remove_file(replacement);
+        return Err(error).with_context(|| format!("failed to exchange {}", path.display()));
+    }
+    finish_exchanged_file(path, replacement)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_os = "macos"))
+))]
+fn exchange_existing_file(path: &Path, replacement: &Path) -> Result<Option<Vec<u8>>> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+    let backup = Builder::new()
+        .prefix(".miaominal-previous-")
+        .suffix(".backup")
+        .tempfile_in(parent)
+        .with_context(|| format!("failed to reserve a backup path in {}", parent.display()))?;
+    let (backup_file, backup_path) = backup
+        .keep()
+        .map_err(|error| error.error)
+        .context("failed to retain OpenSSH config backup path")?;
+    drop(backup_file);
+    fs::remove_file(&backup_path)
+        .with_context(|| format!("failed to prepare backup path {}", backup_path.display()))?;
+
+    fs::rename(path, &backup_path).with_context(|| {
+        format!(
+            "failed to move {} to recovery backup {}",
+            path.display(),
+            backup_path.display()
+        )
+    })?;
+    if let Err(error) = fs::hard_link(replacement, path) {
+        let _ = fs::remove_file(replacement);
+        if !path.exists() && fs::hard_link(&backup_path, path).is_ok() {
+            let _ = fs::remove_file(&backup_path);
+        }
+        return Err(error).with_context(|| {
+            if backup_path.exists() {
+                format!(
+                    "failed to install {}; the previous file was retained at {}",
+                    path.display(),
+                    backup_path.display()
+                )
+            } else {
+                format!(
+                    "failed to install {}; the previous file was restored",
+                    path.display()
+                )
+            }
+        });
+    }
+    fs::remove_file(replacement).with_context(|| {
+        format!(
+            "failed to remove replacement link {}",
+            replacement.display()
+        )
+    })?;
+    let previous = fs::read(&backup_path)
+        .with_context(|| format!("failed to read replaced file {}", backup_path.display()))?;
+    fs::remove_file(&backup_path)
+        .with_context(|| format!("failed to remove backup {}", backup_path.display()))?;
+    sync_parent_directory(parent)?;
+    Ok(Some(previous))
+}
+
+#[cfg(unix)]
+fn finish_exchanged_file(path: &Path, replacement: &Path) -> Result<Option<Vec<u8>>> {
+    let previous = fs::read(replacement)
+        .with_context(|| format!("failed to read replaced file {}", replacement.display()))?;
+    fs::remove_file(replacement)
+        .with_context(|| format!("failed to remove replaced file {}", replacement.display()))?;
+    if let Some(parent) = path.parent() {
+        sync_parent_directory(parent)?;
+    }
+    Ok(Some(previous))
+}
+
 #[cfg(unix)]
 fn sync_parent_directory(parent: &Path) -> Result<()> {
     fs::File::open(parent)
@@ -1423,6 +1682,22 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn atomic_replace_returns_the_exact_previous_contents() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("config");
+
+        let created = atomic_replace_and_read_previous(&path, b"first")
+            .expect("missing destination should be created");
+        assert_eq!(created, None);
+        assert_eq!(fs::read(&path).unwrap(), b"first");
+
+        let previous = atomic_replace_and_read_previous(&path, b"second")
+            .expect("existing destination should be exchanged");
+        assert_eq!(previous, Some(b"first".to_vec()));
+        assert_eq!(fs::read(&path).unwrap(), b"second");
     }
 
     #[test]

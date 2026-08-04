@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
-use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 
 const BRIDGE_SERVER_WINDOW_SIZE: u32 = 1024 * 1024;
 const BRIDGE_SERVER_MAXIMUM_PACKET_SIZE: u32 = 32 * 1024;
@@ -94,7 +94,7 @@ where
     F: Future<Output = ()> + Send,
 {
     let route = Arc::new(route);
-    let relay_tasks = Arc::new(Mutex::new(Vec::new()));
+    let relay_tasks = Arc::new(Mutex::new(JoinSet::new()));
     let handler = SshBridgeServerHandler {
         route: route.clone(),
         channels: Arc::new(Mutex::new(HashMap::new())),
@@ -138,9 +138,8 @@ where
     };
 
     let mut tasks = relay_tasks.lock().await;
-    for task in tasks.drain(..) {
-        task.abort();
-    }
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
     drop(tasks);
     route.disconnect().await;
     result
@@ -173,7 +172,7 @@ struct SshBridgeServerHandler {
     route: Arc<ConnectedSshRoute>,
     channels: Arc<Mutex<HashMap<ChannelId, UpstreamChannel>>>,
     channel_slots: Arc<Semaphore>,
-    relay_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    relay_tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 impl SshBridgeServerHandler {
@@ -194,11 +193,12 @@ impl SshBridgeServerHandler {
             },
         );
         let channels = self.channels.clone();
-        let relay = tokio::spawn(async move {
+        let mut relay_tasks = self.relay_tasks.lock().await;
+        reap_completed_relay_tasks(&mut relay_tasks);
+        relay_tasks.spawn(async move {
             relay_upstream_channel(upstream_reader, local_handle, channel_id).await;
             channels.lock().await.remove(&channel_id);
         });
-        self.relay_tasks.lock().await.push(relay);
     }
 
     async fn fail_channel(&self, channel: ChannelId, session: &mut server::Session) {
@@ -213,6 +213,16 @@ impl SshBridgeServerHandler {
     {
         if request.await.is_err() {
             self.fail_channel(channel, session).await;
+        }
+    }
+}
+
+fn reap_completed_relay_tasks(tasks: &mut JoinSet<()>) {
+    while let Some(result) = tasks.try_join_next() {
+        if let Err(error) = result
+            && !error.is_cancelled()
+        {
+            log::debug!("SSH Bridge channel relay task failed: {error}");
         }
     }
 }
@@ -632,6 +642,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::task::JoinHandle;
 
     struct AcceptAllClientHandler;
 
@@ -1109,5 +1120,18 @@ mod tests {
             .unwrap();
         bridge_task.await.unwrap().unwrap();
         upstream_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_relay_tasks_are_reaped_before_more_channels_accumulate() {
+        let mut tasks = JoinSet::new();
+        for _ in 0..128 {
+            tasks.spawn(async {});
+        }
+        while !tasks.is_empty() {
+            tokio::task::yield_now().await;
+            reap_completed_relay_tasks(&mut tasks);
+        }
+        assert!(tasks.is_empty());
     }
 }

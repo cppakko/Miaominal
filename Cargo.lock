@@ -5331,12 +5331,14 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "directories",
+ "libc",
  "log",
  "serde",
  "sha2 0.11.0",
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

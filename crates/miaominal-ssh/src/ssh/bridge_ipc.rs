@@ -14,6 +14,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+const SSH_BRIDGE_ROUTE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub trait SshBridgeIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> SshBridgeIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 pub type SshBridgeStream = Box<dyn SshBridgeIo>;
@@ -202,8 +204,25 @@ where
     F: FnOnce(SshBridgeRoute) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
+    accept_route_request_with_timeout(stream, routes, SSH_BRIDGE_ROUTE_HANDSHAKE_TIMEOUT, prepare)
+        .await
+}
+
+async fn accept_route_request_with_timeout<T, F, Fut>(
+    stream: &mut SshBridgeStream,
+    routes: &SshBridgeRouteTable,
+    handshake_timeout: Duration,
+    prepare: F,
+) -> Result<T>
+where
+    F: FnOnce(SshBridgeRoute) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
     let result = async {
-        let request: SshBridgeRouteRequest = read_control_frame(stream).await?;
+        let request: SshBridgeRouteRequest =
+            tokio::time::timeout(handshake_timeout, read_control_frame(stream))
+                .await
+                .map_err(|_| anyhow!("SSH Bridge control frame timed out"))??;
         if request.version != SSH_BRIDGE_PROTOCOL_VERSION {
             bail!(
                 "unsupported SSH Bridge protocol version {}; expected {}",
@@ -1331,6 +1350,34 @@ mod tests {
             }
             server_task.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn route_handshake_times_out_when_client_sends_no_control_frame() {
+        let table = SshBridgeRouteTable::default();
+        let (client, server) = tokio::io::duplex(8192);
+        let mut client: SshBridgeStream = Box::new(client);
+        let mut server: SshBridgeStream = Box::new(server);
+        let server_task = tokio::spawn(async move {
+            accept_route_request_with_timeout(
+                &mut server,
+                &table,
+                Duration::from_millis(10),
+                |route| async move { Ok(route) },
+            )
+            .await
+            .expect_err("an idle route handshake must time out")
+        });
+
+        let response: SshBridgeRouteResponse = read_control_frame(&mut client).await.unwrap();
+        assert!(!response.ok);
+        assert!(
+            response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("timed out"))
+        );
+        assert!(server_task.await.unwrap().to_string().contains("timed out"));
     }
 
     #[tokio::test]
