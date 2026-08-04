@@ -6,4 +6,5 @@ pub mod profile;
 pub mod proxy;
 pub mod sftp;
 pub mod snippet;
+pub mod ssh_bridge_security;
 pub mod terminal;
