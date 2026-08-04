@@ -2,6 +2,9 @@ use super::bridge::{
     SSH_BRIDGE_MAX_CONTROL_FRAME, SSH_BRIDGE_PROTOCOL_VERSION, SshBridgeEndpoint, SshBridgeRoute,
 };
 use anyhow::{Context, Result, anyhow, bail};
+use miaominal_core::ssh_bridge_security::{
+    BridgePeerIdentity, BridgeProcessCaptureStatus, BridgeProcessIdentity,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -14,6 +17,45 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub trait SshBridgeIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> SshBridgeIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 pub type SshBridgeStream = Box<dyn SshBridgeIo>;
+
+pub struct SshBridgeConnection {
+    pub stream: SshBridgeStream,
+    pub peer: BridgePeerIdentity,
+}
+
+impl AsyncRead for SshBridgeConnection {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.stream).poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for SshBridgeConnection {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut *self.stream).poll_write(cx, buffer)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.stream).poll_shutdown(cx)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SshBridgeRouteRequest {
@@ -174,7 +216,17 @@ where
             bail!("malformed SSH Bridge route token");
         }
         let route = routes.resolve(&request.route)?;
-        prepare(route).await
+        let mut unexpected = [0_u8; 1];
+        tokio::select! {
+            biased;
+            read = stream.read(&mut unexpected) => {
+                match read.context("failed while monitoring SSH Bridge client during route preparation")? {
+                    0 => bail!("SSH Bridge client disconnected before route preparation completed"),
+                    _ => bail!("SSH Bridge client sent data before route preparation completed"),
+                }
+            }
+            prepared = prepare(route) => prepared,
+        }
     }
     .await;
 
@@ -232,7 +284,7 @@ impl SshBridgeListener {
         })
     }
 
-    pub async fn accept(&mut self) -> Result<SshBridgeStream> {
+    pub async fn accept(&mut self) -> Result<SshBridgeConnection> {
         self.inner.accept().await
     }
 }
@@ -421,7 +473,7 @@ impl PlatformListener {
         })
     }
 
-    async fn accept(&mut self) -> Result<SshBridgeStream> {
+    async fn accept(&mut self) -> Result<SshBridgeConnection> {
         if self.pending.is_none() {
             self.pending = Some(self.create_next_instance()?);
         }
@@ -437,9 +489,13 @@ impl PlatformListener {
             .pending
             .take()
             .ok_or_else(|| anyhow!("SSH Bridge named-pipe listener is unavailable"))?;
+        let peer = capture_windows_peer_identity(&server);
         let next = self.create_next_instance()?;
         self.pending = Some(next);
-        Ok(Box::new(server))
+        Ok(SshBridgeConnection {
+            stream: Box::new(server),
+            peer,
+        })
     }
 
     fn create_next_instance(&mut self) -> Result<tokio::net::windows::named_pipe::NamedPipeServer> {
@@ -476,6 +532,215 @@ impl PlatformListener {
                 }
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn capture_windows_peer_identity(
+    server: &tokio::net::windows::named_pipe::NamedPipeServer,
+) -> BridgePeerIdentity {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
+
+    let mut pid = 0_u32;
+    let captured = unsafe { GetNamedPipeClientProcessId(server.as_raw_handle().cast(), &mut pid) };
+    if captured == 0 {
+        let error = std::io::Error::last_os_error();
+        return BridgePeerIdentity {
+            capture_status: Some(classify_windows_capture_error(&error)),
+            ..BridgePeerIdentity::default()
+        };
+    }
+    if pid == 0 {
+        return BridgePeerIdentity {
+            capture_status: Some(BridgeProcessCaptureStatus::Failed),
+            ..BridgePeerIdentity::default()
+        };
+    }
+    BridgePeerIdentity {
+        pid: Some(pid),
+        user_sid: windows_process_user_sid(pid),
+        process_chain: windows_process_chain(pid),
+        capture_status: Some(BridgeProcessCaptureStatus::Captured),
+        ..BridgePeerIdentity::default()
+    }
+}
+
+#[cfg(windows)]
+fn windows_process_chain(start_pid: u32) -> Vec<BridgeProcessIdentity> {
+    use std::collections::{HashMap, HashSet};
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return vec![capture_windows_process(start_pid, None)];
+    }
+    let mut parents = HashMap::new();
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) != 0 };
+    while has_entry {
+        parents.insert(entry.th32ProcessID, entry.th32ParentProcessID);
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) != 0 };
+    }
+    unsafe { CloseHandle(snapshot) };
+
+    let mut chain = Vec::new();
+    let mut current = start_pid;
+    let mut visited = HashSet::new();
+    while current != 0 && chain.len() < 8 && visited.insert(current) {
+        let parent = parents.get(&current).copied().filter(|pid| *pid != 0);
+        chain.push(capture_windows_process(current, parent));
+        let Some(parent) = parent else {
+            break;
+        };
+        current = parent;
+    }
+    chain
+}
+
+#[cfg(windows)]
+fn capture_windows_process(pid: u32, parent_pid: Option<u32>) -> BridgeProcessIdentity {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error();
+        return BridgeProcessIdentity {
+            pid,
+            parent_pid,
+            started_at: None,
+            executable_path: None,
+            capture_status: classify_windows_capture_error(&error),
+        };
+    }
+    let mut path = vec![0_u16; 32_768];
+    let mut path_len = path.len() as u32;
+    let path_captured =
+        unsafe { QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut path_len) };
+    let (executable_path, path_error) = if path_captured != 0 {
+        (
+            Some(String::from_utf16_lossy(&path[..path_len as usize])),
+            None,
+        )
+    } else {
+        (None, Some(std::io::Error::last_os_error()))
+    };
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let times_captured =
+        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+    let (started_at, times_error) = if times_captured != 0 {
+        (
+            windows_filetime_to_unix_seconds(
+                ((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64,
+            ),
+            None,
+        )
+    } else {
+        (None, Some(std::io::Error::last_os_error()))
+    };
+    unsafe { CloseHandle(handle) };
+    let capture_status = path_error
+        .as_ref()
+        .or(times_error.as_ref())
+        .map(classify_windows_capture_error)
+        .unwrap_or(BridgeProcessCaptureStatus::Captured);
+    BridgeProcessIdentity {
+        pid,
+        parent_pid,
+        started_at,
+        executable_path,
+        capture_status,
+    }
+}
+
+#[cfg(windows)]
+fn windows_filetime_to_unix_seconds(filetime: u64) -> Option<u64> {
+    const WINDOWS_TO_UNIX_EPOCH_SECS: u64 = 11_644_473_600;
+    filetime
+        .checked_div(10_000_000)
+        .and_then(|seconds| seconds.checked_sub(WINDOWS_TO_UNIX_EPOCH_SECS))
+}
+
+#[cfg(windows)]
+fn windows_process_user_sid(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+        unsafe { CloseHandle(process) };
+        return None;
+    }
+    let mut size = 0_u32;
+    unsafe {
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut size);
+    }
+    let mut buffer = vec![0_u8; size as usize];
+    let ok = size > 0
+        && unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                size,
+                &mut size,
+            ) != 0
+        };
+    let sid = if ok {
+        let token_user = unsafe { &*(buffer.as_ptr().cast::<TOKEN_USER>()) };
+        let mut string_sid = std::ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut string_sid) } != 0 {
+            let mut len = 0;
+            while unsafe { *string_sid.add(len) } != 0 {
+                len += 1;
+            }
+            let value =
+                String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(string_sid, len) });
+            unsafe { LocalFree(string_sid.cast()) };
+            Some(value)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    unsafe {
+        CloseHandle(token);
+        CloseHandle(process);
+    }
+    sid
+}
+
+#[cfg(windows)]
+fn classify_windows_capture_error(error: &std::io::Error) -> BridgeProcessCaptureStatus {
+    classify_windows_capture_error_code(error.raw_os_error())
+}
+
+#[cfg(windows)]
+fn classify_windows_capture_error_code(error_code: Option<i32>) -> BridgeProcessCaptureStatus {
+    match error_code {
+        Some(5) => BridgeProcessCaptureStatus::AccessDenied,
+        Some(87) | Some(1168) => BridgeProcessCaptureStatus::Exited,
+        _ => BridgeProcessCaptureStatus::Failed,
     }
 }
 
@@ -564,13 +829,23 @@ impl PlatformListener {
             .metadata()
             .with_context(|| format!("failed to inspect {}", lock_path.display()))?
             .uid();
+        let current_uid = current_effective_uid();
+        if lock_owner != current_uid {
+            bail!(
+                "SSH Bridge lock {} is owned by uid {}, expected current uid {}",
+                lock_path.display(),
+                lock_owner,
+                current_uid
+            );
+        }
 
         if let Some(observed) = unix_socket_identity(socket_path)? {
-            if observed.uid != lock_owner {
+            if observed.uid != current_uid {
                 bail!(
-                    "refusing to remove SSH Bridge socket {} owned by uid {}",
+                    "refusing to remove SSH Bridge socket {} owned by uid {}; current uid is {}",
                     socket_path.display(),
-                    observed.uid
+                    observed.uid,
+                    current_uid
                 );
             }
             match tokio::net::UnixStream::connect(socket_path).await {
@@ -614,7 +889,7 @@ impl PlatformListener {
             .with_context(|| format!("failed to secure {}", socket_path.display()))?;
         let socket_identity = unix_socket_identity(socket_path)?
             .ok_or_else(|| anyhow!("SSH Bridge socket disappeared after bind"))?;
-        if socket_identity.uid != lock_owner {
+        if socket_identity.uid != current_uid {
             bail!(
                 "SSH Bridge socket {} has unexpected owner uid {}",
                 socket_path.display(),
@@ -629,14 +904,18 @@ impl PlatformListener {
         })
     }
 
-    async fn accept(&mut self) -> Result<SshBridgeStream> {
+    async fn accept(&mut self) -> Result<SshBridgeConnection> {
         let (stream, _) = self.listener.accept().await.with_context(|| {
             format!(
                 "failed to accept SSH Bridge socket {}",
                 self.socket_path.display()
             )
         })?;
-        Ok(Box::new(stream))
+        let peer = capture_unix_peer_identity(&stream);
+        Ok(SshBridgeConnection {
+            stream: Box::new(stream),
+            peer,
+        })
     }
 
     async fn connect(endpoint: &SshBridgeEndpoint) -> Result<SshBridgeStream> {
@@ -648,6 +927,232 @@ impl PlatformListener {
             .with_context(|| format!("failed to connect to {}", socket_path.display()))?;
         Ok(Box::new(stream))
     }
+}
+
+#[cfg(unix)]
+fn current_effective_uid() -> u32 {
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+
+    unsafe { geteuid() }
+}
+
+#[cfg(unix)]
+fn capture_unix_peer_identity(stream: &tokio::net::UnixStream) -> BridgePeerIdentity {
+    let credentials = match stream.peer_cred() {
+        Ok(credentials) => credentials,
+        Err(_) => {
+            return BridgePeerIdentity {
+                capture_status: Some(BridgeProcessCaptureStatus::Failed),
+                ..BridgePeerIdentity::default()
+            };
+        }
+    };
+    let pid = credentials.pid();
+    BridgePeerIdentity {
+        pid,
+        uid: Some(credentials.uid()),
+        gid: Some(credentials.gid()),
+        process_chain: pid.map(unix_process_chain).unwrap_or_default(),
+        capture_status: Some(if pid.is_some() {
+            BridgeProcessCaptureStatus::Captured
+        } else {
+            BridgeProcessCaptureStatus::Unsupported
+        }),
+        ..BridgePeerIdentity::default()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn unix_process_chain(start_pid: u32) -> Vec<BridgeProcessIdentity> {
+    use std::collections::HashSet;
+
+    let mut chain = Vec::new();
+    let mut current = start_pid;
+    let mut visited = HashSet::new();
+    while current != 0 && chain.len() < 8 && visited.insert(current) {
+        let identity = capture_linux_process(current);
+        let parent = identity.parent_pid;
+        chain.push(identity);
+        let Some(parent) = parent else {
+            break;
+        };
+        current = parent;
+    }
+    chain
+}
+
+#[cfg(target_os = "linux")]
+fn capture_linux_process(pid: u32) -> BridgeProcessIdentity {
+    let stat_path = format!("/proc/{pid}/stat");
+    let stat = std::fs::read_to_string(&stat_path);
+    let (parent_pid, started_at, capture_status) = match stat {
+        Ok(stat) => {
+            let fields = stat
+                .rfind(')')
+                .and_then(|index| stat.get(index + 1..))
+                .map(|rest| rest.split_whitespace().collect::<Vec<_>>());
+            match fields {
+                Some(fields) if fields.len() > 19 => (
+                    fields[1].parse::<u32>().ok().filter(|parent| *parent != 0),
+                    fields[19]
+                        .parse::<u64>()
+                        .ok()
+                        .and_then(linux_process_start_unix_seconds),
+                    BridgeProcessCaptureStatus::Captured,
+                ),
+                _ => (None, None, BridgeProcessCaptureStatus::Failed),
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            (None, None, BridgeProcessCaptureStatus::Exited)
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            (None, None, BridgeProcessCaptureStatus::AccessDenied)
+        }
+        Err(_) => (None, None, BridgeProcessCaptureStatus::Failed),
+    };
+    BridgeProcessIdentity {
+        pid,
+        parent_pid,
+        started_at,
+        executable_path: std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned()),
+        capture_status,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_start_unix_seconds(start_ticks: u64) -> Option<u64> {
+    const SC_CLK_TCK: i32 = 2;
+    unsafe extern "C" {
+        fn sysconf(name: i32) -> isize;
+    }
+
+    let ticks_per_second = unsafe { sysconf(SC_CLK_TCK) };
+    if ticks_per_second <= 0 {
+        return None;
+    }
+    let boot_time = std::fs::read_to_string("/proc/stat")?
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    boot_time.checked_add(start_ticks / ticks_per_second as u64)
+}
+
+#[cfg(target_os = "macos")]
+fn unix_process_chain(start_pid: u32) -> Vec<BridgeProcessIdentity> {
+    use std::collections::HashSet;
+
+    let mut chain = Vec::new();
+    let mut current = start_pid;
+    let mut visited = HashSet::new();
+    while current != 0 && chain.len() < 8 && visited.insert(current) {
+        let identity = capture_macos_process(current);
+        let parent = identity.parent_pid;
+        chain.push(identity);
+        let Some(parent) = parent else {
+            break;
+        };
+        current = parent;
+    }
+    chain
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_process(pid: u32) -> BridgeProcessIdentity {
+    const PROC_PIDTBSDINFO: i32 = 3;
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4096;
+
+    #[repr(C)]
+    struct ProcBsdInfo {
+        flags: u32,
+        status: u32,
+        xstatus: u32,
+        pid: u32,
+        ppid: u32,
+        uid: u32,
+        gid: u32,
+        ruid: u32,
+        rgid: u32,
+        svuid: u32,
+        svgid: u32,
+        reserved: u32,
+        comm: [u8; 16],
+        name: [u8; 32],
+        nfiles: u32,
+        pgid: u32,
+        pjobc: u32,
+        e_tdev: u32,
+        e_tpgid: u32,
+        nice: i32,
+        start_tvsec: u64,
+        start_tvusec: u64,
+    }
+
+    unsafe extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut core::ffi::c_void, buffersize: u32) -> i32;
+        fn proc_pidinfo(
+            pid: i32,
+            flavor: i32,
+            arg: u64,
+            buffer: *mut core::ffi::c_void,
+            buffersize: i32,
+        ) -> i32;
+    }
+
+    let mut buffer = vec![0_u8; PROC_PIDPATHINFO_MAXSIZE];
+    let length =
+        unsafe { proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let executable_path = (length > 0).then(|| {
+        String::from_utf8_lossy(&buffer[..length as usize])
+            .trim_end_matches('\0')
+            .to_string()
+    });
+    let mut info = unsafe { std::mem::zeroed::<ProcBsdInfo>() };
+    let info_length = unsafe {
+        proc_pidinfo(
+            pid as i32,
+            PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut ProcBsdInfo).cast(),
+            std::mem::size_of::<ProcBsdInfo>() as i32,
+        )
+    };
+    let captured_info = info_length == std::mem::size_of::<ProcBsdInfo>() as i32;
+    let capture_status = if captured_info || length > 0 {
+        BridgeProcessCaptureStatus::Captured
+    } else {
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(1) | Some(13) => BridgeProcessCaptureStatus::AccessDenied,
+            Some(3) => BridgeProcessCaptureStatus::Exited,
+            _ => BridgeProcessCaptureStatus::Failed,
+        }
+    };
+    BridgeProcessIdentity {
+        pid,
+        parent_pid: captured_info
+            .then_some(info.ppid)
+            .filter(|parent| *parent != 0),
+        started_at: captured_info.then_some(info.start_tvsec),
+        executable_path,
+        capture_status,
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn unix_process_chain(start_pid: u32) -> Vec<BridgeProcessIdentity> {
+    vec![BridgeProcessIdentity {
+        pid: start_pid,
+        parent_pid: None,
+        started_at: None,
+        executable_path: None,
+        capture_status: BridgeProcessCaptureStatus::Unsupported,
+    }]
 }
 
 #[cfg(unix)]
@@ -683,7 +1188,7 @@ impl PlatformListener {
         bail!("SSH Bridge IPC is unsupported on this platform")
     }
 
-    async fn accept(&mut self) -> Result<SshBridgeStream> {
+    async fn accept(&mut self) -> Result<SshBridgeConnection> {
         bail!("SSH Bridge IPC is unsupported on this platform")
     }
 
@@ -696,6 +1201,27 @@ impl PlatformListener {
 mod tests {
     use super::*;
     use miaominal_core::profile::SessionProfile;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_capture_error_codes_are_classified_explicitly() {
+        assert_eq!(
+            classify_windows_capture_error_code(Some(5)),
+            BridgeProcessCaptureStatus::AccessDenied
+        );
+        assert_eq!(
+            classify_windows_capture_error_code(Some(87)),
+            BridgeProcessCaptureStatus::Exited
+        );
+        assert_eq!(
+            classify_windows_capture_error_code(Some(1168)),
+            BridgeProcessCaptureStatus::Exited
+        );
+        assert_eq!(
+            classify_windows_capture_error_code(None),
+            BridgeProcessCaptureStatus::Failed
+        );
+    }
 
     fn route() -> SshBridgeRoute {
         SshBridgeRoute {
@@ -727,6 +1253,35 @@ mod tests {
         client.read_exact(&mut banner).await.unwrap();
         assert_eq!(banner, b"SSH-2.0-Miaominal\r\n");
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn route_preparation_rejects_early_client_bytes() {
+        let table = SshBridgeRouteTable::default();
+        table.replace([route()]);
+        let (client, server) = tokio::io::duplex(8192);
+        let mut client: SshBridgeStream = Box::new(client);
+        let mut server: SshBridgeStream = Box::new(server);
+        let server_task = tokio::spawn(async move {
+            accept_route_request_with(&mut server, &table, |_| async {
+                std::future::pending::<Result<()>>().await
+            })
+            .await
+            .expect_err("early bytes must cancel route preparation")
+        });
+        write_control_frame(&mut client, &SshBridgeRouteRequest::new(route().token))
+            .await
+            .unwrap();
+        client.write_all(b"x").await.unwrap();
+        let response: SshBridgeRouteResponse = read_control_frame(&mut client).await.unwrap();
+        assert!(!response.ok);
+        assert!(
+            server_task
+                .await
+                .unwrap()
+                .to_string()
+                .contains("sent data before route preparation")
+        );
     }
 
     #[tokio::test]
@@ -794,6 +1349,14 @@ mod tests {
                 stream.write_all(&[byte]).await.unwrap();
             });
             let mut accepted = listener.accept().await.expect("accept client");
+            assert!(accepted.peer.capture_status.is_some());
+            #[cfg(windows)]
+            assert!(accepted.peer.pid.is_some());
+            #[cfg(unix)]
+            {
+                assert!(accepted.peer.uid.is_some());
+                assert!(accepted.peer.gid.is_some());
+            }
             assert_eq!(accepted.read_u8().await.unwrap(), byte);
             client.await.unwrap();
         }
@@ -895,6 +1458,42 @@ mod tests {
         table.replace([replacement.clone()]);
         assert!(table.resolve(&route().token).is_err());
         assert_eq!(table.resolve(&replacement.token).unwrap(), replacement);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_process_capture_handles_live_and_exited_processes() {
+        let current = capture_linux_process(std::process::id());
+        assert_eq!(current.capture_status, BridgeProcessCaptureStatus::Captured);
+        assert!(current.executable_path.is_some());
+        let exited = capture_linux_process(u32::MAX);
+        assert_eq!(exited.capture_status, BridgeProcessCaptureStatus::Exited);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_capture_handles_live_and_exited_processes() {
+        let current = capture_windows_process(std::process::id(), None);
+        assert_eq!(current.capture_status, BridgeProcessCaptureStatus::Captured);
+        assert!(current.executable_path.is_some());
+        assert!(current.started_at.is_some());
+        assert_eq!(
+            windows_filetime_to_unix_seconds(11_644_473_600 * 10_000_000),
+            Some(0)
+        );
+        let exited = capture_windows_process(u32::MAX, None);
+        assert!(matches!(
+            exited.capture_status,
+            BridgeProcessCaptureStatus::Exited | BridgeProcessCaptureStatus::Failed
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_process_capture_resolves_current_process() {
+        let current = capture_macos_process(std::process::id());
+        assert_eq!(current.capture_status, BridgeProcessCaptureStatus::Captured);
+        assert!(current.executable_path.is_some());
     }
 
     #[test]

@@ -2508,19 +2508,18 @@ impl SessionController {
             self.set_host_editor_state(false, false);
         }
 
-        let message = if let Err(error) = self.persist_profiles() {
-            i18n::string_args(
+        let message = match self.persist_profiles() {
+            Err(error) => i18n::string_args(
                 "profile.messages.deleted_local_save_failed",
                 &[
                     ("name", &outcome.removed.name),
                     ("error", &error.to_string()),
                 ],
-            )
-        } else {
-            i18n::string_args(
+            ),
+            Ok(()) => i18n::string_args(
                 "profile.messages.deleted",
                 &[("name", &outcome.removed.name)],
-            )
+            ),
         };
 
         if reload_inputs_after_delete {

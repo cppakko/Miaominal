@@ -9,8 +9,8 @@ use super::session::{
 };
 use anyhow::{Context, Result};
 use miaominal_core::profile::{PortForwardRule, SessionProfile};
-use miaominal_core::proxy::ProxyProfile;
-use miaominal_secrets::SecretStore;
+use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile};
+use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_storage::KnownHostsStore;
 use russh::{Channel, Disconnect, client};
 use std::sync::Arc;
@@ -30,6 +30,12 @@ pub struct ProfileConnector {
     known_hosts: KnownHostsStore,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeCredentialReadiness {
+    Ready,
+    VaultLocked,
+}
+
 impl ProfileConnector {
     pub fn new(
         all_profiles: Vec<SessionProfile>,
@@ -47,26 +53,70 @@ impl ProfileConnector {
 
     /// Connects using the strict, non-interactive SSH Bridge policy.
     pub async fn connect_bridge(&self, profile: SessionProfile) -> Result<ConnectedSshRoute> {
-        self.validate_bridge_route_credentials(&profile)?;
+        if self.bridge_credentials_readiness(&profile)? == BridgeCredentialReadiness::VaultLocked {
+            return Err(super::auth::BridgeVaultLockedError.into());
+        }
         let mut interaction = ConnectorInteraction::Bridge;
         self.connect(profile, &mut interaction).await
     }
 
-    fn validate_bridge_route_credentials(&self, profile: &SessionProfile) -> Result<()> {
-        let target = hydrate_profile_from_secrets(profile.clone(), &self.secrets);
-        validate_bridge_auth_material(&target, &self.secrets).with_context(|| {
-            format!("credentials unavailable for {}", target.connection_label())
-        })?;
-        for jump in connection::resolve_proxy_jump_profiles(profile, &self.all_profiles)? {
-            let jump = hydrate_profile_from_secrets(jump, &self.secrets);
-            validate_bridge_auth_material(&jump, &self.secrets).with_context(|| {
-                format!(
-                    "credentials unavailable for jump host {}",
-                    jump.connection_label()
-                )
-            })?;
+    pub fn bridge_credentials_readiness(
+        &self,
+        profile: &SessionProfile,
+    ) -> Result<BridgeCredentialReadiness> {
+        if self.validate_bridge_profile_credentials(profile)?
+            == BridgeCredentialReadiness::VaultLocked
+        {
+            return Ok(BridgeCredentialReadiness::VaultLocked);
         }
-        Ok(())
+        for jump in connection::resolve_proxy_jump_profiles(profile, &self.all_profiles)? {
+            if self.validate_bridge_profile_credentials(&jump)?
+                == BridgeCredentialReadiness::VaultLocked
+            {
+                return Ok(BridgeCredentialReadiness::VaultLocked);
+            }
+        }
+        if let Some(proxy) = crate::transport::resolve_entry_proxy(
+            profile.entry_proxy_id.as_deref(),
+            &self.all_proxies,
+        )? && proxy.auth_mode == ProxyAuthMode::UsernamePassword
+        {
+            match self.secrets.get(&proxy.id, SecretKind::ProxyPassword) {
+                Ok(Some(_)) => {}
+                Ok(None) => anyhow::bail!(
+                    "proxy {} requires a saved password",
+                    proxy.connection_label()
+                ),
+                Err(error) if SecretStore::is_structured_locked_error(&error) => {
+                    return Ok(BridgeCredentialReadiness::VaultLocked);
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to read password for proxy {}",
+                            proxy.connection_label()
+                        )
+                    });
+                }
+            }
+        }
+        Ok(BridgeCredentialReadiness::Ready)
+    }
+
+    fn validate_bridge_profile_credentials(
+        &self,
+        profile: &SessionProfile,
+    ) -> Result<BridgeCredentialReadiness> {
+        let target = hydrate_profile_from_secrets(profile.clone(), &self.secrets);
+        match validate_bridge_auth_material(&target, &self.secrets) {
+            Ok(()) => Ok(BridgeCredentialReadiness::Ready),
+            Err(error) if is_bridge_vault_locked_error(&error) => {
+                Ok(BridgeCredentialReadiness::VaultLocked)
+            }
+            Err(error) => Err(error).with_context(|| {
+                format!("credentials unavailable for {}", target.connection_label())
+            }),
+        }
     }
 
     pub(super) async fn connect_interactive(
@@ -234,6 +284,13 @@ impl ProfileConnector {
             jump_sessions,
         ))
     }
+}
+
+pub fn is_bridge_vault_locked_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<super::auth::BridgeVaultLockedError>()
+        .is_some()
+        || SecretStore::is_structured_locked_error(error)
 }
 
 enum ConnectorInteraction<'a> {
@@ -421,7 +478,6 @@ pub(super) struct RouteCleanup {
     target: Arc<client::Handle<ClientHandler>>,
     jumps: Vec<Arc<client::Handle<ClientHandler>>>,
     disconnected: Arc<AtomicBool>,
-    runtime: Option<tokio::runtime::Handle>,
 }
 
 impl RouteCleanup {
@@ -433,7 +489,6 @@ impl RouteCleanup {
             target,
             jumps,
             disconnected: Arc::new(AtomicBool::new(false)),
-            runtime: tokio::runtime::Handle::try_current().ok(),
         }
     }
 
@@ -452,18 +507,46 @@ impl Drop for RouteCleanup {
         }
         let target = self.target.clone();
         let jumps = self.jumps.clone();
-        if let Some(runtime) = self
-            .runtime
-            .clone()
-            .or_else(|| tokio::runtime::Handle::try_current().ok())
-        {
+        if let Some(runtime) = route_cleanup_runtime() {
             runtime.spawn(disconnect_handles(target, jumps));
         } else {
             log::debug!(
-                "SSH route dropped without a Tokio runtime; transport handles will close without a graceful disconnect"
+                "SSH route cleanup runtime could not be started; transport handles will close without a graceful disconnect"
             );
         }
     }
+}
+
+fn route_cleanup_runtime() -> Option<tokio::runtime::Handle> {
+    use std::sync::OnceLock;
+
+    static RUNTIME: OnceLock<Option<tokio::runtime::Handle>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let (handle_sender, handle_receiver) = std::sync::mpsc::sync_channel(1);
+            std::thread::Builder::new()
+                .name("miaominal-ssh-route-cleanup".into())
+                .spawn(move || {
+                    let runtime = match tokio::runtime::Builder::new_current_thread()
+                        .enable_io()
+                        .enable_time()
+                        .build()
+                    {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            log::debug!("failed to create SSH route cleanup runtime: {error:?}");
+                            return;
+                        }
+                    };
+                    if handle_sender.send(runtime.handle().clone()).is_err() {
+                        return;
+                    }
+                    runtime.block_on(std::future::pending::<()>());
+                })
+                .ok()?;
+            handle_receiver.recv().ok()
+        })
+        .clone()
 }
 
 async fn disconnect_handles(
@@ -491,8 +574,21 @@ mod tests {
     use super::*;
     use crate::auth::validate_bridge_auth_material;
     use miaominal_core::profile::AuthMethod;
+    use miaominal_core::proxy::ProxyAuthMode;
     use russh::client::Handler;
     use russh::keys::{Algorithm, PrivateKey};
+
+    #[test]
+    fn route_cleanup_runtime_is_independent_of_the_calling_runtime() {
+        let runtime = route_cleanup_runtime().expect("dedicated cleanup runtime");
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        runtime.spawn(async move {
+            let _ = sender.send(());
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("cleanup runtime should execute work without an application runtime");
+    }
 
     #[test]
     fn connector_resolves_jump_chain_in_saved_order() {
@@ -613,6 +709,58 @@ mod tests {
                 .expect_err("missing agent identity should fail")
                 .to_string()
                 .contains("requires an agent identity")
+        );
+    }
+
+    #[test]
+    fn connector_preflight_distinguishes_locked_vault_from_invalid_credentials() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let known_hosts = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+
+        let mut locked = SessionProfile::blank("locked", 1);
+        locked.has_stored_password = true;
+        let connector = ProfileConnector::new(
+            vec![locked.clone()],
+            vec![],
+            SecretStore::new_locked_vault(),
+            known_hosts.clone(),
+        );
+        assert_eq!(
+            connector.bridge_credentials_readiness(&locked).unwrap(),
+            BridgeCredentialReadiness::VaultLocked
+        );
+
+        let mut invalid = SessionProfile::blank("invalid", 2);
+        invalid.auth_method = Some(AuthMethod::KeyFile);
+        invalid.private_key_path = directory
+            .path()
+            .join("missing-key")
+            .to_string_lossy()
+            .into_owned();
+        let connector = ProfileConnector::new(
+            vec![invalid.clone()],
+            vec![],
+            SecretStore::new_locked_vault(),
+            known_hosts.clone(),
+        );
+        assert!(connector.bridge_credentials_readiness(&invalid).is_err());
+
+        let mut proxied = SessionProfile::blank("proxied", 3);
+        proxied.auth_method = Some(AuthMethod::Agent);
+        proxied.agent_identity = "ssh-ed25519 AAAA test".into();
+        proxied.entry_proxy_id = Some("proxy".into());
+        let mut proxy = ProxyProfile::blank("proxy", 1);
+        proxy.auth_mode = ProxyAuthMode::UsernamePassword;
+        proxy.has_stored_password = true;
+        let connector = ProfileConnector::new(
+            vec![proxied.clone()],
+            vec![proxy],
+            SecretStore::new_locked_vault(),
+            known_hosts,
+        );
+        assert_eq!(
+            connector.bridge_credentials_readiness(&proxied).unwrap(),
+            BridgeCredentialReadiness::VaultLocked
         );
     }
 

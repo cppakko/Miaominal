@@ -16,6 +16,21 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 pub(super) type LocalAgentTransport = Box<dyn AgentStream + Send + Unpin + 'static>;
 
+#[derive(Debug)]
+pub(crate) struct BridgeVaultLockedError;
+
+impl std::fmt::Display for BridgeVaultLockedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("local vault is locked")
+    }
+}
+
+impl std::error::Error for BridgeVaultLockedError {}
+
+fn bridge_vault_locked() -> anyhow::Error {
+    BridgeVaultLockedError.into()
+}
+
 pub async fn list_local_agent_identities() -> Result<Vec<AgentIdentitySummary>> {
     let mut agent = connect_local_agent().await?;
     let identities = agent
@@ -88,7 +103,7 @@ pub(crate) fn validate_bridge_auth_material(
         AuthMethod::Password | AuthMethod::KeyboardInteractive => {
             if profile.password.is_empty() {
                 if profile.has_stored_password {
-                    bail!("saved password is unavailable because the local vault is locked");
+                    return Err(bridge_vault_locked());
                 }
                 bail!("SSH Bridge requires an available password for this profile");
             }
@@ -102,9 +117,7 @@ pub(crate) fn validate_bridge_auth_material(
                 bail!("SSH private key file is unavailable: {path}");
             }
             if profile.passphrase.is_empty() && profile.has_stored_passphrase {
-                bail!(
-                    "saved private-key passphrase is unavailable because the local vault is locked"
-                );
+                return Err(bridge_vault_locked());
             }
         }
         AuthMethod::ManagedKey => {
@@ -116,7 +129,7 @@ pub(crate) fn validate_bridge_auth_material(
                 Ok(Some(_)) => {}
                 Ok(None) => bail!("managed key {id} is missing from the local credential store"),
                 Err(error) if SecretStore::is_locked_error(&error) => {
-                    bail!("managed key {id} is unavailable because the local vault is locked")
+                    return Err(bridge_vault_locked());
                 }
                 Err(error) => return Err(error),
             }
@@ -155,7 +168,7 @@ where
         AuthMethod::Password => {
             if password.is_empty() {
                 if has_stored_password {
-                    bail!("saved password is unavailable because the local vault is locked");
+                    return Err(bridge_vault_locked());
                 }
                 bail!("password authentication requires a password");
             }
@@ -194,10 +207,7 @@ where
                     )
                 }
                 Err(error) if SecretStore::is_locked_error(&error) => {
-                    bail!(
-                        "managed key {} is unavailable because the local vault is locked",
-                        managed_key_id
-                    )
+                    return Err(bridge_vault_locked());
                 }
                 Err(error) => return Err(error),
             };
@@ -262,7 +272,7 @@ where
     let password = profile.password.clone();
     if password.is_empty() {
         if profile.has_stored_password {
-            bail!("saved password is unavailable because the local vault is locked");
+            return Err(bridge_vault_locked());
         }
         bail!("keyboard-interactive authentication requires a saved password for SSH Bridge");
     }

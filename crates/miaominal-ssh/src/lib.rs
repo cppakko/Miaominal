@@ -28,10 +28,10 @@ mod bridge_server;
 pub use auth::{authenticate, hydrate_profile_from_secrets, list_local_agent_identities};
 pub use bridge::{SshBridgeEndpoint, SshBridgeRoute, SshBridgeStatus, SshBridgeSyncResult};
 pub use bridge_ipc::{
-    SshBridgeHelperArgs, SshBridgeListener, SshBridgeRouteRequest, SshBridgeRouteResponse,
-    SshBridgeRouteTable, SshBridgeStream, accept_route_request, accept_route_request_with,
-    connect_endpoint, parse_ssh_bridge_helper_args, read_control_frame, request_route,
-    run_ssh_bridge_helper, write_control_frame,
+    SshBridgeConnection, SshBridgeHelperArgs, SshBridgeListener, SshBridgeRouteRequest,
+    SshBridgeRouteResponse, SshBridgeRouteTable, SshBridgeStream, accept_route_request,
+    accept_route_request_with, connect_endpoint, parse_ssh_bridge_helper_args, read_control_frame,
+    request_route, run_ssh_bridge_helper, write_control_frame,
 };
 pub use bridge_server::{
     SshBridgeServerIdentity, run_ssh_bridge_server, run_ssh_bridge_server_with_shutdown,
@@ -40,7 +40,9 @@ pub use forwarding::start_port_forward_session;
 pub use miaominal_core::forwarding::{
     AgentIdentitySummary, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot,
 };
-pub use profile_connector::{ConnectedSshRoute, ProfileConnector};
+pub use profile_connector::{
+    BridgeCredentialReadiness, ConnectedSshRoute, ProfileConnector, is_bridge_vault_locked_error,
+};
 #[allow(unused_imports)]
 pub use session::SessionConnection;
 pub use session::{
