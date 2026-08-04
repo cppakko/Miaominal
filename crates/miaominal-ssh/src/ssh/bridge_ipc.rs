@@ -833,13 +833,13 @@ impl PlatformListener {
             .with_context(|| format!("failed to secure {}", lock_path.display()))?;
         match lock_file.try_lock() {
             Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 bail!(
                     "another Miaominal instance owns SSH Bridge lock {}",
                     lock_path.display()
                 );
             }
-            Err(error) => {
+            Err(std::fs::TryLockError::Error(error)) => {
                 return Err(error)
                     .with_context(|| format!("failed to lock {}", lock_path.display()));
             }
@@ -968,7 +968,7 @@ fn capture_unix_peer_identity(stream: &tokio::net::UnixStream) -> BridgePeerIden
             };
         }
     };
-    let pid = credentials.pid();
+    let pid = credentials.pid().and_then(|pid| u32::try_from(pid).ok());
     BridgePeerIdentity {
         pid,
         uid: Some(credentials.uid()),
@@ -1054,7 +1054,8 @@ fn linux_process_start_unix_seconds(start_ticks: u64) -> Option<u64> {
     if ticks_per_second <= 0 {
         return None;
     }
-    let boot_time = std::fs::read_to_string("/proc/stat")?
+    let boot_time = std::fs::read_to_string("/proc/stat")
+        .ok()?
         .lines()
         .find_map(|line| line.strip_prefix("btime "))?
         .trim()
