@@ -716,7 +716,14 @@ impl AppView {
                     .render_trusted_page(controller.clone(), cx)
             }
             SidebarSection::Settings => {
-                pages::render_settings_page(self.controllers.settings.clone())
+                let settings = self.controllers.settings.clone();
+                let (settings_instance_generation, bridge_security_requested) =
+                    settings.read(cx).take_ssh_bridge_settings_render_request();
+                pages::render_settings_page(
+                    settings,
+                    settings_instance_generation,
+                    bridge_security_requested,
+                )
             }
             SidebarSection::Snippets => {
                 let controller = self.controllers.session.clone();

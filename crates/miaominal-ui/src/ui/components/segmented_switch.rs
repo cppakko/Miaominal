@@ -1,7 +1,7 @@
 use gpui::{
     Animation, AnimationExt as _, App, ElementId, FontWeight, InteractiveElement, IntoElement,
-    MouseButton, ParentElement as _, RenderOnce, SharedString, Styled, Window, div, ease_in_out,
-    prelude::FluentBuilder as _, px, rgb,
+    MouseButton, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, ease_in_out, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::h_flex;
 use std::{rc::Rc, time::Duration};
@@ -13,10 +13,16 @@ const ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
 type SegmentedSwitchClick = dyn Fn(usize, &mut Window, &mut App);
 
+struct SegmentedSwitchItem {
+    label: SharedString,
+    tooltip: Option<SharedString>,
+    disabled: bool,
+}
+
 #[derive(IntoElement)]
 pub(crate) struct SegmentedSwitch {
     id: ElementId,
-    items: Vec<SharedString>,
+    items: Vec<SegmentedSwitchItem>,
     selected_index: usize,
     width: f32,
     height: f32,
@@ -43,7 +49,38 @@ impl SegmentedSwitch {
     }
 
     pub(crate) fn item(mut self, label: impl Into<SharedString>) -> Self {
-        self.items.push(label.into());
+        self.items.push(SegmentedSwitchItem {
+            label: label.into(),
+            tooltip: None,
+            disabled: false,
+        });
+        self
+    }
+
+    pub(crate) fn item_with_tooltip(
+        mut self,
+        label: impl Into<SharedString>,
+        tooltip: impl Into<SharedString>,
+    ) -> Self {
+        self.items.push(SegmentedSwitchItem {
+            label: label.into(),
+            tooltip: Some(tooltip.into()),
+            disabled: false,
+        });
+        self
+    }
+
+    pub(crate) fn item_with_tooltip_disabled(
+        mut self,
+        label: impl Into<SharedString>,
+        tooltip: impl Into<SharedString>,
+        disabled: bool,
+    ) -> Self {
+        self.items.push(SegmentedSwitchItem {
+            label: label.into(),
+            tooltip: Some(tooltip.into()),
+            disabled,
+        });
         self
     }
 
@@ -150,7 +187,12 @@ impl RenderOnce for SegmentedSwitch {
             root = root.child(indicator);
         }
 
-        for (index, label) in self.items.into_iter().enumerate() {
+        for (index, item) in self.items.into_iter().enumerate() {
+            let SegmentedSwitchItem {
+                label,
+                tooltip,
+                disabled,
+            } = item;
             let selected = index == selected_index;
             let foreground = if selected {
                 roles.on_secondary_container
@@ -158,6 +200,7 @@ impl RenderOnce for SegmentedSwitch {
                 text_muted
             };
             let mut item = div()
+                .id((self.id.clone(), format!("item-{index}")))
                 .w(px(segment_width))
                 .h(px(segment_height))
                 .flex_shrink_0()
@@ -168,7 +211,6 @@ impl RenderOnce for SegmentedSwitch {
                 .overflow_hidden()
                 .rounded(px(999.0))
                 .text_color(rgb(foreground))
-                .cursor_pointer()
                 .child(
                     div()
                         .w_full()
@@ -182,11 +224,23 @@ impl RenderOnce for SegmentedSwitch {
                         .child(label),
                 );
 
-            if !selected {
+            if let Some(tooltip) = tooltip {
+                item = item.tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                });
+            }
+
+            if disabled {
+                item = item.opacity(0.5);
+            } else {
+                item = item.cursor_pointer();
+            }
+
+            if !selected && !disabled {
                 item = item.hover(move |this| this.bg(rgb(roles.surface_container_highest)));
             }
 
-            if let Some(on_click) = self.on_click.clone() {
+            if !disabled && let Some(on_click) = self.on_click.clone() {
                 item = item.on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     on_click(index, window, cx)
                 });

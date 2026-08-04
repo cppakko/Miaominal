@@ -5,6 +5,7 @@ pub(in crate::ui::shell) struct SelectOption<T> {
     title: SharedString,
     value: T,
     icon: Option<AppIcon>,
+    disabled: bool,
 }
 
 impl<T> SelectOption<T> {
@@ -13,11 +14,17 @@ impl<T> SelectOption<T> {
             title: title.into(),
             value,
             icon: None,
+            disabled: false,
         }
     }
 
     pub(in crate::ui::shell) fn value(&self) -> &T {
         &self.value
+    }
+
+    pub(in crate::ui::shell) fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 }
 
@@ -54,6 +61,10 @@ impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
 
     fn value(&self) -> &Self::Value {
         &self.value
+    }
+
+    fn disabled(&self) -> bool {
+        self.disabled
     }
 }
 

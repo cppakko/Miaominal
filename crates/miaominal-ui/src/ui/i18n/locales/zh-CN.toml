@@ -6,6 +6,10 @@ description = "配置终端和应用界面的字体、布局与主题。"
 title = "连接"
 description = "配置主机页面、连接历史、会话监控和标签页行为。"
 
+[settings.pages.openssh_integration]
+title = "OpenSSH 集成"
+description = "管理 OpenSSH 集成、Bridge 安全策略、待审批请求与连接审计。"
+
 [settings.pages.key_bindings]
 title = "快捷键"
 description = "自定义工作区导航和终端操作的快捷键。点击修改后按下组合键（需要 Ctrl 或 Alt）。"
@@ -104,59 +108,131 @@ description = "选择关闭顶部栏最后一个标签页时应用应执行的�
 label = "关闭最后一个标签页时"
 description = "可以直接退出应用，或者自动打开一个新的 Hosts 主页标签页。"
 
-[settings.connections.ssh_bridge.group]
-title = "OpenSSH 集成"
-description = "可从 VS Code Remote-SSH、scp、rsync 等 OpenSSH 工具连接。当配置使用已保存密码、Miaominal 跳板链或 SOCKS/HTTP 代理时，推荐使用 Bridge。Miaominal 必须保持运行。启用 Bridge 后，同一操作系统用户下获准访问本地端点的进程可以请求使用已导出的主机配置建立连接。"
+[settings.openssh_integration.group]
+title = "集成状态"
 
-[settings.connections.ssh_bridge.mode]
+[settings.openssh_integration.mode]
 label = "集成模式"
-description = "关闭会移除当前实例生成的 Include；Direct 导出普通 OpenSSH 主机配置；Bridge 让完整 SSH 连接经过 Miaominal，且不会导出密码或私钥。"
 
-[settings.connections.ssh_bridge.modes]
+[settings.openssh_integration.mode_tooltips]
+disabled = "移除当前实例生成的 OpenSSH Include，并关闭集成。"
+direct = "直接导出普通 OpenSSH 主机配置，但无法使用已保存密码和 Miaominal 专用路由。"
+bridge = "让完整 SSH 连接经过 Miaominal，且不会导出密码或私钥。Miaominal 必须保持运行，同一操作系统用户下获准访问本地端点的进程可以请求使用已导出的主机配置建立连接。"
+
+[settings.openssh_integration.modes]
 disabled = "关闭"
 direct = "Direct"
 bridge = "Bridge（推荐）"
+bridge_segment = "Bridge"
 
-[settings.connections.ssh_bridge.status]
+[settings.openssh_integration.status]
 label = "Bridge 状态"
 
-[settings.connections.ssh_bridge.states]
+[settings.openssh_integration.states]
 disabled = "已关闭"
 starting = "启动中"
 running = "运行中"
 stopping = "停止中"
 error = "错误"
 
-[settings.connections.ssh_bridge.endpoint]
+[settings.openssh_integration.endpoint]
 label = "私有端点"
 
-[settings.connections.ssh_bridge.config_path]
+[settings.openssh_integration.config_path]
 label = "生成的配置"
 
-[settings.connections.ssh_bridge.profiles]
+[settings.openssh_integration.profiles]
 label = "导出的配置"
 value = "已导出 {exported} 个，跳过 {skipped} 个"
 
-[settings.connections.ssh_bridge.active_clients]
+[settings.openssh_integration.active_clients]
 label = "活动客户端"
 
-[settings.connections.ssh_bridge.credentials]
+[settings.openssh_integration.credentials]
 label = "凭据就绪状态"
 ready = "每次建立新的 Bridge 连接时会检查所需凭据。"
 locked = "本地 Vault 已锁定；需要已保存凭据的配置会失败，直到 Vault 解锁。"
 
-[settings.connections.ssh_bridge.validation]
+[settings.openssh_integration.validation]
 label = "路由校验"
 ready = "所有已保存 SSH 配置的拓扑结构均有效。"
 skipped = "已跳过 {count} 个配置。首个问题：{error}"
 
-[settings.connections.ssh_bridge.last_error]
+[settings.openssh_integration.last_error]
 label = "最近错误"
 none = "最近没有 Bridge 错误。"
 
-[settings.connections.ssh_bridge.notifications]
+[settings.openssh_integration.notifications]
 mode_changed = "OpenSSH 集成已切换为 {mode}。"
 sync_failed = "无法更新托管的 OpenSSH 集成：{error}"
+
+[settings.openssh_integration.security]
+health_label = "安全状态"
+pending_label = "待授权请求"
+policies_label = "全局安全策略"
+healthy = "安全策略存储和审计日志工作正常。"
+policy_store_error = "安全数据库不可用：{error}"
+audit_health_error = "审计日志需要处理：{error}"
+no_pending = "当前没有等待授权的 SSH Bridge 请求。"
+pending_summary = "{profile} 由 {source} 请求；{seconds} 秒后过期"
+vault_pending_summary = "{profile} 由 {source} 请求；请在 {seconds} 秒内解锁本地保险库"
+in_app_title = "SSH Bridge 需要授权"
+in_app_request = "{source} 请求连接 {profile}。"
+in_app_vault_title = "SSH Bridge 正在等待解锁保险库"
+in_app_vault_request = "{source} 请求的 {profile} 正在等待本地保险库解锁。"
+notification_approval_title = "SSH Bridge 请求授权"
+notification_system_auth_title = "SSH Bridge 需要验证身份"
+notification_vault_title = "SSH Bridge 需要解锁保险库"
+notification_request = "{profile} · 来源：{source}"
+notification_expires = "剩余 {seconds} 秒"
+notification_additional = "另有 {count} 个请求"
+view = "查看"
+unknown_source = "未知进程"
+approve = "批准"
+reject = "拒绝"
+authenticate = "验证身份"
+unlock_vault = "解锁保险库"
+cancel_connection = "取消连接"
+cancel = "取消"
+confirm = "确认"
+policy_saved = "SSH Bridge 安全策略已保存。"
+policy_failed = "无法保存 SSH Bridge 安全策略：{error}"
+decision_failed = "无法完成该授权请求：{error}"
+request_expired = "该 SSH Bridge 授权请求已经过期。"
+downgrade_confirm = "将全局安全级别降低为 {level}？全部 Profile 的后续连接所需验证都会减少。"
+system_auth_unavailable = "当前平台或设备不支持系统认证。已有的“需要系统认证”策略会安全拒绝，不会自动降级。"
+approval_timeout = "审批超时"
+seconds = "{seconds} 秒"
+source_best_effort = "来源进程信息仅为尽力采集结果，不构成可信身份认证。"
+no_process_chain = "无法取得进程祖先链。"
+process_chain_entry = "PID {pid} · 父进程 {parent} · 启动时间 {started} · {path} · {status}"
+
+[settings.openssh_integration.security.levels]
+standard = "标准"
+approval = "需要批准"
+system_auth = "需要系统认证"
+approval_segment = "审批"
+system_auth_segment = "系统认证"
+
+[settings.openssh_integration.security.level_tooltips]
+standard = "本地 IPC 和路由验证通过后直接连接，不再询问用户。"
+approval = "每次连接都必须先由用户明确批准，之后才能建立上游 SSH 连接。"
+system_auth = "每次连接都必须通过 Windows Hello、PIN 或密码验证；认证不可用时安全拒绝。"
+
+[settings.openssh_integration.security.capture]
+captured = "已采集"
+exited = "进程已退出"
+access_denied = "访问被拒绝"
+unsupported = "不支持"
+failed = "采集失败"
+
+[settings.openssh_integration.security_policy_group]
+title = "安全策略"
+description = "存储健康状况，以及应用于每个 Bridge 配置的全局安全级别。"
+
+[settings.openssh_integration.security_pending_group]
+title = "待授权请求"
+description = "批准或拒绝等待你决策的 Bridge 连接请求。"
 
 [settings.connections.import_group]
 title = "导入配置"

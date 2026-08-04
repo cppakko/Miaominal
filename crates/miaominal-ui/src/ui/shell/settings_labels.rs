@@ -1,5 +1,6 @@
 use crate::ui::i18n;
 use miaominal_core::profile::{ImportField, ImportIssueKind, ImportIssueReason, ImportSourceKind};
+use miaominal_core::ssh_bridge_security::BridgeSecurityLevel;
 use miaominal_settings::{
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration, ThemeId,
 };
@@ -40,6 +41,18 @@ pub(in crate::ui::shell) fn theme_id_label(theme_id: ThemeId) -> String {
     i18n::string(match theme_id {
         ThemeId::Light => "enum.theme.light",
         ThemeId::Dark => "enum.theme.dark",
+    })
+}
+
+pub(in crate::ui::shell) fn bridge_security_level_label(level: BridgeSecurityLevel) -> String {
+    i18n::string(match level {
+        BridgeSecurityLevel::Standard => "settings.openssh_integration.security.levels.standard",
+        BridgeSecurityLevel::RequireApproval { .. } => {
+            "settings.openssh_integration.security.levels.approval"
+        }
+        BridgeSecurityLevel::RequireSystemAuth => {
+            "settings.openssh_integration.security.levels.system_auth"
+        }
     })
 }
 

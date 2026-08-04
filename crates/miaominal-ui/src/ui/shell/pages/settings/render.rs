@@ -1,7 +1,8 @@
 use super::super::super::*;
 use crate::ui::assets::AppIcon;
 use crate::ui::components::{
-    FontFamilyPickerState, editor_button_with_id, font_family_picker, md3_select, md3_spinner,
+    FontFamilyPickerState, SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select,
+    md3_spinner,
 };
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
@@ -10,35 +11,137 @@ use gpui_component::{
     group_box::GroupBoxVariant,
     notification::Notification,
     setting::{
-        RenderOptions, SettingField, SettingFieldElement, SettingGroup, SettingItem, SettingPage,
-        Settings,
+        RenderOptions, SelectIndex, SettingField, SettingFieldElement, SettingGroup, SettingItem,
+        SettingPage, Settings,
     },
 };
-use miaominal_settings::{self, KeyBinding, ThemeId};
+use miaominal_core::ssh_bridge_security::{
+    BridgePeerIdentity, BridgePendingPhase, BridgeProcessCaptureStatus, BridgeSecurityLevel,
+};
+use miaominal_settings::{self, KeyBinding, OpenSshIntegrationMode, ThemeId};
 use miaominal_ssh::SshBridgeStatus;
 use miaominal_sync::SyncProvider;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsPageId {
+    Appearance,
+    Connections,
+    OpenSshIntegration,
+    KeyBindings,
+    AiProviders,
+    Sync,
+    Vault,
+    About,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsGroupId {
+    RecentConnections,
+    Monitoring,
+    Tabs,
+    Proxies,
+    Import,
+    SshBridgeIntegration,
+    SshBridgeSecurityPolicy,
+    SshBridgeSecurityPending,
+}
+
+#[derive(Clone, Copy)]
+enum SettingsDestination {
+    SshBridgeSecurity,
+}
+
+struct NamedSettingPage {
+    id: SettingsPageId,
+    group_ids: Vec<SettingsGroupId>,
+    page: SettingPage,
+}
+
+impl NamedSettingPage {
+    fn new(id: SettingsPageId, page: SettingPage) -> Self {
+        Self {
+            id,
+            group_ids: Vec::new(),
+            page,
+        }
+    }
+}
+
+macro_rules! named_setting_groups {
+    ($( $id:expr => $group:expr ),+ $(,)?) => {{
+        let mut ids = Vec::new();
+        let mut groups = Vec::new();
+        $(
+            ids.push($id);
+            groups.push($group);
+        )+
+        (ids, groups)
+    }};
+}
+
+fn settings_destination_index(
+    pages: &[NamedSettingPage],
+    destination: SettingsDestination,
+) -> Option<SelectIndex> {
+    let (page_id, group_id) = match destination {
+        SettingsDestination::SshBridgeSecurity => (
+            SettingsPageId::OpenSshIntegration,
+            SettingsGroupId::SshBridgeSecurityPending,
+        ),
+    };
+    let page_ix = pages.iter().position(|page| page.id == page_id)?;
+    let group_ix = pages[page_ix]
+        .group_ids
+        .iter()
+        .position(|group| *group == group_id)?;
+    Some(SelectIndex {
+        page_ix,
+        group_ix: Some(group_ix),
+    })
+}
+
 pub(in crate::ui::shell) fn render_settings_page(
     settings: Entity<SettingsController>,
+    settings_instance_generation: u64,
+    bridge_security_requested: bool,
 ) -> gpui::AnyElement {
     let pages = setting_pages(settings);
-    Settings::new("app-settings")
+    let initial_selection = bridge_security_requested
+        .then(|| settings_destination_index(&pages, SettingsDestination::SshBridgeSecurity))
+        .flatten();
+    let settings_id = format!("app-settings-{settings_instance_generation}");
+    let settings = Settings::new(settings_id)
         .with_size(Size::Large)
         .with_group_variant(GroupBoxVariant::Outline)
-        .sidebar_width(px(220.0))
-        .pages(pages)
+        .sidebar_width(px(220.0));
+    let settings = match initial_selection {
+        Some(index) => settings.default_selected_index(index),
+        None => settings,
+    };
+    settings
+        .pages(pages.into_iter().map(|page| page.page))
         .into_any_element()
 }
 
-fn setting_pages(settings: Entity<SettingsController>) -> Vec<SettingPage> {
+fn setting_pages(settings: Entity<SettingsController>) -> Vec<NamedSettingPage> {
     vec![
-        appearance_page(settings.clone()),
+        NamedSettingPage::new(
+            SettingsPageId::Appearance,
+            appearance_page(settings.clone()),
+        ),
         connections_page(settings.clone()),
-        key_bindings_page(settings.clone()),
-        ai_providers_page(settings.clone()),
-        sync_page(settings.clone()),
-        vault_page(settings.clone()),
-        about_page(settings),
+        openssh_page(settings.clone()),
+        NamedSettingPage::new(
+            SettingsPageId::KeyBindings,
+            key_bindings_page(settings.clone()),
+        ),
+        NamedSettingPage::new(
+            SettingsPageId::AiProviders,
+            ai_providers_page(settings.clone()),
+        ),
+        NamedSettingPage::new(SettingsPageId::Sync, sync_page(settings.clone())),
+        NamedSettingPage::new(SettingsPageId::Vault, vault_page(settings.clone())),
+        NamedSettingPage::new(SettingsPageId::About, about_page(settings)),
     ]
 }
 
@@ -172,254 +275,311 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
         ])
 }
 
-fn connections_page(settings: Entity<SettingsController>) -> SettingPage {
-    SettingPage::new(i18n::string("settings.pages.connections.title"))
+fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
+    let (group_ids, groups) = named_setting_groups![
+        SettingsGroupId::RecentConnections => SettingGroup::new()
+            .title(i18n::string("settings.connections.recent_group.title"))
+            .description(i18n::string(
+                "settings.connections.recent_group.description",
+            ))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.connections.recent_count.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |options, _, cx| {
+                            let size = options.size;
+                            let id_prefix = SharedString::from(format!(
+                                "settings-recent-count-{}-{}-{}",
+                                options.page_ix, options.group_ix, options.item_ix
+                            ));
+                            render_recent_connections_stepper(
+                                entity.clone(),
+                                id_prefix,
+                                size,
+                                cx,
+                            )
+                        }
+                    }),
+                )
+                .description(i18n::string_args(
+                    "settings.connections.recent_count.description",
+                    &[(
+                        "max",
+                        &miaominal_settings::RECENT_CONNECTIONS_COUNT_MAX.to_string(),
+                    )],
+                )),
+            ]),
+        SettingsGroupId::Monitoring => SettingGroup::new()
+            .title(i18n::string("settings.connections.monitor_group.title"))
+            .description(i18n::string(
+                "settings.connections.monitor_group.description",
+            ))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.connections.auto_collect_monitoring.label"),
+                    SettingField::switch(
+                        {
+                            let entity = settings.clone();
+                            move |cx: &App| {
+                                entity.read(cx).settings().auto_collect_session_monitoring
+                            }
+                        },
+                        {
+                            let entity = settings.clone();
+                            move |enabled: bool, cx: &mut App| {
+                                entity.update(cx, |controller, cx| {
+                                    controller.emit(
+                                        AppCommand::SessionMonitoringPreferenceChanged(enabled),
+                                        cx,
+                                    );
+                                });
+                            }
+                        },
+                    ),
+                )
+                .description(i18n::string(
+                    "settings.connections.auto_collect_monitoring.description",
+                )),
+                SettingItem::new(
+                    i18n::string("settings.connections.monitor_history.label"),
+                    SettingField::element(MonitorHistoryDurationField::new(settings.clone())),
+                )
+                .description(i18n::string(
+                    "settings.connections.monitor_history.description",
+                )),
+            ]),
+        SettingsGroupId::Tabs => SettingGroup::new()
+            .title(i18n::string("settings.connections.tabs_group.title"))
+            .description(i18n::string("settings.connections.tabs_group.description"))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.connections.last_tab_close_behavior.label"),
+                    SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
+                )
+                .description(i18n::string(
+                    "settings.connections.last_tab_close_behavior.description",
+                )),
+            ]),
+        SettingsGroupId::Proxies => SettingGroup::new()
+            .title(i18n::string("settings.proxies.group.title"))
+            .description(i18n::string("settings.proxies.group.description"))
+            .item(
+                SettingItem::new(
+                    i18n::string("settings.proxies.saved.label"),
+                    SettingField::element(ProxyManagementField::new(settings.clone())),
+                )
+                .layout(Axis::Vertical)
+                .description(i18n::string("settings.proxies.saved.description")),
+            ),
+        SettingsGroupId::Import => SettingGroup::new()
+            .title(i18n::string("settings.connections.import_group.title"))
+            .description(i18n::string(
+                "settings.connections.import_group.description",
+            ))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.connections.import_source.label"),
+                    SettingField::element(ProfileImportSourceField::new(settings.clone())),
+                )
+                .description(i18n::string(
+                    "settings.connections.import_source.description",
+                )),
+                SettingItem::new(
+                    i18n::string("settings.connections.import_action.label"),
+                    SettingField::element(ProfileImportActionField::new(settings.clone())),
+                )
+                .description(i18n::string(
+                    "settings.connections.import_action.description",
+                )),
+            ]),
+    ];
+    let page = SettingPage::new(i18n::string("settings.pages.connections.title"))
         .description(i18n::string("settings.pages.connections.description"))
         .resettable(false)
-        .groups(vec![
-            SettingGroup::new()
-                .title(i18n::string("settings.connections.recent_group.title"))
-                .description(i18n::string(
-                    "settings.connections.recent_group.description",
-                ))
-                .items(vec![
-                    SettingItem::new(
-                        i18n::string("settings.connections.recent_count.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |options, _, cx| {
-                                let size = options.size;
-                                let id_prefix = SharedString::from(format!(
-                                    "settings-recent-count-{}-{}-{}",
-                                    options.page_ix, options.group_ix, options.item_ix
-                                ));
-                                render_recent_connections_stepper(
-                                    entity.clone(),
-                                    id_prefix,
-                                    size,
-                                    cx,
-                                )
-                            }
-                        }),
-                    )
-                    .description(i18n::string_args(
-                        "settings.connections.recent_count.description",
-                        &[(
-                            "max",
-                            &miaominal_settings::RECENT_CONNECTIONS_COUNT_MAX.to_string(),
-                        )],
-                    )),
-                ]),
-            SettingGroup::new()
-                .title(i18n::string("settings.connections.monitor_group.title"))
-                .description(i18n::string(
-                    "settings.connections.monitor_group.description",
-                ))
-                .items(vec![
-                    SettingItem::new(
-                        i18n::string("settings.connections.auto_collect_monitoring.label"),
-                        SettingField::switch(
-                            {
-                                let entity = settings.clone();
-                                move |cx: &App| {
-                                    entity.read(cx).settings().auto_collect_session_monitoring
-                                }
-                            },
-                            {
-                                let entity = settings.clone();
-                                move |enabled: bool, cx: &mut App| {
-                                    entity.update(cx, |controller, cx| {
-                                        controller.emit(
-                                            AppCommand::SessionMonitoringPreferenceChanged(enabled),
-                                            cx,
-                                        );
-                                    });
-                                }
-                            },
-                        ),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.auto_collect_monitoring.description",
-                    )),
-                    SettingItem::new(
-                        i18n::string("settings.connections.monitor_history.label"),
-                        SettingField::element(MonitorHistoryDurationField::new(settings.clone())),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.monitor_history.description",
-                    )),
-                ]),
-            SettingGroup::new()
-                .title(i18n::string("settings.connections.tabs_group.title"))
-                .description(i18n::string("settings.connections.tabs_group.description"))
-                .items(vec![
-                    SettingItem::new(
-                        i18n::string("settings.connections.last_tab_close_behavior.label"),
-                        SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.last_tab_close_behavior.description",
-                    )),
-                ]),
-            SettingGroup::new()
-                .title(i18n::string("settings.connections.ssh_bridge.group.title"))
-                .description(i18n::string(
-                    "settings.connections.ssh_bridge.group.description",
-                ))
-                .items(vec![
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.mode.label"),
-                        SettingField::element(OpenSshIntegrationModeField::new(settings.clone())),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.ssh_bridge.mode.description",
-                    )),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.status.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                render_text_action_field(
-                                    ssh_bridge_status_label(entity.read(cx).ssh_bridge_status()),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.endpoint.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                render_text_action_field(
-                                    entity.read(cx).ssh_bridge_endpoint(),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.config_path.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                render_text_action_field(
-                                    entity.read(cx).open_ssh_config_path(),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.profiles.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                let (exported, skipped) =
-                                    ssh_bridge_profile_counts(entity.read(cx));
-                                let exported = exported.to_string();
-                                let skipped = skipped.to_string();
-                                render_text_action_field(
-                                    i18n::string_args(
-                                        "settings.connections.ssh_bridge.profiles.value",
-                                        &[("exported", &exported), ("skipped", &skipped)],
-                                    ),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.active_clients.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                render_text_action_field(
-                                    ssh_bridge_active_clients(entity.read(cx).ssh_bridge_status())
-                                        .to_string(),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.credentials.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                let key = ssh_bridge_credentials_key(
-                                    entity.read(cx).local_vault_status(),
-                                );
-                                render_text_action_field(i18n::string(key), None)
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.validation.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                let diagnostics =
-                                    entity.read(cx).ssh_bridge_validation_diagnostics();
-                                let value = if diagnostics.is_empty() {
-                                    i18n::string("settings.connections.ssh_bridge.validation.ready")
-                                } else {
-                                    let count = diagnostics.len().to_string();
-                                    i18n::string_args(
-                                        "settings.connections.ssh_bridge.validation.skipped",
-                                        &[("count", &count), ("error", &diagnostics[0])],
-                                    )
-                                };
-                                render_text_action_field(value, None)
-                            }
-                        }),
-                    ),
-                    SettingItem::new(
-                        i18n::string("settings.connections.ssh_bridge.last_error.label"),
-                        SettingField::render({
-                            let entity = settings.clone();
-                            move |_, _, cx| {
-                                render_text_action_field(
-                                    ssh_bridge_last_error(entity.read(cx).ssh_bridge_status()),
-                                    None,
-                                )
-                            }
-                        }),
-                    ),
-                ]),
-            SettingGroup::new()
-                .title(i18n::string("settings.proxies.group.title"))
-                .description(i18n::string("settings.proxies.group.description"))
-                .item(
-                    SettingItem::new(
-                        i18n::string("settings.proxies.saved.label"),
-                        SettingField::element(ProxyManagementField::new(settings.clone())),
-                    )
-                    .layout(Axis::Vertical)
-                    .description(i18n::string("settings.proxies.saved.description")),
+        .groups(groups);
+    NamedSettingPage {
+        id: SettingsPageId::Connections,
+        group_ids,
+        page,
+    }
+}
+
+fn openssh_page(settings: Entity<SettingsController>) -> NamedSettingPage {
+    let (group_ids, groups) = named_setting_groups![
+        SettingsGroupId::SshBridgeIntegration => SettingGroup::new()
+            .title(i18n::string("settings.openssh_integration.group.title"))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.mode.label"),
+                    SettingField::element(OpenSshIntegrationModeField::new(settings.clone())),
                 ),
-            SettingGroup::new()
-                .title(i18n::string("settings.connections.import_group.title"))
-                .description(i18n::string(
-                    "settings.connections.import_group.description",
-                ))
-                .items(vec![
-                    SettingItem::new(
-                        i18n::string("settings.connections.import_source.label"),
-                        SettingField::element(ProfileImportSourceField::new(settings.clone())),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.import_source.description",
-                    )),
-                    SettingItem::new(
-                        i18n::string("settings.connections.import_action.label"),
-                        SettingField::element(ProfileImportActionField::new(settings.clone())),
-                    )
-                    .description(i18n::string(
-                        "settings.connections.import_action.description",
-                    )),
-                ]),
-        ])
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.status.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            render_text_action_field(
+                                ssh_bridge_status_label(entity.read(cx).ssh_bridge_status()),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.endpoint.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            render_text_action_field(
+                                entity.read(cx).ssh_bridge_endpoint(),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.config_path.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            render_text_action_field(
+                                entity.read(cx).open_ssh_config_path(),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.profiles.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            let (exported, skipped) =
+                                ssh_bridge_profile_counts(entity.read(cx));
+                            let exported = exported.to_string();
+                            let skipped = skipped.to_string();
+                            render_text_action_field(
+                                i18n::string_args(
+                                    "settings.openssh_integration.profiles.value",
+                                    &[("exported", &exported), ("skipped", &skipped)],
+                                ),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.active_clients.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            render_text_action_field(
+                                ssh_bridge_active_clients(entity.read(cx).ssh_bridge_status())
+                                    .to_string(),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.credentials.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            let key = ssh_bridge_credentials_key(
+                                entity.read(cx).local_vault_status(),
+                            );
+                            render_text_action_field(i18n::string(key), None)
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.validation.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            let diagnostics =
+                                entity.read(cx).ssh_bridge_validation_diagnostics();
+                            let value = if diagnostics.is_empty() {
+                                i18n::string("settings.openssh_integration.validation.ready")
+                            } else {
+                                let count = diagnostics.len().to_string();
+                                i18n::string_args(
+                                    "settings.openssh_integration.validation.skipped",
+                                    &[("count", &count), ("error", &diagnostics[0])],
+                                )
+                            };
+                            render_text_action_field(value, None)
+                        }
+                    }),
+                ),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.last_error.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| {
+                            render_text_action_field(
+                                ssh_bridge_last_error(entity.read(cx).ssh_bridge_status()),
+                                None,
+                            )
+                        }
+                    }),
+                ),
+            ]),
+        SettingsGroupId::SshBridgeSecurityPolicy => SettingGroup::new()
+            .title(i18n::string(
+                "settings.openssh_integration.security_policy_group.title",
+            ))
+            .description(i18n::string(
+                "settings.openssh_integration.security_policy_group.description",
+            ))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.security.health_label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| render_ssh_bridge_security_health(entity.read(cx))
+                    }),
+                )
+                .layout(Axis::Vertical),
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.security.policies_label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| render_ssh_bridge_policy(entity.clone(), cx)
+                    }),
+                ),
+            ]),
+        SettingsGroupId::SshBridgeSecurityPending => SettingGroup::new()
+            .title(i18n::string(
+                "settings.openssh_integration.security_pending_group.title",
+            ))
+            .description(i18n::string(
+                "settings.openssh_integration.security_pending_group.description",
+            ))
+            .item(
+                SettingItem::new(
+                    i18n::string("settings.openssh_integration.security.pending_label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |_, _, cx| render_ssh_bridge_pending(entity.clone(), cx)
+                    }),
+                )
+                .layout(Axis::Vertical),
+            ),
+    ];
+    let page = SettingPage::new(i18n::string("settings.pages.openssh_integration.title"))
+        .description(i18n::string(
+            "settings.pages.openssh_integration.description",
+        ))
+        .resettable(false)
+        .groups(groups);
+    NamedSettingPage {
+        id: SettingsPageId::OpenSshIntegration,
+        group_ids,
+        page,
+    }
 }
 
 #[derive(Clone)]
@@ -433,24 +593,82 @@ impl OpenSshIntegrationModeField {
     }
 }
 
+const OPEN_SSH_INTEGRATION_MODES: [OpenSshIntegrationMode; 3] = [
+    OpenSshIntegrationMode::Disabled,
+    OpenSshIntegrationMode::Direct,
+    OpenSshIntegrationMode::Bridge,
+];
+
+fn open_ssh_integration_mode_index(mode: OpenSshIntegrationMode) -> usize {
+    OPEN_SSH_INTEGRATION_MODES
+        .iter()
+        .position(|candidate| *candidate == mode)
+        .unwrap_or_default()
+}
+
+fn open_ssh_integration_mode_at(index: usize) -> Option<OpenSshIntegrationMode> {
+    OPEN_SSH_INTEGRATION_MODES.get(index).copied()
+}
+
+fn open_ssh_integration_mode_segment_label(mode: OpenSshIntegrationMode) -> String {
+    i18n::string(match mode {
+        OpenSshIntegrationMode::Disabled => "settings.openssh_integration.modes.disabled",
+        OpenSshIntegrationMode::Direct => "settings.openssh_integration.modes.direct",
+        OpenSshIntegrationMode::Bridge => "settings.openssh_integration.modes.bridge_segment",
+    })
+}
+
+fn open_ssh_integration_mode_tooltip(mode: OpenSshIntegrationMode) -> String {
+    i18n::string(match mode {
+        OpenSshIntegrationMode::Disabled => "settings.openssh_integration.mode_tooltips.disabled",
+        OpenSshIntegrationMode::Direct => "settings.openssh_integration.mode_tooltips.direct",
+        OpenSshIntegrationMode::Bridge => "settings.openssh_integration.mode_tooltips.bridge",
+    })
+}
+
 impl SettingFieldElement for OpenSshIntegrationModeField {
     type Element = AnyElement;
 
     fn render_field(
         &self,
-        options: &RenderOptions,
+        _options: &RenderOptions,
         _window: &mut Window,
         cx: &mut App,
     ) -> Self::Element {
-        let select = self
-            .controller
-            .read(cx)
-            .forms
-            .open_ssh_integration_mode_select
-            .clone();
-        md3_select(&select)
-            .with_size(options.size)
-            .w_full()
+        let selected_index = open_ssh_integration_mode_index(
+            self.controller
+                .read(cx)
+                .settings()
+                .open_ssh_integration_mode,
+        );
+        SegmentedSwitch::new("settings-openssh-integration-mode")
+            .selected_index(selected_index)
+            .width(252.0)
+            .height(34.0)
+            .padding(2.0)
+            .item_with_tooltip(
+                open_ssh_integration_mode_segment_label(OpenSshIntegrationMode::Disabled),
+                open_ssh_integration_mode_tooltip(OpenSshIntegrationMode::Disabled),
+            )
+            .item_with_tooltip(
+                open_ssh_integration_mode_segment_label(OpenSshIntegrationMode::Direct),
+                open_ssh_integration_mode_tooltip(OpenSshIntegrationMode::Direct),
+            )
+            .item_with_tooltip(
+                open_ssh_integration_mode_segment_label(OpenSshIntegrationMode::Bridge),
+                open_ssh_integration_mode_tooltip(OpenSshIntegrationMode::Bridge),
+            )
+            .on_click({
+                let controller = self.controller.clone();
+                move |index, _, cx| {
+                    let Some(mode) = open_ssh_integration_mode_at(index) else {
+                        return;
+                    };
+                    controller.update(cx, |controller, cx| {
+                        controller.set_open_ssh_integration_mode(mode, cx);
+                    });
+                }
+            })
             .into_any_element()
     }
 }
@@ -461,11 +679,11 @@ fn ssh_bridge_status_label(status: &SshBridgeStatus) -> String {
 
 fn ssh_bridge_status_key(status: &SshBridgeStatus) -> &'static str {
     match status {
-        SshBridgeStatus::Disabled => "settings.connections.ssh_bridge.states.disabled",
-        SshBridgeStatus::Starting => "settings.connections.ssh_bridge.states.starting",
-        SshBridgeStatus::Running { .. } => "settings.connections.ssh_bridge.states.running",
-        SshBridgeStatus::Stopping => "settings.connections.ssh_bridge.states.stopping",
-        SshBridgeStatus::Error { .. } => "settings.connections.ssh_bridge.states.error",
+        SshBridgeStatus::Disabled => "settings.openssh_integration.states.disabled",
+        SshBridgeStatus::Starting => "settings.openssh_integration.states.starting",
+        SshBridgeStatus::Running { .. } => "settings.openssh_integration.states.running",
+        SshBridgeStatus::Stopping => "settings.openssh_integration.states.stopping",
+        SshBridgeStatus::Error { .. } => "settings.openssh_integration.states.error",
     }
 }
 
@@ -494,9 +712,9 @@ fn ssh_bridge_profile_counts_from(
 
 fn ssh_bridge_credentials_key(status: LocalVaultStatus) -> &'static str {
     match status {
-        LocalVaultStatus::Locked => "settings.connections.ssh_bridge.credentials.locked",
+        LocalVaultStatus::Locked => "settings.openssh_integration.credentials.locked",
         LocalVaultStatus::Disabled | LocalVaultStatus::Unlocked => {
-            "settings.connections.ssh_bridge.credentials.ready"
+            "settings.openssh_integration.credentials.ready"
         }
     }
 }
@@ -518,8 +736,501 @@ fn ssh_bridge_last_error(status: &SshBridgeStatus) -> String {
             ..
         }
         | SshBridgeStatus::Error { message: error, .. } => error.clone(),
-        _ => i18n::string("settings.connections.ssh_bridge.last_error.none"),
+        _ => i18n::string("settings.openssh_integration.last_error.none"),
     }
+}
+
+fn bridge_process_capture_status_label(status: BridgeProcessCaptureStatus) -> String {
+    i18n::string(match status {
+        BridgeProcessCaptureStatus::Captured => {
+            "settings.openssh_integration.security.capture.captured"
+        }
+        BridgeProcessCaptureStatus::Exited => {
+            "settings.openssh_integration.security.capture.exited"
+        }
+        BridgeProcessCaptureStatus::AccessDenied => {
+            "settings.openssh_integration.security.capture.access_denied"
+        }
+        BridgeProcessCaptureStatus::Unsupported => {
+            "settings.openssh_integration.security.capture.unsupported"
+        }
+        BridgeProcessCaptureStatus::Failed => {
+            "settings.openssh_integration.security.capture.failed"
+        }
+    })
+}
+
+fn bridge_process_chain_lines(peer: &BridgePeerIdentity) -> Vec<String> {
+    if peer.process_chain.is_empty() {
+        return vec![i18n::string(
+            "settings.openssh_integration.security.no_process_chain",
+        )];
+    }
+    peer.process_chain
+        .iter()
+        .map(|process| {
+            let pid = process.pid.to_string();
+            let parent = process
+                .parent_pid
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "—".into());
+            let path =
+                bridge_security_display_text(process.executable_path.as_deref().unwrap_or("—"));
+            let status = bridge_process_capture_status_label(process.capture_status);
+            let started = process
+                .started_at
+                .and_then(|value| i64::try_from(value).ok())
+                .map(|value| bridge_audit_timestamp(Some(value)))
+                .unwrap_or_else(|| "—".into());
+            i18n::string_args(
+                "settings.openssh_integration.security.process_chain_entry",
+                &[
+                    ("pid", &pid),
+                    ("parent", &parent),
+                    ("path", &path),
+                    ("started", &started),
+                    ("status", &status),
+                ],
+            )
+        })
+        .collect()
+}
+
+fn bridge_audit_timestamp(timestamp: Option<i64>) -> String {
+    let Some(timestamp) = timestamp else {
+        return "—".into();
+    };
+    let Ok(value) = time::OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return timestamp.to_string();
+    };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        value.year(),
+        u8::from(value.month()),
+        value.day(),
+        value.hour(),
+        value.minute(),
+        value.second()
+    )
+}
+
+fn bridge_security_display_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+fn bridge_security_level_index(level: BridgeSecurityLevel) -> usize {
+    match level {
+        BridgeSecurityLevel::Standard => 0,
+        BridgeSecurityLevel::RequireApproval { .. } => 1,
+        BridgeSecurityLevel::RequireSystemAuth => 2,
+    }
+}
+
+fn bridge_security_level_at(
+    index: usize,
+    current: BridgeSecurityLevel,
+) -> Option<BridgeSecurityLevel> {
+    match index {
+        0 => Some(BridgeSecurityLevel::Standard),
+        1 => Some(match current {
+            BridgeSecurityLevel::RequireApproval { timeout_secs } => {
+                BridgeSecurityLevel::RequireApproval { timeout_secs }
+            }
+            _ => SettingsController::default_bridge_approval_level(),
+        }),
+        2 => Some(BridgeSecurityLevel::RequireSystemAuth),
+        _ => None,
+    }
+}
+
+fn bridge_security_level_segment_label(level: BridgeSecurityLevel) -> String {
+    i18n::string(match level {
+        BridgeSecurityLevel::Standard => "settings.openssh_integration.security.levels.standard",
+        BridgeSecurityLevel::RequireApproval { .. } => {
+            "settings.openssh_integration.security.levels.approval_segment"
+        }
+        BridgeSecurityLevel::RequireSystemAuth => {
+            "settings.openssh_integration.security.levels.system_auth_segment"
+        }
+    })
+}
+
+fn bridge_security_level_tooltip(level: BridgeSecurityLevel) -> String {
+    i18n::string(match level {
+        BridgeSecurityLevel::Standard => {
+            "settings.openssh_integration.security.level_tooltips.standard"
+        }
+        BridgeSecurityLevel::RequireApproval { .. } => {
+            "settings.openssh_integration.security.level_tooltips.approval"
+        }
+        BridgeSecurityLevel::RequireSystemAuth => {
+            "settings.openssh_integration.security.level_tooltips.system_auth"
+        }
+    })
+}
+
+fn render_ssh_bridge_security_health(controller: &SettingsController) -> AnyElement {
+    let security = controller.ssh_bridge_security();
+    let error = security
+        .policy_store_error
+        .as_ref()
+        .map(|error| {
+            i18n::string_args(
+                "settings.openssh_integration.security.policy_store_error",
+                &[("error", error)],
+            )
+        })
+        .or_else(|| {
+            security.audit_health_error.as_ref().map(|error| {
+                i18n::string_args(
+                    "settings.openssh_integration.security.audit_health_error",
+                    &[("error", error)],
+                )
+            })
+        });
+    if let Some(error) = error {
+        let roles = miaominal_settings::current_theme().material.roles;
+        return v_flex()
+            .w_full()
+            .p_3()
+            .rounded(px(8.0))
+            .bg(rgb(roles.error_container))
+            .child(
+                div()
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                    .text_color(rgb(roles.on_error_container))
+                    .child(error),
+            )
+            .into_any_element();
+    }
+    render_text_action_field(
+        i18n::string("settings.openssh_integration.security.healthy"),
+        None,
+    )
+}
+
+fn render_ssh_bridge_pending(entity: Entity<SettingsController>, cx: &App) -> AnyElement {
+    let (pending, system_auth_available) = {
+        let controller = entity.read(cx);
+        (
+            controller.ssh_bridge_security().pending.clone(),
+            controller.ssh_bridge_security().system_auth_available,
+        )
+    };
+    if pending.is_empty() {
+        return render_text_action_field(
+            i18n::string("settings.openssh_integration.security.no_pending"),
+            None,
+        );
+    }
+    let roles = miaominal_settings::current_theme().material.roles;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    v_flex()
+        .w_full()
+        .gap_3()
+        .children(pending.into_iter().map(|request| {
+            let source = request
+                .peer
+                .source_path()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| {
+                    i18n::string("settings.openssh_integration.security.unknown_source")
+                });
+            let source = bridge_security_display_text(&source);
+            let profile_name = bridge_security_display_text(&request.profile_name);
+            let remaining = request.expires_at.saturating_sub(now).max(0).to_string();
+            let summary_key = match request.phase {
+                BridgePendingPhase::AwaitingVaultUnlock => {
+                    "settings.openssh_integration.security.vault_pending_summary"
+                }
+                BridgePendingPhase::AwaitingApproval | BridgePendingPhase::AwaitingSystemAuth => {
+                    "settings.openssh_integration.security.pending_summary"
+                }
+            };
+            let summary = i18n::string_args(
+                summary_key,
+                &[
+                    ("profile", &profile_name),
+                    ("source", &source),
+                    ("seconds", &remaining),
+                ],
+            );
+            let request_id = request.request_id.clone();
+            let process_chain = bridge_process_chain_lines(&request.peer);
+            let reject_entity = entity.clone();
+            let mut actions = vec![
+                editor_button_with_id(
+                    format!("ssh-bridge-reject-{request_id}"),
+                    i18n::string("settings.openssh_integration.security.reject"),
+                    false,
+                    false,
+                    false,
+                    {
+                        let request_id = request_id.clone();
+                        move |_, cx| {
+                            reject_entity.update(cx, |controller, cx| {
+                                controller.reject_ssh_bridge_request(request_id.clone(), cx);
+                            });
+                        }
+                    },
+                )
+                .into_any_element(),
+            ];
+            match request.phase {
+                BridgePendingPhase::AwaitingApproval => {
+                    let approve_entity = entity.clone();
+                    let approve_id = request_id.clone();
+                    actions.push(
+                        editor_button_with_id(
+                            format!("ssh-bridge-approve-{request_id}"),
+                            i18n::string("settings.openssh_integration.security.approve"),
+                            true,
+                            false,
+                            false,
+                            move |_, cx| {
+                                approve_entity.update(cx, |controller, cx| {
+                                    controller.approve_ssh_bridge_request(approve_id.clone(), cx);
+                                });
+                            },
+                        )
+                        .into_any_element(),
+                    );
+                }
+                BridgePendingPhase::AwaitingSystemAuth => {
+                    let auth_entity = entity.clone();
+                    let auth_id = request_id.clone();
+                    actions.push(
+                        editor_button_with_id(
+                            format!("ssh-bridge-auth-{request_id}"),
+                            i18n::string("settings.openssh_integration.security.authenticate"),
+                            true,
+                            false,
+                            !system_auth_available,
+                            move |_, cx| {
+                                auth_entity.update(cx, |controller, cx| {
+                                    controller.authenticate_ssh_bridge_request(auth_id.clone(), cx);
+                                });
+                            },
+                        )
+                        .into_any_element(),
+                    );
+                }
+                BridgePendingPhase::AwaitingVaultUnlock => {
+                    let unlock_entity = entity.clone();
+                    let cancel_entity = entity.clone();
+                    let cancel_id = request_id.clone();
+                    actions.clear();
+                    actions.push(
+                        editor_button_with_id(
+                            format!("ssh-bridge-cancel-{request_id}"),
+                            i18n::string("settings.openssh_integration.security.cancel_connection"),
+                            false,
+                            false,
+                            false,
+                            move |_, cx| {
+                                cancel_entity.update(cx, |controller, cx| {
+                                    controller.cancel_ssh_bridge_request(cancel_id.clone(), cx);
+                                });
+                            },
+                        )
+                        .into_any_element(),
+                    );
+                    actions.push(
+                        editor_button_with_id(
+                            format!("ssh-bridge-unlock-vault-{request_id}"),
+                            i18n::string("settings.openssh_integration.security.unlock_vault"),
+                            true,
+                            false,
+                            false,
+                            move |_, cx| {
+                                unlock_entity.update(cx, |controller, cx| {
+                                    controller.unlock_ssh_bridge_vault(cx);
+                                });
+                            },
+                        )
+                        .into_any_element(),
+                    );
+                }
+            }
+            v_flex()
+                .w_full()
+                .gap_2()
+                .p_3()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(roles.outline_variant))
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(roles.on_surface))
+                        .child(summary),
+                )
+                .children(process_chain.into_iter().map(|line| {
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(line)
+                }))
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(i18n::string(
+                            "settings.openssh_integration.security.source_best_effort",
+                        )),
+                )
+                .child(h_flex().w_full().justify_end().gap_2().children(actions))
+        }))
+        .into_any_element()
+}
+
+fn render_ssh_bridge_policy(entity: Entity<SettingsController>, cx: &App) -> AnyElement {
+    let (policy, system_auth_available, pending_downgrade) = {
+        let controller = entity.read(cx);
+        (
+            controller.ssh_bridge_security_policy(),
+            controller.ssh_bridge_security().system_auth_available,
+            controller.pending_ssh_bridge_policy_downgrade().cloned(),
+        )
+    };
+    let level = policy.level;
+    let roles = miaominal_settings::current_theme().material.roles;
+    let downgrade_confirmation = pending_downgrade.map(|downgrade_level| {
+        let cancel_entity = entity.clone();
+        let confirm_entity = entity.clone();
+        v_flex()
+            .w_full()
+            .gap_2()
+            .p_3()
+            .rounded(px(8.0))
+            .bg(rgb(roles.error_container))
+            .child(
+                div()
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                    .text_color(rgb(roles.on_error_container))
+                    .child(i18n::string_args(
+                        "settings.openssh_integration.security.downgrade_confirm",
+                        &[("level", &bridge_security_level_label(downgrade_level))],
+                    )),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(settings_compact_button(
+                        "ssh-bridge-policy-downgrade-cancel",
+                        i18n::string("settings.openssh_integration.security.cancel"),
+                        move |_, cx| {
+                            cancel_entity.update(cx, |controller, cx| {
+                                controller.cancel_ssh_bridge_policy_downgrade(cx);
+                            });
+                        },
+                    ))
+                    .child(settings_compact_button(
+                        "ssh-bridge-policy-downgrade-confirm",
+                        i18n::string("settings.openssh_integration.security.confirm"),
+                        move |_, cx| {
+                            confirm_entity.update(cx, |controller, cx| {
+                                controller.confirm_ssh_bridge_policy_downgrade(cx);
+                            });
+                        },
+                    )),
+            )
+            .into_any_element()
+    });
+    let security_level_entity = entity.clone();
+    let system_auth_tooltip = if system_auth_available {
+        bridge_security_level_tooltip(BridgeSecurityLevel::RequireSystemAuth)
+    } else {
+        i18n::string("settings.openssh_integration.security.system_auth_unavailable")
+    };
+    let security_level_switch =
+        SegmentedSwitch::new("settings-ssh-bridge-security-level")
+            .selected_index(bridge_security_level_index(level))
+            .width(252.0)
+            .height(34.0)
+            .padding(2.0)
+            .item_with_tooltip(
+                bridge_security_level_segment_label(BridgeSecurityLevel::Standard),
+                bridge_security_level_tooltip(BridgeSecurityLevel::Standard),
+            )
+            .item_with_tooltip(
+                bridge_security_level_segment_label(
+                    SettingsController::default_bridge_approval_level(),
+                ),
+                bridge_security_level_tooltip(SettingsController::default_bridge_approval_level()),
+            )
+            .item_with_tooltip_disabled(
+                bridge_security_level_segment_label(BridgeSecurityLevel::RequireSystemAuth),
+                system_auth_tooltip,
+                !system_auth_available,
+            )
+            .on_click(move |index, _, cx| {
+                let Some(selected_level) = bridge_security_level_at(index, level) else {
+                    return;
+                };
+                security_level_entity.update(cx, |controller, cx| {
+                    controller.request_ssh_bridge_security_policy(selected_level, cx);
+                });
+            });
+    v_flex()
+        .w_full()
+        .gap_2()
+        .child(h_flex().w_full().justify_end().child(security_level_switch))
+        .when(
+            matches!(level, BridgeSecurityLevel::RequireApproval { .. }),
+            |panel| {
+                let selected_timeout = level.approval_timeout_secs();
+                panel.child(
+                    h_flex()
+                        .w_full()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_2()
+                        .child(i18n::string(
+                            "settings.openssh_integration.security.approval_timeout",
+                        ))
+                        .children([5_u32, 15, 30, 60, 120].into_iter().map(|timeout_secs| {
+                            let timeout_entity = entity.clone();
+                            editor_button_with_id(
+                                format!("ssh-bridge-approval-timeout-{timeout_secs}"),
+                                i18n::string_args(
+                                    "settings.openssh_integration.security.seconds",
+                                    &[("seconds", &timeout_secs.to_string())],
+                                ),
+                                selected_timeout == Some(timeout_secs),
+                                false,
+                                selected_timeout == Some(timeout_secs),
+                                move |_, cx| {
+                                    timeout_entity.update(cx, |controller, cx| {
+                                        controller.request_ssh_bridge_security_policy(
+                                            BridgeSecurityLevel::RequireApproval { timeout_secs },
+                                            cx,
+                                        );
+                                    });
+                                },
+                            )
+                        })),
+                )
+            },
+        )
+        .when_some(downgrade_confirmation, |panel, confirmation| {
+            panel.child(confirmation)
+        })
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -543,7 +1254,7 @@ mod ssh_bridge_tests {
         let status = running_status();
         assert_eq!(
             ssh_bridge_status_key(&status),
-            "settings.connections.ssh_bridge.states.running"
+            "settings.openssh_integration.states.running"
         );
         assert_eq!(ssh_bridge_profile_counts_from(&status, None), (3, 2));
         assert_eq!(ssh_bridge_active_clients(&status), 4);
@@ -566,14 +1277,66 @@ mod ssh_bridge_tests {
     fn bridge_credential_readiness_distinguishes_locked_vaults() {
         assert_eq!(
             ssh_bridge_credentials_key(LocalVaultStatus::Locked),
-            "settings.connections.ssh_bridge.credentials.locked"
+            "settings.openssh_integration.credentials.locked"
         );
         for status in [LocalVaultStatus::Disabled, LocalVaultStatus::Unlocked] {
             assert_eq!(
                 ssh_bridge_credentials_key(status),
-                "settings.connections.ssh_bridge.credentials.ready"
+                "settings.openssh_integration.credentials.ready"
             );
         }
+    }
+
+    #[test]
+    fn open_ssh_integration_segment_indexes_round_trip() {
+        for (index, mode) in OPEN_SSH_INTEGRATION_MODES.into_iter().enumerate() {
+            assert_eq!(open_ssh_integration_mode_index(mode), index);
+            assert_eq!(open_ssh_integration_mode_at(index), Some(mode));
+        }
+        assert_eq!(
+            open_ssh_integration_mode_at(OPEN_SSH_INTEGRATION_MODES.len()),
+            None
+        );
+    }
+
+    #[test]
+    fn security_level_segment_indexes_preserve_approval_timeout() {
+        let approval = BridgeSecurityLevel::RequireApproval { timeout_secs: 60 };
+        assert_eq!(
+            bridge_security_level_index(BridgeSecurityLevel::Standard),
+            0
+        );
+        assert_eq!(bridge_security_level_index(approval), 1);
+        assert_eq!(
+            bridge_security_level_index(BridgeSecurityLevel::RequireSystemAuth),
+            2
+        );
+        assert_eq!(bridge_security_level_at(1, approval), Some(approval));
+        assert_eq!(
+            bridge_security_level_at(1, BridgeSecurityLevel::Standard),
+            Some(SettingsController::default_bridge_approval_level())
+        );
+        assert_eq!(bridge_security_level_at(3, approval), None);
+    }
+
+    #[test]
+    fn ssh_bridge_destination_follows_named_page_and_group_order() {
+        let pages = vec![
+            NamedSettingPage::new(SettingsPageId::About, SettingPage::new("About moved first")),
+            NamedSettingPage {
+                id: SettingsPageId::OpenSshIntegration,
+                group_ids: vec![
+                    SettingsGroupId::SshBridgeIntegration,
+                    SettingsGroupId::SshBridgeSecurityPolicy,
+                    SettingsGroupId::SshBridgeSecurityPending,
+                ],
+                page: SettingPage::new("OpenSSH integration"),
+            },
+        ];
+        let index = settings_destination_index(&pages, SettingsDestination::SshBridgeSecurity)
+            .expect("named SSH Bridge destination should resolve");
+        assert_eq!(index.page_ix, 1);
+        assert_eq!(index.group_ix, Some(2));
     }
 }
 

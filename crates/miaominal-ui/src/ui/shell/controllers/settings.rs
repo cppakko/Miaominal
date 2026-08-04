@@ -2,17 +2,23 @@ use super::{AppCommand, SessionQueryPort};
 use crate::ui::i18n;
 use crate::ui::shell::actions::ai_provider_kind_chat_supported;
 use crate::ui::shell::{
+    BridgeSecurityNotificationAction, BridgeSecurityNotificationKey,
+    BridgeSecurityNotificationModel, BridgeSecurityNotificationState,
+    BridgeSecurityNotificationView, bridge_security_notification_window_options,
+};
+use crate::ui::shell::{
     LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget, SelectOption,
-    SftpBrowserSide, ai_provider_kind_label_key, ai_provider_select_options,
-    last_tab_close_behavior_label, local_vault_auto_lock_duration_label,
-    localized_profile_import_source_label, localized_secret_placeholder,
-    monitor_history_duration_label, new_input_state, set_input_placeholder, set_input_value,
-    theme_id_label, web_search_endpoint_placeholder, web_search_provider_kind_label_key,
+    SftpBrowserSide, SidebarSection, ai_provider_kind_label_key, ai_provider_select_options,
+    bridge_security_level_label, last_tab_close_behavior_label,
+    local_vault_auto_lock_duration_label, localized_profile_import_source_label,
+    localized_secret_placeholder, monitor_history_duration_label, new_input_state,
+    set_input_placeholder, set_input_value, theme_id_label, warning_action_notification,
+    web_search_endpoint_placeholder, web_search_provider_kind_label_key,
 };
 use anyhow::{Result, anyhow};
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
-    UniformListScrollHandle, Window, rgb,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    ScrollStrategy, Subscription, UniformListScrollHandle, Window, WindowHandle, rgb,
 };
 use gpui_component::{
     Colorize, IndexPath,
@@ -22,6 +28,10 @@ use gpui_component::{
 };
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
+use miaominal_core::ssh_bridge_security::{
+    BridgeAuthorizationDecision, BridgePendingPhase, BridgeSecurityLevel, BridgeSecurityPolicy,
+    BridgeSecuritySnapshot, DEFAULT_BRIDGE_APPROVAL_TIMEOUT_SECS,
+};
 use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, OpenSshIntegrationService,
@@ -39,14 +49,15 @@ use miaominal_storage::{
     keychain_store::ManagedKeyStore,
 };
 use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus, engine::SyncEngine};
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle as TokioHandle;
 
 fn open_ssh_integration_mode_label(mode: OpenSshIntegrationMode) -> String {
     i18n::string(match mode {
-        OpenSshIntegrationMode::Disabled => "settings.connections.ssh_bridge.modes.disabled",
-        OpenSshIntegrationMode::Direct => "settings.connections.ssh_bridge.modes.direct",
-        OpenSshIntegrationMode::Bridge => "settings.connections.ssh_bridge.modes.bridge",
+        OpenSshIntegrationMode::Disabled => "settings.openssh_integration.modes.disabled",
+        OpenSshIntegrationMode::Direct => "settings.openssh_integration.modes.direct",
+        OpenSshIntegrationMode::Bridge => "settings.openssh_integration.modes.bridge",
     })
 }
 
@@ -56,6 +67,8 @@ enum SshBridgeLifecycleAction {
     Disable,
 }
 
+struct BridgeApprovalNotification;
+
 fn ssh_bridge_lifecycle_action(mode: OpenSshIntegrationMode) -> SshBridgeLifecycleAction {
     match mode {
         OpenSshIntegrationMode::Bridge => SshBridgeLifecycleAction::Enable,
@@ -63,6 +76,42 @@ fn ssh_bridge_lifecycle_action(mode: OpenSshIntegrationMode) -> SshBridgeLifecyc
             SshBridgeLifecycleAction::Disable
         }
     }
+}
+
+fn bridge_security_rank(level: BridgeSecurityLevel) -> u8 {
+    match level {
+        BridgeSecurityLevel::Standard => 0,
+        BridgeSecurityLevel::RequireApproval { .. } => 1,
+        BridgeSecurityLevel::RequireSystemAuth => 2,
+    }
+}
+
+fn bridge_system_auth_decision(
+    outcome: crate::ui::bridge_security_platform::SystemAuthVerification,
+) -> BridgeAuthorizationDecision {
+    use crate::ui::bridge_security_platform::SystemAuthVerification;
+
+    match outcome {
+        SystemAuthVerification::Verified => BridgeAuthorizationDecision::SystemAuthVerified,
+        SystemAuthVerification::Canceled => BridgeAuthorizationDecision::SystemAuthCancelled,
+        SystemAuthVerification::Unavailable => BridgeAuthorizationDecision::SystemAuthUnavailable,
+        SystemAuthVerification::Busy
+        | SystemAuthVerification::RetriesExhausted
+        | SystemAuthVerification::Failed => BridgeAuthorizationDecision::SystemAuthFailed,
+    }
+}
+
+fn bridge_security_display_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 fn apply_open_ssh_integration_mode_change(
@@ -431,6 +480,8 @@ pub(in crate::ui::shell) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>>,
     pub(in crate::ui::shell) open_ssh_integration_mode_select:
         Entity<SelectState<Vec<SelectOption<OpenSshIntegrationMode>>>>,
+    pub(in crate::ui::shell) ssh_bridge_security_level_select:
+        Entity<SelectState<Vec<SelectOption<BridgeSecurityLevel>>>>,
     pub(in crate::ui::shell) profile_import_source_select:
         Entity<SelectState<Vec<SelectOption<ImportSourceKind>>>>,
     pub(in crate::ui::shell) sync_provider_select:
@@ -521,6 +572,16 @@ pub(in crate::ui::shell) struct SettingsController {
     open_ssh_integration_service: OpenSshIntegrationService,
     ssh_bridge_status: SshBridgeStatus,
     ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
+    ssh_bridge_security: BridgeSecuritySnapshot,
+    ssh_bridge_notification_main_window: AnyWindowHandle,
+    ssh_bridge_notification_state: BridgeSecurityNotificationState,
+    ssh_bridge_notification_window: Option<(
+        WindowHandle<BridgeSecurityNotificationView>,
+        BridgeSecurityNotificationKey,
+    )>,
+    pending_ssh_bridge_policy_downgrade: Option<BridgeSecurityLevel>,
+    ssh_bridge_settings_instance_generation: Cell<u64>,
+    ssh_bridge_security_initial_selection_pending: Cell<bool>,
     ssh_bridge_status_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) forms: SettingsForms,
     sync: SyncUiState,
@@ -678,6 +739,14 @@ impl SettingsController {
             .iter()
             .position(|mode| *mode.value() == settings.open_ssh_integration_mode)
             .map(|index| IndexPath::default().row(index));
+        let ssh_bridge_security_level_options = [
+            BridgeSecurityLevel::Standard,
+            Self::default_bridge_approval_level(),
+            BridgeSecurityLevel::RequireSystemAuth,
+        ]
+        .into_iter()
+        .map(|level| SelectOption::new(level, bridge_security_level_label(level)))
+        .collect::<Vec<_>>();
         let profile_import_source_options = [
             ImportSourceKind::OpenSshConfig,
             ImportSourceKind::PuttyRegistry,
@@ -799,6 +868,14 @@ impl SettingsController {
                 SelectState::new(
                     open_ssh_integration_mode_options,
                     selected_open_ssh_integration_mode,
+                    window,
+                    cx,
+                )
+            }),
+            ssh_bridge_security_level_select: cx.new(|cx| {
+                SelectState::new(
+                    ssh_bridge_security_level_options,
+                    Some(IndexPath::default().row(0)),
                     window,
                     cx,
                 )
@@ -1220,6 +1297,238 @@ impl SettingsController {
         cx.emit(command);
     }
 
+    fn close_bridge_security_notification_window(&mut self, cx: &mut App) {
+        if let Some((handle, _)) = self.ssh_bridge_notification_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+    }
+
+    fn push_bridge_security_in_app_notification(
+        &self,
+        model: &BridgeSecurityNotificationModel,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::WindowExt as _;
+
+        let vault_unlock = model.phase == BridgePendingPhase::AwaitingVaultUnlock;
+        let mut message = i18n::string_args(
+            if vault_unlock {
+                "settings.openssh_integration.security.in_app_vault_request"
+            } else {
+                "settings.openssh_integration.security.in_app_request"
+            },
+            &[
+                ("profile", &model.profile_name),
+                ("source", &model.source_summary),
+            ],
+        );
+        if model.additional_count > 0 {
+            let count = model.additional_count.to_string();
+            message.push(' ');
+            message.push_str(&i18n::string_args(
+                "settings.openssh_integration.security.notification_additional",
+                &[("count", &count)],
+            ));
+        }
+        let controller = cx.entity().clone();
+        let notification = warning_action_notification(
+            i18n::string(if vault_unlock {
+                "settings.openssh_integration.security.in_app_vault_title"
+            } else {
+                "settings.openssh_integration.security.in_app_title"
+            }),
+            message,
+            i18n::string(if vault_unlock {
+                "settings.openssh_integration.security.unlock_vault"
+            } else {
+                "settings.openssh_integration.security.view"
+            }),
+            move |_, cx| {
+                controller.update(cx, |controller, cx| {
+                    if vault_unlock {
+                        controller.unlock_ssh_bridge_vault(cx);
+                    } else {
+                        controller.request_ssh_bridge_security_page();
+                    }
+                    cx.emit(AppCommand::SidebarSectionRequested(
+                        SidebarSection::Settings,
+                    ));
+                    cx.notify();
+                });
+            },
+        )
+        .id::<BridgeApprovalNotification>();
+        let _ = self
+            .ssh_bridge_notification_main_window
+            .update(cx, move |_, window, cx| {
+                window.push_notification(notification, cx);
+            });
+    }
+
+    fn open_bridge_security_notification_window(
+        &mut self,
+        model: BridgeSecurityNotificationModel,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let display = self
+            .ssh_bridge_notification_main_window
+            .update(cx, |_, window, cx| window.display(cx))
+            .ok()
+            .flatten()
+            .or_else(|| cx.primary_display());
+        let options = bridge_security_notification_window_options(display.as_deref());
+        let controller = cx.weak_entity();
+        let view_model = model.clone();
+        let handle = cx.open_window(options, move |_, cx| {
+            cx.new(|cx| BridgeSecurityNotificationView::new(view_model, controller.clone(), cx))
+        })?;
+        if let Err(error) = handle
+            .update(cx, |_, window, _| {
+                crate::ui::bridge_security_platform::configure_notification_window(window)
+            })
+            .and_then(|result| result)
+        {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            return Err(error);
+        }
+        self.ssh_bridge_notification_window = Some((handle, model.key));
+        Ok(())
+    }
+
+    fn sync_bridge_security_notification(
+        &mut self,
+        snapshot: &BridgeSecuritySnapshot,
+        bridge_running: bool,
+        app_foreground: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !bridge_running {
+            self.close_bridge_security_notification_window(cx);
+            self.ssh_bridge_notification_state.clear();
+            return;
+        }
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let Some(model) = self.ssh_bridge_notification_state.reconcile(snapshot, now) else {
+            self.close_bridge_security_notification_window(cx);
+            self.ssh_bridge_notification_state.clear();
+            return;
+        };
+
+        if app_foreground {
+            self.close_bridge_security_notification_window(cx);
+            if self
+                .ssh_bridge_notification_state
+                .should_present(&model.key)
+            {
+                self.push_bridge_security_in_app_notification(&model, cx);
+                self.ssh_bridge_notification_state.mark_presented(model.key);
+            }
+            return;
+        }
+
+        if let Some((handle, key)) = self.ssh_bridge_notification_window.as_ref() {
+            let handle = *handle;
+            if *key == model.key {
+                let updated_model = model.clone();
+                if handle
+                    .update(cx, |view, _, cx| view.set_model(updated_model, cx))
+                    .is_ok()
+                {
+                    return;
+                }
+                self.ssh_bridge_notification_window = None;
+            } else {
+                self.close_bridge_security_notification_window(cx);
+            }
+        }
+
+        if !self
+            .ssh_bridge_notification_state
+            .should_present(&model.key)
+        {
+            return;
+        }
+
+        let key = model.key.clone();
+        if let Err(error) = self.open_bridge_security_notification_window(model.clone(), cx) {
+            log::warn!("failed to show SSH Bridge notification window: {error:?}");
+            self.push_bridge_security_in_app_notification(&model, cx);
+        }
+        self.ssh_bridge_notification_state.mark_presented(key);
+    }
+
+    pub(in crate::ui::shell) fn dismiss_bridge_security_notification(
+        &mut self,
+        key: BridgeSecurityNotificationKey,
+        cx: &mut Context<Self>,
+    ) {
+        self.ssh_bridge_notification_window = None;
+        self.ssh_bridge_notification_state.dismiss(key);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn handle_bridge_security_notification_action(
+        &mut self,
+        key: BridgeSecurityNotificationKey,
+        action: BridgeSecurityNotificationAction,
+        cx: &mut Context<Self>,
+    ) {
+        self.ssh_bridge_notification_window = None;
+        cx.activate(true);
+        let _ = self
+            .ssh_bridge_notification_main_window
+            .update(cx, |_, window, _| window.activate_window());
+        let request_still_pending = self
+            .ssh_bridge_service
+            .security_snapshot()
+            .pending
+            .iter()
+            .any(|request| request.request_id == key.request_id && request.phase == key.phase);
+        if !request_still_pending {
+            self.request_ssh_bridge_security_page();
+            cx.emit(AppCommand::SidebarSectionRequested(
+                SidebarSection::Settings,
+            ));
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "settings.openssh_integration.security.request_expired",
+            )));
+            cx.notify();
+            return;
+        }
+        match action {
+            BridgeSecurityNotificationAction::OpenSecurity => {
+                self.request_ssh_bridge_security_page();
+            }
+            BridgeSecurityNotificationAction::UnlockVault => {
+                self.unlock_ssh_bridge_vault(cx);
+            }
+        }
+        cx.emit(AppCommand::SidebarSectionRequested(
+            SidebarSection::Settings,
+        ));
+        cx.notify();
+    }
+
+    fn request_ssh_bridge_security_page(&self) {
+        let mut generation = self
+            .ssh_bridge_settings_instance_generation
+            .get()
+            .wrapping_add(1);
+        if generation == 0 {
+            generation = 1;
+        }
+        self.ssh_bridge_settings_instance_generation.set(generation);
+        self.ssh_bridge_security_initial_selection_pending.set(true);
+    }
+
+    pub(in crate::ui::shell) fn take_ssh_bridge_settings_render_request(&self) -> (u64, bool) {
+        (
+            self.ssh_bridge_settings_instance_generation.get(),
+            self.ssh_bridge_security_initial_selection_pending
+                .replace(false),
+        )
+    }
+
     pub(in crate::ui::shell) fn new(
         args: SettingsControllerArgs,
         session_query: SessionQueryPort,
@@ -1235,6 +1544,7 @@ impl SettingsController {
         let terminal_right_click_behavior_select =
             forms.terminal_right_click_behavior_select.clone();
         let open_ssh_integration_mode_select = forms.open_ssh_integration_mode_select.clone();
+        let ssh_bridge_security_level_select = forms.ssh_bridge_security_level_select.clone();
         let sync_provider_select = forms.sync_provider_select.clone();
         let ai_provider_select = forms.ai_provider_select.clone();
         let ai_provider_kind_select = forms.ai_provider_kind_select.clone();
@@ -1337,6 +1647,15 @@ impl SettingsController {
                 let SelectEvent::Confirm(selected) = event;
                 if let Some(mode) = selected.as_ref().copied() {
                     this.set_open_ssh_integration_mode(mode, cx);
+                }
+            },
+        );
+        let ssh_bridge_security_level_subscription = cx.subscribe(
+            &ssh_bridge_security_level_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(level) = selected.as_ref().copied() {
+                    this.request_ssh_bridge_security_policy(level, cx);
                 }
             },
         );
@@ -1470,6 +1789,8 @@ impl SettingsController {
 
         let ssh_bridge_status = args.ssh_bridge_service.status();
         let ssh_bridge_sync_result = args.open_ssh_integration_service.last_sync_result();
+        let ssh_bridge_security = args.ssh_bridge_service.security_snapshot();
+        let ssh_bridge_notification_main_window = window.window_handle();
         let mut controller = Self {
             runtime: args.runtime,
             session_store: args.session_store,
@@ -1487,6 +1808,13 @@ impl SettingsController {
             open_ssh_integration_service: args.open_ssh_integration_service,
             ssh_bridge_status,
             ssh_bridge_sync_result,
+            ssh_bridge_security,
+            ssh_bridge_notification_main_window,
+            ssh_bridge_notification_state: BridgeSecurityNotificationState::default(),
+            ssh_bridge_notification_window: None,
+            pending_ssh_bridge_policy_downgrade: None,
+            ssh_bridge_settings_instance_generation: Cell::new(0),
+            ssh_bridge_security_initial_selection_pending: Cell::new(false),
             ssh_bridge_status_task: None,
             forms,
             sync: bootstrap.sync,
@@ -1532,6 +1860,7 @@ impl SettingsController {
                 monitor_history_subscription,
                 terminal_right_click_behavior_subscription,
                 open_ssh_integration_mode_subscription,
+                ssh_bridge_security_level_subscription,
                 sync_provider_select_subscription,
                 ai_provider_select_subscription,
                 ai_provider_kind_subscription,
@@ -1546,6 +1875,13 @@ impl SettingsController {
                 proxy_auth_mode_subscription,
             ],
         };
+        controller.sync_ssh_bridge_security_level_select(window, cx);
+        let auth_service = controller.ssh_bridge_service.clone();
+        cx.spawn(async move |_this, _cx| {
+            let available = crate::ui::bridge_security_platform::system_auth_available().await;
+            auth_service.set_system_auth_available(available);
+        })
+        .detach();
         controller.ssh_bridge_status_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -1554,13 +1890,32 @@ impl SettingsController {
                 if this
                     .update(cx, |controller, cx| {
                         let status = controller.ssh_bridge_service.status();
+                        let bridge_running = matches!(status, SshBridgeStatus::Running { .. });
                         let sync_result =
                             controller.open_ssh_integration_service.last_sync_result();
+                        let security = controller.ssh_bridge_service.security_snapshot();
+                        let mut changed = false;
                         if status != controller.ssh_bridge_status
                             || sync_result != controller.ssh_bridge_sync_result
                         {
                             controller.ssh_bridge_status = status;
                             controller.ssh_bridge_sync_result = sync_result;
+                            changed = true;
+                        }
+                        let app_foreground = cx.active_window().is_some()
+                            && crate::ui::bridge_security_platform::is_app_foreground();
+                        controller.sync_bridge_security_notification(
+                            &security,
+                            bridge_running,
+                            app_foreground,
+                            cx,
+                        );
+                        if security != controller.ssh_bridge_security {
+                            controller.ssh_bridge_security = security;
+                            controller.sync_ssh_bridge_security_level_select_via_active_window(cx);
+                            changed = true;
+                        }
+                        if changed {
                             cx.notify();
                         }
                     })
@@ -1628,6 +1983,207 @@ impl SettingsController {
         self.ssh_bridge_service.route_refresh().diagnostics
     }
 
+    pub(in crate::ui::shell) fn ssh_bridge_security(&self) -> &BridgeSecuritySnapshot {
+        &self.ssh_bridge_security
+    }
+
+    pub(in crate::ui::shell) fn ssh_bridge_security_policy(&self) -> BridgeSecurityPolicy {
+        self.ssh_bridge_service.security_policy()
+    }
+
+    pub(in crate::ui::shell) fn request_ssh_bridge_security_policy(
+        &mut self,
+        level: BridgeSecurityLevel,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.ssh_bridge_service.security_policy().level;
+        if bridge_security_rank(level) < bridge_security_rank(current) {
+            self.pending_ssh_bridge_policy_downgrade = Some(level);
+            cx.notify();
+            return;
+        }
+        self.apply_ssh_bridge_security_policy(level, cx);
+    }
+
+    fn apply_ssh_bridge_security_policy(
+        &mut self,
+        level: BridgeSecurityLevel,
+        cx: &mut Context<Self>,
+    ) {
+        match self.ssh_bridge_service.set_security_policy(level) {
+            Ok(_) => {
+                self.ssh_bridge_security = self.ssh_bridge_service.security_snapshot();
+                self.sync_ssh_bridge_security_level_select_via_active_window(cx);
+                cx.emit(AppCommand::Feedback(i18n::string(
+                    "settings.openssh_integration.security.policy_saved",
+                )));
+            }
+            Err(error) => cx.emit(AppCommand::Feedback(i18n::string_args(
+                "settings.openssh_integration.security.policy_failed",
+                &[("error", &error.to_string())],
+            ))),
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn pending_ssh_bridge_policy_downgrade(
+        &self,
+    ) -> Option<&BridgeSecurityLevel> {
+        self.pending_ssh_bridge_policy_downgrade.as_ref()
+    }
+
+    fn sync_ssh_bridge_security_level_select(&mut self, window: &mut Window, cx: &mut App) {
+        let level = self.ssh_bridge_service.security_policy().level;
+        let system_auth_available = self.ssh_bridge_security.system_auth_available;
+        let select = self.forms.ssh_bridge_security_level_select.clone();
+        let options = [
+            BridgeSecurityLevel::Standard,
+            Self::default_bridge_approval_level(),
+            BridgeSecurityLevel::RequireSystemAuth,
+        ]
+        .into_iter()
+        .map(|level| {
+            SelectOption::new(level, bridge_security_level_label(level)).disabled(
+                matches!(level, BridgeSecurityLevel::RequireSystemAuth) && !system_auth_available,
+            )
+        })
+        .collect::<Vec<_>>();
+        select.update(cx, |select, cx| {
+            select.set_items(options, window, cx);
+            let index = match level {
+                BridgeSecurityLevel::Standard => 0,
+                BridgeSecurityLevel::RequireApproval { .. } => 1,
+                BridgeSecurityLevel::RequireSystemAuth => 2,
+            };
+            select.set_selected_index(Some(IndexPath::default().row(index)), window, cx);
+        });
+    }
+
+    fn sync_ssh_bridge_security_level_select_via_active_window(&mut self, cx: &mut App) {
+        let Some(window) = cx.active_window() else {
+            return;
+        };
+        let _ = window.update(cx, |_, window, cx| {
+            self.sync_ssh_bridge_security_level_select(window, cx);
+        });
+    }
+
+    pub(in crate::ui::shell) fn confirm_ssh_bridge_policy_downgrade(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(level) = self.pending_ssh_bridge_policy_downgrade.take() {
+            self.apply_ssh_bridge_security_policy(level, cx);
+        }
+    }
+
+    pub(in crate::ui::shell) fn cancel_ssh_bridge_policy_downgrade(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_ssh_bridge_policy_downgrade = None;
+        self.sync_ssh_bridge_security_level_select_via_active_window(cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn approve_ssh_bridge_request(
+        &mut self,
+        request_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.decide_ssh_bridge_request(request_id, BridgeAuthorizationDecision::Approve, cx);
+    }
+
+    pub(in crate::ui::shell) fn reject_ssh_bridge_request(
+        &mut self,
+        request_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.decide_ssh_bridge_request(request_id, BridgeAuthorizationDecision::Reject, cx);
+    }
+
+    pub(in crate::ui::shell) fn cancel_ssh_bridge_request(
+        &mut self,
+        request_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.ssh_bridge_service.cancel_pending_request(&request_id) {
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "settings.openssh_integration.security.decision_failed",
+                &[("error", &error.to_string())],
+            )));
+        }
+        self.ssh_bridge_security = self.ssh_bridge_service.security_snapshot();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn unlock_ssh_bridge_vault(&mut self, cx: &mut Context<Self>) {
+        self.request_ssh_bridge_security_page();
+        if !self.local_vault_unlock_in_progress && self.local_vault_passphrase_popup.is_none() {
+            cx.emit(AppCommand::vault_unlock_prompt());
+        }
+        cx.notify();
+    }
+
+    fn decide_ssh_bridge_request(
+        &mut self,
+        request_id: String,
+        decision: BridgeAuthorizationDecision,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self
+            .ssh_bridge_service
+            .decide_authorization(&request_id, decision)
+        {
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "settings.openssh_integration.security.decision_failed",
+                &[("error", &error.to_string())],
+            )));
+        }
+        self.ssh_bridge_security = self.ssh_bridge_service.security_snapshot();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn authenticate_ssh_bridge_request(
+        &mut self,
+        request_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self
+            .ssh_bridge_security
+            .pending
+            .iter()
+            .find(|request| request.request_id == request_id)
+        else {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "settings.openssh_integration.security.request_expired",
+            )));
+            return;
+        };
+        let source =
+            bridge_security_display_text(request.peer.source_path().unwrap_or("unknown process"));
+        let profile_name = bridge_security_display_text(&request.profile_name);
+        let reason = format!(
+            "Allow SSH Bridge request {} to profile {} from {}",
+            request.request_id, profile_name, source
+        );
+        let service = self.ssh_bridge_service.clone();
+        cx.spawn(async move |_this, _cx| {
+            let outcome = crate::ui::bridge_security_platform::verify_system_auth(&reason).await;
+            let decision = bridge_system_auth_decision(outcome);
+            if let Err(error) = service.decide_authorization(&request_id, decision) {
+                log::debug!("failed to finish SSH Bridge system authentication: {error:?}");
+            }
+        })
+        .detach();
+    }
+
+    pub(in crate::ui::shell) fn default_bridge_approval_level() -> BridgeSecurityLevel {
+        BridgeSecurityLevel::RequireApproval {
+            timeout_secs: DEFAULT_BRIDGE_APPROVAL_TIMEOUT_SECS,
+        }
+    }
+
     pub(in crate::ui::shell) fn set_open_ssh_integration_mode(
         &mut self,
         mode: OpenSshIntegrationMode,
@@ -1647,7 +2203,7 @@ impl SettingsController {
                 self.ssh_bridge_sync_result = self.open_ssh_integration_service.last_sync_result();
                 let message = error.to_string();
                 cx.emit(AppCommand::Feedback(i18n::string_args(
-                    "settings.connections.ssh_bridge.notifications.sync_failed",
+                    "settings.openssh_integration.notifications.sync_failed",
                     &[("error", &message)],
                 )));
                 if let Some(window_handle) = cx.active_window() {
@@ -1675,7 +2231,7 @@ impl SettingsController {
             }
         });
         cx.emit(AppCommand::Feedback(i18n::string_args(
-            "settings.connections.ssh_bridge.notifications.mode_changed",
+            "settings.openssh_integration.notifications.mode_changed",
             &[("mode", &open_ssh_integration_mode_label(mode))],
         )));
         cx.notify();
@@ -2562,8 +3118,36 @@ mod tests {
     use miaominal_core::profile::SessionProfile;
     use miaominal_settings::{AiProviderConfig, SshBridgeConfig};
     use miaominal_ssh::SshBridgeEndpoint;
-    use miaominal_storage::KnownHostsStore;
+    use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
     use tokio::runtime::Runtime;
+
+    #[test]
+    fn system_auth_results_keep_cancelled_and_unavailable_semantics() {
+        use crate::ui::bridge_security_platform::SystemAuthVerification;
+
+        assert_eq!(
+            bridge_system_auth_decision(SystemAuthVerification::Verified),
+            BridgeAuthorizationDecision::SystemAuthVerified
+        );
+        assert_eq!(
+            bridge_system_auth_decision(SystemAuthVerification::Canceled),
+            BridgeAuthorizationDecision::SystemAuthCancelled
+        );
+        assert_eq!(
+            bridge_system_auth_decision(SystemAuthVerification::Unavailable),
+            BridgeAuthorizationDecision::SystemAuthUnavailable
+        );
+        for outcome in [
+            SystemAuthVerification::Busy,
+            SystemAuthVerification::RetriesExhausted,
+            SystemAuthVerification::Failed,
+        ] {
+            assert_eq!(
+                bridge_system_auth_decision(outcome),
+                BridgeAuthorizationDecision::SystemAuthFailed
+            );
+        }
+    }
 
     #[test]
     fn portable_onboarding_inserts_security_before_import() {
@@ -2658,7 +3242,7 @@ mod tests {
         let settings_directory = tempfile::tempdir().unwrap();
         let endpoint = SshBridgeEndpoint::derive(root.path()).unwrap();
         let instance_id = SshBridgeEndpoint::instance_id(root.path()).unwrap();
-        let bridge = SshBridgeService::new(
+        let bridge = SshBridgeService::new_with_stores(
             runtime.handle().clone(),
             endpoint,
             instance_id.clone(),
@@ -2669,6 +3253,10 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
+            BridgeSecurityStore::open(&root.path().join("ssh_bridge_security.db"))
+                .map_err(|error| format!("{error:#}")),
+            BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
+                .map_err(|error| format!("{error:#}")),
         );
         let integration =
             OpenSshIntegrationService::new(bridge, ssh.path().to_path_buf(), instance_id);
@@ -2716,7 +3304,7 @@ mod tests {
             .join("miaominal")
             .join(&instance_id)
             .join("bridge_known_hosts");
-        let bridge = SshBridgeService::new(
+        let bridge = SshBridgeService::new_with_stores(
             runtime.handle().clone(),
             endpoint,
             instance_id.clone(),
@@ -2724,6 +3312,10 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
+            BridgeSecurityStore::open(&root.path().join("ssh_bridge_security.db"))
+                .map_err(|error| format!("{error:#}")),
+            BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
+                .map_err(|error| format!("{error:#}")),
         );
         let integration =
             OpenSshIntegrationService::new(bridge.clone(), ssh.path().to_path_buf(), instance_id);

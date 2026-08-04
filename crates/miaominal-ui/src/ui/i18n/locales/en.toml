@@ -6,6 +6,10 @@ description = "Configure fonts, layout, and themes for the terminal and applicat
 title = "Connections"
 description = "Configure the Hosts page, connection history, monitoring, and tab behavior."
 
+[settings.pages.openssh_integration]
+title = "OpenSSH Integration"
+description = "Manage the OpenSSH integration, its Bridge security policy, pending approvals, and connection audit."
+
 [settings.pages.key_bindings]
 title = "Key Bindings"
 description = "Customize shortcuts for workspace navigation and terminal actions. Click Change, then press a key combo (requires Ctrl or Alt)."
@@ -108,59 +112,131 @@ description = "Choose what happens when closing the last remaining tab in the to
 label = "When the last tab closes"
 description = "Either quit the application immediately or open a fresh Hosts home tab."
 
-[settings.connections.ssh_bridge.group]
-title = "OpenSSH integration"
-description = "Connect from VS Code Remote-SSH, scp, rsync, and other OpenSSH-based tools. Bridge is recommended when profiles use saved passwords, Miaominal jump chains, or SOCKS/HTTP proxies. Miaominal must remain running. Any permitted process running as the same OS user can request an exported profile connection while Bridge is enabled."
+[settings.openssh_integration.group]
+title = "Integration status"
 
-[settings.connections.ssh_bridge.mode]
+[settings.openssh_integration.mode]
 label = "Integration mode"
-description = "Off removes this instance's generated include. Direct exports ordinary OpenSSH host settings. Bridge routes the complete SSH connection through Miaominal without exporting passwords or private keys."
 
-[settings.connections.ssh_bridge.modes]
+[settings.openssh_integration.mode_tooltips]
+disabled = "Remove this instance's generated OpenSSH Include and disable integration."
+direct = "Export ordinary OpenSSH host settings directly. Saved passwords and Miaominal-only routing are unavailable."
+bridge = "Route the complete SSH connection through Miaominal without exporting passwords or private keys. Miaominal must remain running, and permitted processes running as the same OS user can request exported profile connections."
+
+[settings.openssh_integration.modes]
 disabled = "Off"
 direct = "Direct"
 bridge = "Bridge (Recommended)"
+bridge_segment = "Bridge"
 
-[settings.connections.ssh_bridge.status]
+[settings.openssh_integration.status]
 label = "Bridge status"
 
-[settings.connections.ssh_bridge.states]
+[settings.openssh_integration.states]
 disabled = "Disabled"
 starting = "Starting"
 running = "Running"
 stopping = "Stopping"
 error = "Error"
 
-[settings.connections.ssh_bridge.endpoint]
+[settings.openssh_integration.endpoint]
 label = "Private endpoint"
 
-[settings.connections.ssh_bridge.config_path]
+[settings.openssh_integration.config_path]
 label = "Generated config"
 
-[settings.connections.ssh_bridge.profiles]
+[settings.openssh_integration.profiles]
 label = "Exported profiles"
 value = "{exported} exported, {skipped} skipped"
 
-[settings.connections.ssh_bridge.active_clients]
+[settings.openssh_integration.active_clients]
 label = "Active clients"
 
-[settings.connections.ssh_bridge.credentials]
+[settings.openssh_integration.credentials]
 label = "Credential readiness"
 ready = "Available credentials are checked when a new Bridge connection starts."
 locked = "The local vault is locked; profiles that require stored credentials will fail until it is unlocked."
 
-[settings.connections.ssh_bridge.validation]
+[settings.openssh_integration.validation]
 label = "Route validation"
 ready = "All saved SSH profile topologies are structurally valid."
 skipped = "{count} profile(s) skipped. First issue: {error}"
 
-[settings.connections.ssh_bridge.last_error]
+[settings.openssh_integration.last_error]
 label = "Recent error"
 none = "No recent Bridge error."
 
-[settings.connections.ssh_bridge.notifications]
+[settings.openssh_integration.notifications]
 mode_changed = "OpenSSH integration changed to {mode}."
 sync_failed = "Could not update the managed OpenSSH integration: {error}"
+
+[settings.openssh_integration.security]
+health_label = "Security status"
+pending_label = "Pending authorization"
+policies_label = "Global security policy"
+healthy = "Security policy storage and audit logging are healthy."
+policy_store_error = "Security database unavailable: {error}"
+audit_health_error = "Audit logging needs attention: {error}"
+no_pending = "No SSH Bridge requests are waiting for authorization."
+pending_summary = "{profile} requested by {source}; expires in {seconds}s"
+vault_pending_summary = "{profile} requested by {source}; unlock the local vault within {seconds}s"
+in_app_title = "SSH Bridge approval required"
+in_app_request = "{profile} was requested by {source}."
+in_app_vault_title = "Unlock the local vault for SSH Bridge"
+in_app_vault_request = "{profile}, requested by {source}, is waiting for the local vault."
+notification_approval_title = "SSH Bridge approval required"
+notification_system_auth_title = "SSH Bridge identity verification required"
+notification_vault_title = "Unlock the local vault for SSH Bridge"
+notification_request = "{profile} · Source: {source}"
+notification_expires = "{seconds}s remaining"
+notification_additional = "{count} more requests"
+view = "View"
+unknown_source = "Unknown process"
+approve = "Approve"
+reject = "Reject"
+authenticate = "Verify identity"
+unlock_vault = "Unlock vault"
+cancel_connection = "Cancel connection"
+cancel = "Cancel"
+confirm = "Confirm"
+policy_saved = "SSH Bridge security policy saved."
+policy_failed = "Could not save the SSH Bridge security policy: {error}"
+decision_failed = "The authorization request could not be completed: {error}"
+request_expired = "This SSH Bridge authorization request has already expired."
+downgrade_confirm = "Lower the global security level to {level}? Future connections for every profile will require less verification."
+system_auth_unavailable = "System authentication is unavailable on this platform or device. Existing Require System Auth policies fail closed and never fall back."
+approval_timeout = "Approval timeout"
+seconds = "{seconds}s"
+source_best_effort = "Source process information is collected on a best-effort basis and is not a trusted identity."
+no_process_chain = "Process ancestry is unavailable."
+process_chain_entry = "PID {pid} · parent {parent} · started {started} · {path} · {status}"
+
+[settings.openssh_integration.security.levels]
+standard = "Standard"
+approval = "Require approval"
+system_auth = "Require system authentication"
+approval_segment = "Approval"
+system_auth_segment = "System auth"
+
+[settings.openssh_integration.security.level_tooltips]
+standard = "Allow the connection after local IPC and route validation, without asking the user."
+approval = "Require an explicit approval for every connection before opening the upstream SSH session."
+system_auth = "Require Windows Hello, PIN, or password verification for every connection and fail closed when authentication is unavailable."
+
+[settings.openssh_integration.security.capture]
+captured = "Captured"
+exited = "Process exited"
+access_denied = "Access denied"
+unsupported = "Unsupported"
+failed = "Capture failed"
+
+[settings.openssh_integration.security_policy_group]
+title = "Security policy"
+description = "Storage health and the global security level applied to every Bridge profile."
+
+[settings.openssh_integration.security_pending_group]
+title = "Pending authorization"
+description = "Approve or reject Bridge connections that are waiting for your decision."
 
 [settings.connections.import_group]
 title = "Import profiles"
