@@ -8,6 +8,17 @@ const MANAGED_KEY_CHUNK_UTF16_UNITS: usize = 1024;
 const MANAGED_KEY_CHUNK_MAX_COUNT: usize = 64;
 const MANAGED_KEY_CHUNK_MANIFEST_PREFIX: &str = "\u{1f}miaominal.managed-key-chunks.v1:";
 
+#[derive(Debug)]
+pub struct LocalVaultLockedError;
+
+impl std::fmt::Display for LocalVaultLockedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("local vault is locked")
+    }
+}
+
+impl std::error::Error for LocalVaultLockedError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagedKeyChunkManifest {
     generation: String,
@@ -132,7 +143,10 @@ impl SecretStore {
             .map(|index| manifest.chunk_account(account, index))
             .collect::<Vec<_>>();
         let account_refs = accounts.iter().map(String::as_str).collect::<Vec<_>>();
-        let chunks = self.credentials.get_many(&account_refs)?;
+        let chunks = self
+            .credentials
+            .get_many(&account_refs)
+            .map_err(Self::normalize_read_error)?;
         let mut value = String::new();
 
         for (index, chunk) in chunks.into_iter().enumerate() {
@@ -170,6 +184,7 @@ impl SecretStore {
         let value = self
             .credentials
             .get(&account)
+            .map_err(Self::normalize_read_error)
             .with_context(|| format!("failed to read secret for {profile_id}:{}", kind.suffix()))?;
 
         if kind != SecretKind::ManagedPrivateKey {
@@ -194,6 +209,7 @@ impl SecretStore {
         let values = self
             .credentials
             .get_many(&[password_account.as_str(), passphrase_account.as_str()])
+            .map_err(Self::normalize_read_error)
             .with_context(|| format!("failed to read saved secrets for {profile_id}"))?;
         let mut values = values.into_iter();
 
@@ -337,11 +353,28 @@ impl SecretStore {
     }
 
     pub fn is_locked_error(error: &anyhow::Error) -> bool {
-        error.chain().any(|cause| {
+        error.downcast_ref::<LocalVaultLockedError>().is_some()
+            || error.chain().any(|cause| {
+                let message = cause.to_string();
+                message.contains(Self::LOCKED_VAULT_MESSAGE)
+                    || message.contains(Self::REVOKED_VAULT_MESSAGE)
+            })
+    }
+
+    pub fn is_structured_locked_error(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<LocalVaultLockedError>().is_some()
+    }
+
+    fn normalize_read_error(error: anyhow::Error) -> anyhow::Error {
+        if error.chain().any(|cause| {
             let message = cause.to_string();
             message.contains(Self::LOCKED_VAULT_MESSAGE)
                 || message.contains(Self::REVOKED_VAULT_MESSAGE)
-        })
+        }) {
+            anyhow::Error::new(LocalVaultLockedError)
+        } else {
+            error
+        }
     }
 }
 
@@ -420,6 +453,15 @@ mod tests {
         let error = anyhow::anyhow!("local vault session has been revoked");
 
         assert!(SecretStore::is_locked_error(&error));
+    }
+
+    #[test]
+    fn locked_backend_reads_are_normalized_to_a_structured_error() {
+        let error = SecretStore::new_locked_vault()
+            .get("profile", SecretKind::Password)
+            .expect_err("locked vault read should fail");
+
+        assert!(SecretStore::is_structured_locked_error(&error));
     }
 
     #[test]

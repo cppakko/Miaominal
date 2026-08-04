@@ -10,4 +10,4 @@ pub use credential_backend::{
 };
 pub use model::SecretKind;
 pub use protected_memory::{MAX_VAULT_PASSPHRASE_BYTES, ProtectedPassphrase};
-pub use secret_store::SecretStore;
+pub use secret_store::{LocalVaultLockedError, SecretStore};
