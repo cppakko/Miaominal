@@ -7,7 +7,7 @@ use crate::ui::{
 };
 use gpui_component::menu::DropdownMenu as _;
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
-use rfd::FileDialog;
+use rfd::AsyncFileDialog;
 
 const KEYCHAIN_CARD_WIDTH: f32 = 332.0;
 const KEYCHAIN_CARD_ACTION_WIDTH: f32 = 52.0;
@@ -591,20 +591,40 @@ impl KeychainController {
                                                 return;
                                             }
 
-                                            let Some(path) = FileDialog::new()
+                                            let dialog = AsyncFileDialog::new()
+                                                .set_parent(window)
                                                 .set_title(i18n::string(
                                                     "keychain.editor.select_private_key_to_import",
-                                                ))
-                                                .pick_file()
-                                            else {
-                                                return;
-                                            };
+                                                ));
+                                            let window_handle = window.window_handle();
+                                            let entity = entity.clone();
 
-                                            entity.update(cx, |this, cx| {
-                                                this.set_managed_key_import_file_path(
-                                                    path, window, cx,
-                                                );
-                                            });
+                                            cx.spawn(async move |cx| {
+                                                let Some(file) = dialog.pick_file().await else {
+                                                    return;
+                                                };
+                                                let path = file.path().to_path_buf();
+                                                cx.update(move |cx| {
+                                                    if let Err(error) = window_handle.update(
+                                                        cx,
+                                                        move |_, window, cx| {
+                                                            let _ = entity.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.set_managed_key_import_file_path(
+                                                                        path, window, cx,
+                                                                    );
+                                                                },
+                                                            );
+                                                        },
+                                                    ) {
+                                                        log::debug!(
+                                                            "failed to apply selected managed key import file: {error:?}"
+                                                        );
+                                                    }
+                                                });
+                                            })
+                                            .detach();
                                         }
                                     },
                                 )),

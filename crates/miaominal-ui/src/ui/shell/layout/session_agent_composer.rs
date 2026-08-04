@@ -439,10 +439,10 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     Some(roles.surface_container_high),
                                     Some(text_muted),
                                     None,
-                                    move |_window, cx| {
+                                    move |window, cx| {
                                         let controller = attach_controller.clone();
                                         controller.update(cx, |controller, cx| {
-                                            controller.open_attachment_picker(cx);
+                                            controller.open_attachment_picker(window, cx);
                                         });
                                     },
                                 ))

@@ -1,7 +1,7 @@
 use super::{AgentController, AppCommand};
 use crate::ui::{i18n, shell::error_notification};
 use base64::Engine as _;
-use gpui::{Context, ImageFormat};
+use gpui::{Context, ImageFormat, Window};
 use gpui_component::WindowExt as _;
 use miaominal_core::chat_attachment::{
     ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
@@ -39,26 +39,33 @@ impl AttachmentError {
 }
 
 impl AgentController {
-    pub(in crate::ui::shell) fn open_attachment_picker(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui::shell) fn open_attachment_picker(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.session_agent().is_busy() {
             return;
         }
 
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_parent(window)
+            .add_filter("All files", &["*"])
+            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+            .add_filter(
+                "Text files",
+                &[
+                    "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "yaml", "yml",
+                    "toml", "xml", "html", "css", "c", "cpp", "h", "hpp", "go", "java", "sh",
+                    "bash", "sql", "csv", "log", "ini", "cfg", "env", "diff", "patch",
+                ],
+            );
         cx.spawn(async move |this, cx| {
-            let files = rfd::FileDialog::new()
-                .add_filter("All files", &["*"])
-                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
-                .add_filter(
-                    "Text files",
-                    &[
-                        "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "yaml", "yml",
-                        "toml", "xml", "html", "css", "c", "cpp", "h", "hpp", "go", "java", "sh",
-                        "bash", "sql", "csv", "log", "ini", "cfg", "env", "diff", "patch",
-                    ],
-                )
-                .pick_files();
-            let files = match files {
-                Some(paths) if !paths.is_empty() => paths,
+            let files = match dialog.pick_files().await {
+                Some(files) if !files.is_empty() => files
+                    .into_iter()
+                    .map(|file| file.path().to_path_buf())
+                    .collect(),
                 _ => return,
             };
             let _ = this.update(cx, |controller, cx| {
