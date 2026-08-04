@@ -3,7 +3,15 @@ use miaominal_core::profile::{ImportField, ImportIssueKind, ImportIssueReason, I
 use miaominal_core::ssh_bridge_security::BridgeSecurityLevel;
 use miaominal_settings::{
     LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration, ThemeId,
+    WindowCloseBehavior,
 };
+
+pub(in crate::ui::shell) fn window_close_behavior_label(behavior: WindowCloseBehavior) -> String {
+    i18n::string(match behavior {
+        WindowCloseBehavior::ExitApplication => "enum.window_close_behavior.exit_application",
+        WindowCloseBehavior::MinimizeToTray => "enum.window_close_behavior.minimize_to_tray",
+    })
+}
 
 pub(in crate::ui::shell) fn last_tab_close_behavior_label(
     behavior: LastTabCloseBehavior,

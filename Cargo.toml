@@ -113,6 +113,7 @@ tokio = { version = "1", features = [
 ] }
 tokio-socks = "0.5.2"
 toml = "1.1.2"
+tray-icon = { version = "0.24.2", default-features = false }
 unicode-segmentation = "1.13.3"
 uuid = { version = "1.23.4", features = ["v4"] }
 zeroize = "=1.8.2"
@@ -205,7 +206,7 @@ revision = "1"
 section = "net"
 priority = "optional"
 depends = "$auto"
-recommends = "xdg-desktop-portal"
+recommends = "xdg-desktop-portal, libayatana-appindicator3-1"
 assets = [
     ["target/release/miaominal", "usr/bin/", "755"],
     ["packaging/linux/miaominal.desktop", "usr/share/applications/", "644"],
@@ -231,6 +232,7 @@ assets = [
 
 [package.metadata.generate-rpm.recommends]
 xdg-desktop-portal = "*"
+libayatana-appindicator-gtk3 = "*"
 
 [profile.release]
 opt-level = 3

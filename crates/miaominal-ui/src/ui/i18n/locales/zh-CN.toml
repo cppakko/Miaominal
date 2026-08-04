@@ -4,7 +4,7 @@ description = "配置终端和应用界面的字体、布局与主题。"
 
 [settings.pages.connections]
 title = "连接"
-description = "配置主机页面、连接历史、会话监控和标签页行为。"
+description = "配置主机页面、连接历史、会话监控和关闭行为。"
 
 [settings.pages.openssh_integration]
 title = "OpenSSH 集成"
@@ -101,8 +101,12 @@ label = "图表历史窗口"
 description = "监控图表显示多长时间内的数据。窗口越长，内存占用越多。"
 
 [settings.connections.tabs_group]
-title = "标签页"
-description = "选择关闭顶部栏最后一个标签页时应用应执行的行为。"
+title = "关闭行为"
+description = "选择关闭主窗口或顶部栏最后一个标签页时应用应执行的行为。"
+
+[settings.connections.window_close_behavior]
+label = "关闭主窗口时"
+description = "Windows 会将窗口隐藏到系统托盘；Linux 会最小化窗口并保留任务栏入口，避免桌面环境不显示托盘图标时无法恢复。"
 
 [settings.connections.last_tab_close_behavior]
 label = "关闭最后一个标签页时"
@@ -1929,6 +1933,10 @@ dark = "深色"
 exit_application = "关闭应用"
 open_new_home_tab = "打开新的主页标签页"
 
+[enum.window_close_behavior]
+exit_application = "退出应用"
+minimize_to_tray = "最小化到系统托盘"
+
 [enum.monitor_history]
 one_minute = "1 分钟"
 five_minutes = "5 分钟"
@@ -1967,10 +1975,16 @@ auto_collect_session_monitoring_enabled = "会话监控将在连接后自动开�
 auto_collect_session_monitoring_disabled = "会话监控自动采集已关闭"
 last_tab_close_behavior_exit = "关闭最后一个标签页时将退出应用"
 last_tab_close_behavior_open_home = "关闭最后一个标签页时将打开新的主页标签页"
+window_close_behavior_exit = "关闭主窗口时将退出应用"
+window_close_behavior_minimize = "关闭主窗口时将最小化到系统托盘"
 monitor_history_duration_changed = "监控历史窗口已更新"
 local_vault_auto_lock_duration_changed = "本地机密库自动锁定时间已更新"
 chat_history_key_missing = "无法打开加密聊天历史，因为机密库中缺少对应密钥。Miaominal 未生成替代密钥，因此现有数据仍可恢复。"
 chat_history_unavailable = "无法打开加密聊天历史，详细信息已写入应用日志。"
+
+[tray]
+show = "显示 Miaominal"
+quit = "退出 Miaominal"
 
 [settings.ai_providers.providers_group]
 title = "已配置提供商"

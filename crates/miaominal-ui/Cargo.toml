@@ -61,8 +61,13 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 mime_guess = "2.0.5"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+tray-icon = { workspace = true, features = ["gtk"] }
+
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6.2"
+tray-icon.workspace = true
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Security_Credentials_UI",

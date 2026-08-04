@@ -14,6 +14,7 @@ use crate::ui::shell::{
     localized_secret_placeholder, monitor_history_duration_label, new_input_state,
     set_input_placeholder, set_input_value, theme_id_label, warning_action_notification,
     web_search_endpoint_placeholder, web_search_provider_kind_label_key,
+    window_close_behavior_label,
 };
 use anyhow::{Result, anyhow};
 use gpui::{
@@ -41,6 +42,7 @@ use miaominal_settings::{
     AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
     LocalVaultAutoLockDuration, MonitorHistoryDuration, OpenSshIntegrationMode,
     TerminalKeyBindings, TerminalRightClickBehavior, ThemeId, WebSearchProviderKind,
+    WindowCloseBehavior,
 };
 use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::{
@@ -472,6 +474,8 @@ pub(in crate::ui::shell) struct SettingsForms {
     pub(in crate::ui::shell) language_select: Entity<SelectState<Vec<SelectOption<AppLanguage>>>>,
     pub(in crate::ui::shell) last_tab_close_behavior_select:
         Entity<SelectState<Vec<SelectOption<LastTabCloseBehavior>>>>,
+    pub(in crate::ui::shell) window_close_behavior_select:
+        Entity<SelectState<Vec<SelectOption<WindowCloseBehavior>>>>,
     pub(in crate::ui::shell) local_vault_auto_lock_duration_select:
         Entity<SelectState<Vec<SelectOption<LocalVaultAutoLockDuration>>>>,
     pub(in crate::ui::shell) monitor_history_select:
@@ -693,6 +697,15 @@ impl SettingsController {
             .iter()
             .position(|behavior| *behavior.value() == settings.last_tab_close_behavior)
             .map(|index| IndexPath::default().row(index));
+        let window_close_behavior_options = WindowCloseBehavior::all()
+            .iter()
+            .copied()
+            .map(|behavior| SelectOption::new(behavior, window_close_behavior_label(behavior)))
+            .collect::<Vec<_>>();
+        let selected_window_close_behavior = window_close_behavior_options
+            .iter()
+            .position(|behavior| *behavior.value() == settings.window_close_behavior)
+            .map(|index| IndexPath::default().row(index));
         let local_vault_auto_lock_duration_options = LocalVaultAutoLockDuration::all()
             .iter()
             .copied()
@@ -836,6 +849,14 @@ impl SettingsController {
                 SelectState::new(
                     last_tab_close_behavior_options,
                     selected_last_tab_close_behavior,
+                    window,
+                    cx,
+                )
+            }),
+            window_close_behavior_select: cx.new(|cx| {
+                SelectState::new(
+                    window_close_behavior_options,
+                    selected_window_close_behavior,
                     window,
                     cx,
                 )
@@ -1559,6 +1580,7 @@ impl SettingsController {
         let bootstrap = Self::build_bootstrap(&args.settings_store, &args.proxies, window, cx);
         let forms = bootstrap.forms;
         let last_tab_close_behavior_select = forms.last_tab_close_behavior_select.clone();
+        let window_close_behavior_select = forms.window_close_behavior_select.clone();
         let local_vault_auto_lock_duration_select =
             forms.local_vault_auto_lock_duration_select.clone();
         let monitor_history_select = forms.monitor_history_select.clone();
@@ -1596,6 +1618,31 @@ impl SettingsController {
                         }
                         LastTabCloseBehavior::OpenNewHomeTab => {
                             i18n::string("status.last_tab_close_behavior_open_home")
+                        }
+                    };
+                    cx.emit(AppCommand::Feedback(message));
+                    cx.notify();
+                }
+            },
+        );
+        let window_close_behavior_subscription = cx.subscribe(
+            &window_close_behavior_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let Some(behavior) = selected.as_ref().copied() else {
+                    return;
+                };
+                if this
+                    .settings_store
+                    .update(|settings| settings.window_close_behavior = behavior)
+                {
+                    crate::ui::sync_system_tray(cx);
+                    let message = match behavior {
+                        WindowCloseBehavior::ExitApplication => {
+                            i18n::string("status.window_close_behavior_exit")
+                        }
+                        WindowCloseBehavior::MinimizeToTray => {
+                            i18n::string("status.window_close_behavior_minimize")
                         }
                     };
                     cx.emit(AppCommand::Feedback(message));
@@ -1877,6 +1924,7 @@ impl SettingsController {
             secret_visibility: SecretVisibilityState::default(),
             _subscriptions: vec![
                 last_tab_close_behavior_subscription,
+                window_close_behavior_subscription,
                 local_vault_auto_lock_duration_subscription,
                 monitor_history_subscription,
                 terminal_right_click_behavior_subscription,
@@ -2831,6 +2879,7 @@ impl SettingsController {
             .update(|settings| settings.language = language)
         {
             i18n::set_language(language);
+            crate::ui::sync_system_tray(cx);
             cx.emit(AppCommand::LocaleRefresh);
             cx.emit(AppCommand::Feedback(i18n::string_args(
                 "status.language_changed",

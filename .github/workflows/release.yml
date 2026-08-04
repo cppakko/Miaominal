@@ -123,6 +123,8 @@ jobs:
             libfontconfig-dev \
             libgit2-dev \
             libglib2.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
             libsecret-1-dev \
             libsqlite3-dev \
             libssl-dev \
@@ -202,6 +204,8 @@ jobs:
 
           dpkg-deb --info "dist/${{ matrix.deb_name }}"
           rpm -qip "dist/${{ matrix.rpm_name }}"
+          dpkg-deb --field "dist/${{ matrix.deb_name }}" Recommends | grep -F "libayatana-appindicator3-1"
+          rpm -qp --recommends "dist/${{ matrix.rpm_name }}" | grep -F "libayatana-appindicator-gtk3"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4

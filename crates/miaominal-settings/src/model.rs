@@ -13,8 +13,8 @@ pub use crate::data::{
     OpenSshIntegrationMode, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
     RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalKeyBindings,
     TerminalRightClickBehavior, ThemeId, WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN,
-    WebSearchConfig, WebSearchProviderKind, ai_provider_kind_label, default_font_fallbacks,
-    default_font_family,
+    WebSearchConfig, WebSearchProviderKind, WindowCloseBehavior, ai_provider_kind_label,
+    default_font_fallbacks, default_font_family,
 };
 
 impl AppLanguage {
@@ -102,6 +102,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.terminal_free_type_mode != b.terminal_free_type_mode
         || a.auto_collect_session_monitoring != b.auto_collect_session_monitoring
         || a.last_tab_close_behavior != b.last_tab_close_behavior
+        || a.window_close_behavior != b.window_close_behavior
         || a.monitor_history_duration != b.monitor_history_duration
         || a.local_sftp_hidden_columns != b.local_sftp_hidden_columns
         || a.remote_sftp_hidden_columns != b.remote_sftp_hidden_columns
@@ -187,6 +188,10 @@ mod tests {
             settings.last_tab_close_behavior,
             LastTabCloseBehavior::ExitApplication
         );
+        assert_eq!(
+            settings.window_close_behavior,
+            WindowCloseBehavior::ExitApplication
+        );
         assert_eq!(settings.local_sftp_hidden_columns, vec![4, 5]);
         assert_eq!(settings.remote_sftp_hidden_columns, vec![4, 5]);
         assert!(!settings.terminal_free_type_mode);
@@ -214,6 +219,37 @@ mod tests {
         let original = AppSettings::default();
         let modified = AppSettings {
             agent_mode: AiAgentMode::FullAuto,
+            ..AppSettings::default()
+        };
+
+        assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn window_close_behavior_round_trips_and_is_local_only() {
+        let settings = AppSettings {
+            window_close_behavior: WindowCloseBehavior::MinimizeToTray,
+            ..AppSettings::default()
+        };
+
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        assert!(serialized.contains("window_close_behavior = \"minimize_to_tray\""));
+
+        let decoded: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
+        assert_eq!(
+            decoded.window_close_behavior,
+            WindowCloseBehavior::MinimizeToTray
+        );
+
+        let synced = toml::to_string(&settings.synced_settings()).expect("serialize sync settings");
+        assert!(!synced.contains("window_close_behavior"));
+    }
+
+    #[test]
+    fn changed_detects_window_close_behavior() {
+        let original = AppSettings::default();
+        let modified = AppSettings {
+            window_close_behavior: WindowCloseBehavior::MinimizeToTray,
             ..AppSettings::default()
         };
 

@@ -9,7 +9,10 @@ mod app;
 use gpui::WindowDecorations;
 #[cfg(target_os = "macos")]
 use gpui::point;
-use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px,
+    size,
+};
 use gpui_component::Root;
 use miaominal_ui::AppAssets;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -88,7 +91,7 @@ fn ensure_graphical_session() -> Result<(), String> {
     Ok(())
 }
 
-fn open_main_window(cx: &mut App, runtime: TokioHandle) {
+fn open_main_window(cx: &mut App, runtime: TokioHandle) -> AnyWindowHandle {
     let bounds = Bounds::centered(None, size(px(1240.0), px(800.0)), cx);
 
     cx.open_window(
@@ -107,11 +110,13 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) {
             ..Default::default()
         },
         |window, cx| {
+            miaominal_ui::configure_main_window_close(window, cx);
             let view = cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         },
     )
-    .expect("failed to open main window");
+    .expect("failed to open main window")
+    .into()
 }
 
 fn run_hidden_ssh_bridge_helper() -> Option<i32> {
@@ -209,7 +214,7 @@ fn main() {
         let runtime = runtime.clone();
         move |cx: &mut App| {
             if cx.windows().is_empty() {
-                open_main_window(cx, runtime.clone());
+                let _ = open_main_window(cx, runtime.clone());
             }
             cx.activate(true);
         }
@@ -221,7 +226,8 @@ fn main() {
         miaominal_ui::i18n::init();
         app::install_app_menus(cx);
 
-        open_main_window(cx, runtime.clone());
+        let main_window = open_main_window(cx, runtime.clone());
+        miaominal_ui::initialize_system_tray(main_window, cx);
 
         cx.activate(true);
     });

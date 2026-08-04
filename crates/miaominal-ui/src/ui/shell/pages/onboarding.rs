@@ -443,8 +443,8 @@ fn onboarding_window_controls(window: &Window) -> impl IntoElement {
                 "onboarding-window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, _| {
-                    window.remove_window();
+                |window, cx| {
+                    crate::ui::request_main_window_close(window, cx);
                 },
             ))
             .child(onboarding_window_control_button(
@@ -475,8 +475,8 @@ fn onboarding_window_controls(window: &Window) -> impl IntoElement {
                 "onboarding-window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, _| {
-                    window.remove_window();
+                |window, cx| {
+                    crate::ui::request_main_window_close(window, cx);
                 },
             ))
             .into_any_element()

@@ -485,6 +485,23 @@ fn default_last_tab_close_behavior() -> LastTabCloseBehavior {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum WindowCloseBehavior {
+    ExitApplication,
+    MinimizeToTray,
+}
+
+impl WindowCloseBehavior {
+    pub fn all() -> &'static [Self] {
+        &[Self::ExitApplication, Self::MinimizeToTray]
+    }
+}
+
+fn default_window_close_behavior() -> WindowCloseBehavior {
+    WindowCloseBehavior::ExitApplication
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MonitorHistoryDuration {
     OneMinute,
     FiveMinutes,
@@ -748,6 +765,8 @@ pub struct AppSettings {
     pub auto_collect_session_monitoring: bool,
     #[serde(default = "default_last_tab_close_behavior")]
     pub last_tab_close_behavior: LastTabCloseBehavior,
+    #[serde(default = "default_window_close_behavior")]
+    pub window_close_behavior: WindowCloseBehavior,
     #[serde(default = "default_monitor_history_duration")]
     pub monitor_history_duration: MonitorHistoryDuration,
     #[serde(default = "default_sftp_browser_hidden_columns")]
@@ -926,6 +945,7 @@ impl Default for AppSettings {
             terminal_free_type_mode: default_terminal_free_type_mode(),
             auto_collect_session_monitoring: default_auto_collect_session_monitoring(),
             last_tab_close_behavior: default_last_tab_close_behavior(),
+            window_close_behavior: default_window_close_behavior(),
             monitor_history_duration: default_monitor_history_duration(),
             local_sftp_hidden_columns: default_sftp_browser_hidden_columns(),
             remote_sftp_hidden_columns: default_sftp_browser_hidden_columns(),
@@ -1083,6 +1103,7 @@ mod tests {
             seed_color: "#123456".into(),
             recent_connections_count: 1,
             agent_mode: AiAgentMode::FullAuto,
+            window_close_behavior: WindowCloseBehavior::MinimizeToTray,
             ..AppSettings::default()
         };
         let remote = AppSettings {
@@ -1131,6 +1152,10 @@ mod tests {
         assert_eq!(local.theme_id, ThemeId::Dark);
         assert_eq!(local.seed_color, "#123456");
         assert_eq!(local.recent_connections_count, 8);
+        assert_eq!(
+            local.window_close_behavior,
+            WindowCloseBehavior::MinimizeToTray
+        );
         assert!(local.terminal_free_type_mode);
         assert!(local.auto_collect_session_monitoring);
         assert_eq!(

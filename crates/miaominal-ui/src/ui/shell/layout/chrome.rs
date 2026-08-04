@@ -484,8 +484,8 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
                 "window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, _| {
-                    window.remove_window();
+                |window, cx| {
+                    crate::ui::request_main_window_close(window, cx);
                 },
             ))
             .child(window_control_button(
@@ -515,8 +515,8 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
                 "window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, _| {
-                    window.remove_window();
+                |window, cx| {
+                    crate::ui::request_main_window_close(window, cx);
                 },
             ))
             .into_any_element()

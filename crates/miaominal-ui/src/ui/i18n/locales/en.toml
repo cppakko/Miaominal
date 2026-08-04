@@ -4,7 +4,7 @@ description = "Configure fonts, layout, and themes for the terminal and applicat
 
 [settings.pages.connections]
 title = "Connections"
-description = "Configure the Hosts page, connection history, monitoring, and tab behavior."
+description = "Configure the Hosts page, connection history, monitoring, and closing behavior."
 
 [settings.pages.openssh_integration]
 title = "OpenSSH Integration"
@@ -105,8 +105,12 @@ label = "Chart history window"
 description = "How far back the monitor charts scroll. Longer windows consume more memory."
 
 [settings.connections.tabs_group]
-title = "Tabs"
-description = "Choose what happens when closing the last remaining tab in the top bar."
+title = "Closing behavior"
+description = "Choose what happens when closing the main window or the last remaining tab."
+
+[settings.connections.window_close_behavior]
+label = "When the main window closes"
+description = "Windows hides the window to the system tray. Linux minimizes it and keeps the taskbar entry as a safe fallback when the desktop does not expose tray icons."
 
 [settings.connections.last_tab_close_behavior]
 label = "When the last tab closes"
@@ -2066,6 +2070,10 @@ dark = "Dark"
 exit_application = "Close the application"
 open_new_home_tab = "Open a new home tab"
 
+[enum.window_close_behavior]
+exit_application = "Exit the application"
+minimize_to_tray = "Minimize to system tray"
+
 [enum.monitor_history]
 one_minute = "1 minute"
 five_minutes = "5 minutes"
@@ -2104,10 +2112,16 @@ auto_collect_session_monitoring_enabled = "Session monitoring will start collect
 auto_collect_session_monitoring_disabled = "Session monitoring auto-collection disabled"
 last_tab_close_behavior_exit = "Closing the last tab will quit the application"
 last_tab_close_behavior_open_home = "Closing the last tab will open a new home tab"
+window_close_behavior_exit = "Closing the main window will exit the application"
+window_close_behavior_minimize = "Closing the main window will minimize it to the system tray"
 monitor_history_duration_changed = "Monitor history window updated"
 local_vault_auto_lock_duration_changed = "Local secrets vault auto-lock timeout updated"
 chat_history_key_missing = "Encrypted chat history cannot be opened because its vault key is missing. No replacement key was generated, so the existing data can still be recovered."
 chat_history_unavailable = "Encrypted chat history could not be opened. See the application log for details."
+
+[tray]
+show = "Show Miaominal"
+quit = "Quit Miaominal"
 
 [agent.mode]
 ask = "Ask"

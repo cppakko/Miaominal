@@ -352,15 +352,7 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
         SettingsGroupId::Tabs => SettingGroup::new()
             .title(i18n::string("settings.connections.tabs_group.title"))
             .description(i18n::string("settings.connections.tabs_group.description"))
-            .items(vec![
-                SettingItem::new(
-                    i18n::string("settings.connections.last_tab_close_behavior.label"),
-                    SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
-                )
-                .description(i18n::string(
-                    "settings.connections.last_tab_close_behavior.description",
-                )),
-            ]),
+            .items(closing_behavior_items(settings.clone())),
         SettingsGroupId::Proxies => SettingGroup::new()
             .title(i18n::string("settings.proxies.group.title"))
             .description(i18n::string("settings.proxies.group.description"))
@@ -403,6 +395,30 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
         group_ids,
         page,
     }
+}
+
+fn closing_behavior_items(settings: Entity<SettingsController>) -> Vec<SettingItem> {
+    let mut items = Vec::new();
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    items.push(
+        SettingItem::new(
+            i18n::string("settings.connections.window_close_behavior.label"),
+            SettingField::element(WindowCloseBehaviorField::new(settings.clone())),
+        )
+        .description(i18n::string(
+            "settings.connections.window_close_behavior.description",
+        )),
+    );
+    items.push(
+        SettingItem::new(
+            i18n::string("settings.connections.last_tab_close_behavior.label"),
+            SettingField::element(LastTabCloseBehaviorField::new(settings)),
+        )
+        .description(i18n::string(
+            "settings.connections.last_tab_close_behavior.description",
+        )),
+    );
+    items
 }
 
 fn openssh_page(settings: Entity<SettingsController>) -> NamedSettingPage {
@@ -1697,6 +1713,40 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
 #[derive(Clone)]
 struct LastTabCloseBehaviorField {
     controller: Entity<SettingsController>,
+}
+
+#[derive(Clone)]
+struct WindowCloseBehaviorField {
+    controller: Entity<SettingsController>,
+}
+
+impl WindowCloseBehaviorField {
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
+    }
+}
+
+impl SettingFieldElement for WindowCloseBehaviorField {
+    type Element = AnyElement;
+
+    fn render_field(
+        &self,
+        options: &RenderOptions,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Self::Element {
+        let select_state = self
+            .controller
+            .read(cx)
+            .forms
+            .window_close_behavior_select
+            .clone();
+
+        md3_select(&select_state)
+            .with_size(options.size)
+            .w(px(184.0))
+            .into_any_element()
+    }
 }
 
 impl LastTabCloseBehaviorField {

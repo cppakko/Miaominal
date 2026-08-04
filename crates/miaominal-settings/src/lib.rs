@@ -24,6 +24,6 @@ pub use model::{
     OpenSshIntegrationMode, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
     RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalKeyBindings,
     TerminalPalette, TerminalRightClickBehavior, Theme, ThemeId, WEB_SEARCH_MAX_RESULTS_MAX,
-    WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind, ai_provider_kind_label,
-    changed, default_font_fallbacks, default_font_family,
+    WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind, WindowCloseBehavior,
+    ai_provider_kind_label, changed, default_font_fallbacks, default_font_family,
 };
