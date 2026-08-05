@@ -1,4 +1,4 @@
-use super::session::{SessionCommand, SessionEvent, SessionEventSender};
+use super::session::{ConnectionCancelled, SessionCommand, SessionEvent, SessionEventSender};
 use anyhow::{Context, Result, anyhow, bail};
 use miaominal_core::forwarding::{AgentIdentitySummary, KbiChallenge, KbiPrompt};
 use miaominal_core::profile::{AuthMethod, SessionProfile};
@@ -382,9 +382,7 @@ where
                             break answers;
                         }
                         Some(SessionCommand::Close) | None => {
-                            bail!(
-                                "connection cancelled during keyboard-interactive authentication"
-                            );
+                            return Err(ConnectionCancelled.into());
                         }
                         Some(_) => {}
                     }

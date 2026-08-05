@@ -34,6 +34,17 @@ use tokio::sync::mpsc::{
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 
+#[derive(Debug)]
+pub(super) struct ConnectionCancelled;
+
+impl std::fmt::Display for ConnectionCancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("connection cancelled")
+    }
+}
+
+impl std::error::Error for ConnectionCancelled {}
+
 pub const SESSION_EVENT_QUEUE_CAPACITY: usize = 64;
 const SSH_CHANNEL_BUFFER_SIZE: usize = 64;
 const SSH_MAXIMUM_PACKET_SIZE: u32 = 32 * 1024;
@@ -189,6 +200,12 @@ pub mod connection {
 #[derive(Debug)]
 pub enum SessionEvent {
     Connected(String),
+    PortForwardReconnecting {
+        error: String,
+        attempt: u32,
+        max_attempts: u32,
+        retry_after_secs: u64,
+    },
     Output(Vec<u8>),
     Status(String),
     Error(String),
@@ -1173,7 +1190,7 @@ where
                         if let Some(sender) = guard.take() {
                             let _ = sender.send(HostKeyDecision::Reject);
                         }
-                        bail!("connection cancelled");
+                        return Err(ConnectionCancelled.into());
                     }
                     Some(_) => {}
                 }
