@@ -30,7 +30,6 @@ use miaominal_core::snippet::SnippetRecord;
 use miaominal_settings;
 use miaominal_sftp::{self, SftpEntry, TransferDirection, TransferId};
 use miaominal_ssh::{self, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot};
-use miaominal_storage::SettingsStore;
 use miaominal_sync::{SyncProvider, SyncStatus};
 use miaominal_terminal::{
     MouseEncoding, MouseProtocol, MouseReportButton, MouseReportKind, MouseReportModifiers,
@@ -42,6 +41,7 @@ use tokio::runtime::Handle as TokioHandle;
 mod actions;
 #[path = "shell/app_view.rs"]
 mod app_view;
+mod application_sync;
 mod bootstrap;
 mod bootstrap_loaders;
 mod bootstrap_subscriptions;
@@ -139,7 +139,6 @@ pub(in crate::ui::shell) use forms::SelectOption;
 use forms::{TerminalSearchAnimation, WorkspaceForms};
 pub(in crate::ui::shell) use layout::{ChromeAppViewExt, WorkspacePanesAppViewExt};
 pub(in crate::ui::shell) use metrics::*;
-pub(in crate::ui::shell) use miaominal_services::AppServices;
 pub(in crate::ui::shell) use navigation::SidebarSection;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
 pub(in crate::ui::shell) use panes::{

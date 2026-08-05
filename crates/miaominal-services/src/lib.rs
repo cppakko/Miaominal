@@ -8,6 +8,8 @@ mod chat_service;
 mod keychain_service;
 #[path = "services/openssh_integration_service.rs"]
 mod openssh_integration_service;
+#[path = "services/port_forward_manager.rs"]
+mod port_forward_manager;
 #[path = "services/profile_service.rs"]
 mod profile_service;
 #[path = "services/proxy_service.rs"]
@@ -28,6 +30,10 @@ pub use app_services::{AppServices, LoadedAppData};
 pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
 pub use openssh_integration_service::OpenSshIntegrationService;
+pub use port_forward_manager::{
+    PortForwardKey, PortForwardManager, PortForwardManagerSnapshot, PortForwardPrompt,
+    PortForwardRuntimeSnapshot, PortForwardRuntimeState,
+};
 pub use profile_service::{ImportedProfilesResult, ProfileService};
 pub use proxy_service::{ProxyPasswordUpdate, ProxyService, UpsertProxyOutcome};
 pub use settings_service::{

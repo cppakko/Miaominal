@@ -4,7 +4,6 @@ use super::*;
 
 pub(in crate::ui::shell) struct PortForwardSessionStart {
     pub(in crate::ui::shell) tab: TabState,
-    pub(in crate::ui::shell) events: SessionEventReceiver,
     pub(in crate::ui::shell) feedback: String,
 }
 
@@ -37,6 +36,13 @@ impl SessionController {
         Some((profile, rule))
     }
 
+    fn port_forward_manager(&self) -> &PortForwardManager {
+        self.services
+            .port_forward_manager
+            .as_ref()
+            .expect("port-forward manager is available in the application")
+    }
+
     fn retire_port_forward_connection(
         &self,
         profile_id: &str,
@@ -56,13 +62,8 @@ impl SessionController {
                     &[("profile_id", profile_id)],
                 )
             });
-        let commands = self
-            .tab_mut(tab_id)
-            .and_then(|mut session| session.commands.take());
-        if let Some(commands) = commands
-            && let Err(error) = commands.close()
-        {
-            log::debug!("failed to close forwarding session cleanly: {error:?}");
+        if let Some(mut session) = self.tab_mut(tab_id) {
+            session.commands.take();
         }
         self.remove_tab(tab_id);
         Some((tab_id, title))
@@ -114,6 +115,7 @@ impl SessionController {
             self.clear_port_forward_editor();
         }
 
+        self.port_forward_manager().stop(profile_id, rule_id);
         let retired = self.retire_port_forward_connection(profile_id, rule_id);
         let (profile_name, rule_label) = {
             let mut profiles = self.profiles.borrow_mut();
@@ -179,6 +181,7 @@ impl SessionController {
             return;
         };
 
+        self.port_forward_manager().stop(profile_id, rule_id);
         let retired = self.retire_port_forward_connection(profile_id, rule_id);
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
@@ -293,25 +296,31 @@ impl SessionController {
             return None;
         }
 
+        let runtime_snapshot = match self.port_forward_manager().start(profile_id, rule_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                log::warn!("failed to start global port-forward session: {error:?}");
+                cx.emit(AppCommand::Feedback(i18n::string_args(
+                    "session.messages.port_forwarding_failed_for",
+                    &[("title", &profile.name), ("error", &error.to_string())],
+                )));
+                cx.notify();
+                return None;
+            }
+        };
         rule.enabled = true;
-        let mut connection_profile = profile.clone();
-        connection_profile.port_forwarding_rules = vec![rule.clone()];
-        let runtime = self
-            .services
-            .runtime
-            .as_ref()
-            .expect("session runtime is available in the application");
-        let connection = miaominal_ssh::start_port_forward_session(
-            runtime,
-            connection_profile,
-            self.profiles.borrow().clone(),
-            self.proxies.borrow().clone(),
-            self.services.secrets.clone(),
-            self.services.known_hosts.clone(),
-        );
-        let (tab, session) =
-            Self::build_port_forwarding_tab(tab_id, &profile, &rule, connection.commands);
+        let _ = self.update_port_forward_rule_enabled_state(profile_id, rule_id, true);
+        if let Err(error) = self.persist_profiles() {
+            log::warn!("failed to persist connected port-forward rule state: {error:?}");
+        }
+        let commands = self
+            .port_forward_manager()
+            .command_sender(profile_id, rule_id);
+        let (mut tab, session) = Self::build_port_forwarding_tab(tab_id, &profile, &rule, commands);
+        tab.status = runtime_snapshot.status_message.clone();
         self.insert_tab(tab_id, session);
+        let _ =
+            self.apply_port_forward_manager_snapshot(&self.port_forward_manager().snapshot(), true);
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(&profile.id);
         let rule_label = Self::rule_summary_label(&rule);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
@@ -320,11 +329,7 @@ impl SessionController {
             &[("rule", &rule_label), ("synced_suffix", &synced_suffix)],
         );
         cx.notify();
-        Some(PortForwardSessionStart {
-            tab,
-            events: connection.events,
-            feedback,
-        })
+        Some(PortForwardSessionStart { tab, feedback })
     }
 
     pub(in crate::ui::shell) fn disconnect_port_forward_rule(
@@ -334,24 +339,126 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         let _ = self.update_port_forward_rule_enabled_state(profile_id, rule_id, false);
-        let Some((tab_id, title)) = self.retire_port_forward_connection(profile_id, rule_id) else {
+        let stopped = self.port_forward_manager().stop(profile_id, rule_id);
+        let retired = self.retire_port_forward_connection(profile_id, rule_id);
+        if !stopped && retired.is_none() {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "forwarding.messages.not_connected",
             )));
             cx.notify();
             return;
-        };
+        }
+        let title = retired
+            .as_ref()
+            .map(|(_, title)| title.clone())
+            .unwrap_or_else(|| {
+                self.port_forward_rule(profile_id, rule_id)
+                    .map(|(_, rule)| Self::rule_summary_label(&rule))
+                    .unwrap_or_else(|| profile_id.to_string())
+            });
 
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
         if let Err(error) = self.persist_profiles() {
             log::warn!("failed to persist disconnected port-forward rule state: {error:?}");
         }
-        cx.emit(AppCommand::CloseTab(tab_id));
+        if let Some((tab_id, _)) = retired {
+            cx.emit(AppCommand::CloseTab(tab_id));
+        }
         cx.emit(AppCommand::Feedback(i18n::string_args(
             "forwarding.messages.disconnected",
             &[("title", &title), ("synced_suffix", &synced_suffix)],
         )));
         cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn apply_port_forward_manager_snapshot(
+        &self,
+        snapshot: &PortForwardManagerSnapshot,
+        allow_prompt: bool,
+    ) -> Vec<(TabId, String)> {
+        let manager = self.port_forward_manager();
+        let mut updates = Vec::new();
+        for (tab_id, session) in self.tabs.borrow_mut().iter_mut() {
+            if session.purpose != SessionPurpose::PortForwarding {
+                continue;
+            }
+            let Some(rule_id) = session.port_forward_rule_id.as_deref() else {
+                continue;
+            };
+            let Some(runtime) = snapshot.session(&session.profile_id, rule_id) else {
+                session.commands = None;
+                session.pending_host_key = None;
+                session.pending_keyboard_interactive = None;
+                session.set_connection_state(SessionConnectionState::Disconnected);
+                updates.push((*tab_id, i18n::string("session.status.disconnected")));
+                continue;
+            };
+            if runtime.log.len() < session.port_forward_log_len {
+                session.port_forward_log_len = 0;
+            }
+            for message in runtime.log.iter().skip(session.port_forward_log_len) {
+                session.terminal.push_text(&format!(
+                    "{} {message}\r\n",
+                    i18n::string("session.terminal.forward_prefix")
+                ));
+            }
+            session.port_forward_log_len = runtime.log.len();
+            session.port_forward_revision = runtime.revision;
+            session.commands = manager.command_sender(&session.profile_id, rule_id);
+            session.set_connection_state(match &runtime.state {
+                PortForwardRuntimeState::Starting | PortForwardRuntimeState::Stopping => {
+                    SessionConnectionState::Connecting
+                }
+                PortForwardRuntimeState::Running => SessionConnectionState::Ready,
+                PortForwardRuntimeState::Reconnecting { error, attempt, .. } => {
+                    SessionConnectionState::Reconnecting {
+                        error: error.clone(),
+                        attempt: *attempt,
+                    }
+                }
+                PortForwardRuntimeState::Stopped => SessionConnectionState::Disconnected,
+                PortForwardRuntimeState::Failed(error) => SessionConnectionState::Failed {
+                    error: error.clone(),
+                    status: Some(SessionFailureStatus::Closed),
+                },
+            });
+            match runtime.prompt.as_ref().filter(|_| allow_prompt) {
+                Some(PortForwardPrompt::HostKey(prompt)) => {
+                    session.pending_host_key = Some(prompt.clone());
+                    session.pending_keyboard_interactive = None;
+                }
+                Some(PortForwardPrompt::KeyboardInteractive(challenge)) => {
+                    session.pending_host_key = None;
+                    session.pending_keyboard_interactive = Some(challenge.clone());
+                }
+                None => {
+                    session.pending_host_key = None;
+                    session.pending_keyboard_interactive = None;
+                }
+            }
+            updates.push((*tab_id, runtime.status_message.clone()));
+        }
+        updates
+    }
+
+    pub(in crate::ui::shell) fn build_port_forward_status_tab(
+        &self,
+        tab_id: TabId,
+        runtime: &miaominal_services::PortForwardRuntimeSnapshot,
+    ) -> Option<(TabState, SessionTabState)> {
+        let profile = self
+            .profiles
+            .borrow()
+            .iter()
+            .find(|profile| profile.id == runtime.key.profile_id)
+            .cloned()?;
+        let commands = self
+            .port_forward_manager()
+            .command_sender(&runtime.key.profile_id, &runtime.key.rule_id);
+        let (mut tab, session) =
+            Self::build_port_forwarding_tab(tab_id, &profile, &runtime.rule, commands);
+        tab.status = runtime.status_message.clone();
+        Some((tab, session))
     }
 }

@@ -20,6 +20,7 @@ use miaominal_services::{AgentService, ChatService};
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use std::cell::{Ref, RefCell, RefMut};
+use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;
 
 mod attachments;
@@ -173,7 +174,7 @@ pub(in crate::ui::shell) struct AgentControllerArgs {
     pub(in crate::ui::shell) agent_service: AgentService,
     pub(in crate::ui::shell) secrets: SecretStore,
     pub(in crate::ui::shell) known_hosts: KnownHostsStore,
-    pub(in crate::ui::shell) chat_service: Option<ChatService>,
+    pub(in crate::ui::shell) chat_service: Option<Arc<ChatService>>,
     pub(in crate::ui::shell) chat_sessions: Vec<ChatSessionRecord>,
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
 }
@@ -206,7 +207,7 @@ pub(in crate::ui::shell) struct AgentController {
     session_terminal: SessionTerminalPort,
     forms: WorkspaceAgentForms,
     focus: FocusHandle,
-    chat_service: Option<ChatService>,
+    chat_service: Option<Arc<ChatService>>,
     chat_sessions: Vec<ChatSessionRecord>,
     runtime: RefCell<AgentRuntimeStore>,
     conversation_view_observer: Entity<AgentConversationViewObserver>,
@@ -619,43 +620,19 @@ impl AgentController {
     pub(in crate::ui::shell) fn credentials_changed(
         &mut self,
         secrets: SecretStore,
+        agent_service: AgentService,
         local_vault_status: LocalVaultStatus,
         cx: &mut Context<Self>,
     ) {
-        self.secrets = secrets.clone();
+        self.secrets = secrets;
         self.local_vault_status = local_vault_status;
-        self.agent_service = AgentService::new(
-            self.task_runtime.clone(),
-            secrets.clone(),
-            self.known_hosts.clone(),
-        );
+        self.agent_service = agent_service;
         if miaominal_paths::credential_policy().ok()
             == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+            && local_vault_status != LocalVaultStatus::Unlocked
         {
-            self.chat_service = if local_vault_status == LocalVaultStatus::Unlocked {
-                match ChatService::open(&secrets.credentials()) {
-                    Ok(service) => Some(service),
-                    Err(error) => {
-                        log::warn!("chat service unavailable after vault unlock: {error:?}");
-                        let key = if error.chain().any(|cause| {
-                            cause.to_string().contains("encryption key is unavailable")
-                        }) {
-                            "status.chat_history_key_missing"
-                        } else {
-                            "status.chat_history_unavailable"
-                        };
-                        cx.emit(AppCommand::Feedback(i18n::string(key)));
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            self.chat_sessions = self
-                .chat_service
-                .as_ref()
-                .and_then(|service| service.list_sessions().ok())
-                .unwrap_or_default();
+            self.chat_service = None;
+            self.chat_sessions.clear();
         }
         cx.notify();
     }
@@ -714,6 +691,17 @@ impl AgentController {
         &self.chat_sessions
     }
 
+    pub(in crate::ui::shell) fn replace_chat_state(
+        &mut self,
+        chat_service: Option<Arc<ChatService>>,
+        chat_sessions: Vec<ChatSessionRecord>,
+        cx: &mut Context<Self>,
+    ) {
+        self.chat_service = chat_service;
+        self.chat_sessions = chat_sessions;
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn chat_history_available(&self) -> bool {
         self.chat_service.is_some()
     }
@@ -727,7 +715,7 @@ impl AgentController {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.chat_service = Some(
+        self.chat_service = Some(Arc::new(
             if miaominal_paths::credential_policy()?
                 == miaominal_paths::CredentialPolicy::LocalVaultRequired
             {
@@ -735,7 +723,7 @@ impl AgentController {
             } else {
                 ChatService::open_default()?
             },
-        );
+        ));
         cx.notify();
         Ok(())
     }

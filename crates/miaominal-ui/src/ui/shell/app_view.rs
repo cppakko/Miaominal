@@ -14,6 +14,9 @@ pub struct AppView {
     pub(in crate::ui::shell) controllers: ControllerSet,
     pub(in crate::ui::shell) workspace: WorkspaceModel,
     pub(in crate::ui::shell) shell: ShellUiState,
+    pub(in crate::ui::shell) application_generations:
+        crate::ui::application::ApplicationGenerations,
+    pub(in crate::ui::shell) applying_application_snapshot: bool,
     pub(in crate::ui::shell) _subscriptions: RootSubscriptions,
 }
 

@@ -312,8 +312,28 @@ impl ControllerSet {
             }};
         }
 
-        connect!(&self.session);
-        connect!(&self.agent);
+        subscriptions.push(cx.observe(&self.session, |this, _controller, cx| {
+            this.publish_session_application_state(cx);
+            cx.notify();
+        }));
+        subscriptions.push(cx.subscribe_in(
+            &self.session,
+            window,
+            |this, _controller, command: &AppCommand, window, cx| {
+                this.handle_app_command_in_window(command, window, cx);
+            },
+        ));
+        subscriptions.push(cx.observe(&self.agent, |this, _controller, cx| {
+            this.publish_chat_application_state(cx);
+            cx.notify();
+        }));
+        subscriptions.push(cx.subscribe_in(
+            &self.agent,
+            window,
+            |this, _controller, command: &AppCommand, window, cx| {
+                this.handle_app_command_in_window(command, window, cx);
+            },
+        ));
         connect!(&self.sftp);
         let observed_settings = Rc::new(RefCell::new(self.settings.read(cx).settings().clone()));
         subscriptions.push(cx.observe(&self.settings, move |this, controller, cx| {
@@ -334,6 +354,7 @@ impl ControllerSet {
                     .read(cx)
                     .clear_all_terminal_free_type_selections();
             }
+            this.publish_settings_application_state(cx);
             cx.notify();
         }));
         subscriptions.push(cx.subscribe_in(
@@ -348,6 +369,7 @@ impl ControllerSet {
             if !status_message.is_empty() {
                 this.shell.status_message = status_message.to_string();
             }
+            this.publish_managed_keys_application_state(cx);
             cx.notify();
         }));
         subscriptions.push(cx.subscribe_in(
@@ -363,6 +385,7 @@ impl ControllerSet {
     pub(in crate::ui::shell) fn broadcast_credentials_changed(
         &self,
         secrets: SecretStore,
+        agent_service: miaominal_services::AgentService,
         local_vault_status: LocalVaultStatus,
         cx: &mut Context<AppView>,
     ) {
@@ -370,7 +393,7 @@ impl ControllerSet {
             controller.credentials_changed(secrets.clone(), local_vault_status, cx)
         });
         self.agent.update(cx, |controller, cx| {
-            controller.credentials_changed(secrets.clone(), local_vault_status, cx)
+            controller.credentials_changed(secrets.clone(), agent_service, local_vault_status, cx)
         });
         self.sftp.update(cx, |controller, cx| {
             controller.credentials_changed(secrets.clone(), cx)

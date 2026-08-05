@@ -3,13 +3,21 @@ use crate::ui::shell::*;
 use anyhow::Result;
 use gpui::{App, Context, Window};
 use miaominal_secrets::ProtectedPassphrase;
-use miaominal_services::{LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition};
+use miaominal_services::{LocalVaultPassphraseChangeOutcome, LocalVaultTransition};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VaultUnlockSuccessStep {
     ApplyCredentialsTransition,
     FinishSettings,
     ResumeDeferredCommand,
+}
+
+fn acknowledge_local_vault_generations(
+    current: &mut crate::ui::application::ApplicationGenerations,
+    incoming: crate::ui::application::ApplicationGenerations,
+) {
+    current.vault = incoming.vault;
+    current.chat = incoming.chat;
 }
 
 fn vault_unlock_success_steps(has_deferred_command: bool) -> Vec<VaultUnlockSuccessStep> {
@@ -167,10 +175,6 @@ pub(in crate::ui::shell) trait LocalVaultRootExt: Sized {
         transition: LocalVaultTransition,
         cx: &mut Context<Self>,
     );
-
-    fn finish_local_vault_auto_lock(&mut self, window: &mut Window, cx: &mut Context<Self>);
-
-    fn finish_local_vault_auto_lock_without_window(&mut self, cx: &mut Context<Self>);
 }
 
 impl LocalVaultRootExt for AppView {
@@ -506,7 +510,6 @@ impl LocalVaultRootExt for AppView {
             LocalVaultOperationResult::ChangePassphrase(result) => {
                 self.finish_local_vault_change_passphrase(result, window, cx)
             }
-            LocalVaultOperationResult::AutoLock => self.finish_local_vault_auto_lock(window, cx),
         }
     }
 
@@ -527,9 +530,6 @@ impl LocalVaultRootExt for AppView {
             }
             LocalVaultOperationResult::ChangePassphrase(result) => {
                 self.finish_local_vault_change_passphrase_without_window(result, cx)
-            }
-            LocalVaultOperationResult::AutoLock => {
-                self.finish_local_vault_auto_lock_without_window(cx)
             }
         }
     }
@@ -997,89 +997,21 @@ impl LocalVaultRootExt for AppView {
         transition: LocalVaultTransition,
         cx: &mut Context<Self>,
     ) {
-        let LocalVaultTransition {
-            mode,
-            secrets,
-            sync_engine,
-            session_passphrase,
-        } = transition;
-        let local_vault_status = match mode {
-            LocalVaultMode::Disabled => LocalVaultStatus::Disabled,
-            LocalVaultMode::Locked => LocalVaultStatus::Locked,
-            LocalVaultMode::Unlocked => LocalVaultStatus::Unlocked,
-        };
-        self.controllers.settings.update(cx, |controller, _| {
-            controller.replace_sync_engine(sync_engine);
-            controller.set_local_vault_status(local_vault_status);
+        let application = crate::ui::application::application_state(cx);
+        application.update(cx, |application, cx| {
+            application.commit_local_vault_transition(transition, cx);
         });
-        self.controllers
-            .broadcast_credentials_changed(secrets, local_vault_status, cx);
-        let settings = self.controllers.settings.clone();
-        settings.update(cx, |controller, cx| {
-            controller.set_local_vault_session_passphrase(session_passphrase);
-            controller.sync_local_vault_auto_lock_task(cx);
+        let snapshot = application.read(cx).snapshot();
+        acknowledge_local_vault_generations(
+            &mut self.application_generations,
+            snapshot.generations,
+        );
+        self.applying_application_snapshot = true;
+        self.apply_application_vault_snapshot(snapshot.vault, cx);
+        self.controllers.agent.update(cx, |controller, cx| {
+            controller.replace_chat_state(snapshot.chat_service, snapshot.chat_sessions, cx);
         });
-    }
-    fn finish_local_vault_auto_lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let should_lock = {
-            let settings = self.controllers.settings.read(cx);
-            settings.local_vault_status() == LocalVaultStatus::Unlocked
-                && settings
-                    .settings()
-                    .local_vault_auto_lock_duration
-                    .duration()
-                    .is_some()
-        };
-        if !should_lock {
-            return;
-        }
-
-        self.controllers.session.update(cx, |controller, cx| {
-            controller.prepare_host_password_for_lock(window, cx);
-        });
-        let transition = self
-            .controllers
-            .settings
-            .read(cx)
-            .local_vault_lock_transition();
-        self.apply_local_vault_transition(transition, cx);
-        self.controllers.session.update(cx, |controller, cx| {
-            controller.set_host_password_visibility(false, false, window, cx);
-        });
-        let settings = self.controllers.settings.clone();
-        self.shell.status_message = settings.update(cx, |controller, cx| {
-            controller.finish_local_vault_lock(window, cx)
-        });
-        cx.notify();
-    }
-    fn finish_local_vault_auto_lock_without_window(&mut self, cx: &mut Context<Self>) {
-        let should_lock = {
-            let settings = self.controllers.settings.read(cx);
-            settings.local_vault_status() == LocalVaultStatus::Unlocked
-                && settings
-                    .settings()
-                    .local_vault_auto_lock_duration
-                    .duration()
-                    .is_some()
-        };
-        if !should_lock {
-            return;
-        }
-
-        let transition = self
-            .controllers
-            .settings
-            .read(cx)
-            .local_vault_lock_transition();
-        self.apply_local_vault_transition(transition, cx);
-        self.controllers.session.update(cx, |controller, cx| {
-            controller.set_host_password_visible(false, cx);
-        });
-        let settings = self.controllers.settings.clone();
-        self.shell.status_message = settings.update(cx, |controller, _| {
-            controller.finish_local_vault_lock_without_window()
-        });
-        cx.notify();
+        self.applying_application_snapshot = false;
     }
 }
 
@@ -1104,5 +1036,34 @@ mod tests {
                 VaultUnlockSuccessStep::FinishSettings,
             ]
         );
+    }
+
+    #[test]
+    fn local_vault_transition_acknowledges_vault_and_chat_generations() {
+        let mut current = crate::ui::application::ApplicationGenerations {
+            catalogs: 1,
+            settings: 2,
+            vault: 3,
+            chat: 4,
+            port_forwards: 5,
+            bridge: 6,
+        };
+        let incoming = crate::ui::application::ApplicationGenerations {
+            catalogs: 10,
+            settings: 20,
+            vault: 30,
+            chat: 40,
+            port_forwards: 50,
+            bridge: 60,
+        };
+
+        acknowledge_local_vault_generations(&mut current, incoming);
+
+        assert_eq!(current.vault, 30);
+        assert_eq!(current.chat, 40);
+        assert_eq!(current.catalogs, 1);
+        assert_eq!(current.settings, 2);
+        assert_eq!(current.port_forwards, 5);
+        assert_eq!(current.bridge, 6);
     }
 }

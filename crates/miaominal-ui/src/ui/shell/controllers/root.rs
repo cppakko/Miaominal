@@ -569,6 +569,7 @@ impl AppView {
             let fallback_this = this.clone();
             let update_result = window_handle.update(cx, move |_, window, cx| {
                 if let Err(error) = this_for_window.update(cx, move |this, cx| {
+                    crate::ui::reload_application_state(runtime.clone(), cx);
                     *this = AppView::new(runtime, window, cx);
                     let message =
                         i18n::string("settings.about.reset_local.notifications.success.message");
@@ -776,18 +777,10 @@ impl AppView {
                         let start = controller.update(cx, |controller, cx| {
                             controller.start_port_forward_session(tab_id, &profile_id, &rule_id, cx)
                         });
-                        let Some(PortForwardSessionStart {
-                            tab,
-                            events,
-                            feedback,
-                        }) = start
-                        else {
+                        let Some(PortForwardSessionStart { tab, feedback }) = start else {
                             return;
                         };
                         this.register_session_tab_metadata(tab, cx);
-                        controller.update(cx, |controller, cx| {
-                            controller.spawn_session_event_loop(tab_id, events, cx);
-                        });
                         this.shell.status_message = feedback;
                         cx.notify();
                     });
@@ -865,6 +858,7 @@ impl AppView {
             }
             AppCommand::WindowActivationChanged { active } => {
                 self.sync_terminal_focus_reporting(window, cx);
+                self.refresh_application_runtime_for_window(*active, window, cx);
                 if !active {
                     self.finish_any_active_sftp_drag_selection(cx);
                 }

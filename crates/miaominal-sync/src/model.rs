@@ -14,7 +14,7 @@ pub enum SyncProvider {
     WebDav,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncConfig {
     #[serde(default)]
     pub provider: SyncProvider,

@@ -1,6 +1,6 @@
 use super::*;
+use crate::ui::application::{ApplicationBootstrapSnapshot, ApplicationVaultStatus};
 use crate::ui::i18n;
-use crate::ui::shell::bootstrap_loaders::{LoadedAppData, load_app_data};
 use crate::ui::shell::bootstrap_subscriptions::{AppViewSubscriptionsArgs, build_subscriptions};
 use gpui_component::WindowExt as _;
 
@@ -262,41 +262,33 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
 
 impl AppView {
     pub fn new(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::bootstrap(runtime, window, cx)
+        crate::ui::initialize_application_state(runtime, cx);
+        Self::bootstrap(window, cx)
     }
 
-    fn bootstrap(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn bootstrap(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal_focus = cx.focus_handle();
-        let settings_store = match SettingsStore::load() {
-            Ok(store) => store,
-            Err(error) => {
-                log::warn!("settings unavailable, using defaults: {error:?}");
-                SettingsStore::fallback()
-            }
-        };
-        crate::ui::i18n::set_language(settings_store.settings().language);
-        miaominal_settings::sync_component_theme(cx);
-        let local_vault_enabled = settings_store.settings().local_vault_enabled;
-        let open_ssh_integration_mode = settings_store.settings().open_ssh_integration_mode;
-        let ssh_bridge_config = settings_store.settings().ssh_bridge.clone();
-        let LoadedAppData {
+        let application = crate::ui::application::application_state(cx);
+        let ApplicationBootstrapSnapshot {
             services,
+            settings_store,
             profiles,
             proxies,
             selected_profile,
             known_hosts_entries,
             snippets,
-            selected_snippet,
             managed_keys,
             chat_service,
             chat_sessions,
+            chat_status_message: _,
             mut status_message,
-        } = load_app_data(
-            runtime,
-            local_vault_enabled,
-            open_ssh_integration_mode,
-            ssh_bridge_config,
-        );
+            vault,
+            generations,
+            port_forwards: _,
+            bridge_status,
+            bridge_sync_result,
+            bridge_security,
+        } = application.read(cx).snapshot();
         let initialization_warning =
             miaominal_paths::initialization_outcome()
                 .ok()
@@ -339,10 +331,10 @@ impl AppView {
             TabId::new(1),
             Self::initial_workspace(terminal_focus.clone()),
         );
-        let local_vault_status = if local_vault_enabled {
-            LocalVaultStatus::Locked
-        } else {
-            LocalVaultStatus::Disabled
+        let local_vault_status = match vault.status {
+            ApplicationVaultStatus::Disabled => LocalVaultStatus::Disabled,
+            ApplicationVaultStatus::Locked => LocalVaultStatus::Locked,
+            ApplicationVaultStatus::Unlocked => LocalVaultStatus::Unlocked,
         };
         let auto_collect_session_monitoring =
             settings_store.settings().auto_collect_session_monitoring;
@@ -351,25 +343,26 @@ impl AppView {
                 runtime: services.runtime.clone(),
                 session_store: services.session_store.clone(),
                 snippet_store: services.snippet_store.clone(),
-                secrets: services.secrets.clone(),
+                secrets: vault.secrets.clone(),
                 known_hosts: services.known_hosts.clone(),
                 profiles,
                 proxies: proxies.clone(),
                 selected_profile,
                 managed_keys: managed_keys.clone(),
                 snippets,
-                selected_snippet,
+                selected_snippet: None,
                 known_hosts_entries,
                 terminal_focus,
                 local_vault_status,
                 auto_collect_session_monitoring,
                 ssh_bridge_service: services.ssh_bridge_service.clone(),
                 open_ssh_integration_service: services.open_ssh_integration_service.clone(),
+                port_forward_manager: services.port_forward_manager.clone(),
             },
             AgentControllerArgs {
                 task_runtime: services.runtime.clone(),
                 agent_service: services.agent_service.clone(),
-                secrets: services.secrets.clone(),
+                secrets: vault.secrets.clone(),
                 known_hosts: services.known_hosts.clone(),
                 chat_service,
                 chat_sessions,
@@ -378,7 +371,7 @@ impl AppView {
             SftpControllerArgs {
                 service: miaominal_services::SftpService::new(
                     services.runtime.clone(),
-                    services.secrets.clone(),
+                    vault.secrets.clone(),
                     services.known_hosts.clone(),
                 ),
                 local_hidden_columns: settings_store.settings().local_sftp_hidden_columns.clone(),
@@ -388,7 +381,7 @@ impl AppView {
                 managed_keys,
                 runtime: services.runtime.clone(),
                 keychain_store: services.keychain_store.clone(),
-                secrets: services.secrets.clone(),
+                secrets: vault.secrets.clone(),
                 known_hosts: services.known_hosts.clone(),
                 local_vault_status,
             },
@@ -400,14 +393,36 @@ impl AppView {
                 proxy_store: services.proxy_store.clone(),
                 proxies: proxies.clone(),
                 settings_store,
-                secrets: services.secrets.clone(),
+                secrets: vault.secrets.clone(),
+                sync_engine: vault.sync_engine.clone(),
                 ssh_bridge_service: services.ssh_bridge_service.clone(),
                 open_ssh_integration_service: services.open_ssh_integration_service.clone(),
             },
             window,
             cx,
         );
-        let controller_subscriptions = controllers.root_subscriptions(window, cx);
+        controllers.settings.update(cx, |controller, cx| {
+            controller.set_local_vault_status(local_vault_status);
+            controller.set_local_vault_session_passphrase(vault.session_passphrase.clone());
+            controller.apply_application_bridge_snapshot(
+                bridge_status,
+                bridge_sync_result,
+                bridge_security,
+                window.is_window_active()
+                    && crate::ui::bridge_security_platform::is_app_foreground(),
+                window,
+                cx,
+            );
+        });
+        let mut controller_subscriptions = controllers.root_subscriptions(window, cx);
+        controller_subscriptions.push(cx.observe_in(
+            &application,
+            window,
+            |this, application, window, cx| {
+                let snapshot = application.read(cx).snapshot();
+                this.apply_application_snapshot(snapshot, window, cx);
+            },
+        ));
 
         let mut view = Self {
             controllers,
@@ -419,6 +434,8 @@ impl AppView {
                 status_message,
                 deferred_app_command: None,
             },
+            application_generations: generations,
+            applying_application_snapshot: false,
             _subscriptions: RootSubscriptions::new(
                 build_subscriptions(AppViewSubscriptionsArgs {
                     rename_subscription,

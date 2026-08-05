@@ -10,10 +10,14 @@ use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, known_hosts_store::KnownHostsStore};
+use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::{AgentService, ChatService, OpenSshIntegrationService, SshBridgeService};
+use crate::{
+    AgentService, ChatService, OpenSshIntegrationService, PortForwardManager, SshBridgeService,
+};
 
+#[derive(Clone)]
 pub struct AppServices {
     pub runtime: TokioHandle,
     pub session_store: Option<SessionStore>,
@@ -23,6 +27,7 @@ pub struct AppServices {
     pub known_hosts: KnownHostsStore,
     pub keychain_store: Option<ManagedKeyStore>,
     pub agent_service: AgentService,
+    pub port_forward_manager: PortForwardManager,
     pub ssh_bridge_service: SshBridgeService,
     pub open_ssh_integration_service: OpenSshIntegrationService,
 }
@@ -31,7 +36,7 @@ pub struct LoadedAppData {
     pub services: AppServices,
     pub known_hosts_entries: Vec<KnownHostEntry>,
     pub managed_keys: Vec<ManagedKeyRecord>,
-    pub chat_service: Option<ChatService>,
+    pub chat_service: Option<Arc<ChatService>>,
     pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
     pub proxies: Vec<ProxyProfile>,
@@ -54,6 +59,8 @@ impl AppServices {
     ) -> Self {
         let agent_service =
             AgentService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
+        let port_forward_manager =
+            PortForwardManager::new(runtime.clone(), secrets.clone(), known_hosts.clone());
         let config_root = miaominal_paths::config_dir().unwrap_or_else(|_| {
             std::env::temp_dir().join(format!("miaominal-{}", std::process::id()))
         });
@@ -97,6 +104,7 @@ impl AppServices {
             known_hosts,
             keychain_store,
             agent_service,
+            port_forward_manager,
             ssh_bridge_service,
             open_ssh_integration_service,
         }
@@ -128,7 +136,13 @@ impl AppServices {
 
         let (session_store, sessions, status_message) = match SessionStore::new() {
             Ok(store) => match store.load(&secrets) {
-                Ok(sessions) => {
+                Ok(mut sessions) => {
+                    let stale_forward_state = reset_stale_port_forward_state(&mut sessions);
+                    if stale_forward_state && let Err(error) = store.save(&sessions) {
+                        log::warn!(
+                            "failed to reset stale port-forward enabled state at startup: {error:?}"
+                        );
+                    }
                     let profile_count = sessions.len();
                     let status_message = if profile_count == 0 {
                         "No saved hosts yet.".to_string()
@@ -211,7 +225,7 @@ impl AppServices {
                     log::warn!("failed to list chat sessions: {error:?}");
                     Vec::new()
                 });
-                (Some(service), sessions)
+                (Some(Arc::new(service)), sessions)
             }
             Err(error) => {
                 log::warn!("chat service unavailable: {error:?}");
@@ -236,6 +250,9 @@ impl AppServices {
         services
             .ssh_bridge_service
             .refresh_routes(sessions.clone(), proxies.clone());
+        services
+            .port_forward_manager
+            .replace_catalogs(sessions.clone(), proxies.clone());
         if open_ssh_integration_mode == OpenSshIntegrationMode::Bridge {
             services
                 .open_ssh_integration_service
@@ -276,5 +293,62 @@ impl AppServices {
             selected_profile,
             status_message,
         }
+    }
+}
+
+fn reset_stale_port_forward_state(sessions: &mut [SessionProfile]) -> bool {
+    let mut changed = false;
+    for profile in sessions {
+        for rule in &mut profile.port_forwarding_rules {
+            changed |= rule.enabled;
+            rule.enabled = false;
+        }
+    }
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use miaominal_core::profile::{PortForwardKind, PortForwardRule};
+
+    #[test]
+    fn startup_reset_clears_only_stale_enabled_forward_flags() {
+        let mut profile = SessionProfile::blank("profile", 1);
+        profile.port_forwarding_rules = vec![
+            PortForwardRule {
+                id: "enabled".into(),
+                label: String::new(),
+                kind: PortForwardKind::Local,
+                listen_host: "127.0.0.1".into(),
+                listen_port: 1000,
+                target_host: "127.0.0.1".into(),
+                target_port: 2000,
+                enabled: true,
+            },
+            PortForwardRule {
+                id: "disabled".into(),
+                label: String::new(),
+                kind: PortForwardKind::Remote,
+                listen_host: "127.0.0.1".into(),
+                listen_port: 3000,
+                target_host: "127.0.0.1".into(),
+                target_port: 4000,
+                enabled: false,
+            },
+        ];
+
+        assert!(reset_stale_port_forward_state(std::slice::from_mut(
+            &mut profile
+        )));
+        assert!(
+            profile
+                .port_forwarding_rules
+                .iter()
+                .all(|rule| !rule.enabled)
+        );
+        assert!(!reset_stale_port_forward_state(std::slice::from_mut(
+            &mut profile
+        )));
     }
 }

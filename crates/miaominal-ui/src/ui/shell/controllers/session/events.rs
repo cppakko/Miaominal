@@ -43,6 +43,13 @@ impl SessionController {
         mut events: SessionEventReceiver,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .tab(tab_id)
+            .is_some_and(|session| session.purpose == SessionPurpose::PortForwarding)
+        {
+            log::warn!("refusing to attach the terminal event loop to port-forward tab {tab_id}");
+            return;
+        }
         let Some(terminal) = self.terminal_state(tab_id) else {
             return;
         };
@@ -128,14 +135,6 @@ impl SessionController {
         if outcome.removal.is_some() {
             self.remove_tab(tab_id);
         }
-        if let Some(SessionEventTabRemoval::PortForward {
-            profile_id,
-            status_message,
-        }) = outcome.removal.as_mut()
-        {
-            let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
-            status_message.push_str(&Self::synced_sessions_suffix(synced_sessions));
-        }
 
         cx.emit(AppCommand::SessionEventApplied { tab_id, outcome });
         cx.notify();
@@ -148,6 +147,12 @@ impl SessionController {
         inactive_tab: bool,
         tab_title: &str,
     ) -> Option<SessionEventOutcome> {
+        if self
+            .tab(tab_id)
+            .is_some_and(|session| session.purpose == SessionPurpose::PortForwarding)
+        {
+            return None;
+        }
         let terminal_port = self.terminal_port();
         let mut outcome = SessionEventOutcome {
             tab_status: None,
@@ -159,14 +164,12 @@ impl SessionController {
             should_notify: true,
         };
         let mut close_connection_test_commands = None;
-        let mut port_forward_rule_enabled_update: Option<(String, String, bool)> = None;
         let mut record_connected_profile_id = None;
         let mut monitor_snapshot = None;
         let mut monitor_error = None;
 
         {
             let mut session = self.tab_mut(tab_id)?;
-            let is_port_forward_session = session.purpose == SessionPurpose::PortForwarding;
             let is_connection_test = session.purpose == SessionPurpose::ConnectionTest;
 
             match event {
@@ -194,15 +197,6 @@ impl SessionController {
                                 &[("connection", &connection_label)],
                             ),
                         });
-                    } else if is_port_forward_session {
-                        outcome.tab_status = Some(i18n::string_args(
-                            "session.status.forwarding_connected",
-                            &[("connection", &connection_label)],
-                        ));
-                        if let Some(rule_id) = session.port_forward_rule_id.clone() {
-                            port_forward_rule_enabled_update =
-                                Some((session.profile_id.clone(), rule_id, true));
-                        }
                     } else {
                         outcome.tab_status = Some(i18n::string_args(
                             "session.status.connected",
@@ -215,38 +209,13 @@ impl SessionController {
                     }
                 }
                 SessionEvent::PortForwardReconnecting {
-                    error,
-                    attempt,
-                    max_attempts,
-                    retry_after_secs,
+                    error: _,
+                    attempt: _,
+                    max_attempts: _,
+                    retry_after_secs: _,
                 } => {
-                    if is_port_forward_session {
-                        session.reconnect_attempt = attempt;
-                        session.set_connection_state(SessionConnectionState::Reconnecting {
-                            error: error.clone(),
-                            attempt,
-                        });
-                        let attempt = attempt.to_string();
-                        let max_attempts = max_attempts.to_string();
-                        let retry_after_secs = retry_after_secs.to_string();
-                        let message = i18n::string_args(
-                            "session.status.port_forward_reconnecting",
-                            &[
-                                ("attempt", &attempt),
-                                ("max", &max_attempts),
-                                ("seconds", &retry_after_secs),
-                                ("error", &error),
-                            ],
-                        );
-                        outcome.tab_status = Some(message.clone());
-                        session.terminal.push_text(&format!(
-                            "{} {message}\r\n",
-                            i18n::string("session.terminal.forward_prefix")
-                        ));
-                        if inactive_tab {
-                            session.has_activity = true;
-                        }
-                    }
+                    log::debug!("ignoring port-forward reconnect event in terminal event loop");
+                    outcome.should_notify = false;
                 }
                 SessionEvent::Output(chunk) => {
                     session.bytes_in = session.bytes_in.saturating_add(chunk.len() as u64);
@@ -281,18 +250,15 @@ impl SessionController {
                         matches!(session.connection_state, SessionConnectionState::Ready);
                     let is_in_reconnect_cycle = session.reconnect_attempt > 0;
                     outcome.tab_status = Some(i18n::string("session.status.error"));
-                    if !is_port_forward_session
-                        && !is_connection_test
-                        && (was_ready || is_in_reconnect_cycle)
-                    {
+                    if !is_connection_test && (was_ready || is_in_reconnect_cycle) {
                         outcome.schedule_reconnect_error = Some(error.clone());
-                    } else if !is_port_forward_session && !is_connection_test && !was_ready {
+                    } else if !is_connection_test && !was_ready {
                         session.set_connection_state(SessionConnectionState::Failed {
                             error: error.clone(),
                             status: None,
                         });
                     }
-                    if !is_port_forward_session && !is_connection_test {
+                    if !is_connection_test {
                         outcome.refresh_monitoring_profile = Some(session.profile_id.clone());
                     }
                     session.terminal.push_text(&i18n::string_args(
@@ -301,8 +267,6 @@ impl SessionController {
                     ));
                     let notification_title = if is_connection_test {
                         i18n::string("session.notifications.test_connection_failed_title")
-                    } else if is_port_forward_session {
-                        i18n::string("session.notifications.port_forwarding_failed_title")
                     } else if was_ready {
                         i18n::string("session.notifications.session_error_title")
                     } else {
@@ -327,31 +291,14 @@ impl SessionController {
                                 &[("profile", &session.profile_id)],
                             ),
                         });
-                    } else if is_port_forward_session {
-                        if let Some(rule_id) = session.port_forward_rule_id.clone() {
-                            port_forward_rule_enabled_update =
-                                Some((session.profile_id.clone(), rule_id, false));
-                        }
-                        outcome.removal = Some(SessionEventTabRemoval::PortForward {
-                            profile_id: session.profile_id.clone(),
-                            status_message: i18n::string_args(
-                                "session.messages.port_forwarding_failed_for",
-                                &[("title", tab_title), ("error", &error)],
-                            ),
-                        });
                     }
                     if inactive_tab {
                         session.has_activity = true;
                     }
                 }
                 SessionEvent::PortForwardNotice(message) => {
-                    session.terminal.push_text(&format!(
-                        "{} {message}\r\n",
-                        i18n::string("session.terminal.forward_prefix")
-                    ));
-                    if inactive_tab {
-                        session.has_activity = true;
-                    }
+                    log::debug!("ignoring port-forward notice in terminal event loop: {message}");
+                    outcome.should_notify = false;
                 }
                 SessionEvent::HostKeyPrompt(prompt) => {
                     outcome.tab_status = Some(if prompt.previous_fingerprint.is_some() {
@@ -394,10 +341,9 @@ impl SessionController {
                         let was_ready =
                             matches!(session.connection_state, SessionConnectionState::Ready);
                         outcome.tab_status = Some(i18n::string("session.status.closed"));
-                        if !is_port_forward_session && !is_connection_test && was_ready {
+                        if !is_connection_test && was_ready {
                             session.set_connection_state(SessionConnectionState::Disconnected);
-                        } else if !is_port_forward_session
-                            && !is_connection_test
+                        } else if !is_connection_test
                             && matches!(
                                 session.connection_state,
                                 SessionConnectionState::Connecting
@@ -451,18 +397,6 @@ impl SessionController {
                                 &[("title", tab_title)],
                             ),
                         });
-                    } else if is_port_forward_session {
-                        if let Some(rule_id) = session.port_forward_rule_id.clone() {
-                            port_forward_rule_enabled_update =
-                                Some((session.profile_id.clone(), rule_id, false));
-                        }
-                        outcome.removal = Some(SessionEventTabRemoval::PortForward {
-                            profile_id: session.profile_id.clone(),
-                            status_message: i18n::string_args(
-                                "session.messages.port_forwarding_disconnected_for",
-                                &[("title", tab_title)],
-                            ),
-                        });
                     } else {
                         outcome.refresh_monitoring_profile = Some(session.profile_id.clone());
                     }
@@ -488,14 +422,6 @@ impl SessionController {
         }
         if let Some((profile_id, enabled, error)) = monitor_error {
             self.apply_profile_monitor_error(&profile_id, tab_id, enabled, error);
-        }
-        if let Some((profile_id, rule_id, enabled)) = port_forward_rule_enabled_update
-            && self
-                .update_port_forward_rule_enabled_state(&profile_id, &rule_id, enabled)
-                .is_some()
-            && let Err(error) = self.persist_profiles()
-        {
-            log::warn!("failed to persist port-forward rule state: {error:?}");
         }
         if let Some(profile_id) = record_connected_profile_id {
             let now = SystemTime::now()
@@ -524,7 +450,6 @@ impl SessionController {
 mod tests {
     use super::*;
     use crate::ui::shell::{SessionMonitoringState, SessionTabState, TerminalState};
-    use miaominal_core::profile::{PortForwardKind, PortForwardRule, SessionProfile};
     use tokio::sync::mpsc;
 
     fn connection_test_controller() -> (SessionController, TabId) {
@@ -549,44 +474,8 @@ mod tests {
                 has_activity: false,
                 monitoring: SessionMonitoringState::new(false),
                 purpose: SessionPurpose::ConnectionTest,
-            },
-        );
-        (controller, tab_id)
-    }
-
-    fn port_forward_controller() -> (SessionController, TabId) {
-        let mut profile = SessionProfile::blank("profile-a", 1);
-        profile.port_forwarding_rules = vec![PortForwardRule {
-            id: "forward-a".to_string(),
-            label: "Forward A".to_string(),
-            kind: PortForwardKind::Local,
-            listen_host: "127.0.0.1".to_string(),
-            listen_port: 8080,
-            target_host: "127.0.0.1".to_string(),
-            target_port: 80,
-            enabled: true,
-        }];
-        let controller = SessionController::new_for_test_with_profiles(vec![profile]);
-        let tab_id = TabId::new(8);
-        controller.insert_tab(
-            tab_id,
-            SessionTabState {
-                profile_id: "profile-a".to_string(),
-                port_forward_rule_id: Some("forward-a".to_string()),
-                terminal: TerminalState::default(),
-                connection_state: SessionConnectionState::Ready,
-                preserved_history_popup_hidden: false,
-                pending_profile: None,
-                commands: None,
-                bytes_in: 0,
-                bytes_out: 0,
-                pending_host_key: None,
-                pending_keyboard_interactive: None,
-                reconnect_task: None,
-                reconnect_attempt: 0,
-                has_activity: false,
-                monitoring: SessionMonitoringState::new(false),
-                purpose: SessionPurpose::PortForwarding,
+                port_forward_revision: 0,
+                port_forward_log_len: 0,
             },
         );
         (controller, tab_id)
@@ -695,88 +584,5 @@ mod tests {
         assert!(matches!(notification.tone, SessionNotificationTone::Error));
         assert_eq!(notification.id, format!("connection-test-failure-{tab_id}"));
         assert_connection_test_removal(&outcome);
-    }
-
-    #[test]
-    fn port_forward_reconnecting_keeps_session_and_sets_reconnecting_state() {
-        let (controller, tab_id) = port_forward_controller();
-
-        let outcome = controller
-            .apply_session_event(
-                tab_id,
-                SessionEvent::PortForwardReconnecting {
-                    error: "transport closed".to_string(),
-                    attempt: 2,
-                    max_attempts: 10,
-                    retry_after_secs: 4,
-                },
-                false,
-                "Forward profile-a",
-            )
-            .expect("port forwarding tab should exist");
-
-        assert!(outcome.removal.is_none());
-        assert!(outcome.notification.is_none());
-        let session = controller
-            .tab(tab_id)
-            .expect("session should remain registered");
-        assert_eq!(session.reconnect_attempt, 2);
-        assert!(matches!(
-            session.connection_state,
-            SessionConnectionState::Reconnecting { attempt: 2, .. }
-        ));
-        assert!(controller.profiles.borrow()[0].port_forwarding_rules[0].enabled);
-    }
-
-    #[test]
-    fn port_forward_connected_after_reconnect_restores_ready_state() {
-        let (controller, tab_id) = port_forward_controller();
-        {
-            let mut session = controller.tab_mut(tab_id).expect("session should exist");
-            session.reconnect_attempt = 3;
-            session.set_connection_state(SessionConnectionState::Reconnecting {
-                error: "transport closed".to_string(),
-                attempt: 3,
-            });
-        }
-
-        let outcome = controller
-            .apply_session_event(
-                tab_id,
-                SessionEvent::Connected("profile-a".to_string()),
-                false,
-                "Forward profile-a",
-            )
-            .expect("port forwarding tab should exist");
-
-        assert!(outcome.removal.is_none());
-        let session = controller
-            .tab(tab_id)
-            .expect("session should remain registered");
-        assert_eq!(session.reconnect_attempt, 0);
-        assert!(matches!(
-            session.connection_state,
-            SessionConnectionState::Ready
-        ));
-    }
-
-    #[test]
-    fn final_port_forward_error_disables_rule_and_removes_session() {
-        let (controller, tab_id) = port_forward_controller();
-
-        let outcome = controller
-            .apply_session_event(
-                tab_id,
-                SessionEvent::Error("reconnect attempts exhausted".to_string()),
-                false,
-                "Forward profile-a",
-            )
-            .expect("port forwarding tab should exist");
-
-        assert!(matches!(
-            outcome.removal,
-            Some(SessionEventTabRemoval::PortForward { .. })
-        ));
-        assert!(!controller.profiles.borrow()[0].port_forwarding_rules[0].enabled);
     }
 }

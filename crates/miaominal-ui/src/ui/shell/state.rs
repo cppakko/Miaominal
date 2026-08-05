@@ -167,6 +167,8 @@ mod tests {
             has_activity: false,
             monitoring: SessionMonitoringState::new(false),
             purpose,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
         }
     }
 

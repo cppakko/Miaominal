@@ -1,3 +1,4 @@
+mod application;
 pub mod assets;
 pub mod bridge_security_platform;
 pub(crate) mod components;
@@ -7,6 +8,7 @@ mod system_tray;
 pub(crate) mod theme;
 pub(crate) mod utils;
 
+pub use application::{initialize_application_state, reload_application_state};
 use settings::Settings as _;
 pub use shell::AppView;
 pub use system_tray::{

@@ -25,12 +25,13 @@ use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::{SecretKind, SecretStore};
 use miaominal_services::{
-    ImportedProfilesResult, OpenSshIntegrationService, ProfileService, SshBridgeService,
-    TerminalService,
+    ImportedProfilesResult, OpenSshIntegrationService, PortForwardManager,
+    PortForwardManagerSnapshot, PortForwardPrompt, PortForwardRuntimeState, ProfileService,
+    SshBridgeService, TerminalService,
 };
 use miaominal_ssh::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionConnection,
-    SessionEventReceiver, SessionMonitorSnapshot,
+    SessionMonitorSnapshot,
 };
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -197,6 +198,8 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) has_activity: bool,
     pub(in crate::ui::shell) monitoring: SessionMonitoringState,
     pub(in crate::ui::shell) purpose: SessionPurpose,
+    pub(in crate::ui::shell) port_forward_revision: u64,
+    pub(in crate::ui::shell) port_forward_log_len: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,13 +225,7 @@ pub(in crate::ui::shell) struct SessionNotificationRequest {
 
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) enum SessionEventTabRemoval {
-    ConnectionTest {
-        status_message: String,
-    },
-    PortForward {
-        profile_id: String,
-        status_message: String,
-    },
+    ConnectionTest { status_message: String },
 }
 
 #[derive(Clone, Debug)]
@@ -570,6 +567,7 @@ pub(in crate::ui::shell) struct SessionControllerArgs {
     pub(in crate::ui::shell) auto_collect_session_monitoring: bool,
     pub(in crate::ui::shell) ssh_bridge_service: SshBridgeService,
     pub(in crate::ui::shell) open_ssh_integration_service: OpenSshIntegrationService,
+    pub(in crate::ui::shell) port_forward_manager: PortForwardManager,
 }
 
 struct SessionFormsBundle {
@@ -589,6 +587,7 @@ struct SessionControllerServices {
     auto_collect_session_monitoring: Cell<bool>,
     ssh_bridge_service: Option<SshBridgeService>,
     open_ssh_integration_service: Option<OpenSshIntegrationService>,
+    port_forward_manager: Option<PortForwardManager>,
 }
 
 #[derive(Default)]
@@ -1411,6 +1410,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(args.auto_collect_session_monitoring),
                 ssh_bridge_service: Some(args.ssh_bridge_service),
                 open_ssh_integration_service: Some(args.open_ssh_integration_service),
+                port_forward_manager: Some(args.port_forward_manager),
             },
             args.profiles,
             args.proxies,
@@ -1540,6 +1540,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(false),
                 ssh_bridge_service: None,
                 open_ssh_integration_service: None,
+                port_forward_manager: None,
             },
             profiles,
             Vec::new(),
@@ -4603,6 +4604,8 @@ impl SessionController {
             has_activity: false,
             monitoring: SessionMonitoringState::new(auto_collect_monitoring),
             purpose: SessionPurpose::Terminal,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
         };
         (
             TabState::new(
@@ -4620,7 +4623,7 @@ impl SessionController {
         id: TabId,
         profile: &SessionProfile,
         rule: &PortForwardRule,
-        commands: SessionCommandSender,
+        commands: Option<SessionCommandSender>,
     ) -> (TabState, SessionTabState) {
         let kind = localized_port_forward_kind_label(rule.kind);
         let listen_port = rule.listen_port.to_string();
@@ -4651,7 +4654,7 @@ impl SessionController {
             connection_state: SessionConnectionState::Connecting,
             preserved_history_popup_hidden: false,
             pending_profile: None,
-            commands: Some(commands),
+            commands,
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
@@ -4661,6 +4664,8 @@ impl SessionController {
             has_activity: false,
             monitoring: SessionMonitoringState::new(false),
             purpose: SessionPurpose::PortForwarding,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
         };
         (
             TabState::new(
@@ -4701,6 +4706,8 @@ impl SessionController {
             has_activity: false,
             monitoring: SessionMonitoringState::new(false),
             purpose: SessionPurpose::ConnectionTest,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
         };
         (
             TabState::new(
@@ -4897,10 +4904,20 @@ impl SessionController {
         decision: HostKeyDecision,
         cx: &mut Context<Self>,
     ) {
-        let Some((prompt, commands)) = self.tab_mut(tab_id).and_then(|mut session| {
-            let prompt = session.pending_host_key.take()?;
-            Some((prompt, session.commands.clone()))
-        }) else {
+        let Some((prompt, commands, port_forward_key)) =
+            self.tab_mut(tab_id).and_then(|mut session| {
+                let prompt = session.pending_host_key.take()?;
+                let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
+                    .then(|| {
+                        session
+                            .port_forward_rule_id
+                            .clone()
+                            .map(|rule_id| (session.profile_id.clone(), rule_id))
+                    })
+                    .flatten();
+                Some((prompt, session.commands.clone(), port_forward_key))
+            })
+        else {
             return;
         };
 
@@ -4910,10 +4927,16 @@ impl SessionController {
                 prompt: prompt.clone(),
             },
         ));
-        let Some(commands) = commands else {
+        let result = if let Some((profile_id, rule_id)) = port_forward_key
+            && let Some(manager) = self.services.port_forward_manager.as_ref()
+        {
+            manager.respond_host_key(&profile_id, &rule_id, decision)
+        } else if let Some(commands) = commands {
+            commands.respond_host_key(decision)
+        } else {
             return;
         };
-        if let Err(error) = commands.respond_host_key(decision) {
+        if let Err(error) = result {
             log::warn!("failed to deliver host key decision: {error:?}");
         }
 
@@ -4944,14 +4967,28 @@ impl SessionController {
         responses: Vec<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some((challenge, commands)) = self.tab_mut(tab_id).and_then(|mut session| {
-            let challenge = session.pending_keyboard_interactive.take()?;
-            Some((challenge, session.commands.clone()))
-        }) else {
+        let Some((challenge, commands, port_forward_key)) =
+            self.tab_mut(tab_id).and_then(|mut session| {
+                let challenge = session.pending_keyboard_interactive.take()?;
+                let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
+                    .then(|| {
+                        session
+                            .port_forward_rule_id
+                            .clone()
+                            .map(|rule_id| (session.profile_id.clone(), rule_id))
+                    })
+                    .flatten();
+                Some((challenge, session.commands.clone(), port_forward_key))
+            })
+        else {
             return;
         };
 
-        if let Some(commands) = commands {
+        if let Some((profile_id, rule_id)) = port_forward_key
+            && let Some(manager) = self.services.port_forward_manager.as_ref()
+        {
+            let _ = manager.respond_keyboard_interactive(&profile_id, &rule_id, responses);
+        } else if let Some(commands) = commands {
             let _ = commands.respond_keyboard_interactive(responses);
         }
         cx.emit(AppCommand::OverlayDismissed(
@@ -4965,14 +5002,28 @@ impl SessionController {
         tab_id: TabId,
         cx: &mut Context<Self>,
     ) {
-        let Some((challenge, commands)) = self.tab_mut(tab_id).and_then(|mut session| {
-            let challenge = session.pending_keyboard_interactive.take()?;
-            Some((challenge, session.commands.clone()))
-        }) else {
+        let Some((challenge, commands, port_forward_key)) =
+            self.tab_mut(tab_id).and_then(|mut session| {
+                let challenge = session.pending_keyboard_interactive.take()?;
+                let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
+                    .then(|| {
+                        session
+                            .port_forward_rule_id
+                            .clone()
+                            .map(|rule_id| (session.profile_id.clone(), rule_id))
+                    })
+                    .flatten();
+                Some((challenge, session.commands.clone(), port_forward_key))
+            })
+        else {
             return;
         };
 
-        if let Some(commands) = commands {
+        if let Some((profile_id, rule_id)) = port_forward_key
+            && let Some(manager) = self.services.port_forward_manager.as_ref()
+        {
+            manager.stop(&profile_id, &rule_id);
+        } else if let Some(commands) = commands {
             let _ = commands.close();
         }
         cx.emit(AppCommand::OverlayDismissed(
@@ -5120,33 +5171,16 @@ impl SessionController {
             .is_some()
     }
 
-    pub(in crate::ui::shell) fn has_port_forward_rule_connection(
+    pub(in crate::ui::shell) fn port_forward_rule_runtime_state(
         &self,
         profile_id: &str,
         rule_id: &str,
-    ) -> bool {
-        let Some(tab_id) = self.port_forward_rule_session_id(profile_id, rule_id) else {
-            return false;
-        };
-        self.tabs.borrow().get(&tab_id).is_some_and(|session| {
-            matches!(session.connection_state, SessionConnectionState::Ready)
-        })
-    }
-
-    pub(in crate::ui::shell) fn is_port_forward_rule_connecting(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-    ) -> bool {
-        let Some(tab_id) = self.port_forward_rule_session_id(profile_id, rule_id) else {
-            return false;
-        };
-        self.tabs.borrow().get(&tab_id).is_some_and(|session| {
-            matches!(
-                session.connection_state,
-                SessionConnectionState::Connecting | SessionConnectionState::Reconnecting { .. }
-            )
-        })
+    ) -> Option<PortForwardRuntimeState> {
+        let manager = self.services.port_forward_manager.as_ref()?;
+        manager
+            .snapshot()
+            .session(profile_id, rule_id)
+            .map(|runtime| runtime.state.clone())
     }
 
     pub(in crate::ui::shell) fn terminal_profile_ids(&self) -> Vec<String> {
@@ -5531,15 +5565,6 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn host_password_visible(&self) -> bool {
         self.host_password_visible
-    }
-
-    pub(in crate::ui::shell) fn set_host_password_visible(
-        &mut self,
-        visible: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_password_visible = visible;
-        cx.notify();
     }
 
     pub(in crate::ui::shell) fn sync_port_snapshot(&self, snapshot: SessionPortSnapshot) {
@@ -5955,6 +5980,8 @@ mod tests {
             has_activity: false,
             monitoring: SessionMonitoringState::new(false),
             purpose: SessionPurpose::Terminal,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
         }
     }
 

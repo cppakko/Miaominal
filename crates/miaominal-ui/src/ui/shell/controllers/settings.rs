@@ -552,6 +552,7 @@ pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub proxies: Vec<ProxyProfile>,
     pub settings_store: SettingsStore,
     pub secrets: SecretStore,
+    pub sync_engine: SyncEngine,
     pub ssh_bridge_service: SshBridgeService,
     pub open_ssh_integration_service: OpenSshIntegrationService,
 }
@@ -590,7 +591,6 @@ pub(in crate::ui::shell) struct SettingsController {
     pending_ssh_bridge_policy_downgrade: Option<BridgeSecurityLevel>,
     ssh_bridge_settings_instance_generation: Cell<u64>,
     ssh_bridge_security_initial_selection_pending: Cell<bool>,
-    ssh_bridge_status_task: Option<gpui::Task<()>>,
     pub(in crate::ui::shell) forms: SettingsForms,
     sync: SyncUiState,
     onboarding: OnboardingState,
@@ -600,7 +600,6 @@ pub(in crate::ui::shell) struct SettingsController {
     local_vault_unlock_in_progress: bool,
     local_vault_disable_in_progress: bool,
     local_vault_session_passphrase: Option<ProtectedPassphrase>,
-    local_vault_auto_lock_task: Option<gpui::Task<()>>,
     recording_binding: Option<KeyBindingSlot>,
     pending_preview: Option<String>,
     pending_binding: Option<KeyBinding>,
@@ -662,16 +661,12 @@ impl SettingsController {
     fn build_bootstrap(
         settings_store: &SettingsStore,
         proxies: &[ProxyProfile],
+        sync_engine: SyncEngine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> SettingsBootstrap {
         let settings = settings_store.settings();
         let local_vault_enabled = settings.local_vault_enabled;
-        let sync_engine = if local_vault_enabled {
-            SyncEngine::new_locked_vault()
-        } else {
-            SyncEngine::new()
-        };
         let sync_secrets = sync_engine
             .config_store
             .get_secrets()
@@ -1581,7 +1576,13 @@ impl SettingsController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let bootstrap = Self::build_bootstrap(&args.settings_store, &args.proxies, window, cx);
+        let bootstrap = Self::build_bootstrap(
+            &args.settings_store,
+            &args.proxies,
+            args.sync_engine.clone(),
+            window,
+            cx,
+        );
         let forms = bootstrap.forms;
         let last_tab_close_behavior_select = forms.last_tab_close_behavior_select.clone();
         let window_close_behavior_select = forms.window_close_behavior_select.clone();
@@ -1665,7 +1666,6 @@ impl SettingsController {
                     .settings_store
                     .update(|settings| settings.local_vault_auto_lock_duration = duration)
                 {
-                    this.sync_local_vault_auto_lock_task(cx);
                     cx.emit(AppCommand::Feedback(i18n::string(
                         "status.local_vault_auto_lock_duration_changed",
                     )));
@@ -1887,7 +1887,6 @@ impl SettingsController {
             pending_ssh_bridge_policy_downgrade: None,
             ssh_bridge_settings_instance_generation: Cell::new(0),
             ssh_bridge_security_initial_selection_pending: Cell::new(false),
-            ssh_bridge_status_task: None,
             forms,
             sync: bootstrap.sync,
             onboarding: bootstrap.onboarding,
@@ -1897,7 +1896,6 @@ impl SettingsController {
             local_vault_unlock_in_progress: false,
             local_vault_disable_in_progress: false,
             local_vault_session_passphrase: None,
-            local_vault_auto_lock_task: None,
             recording_binding: None,
             pending_preview: None,
             pending_binding: None,
@@ -1949,56 +1947,32 @@ impl SettingsController {
             ],
         };
         controller.sync_ssh_bridge_security_level_select(window, cx);
-        let auth_service = controller.ssh_bridge_service.clone();
-        cx.spawn(async move |_this, _cx| {
-            let available = crate::ui::bridge_security_platform::system_auth_available().await;
-            auth_service.set_system_auth_available(available);
-        })
-        .detach();
-        controller.ssh_bridge_status_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
-                if this
-                    .update(cx, |controller, cx| {
-                        let status = controller.ssh_bridge_service.status();
-                        let bridge_running = matches!(status, SshBridgeStatus::Running { .. });
-                        let sync_result =
-                            controller.open_ssh_integration_service.last_sync_result();
-                        let security = controller.ssh_bridge_service.security_snapshot();
-                        let mut changed = false;
-                        if status != controller.ssh_bridge_status
-                            || sync_result != controller.ssh_bridge_sync_result
-                        {
-                            controller.ssh_bridge_status = status;
-                            controller.ssh_bridge_sync_result = sync_result;
-                            changed = true;
-                        }
-                        let app_foreground = cx.active_window().is_some()
-                            && crate::ui::bridge_security_platform::is_app_foreground();
-                        controller.sync_bridge_security_notification(
-                            &security,
-                            bridge_running,
-                            app_foreground,
-                            cx,
-                        );
-                        if security != controller.ssh_bridge_security {
-                            controller.ssh_bridge_security = security;
-                            controller.sync_ssh_bridge_security_level_select_via_active_window(cx);
-                            changed = true;
-                        }
-                        if changed {
-                            cx.notify();
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
         controller
+    }
+
+    pub(in crate::ui::shell) fn apply_application_bridge_snapshot(
+        &mut self,
+        status: SshBridgeStatus,
+        sync_result: Option<SshBridgeSyncResult>,
+        security: BridgeSecuritySnapshot,
+        app_foreground: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge_running = matches!(status, SshBridgeStatus::Running { .. });
+        self.sync_bridge_security_notification(&security, bridge_running, app_foreground, cx);
+        let changed = status != self.ssh_bridge_status
+            || sync_result != self.ssh_bridge_sync_result
+            || security != self.ssh_bridge_security;
+        self.ssh_bridge_status = status;
+        self.ssh_bridge_sync_result = sync_result;
+        if security != self.ssh_bridge_security {
+            self.ssh_bridge_security = security;
+            self.sync_ssh_bridge_security_level_select(window, cx);
+        }
+        if changed {
+            cx.notify();
+        }
     }
 
     pub(in crate::ui::shell) fn settings_store(&self) -> SettingsStore {
@@ -2642,15 +2616,99 @@ impl SettingsController {
         settings_store: SettingsStore,
         cx: &mut Context<Self>,
     ) {
-        let auto_lock_duration_changed = self
-            .settings_store
-            .settings()
-            .local_vault_auto_lock_duration
-            != settings_store.settings().local_vault_auto_lock_duration;
         self.settings_store = settings_store;
-        if auto_lock_duration_changed {
-            self.sync_local_vault_auto_lock_task(cx);
-        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn replace_application_settings(
+        &mut self,
+        settings_store: SettingsStore,
+        sync_engine: SyncEngine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_settings_store(settings_store, cx);
+        self.replace_sync_engine(sync_engine);
+        let settings = self.settings_store.settings().clone();
+
+        self.forms.language_select.update(cx, |select, cx| {
+            select.set_selected_value(&settings.language, window, cx);
+        });
+        self.forms
+            .last_tab_close_behavior_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.last_tab_close_behavior, window, cx);
+            });
+        self.forms
+            .window_close_behavior_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.window_close_behavior, window, cx);
+            });
+        self.forms
+            .local_vault_auto_lock_duration_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.local_vault_auto_lock_duration, window, cx);
+            });
+        self.forms.monitor_history_select.update(cx, |select, cx| {
+            select.set_selected_value(&settings.monitor_history_duration, window, cx);
+        });
+        self.forms
+            .terminal_right_click_behavior_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.terminal_right_click_behavior, window, cx);
+            });
+        self.forms
+            .open_ssh_integration_mode_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.open_ssh_integration_mode, window, cx);
+            });
+        self.forms.sync_provider_select.update(cx, |select, cx| {
+            select.set_selected_value(
+                &self.sync.sync_engine.config_store.config.provider,
+                window,
+                cx,
+            );
+        });
+
+        let ai_provider_options = ai_provider_select_options(&settings);
+        let selected_ai_provider = settings
+            .selected_ai_provider_id
+            .as_ref()
+            .filter(|selected| {
+                ai_provider_options
+                    .iter()
+                    .any(|option| option.value() == *selected)
+            })
+            .cloned()
+            .or_else(|| {
+                ai_provider_options
+                    .first()
+                    .map(|option| option.value().clone())
+            });
+        self.forms.ai_provider_select.update(cx, |select, cx| {
+            select.set_items(ai_provider_options, window, cx);
+            if let Some(selected) = selected_ai_provider.as_ref() {
+                select.set_selected_value(selected, window, cx);
+            } else {
+                select.set_selected_index(None, window, cx);
+            }
+        });
+        self.forms.web_search_kind_select.update(cx, |select, cx| {
+            select.set_selected_value(&settings.web_search.kind, window, cx);
+        });
+        set_input_value(
+            &self.forms.font_fallbacks_input,
+            settings.font_fallbacks.join(", "),
+            window,
+            cx,
+        );
+        let source = miaominal_settings::Theme::from_settings(&settings)
+            .material
+            .source;
+        self.forms.seed_color_picker.update(cx, |picker, cx| {
+            picker.set_value(rgb(source), window, cx);
+        });
+        self.sync_ssh_bridge_security_level_select(window, cx);
         cx.notify();
     }
 

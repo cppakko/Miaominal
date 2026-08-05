@@ -54,7 +54,6 @@ pub(in crate::ui::shell) enum LocalVaultOperationResult {
     Enable(anyhow::Result<LocalVaultEnableResult>),
     Disable(anyhow::Result<LocalVaultTransition>),
     ChangePassphrase(anyhow::Result<LocalVaultChangePassphraseResult>),
-    AutoLock,
 }
 
 #[derive(Clone, Copy)]
@@ -737,12 +736,15 @@ impl SettingsController {
         )
     }
 
-    pub(in crate::ui::shell) fn finish_local_vault_lock_without_window(&mut self) -> String {
-        self.secret_visibility
-            .set_visible(SecretRevealTarget::SyncGithubToken, false);
-        self.secret_visibility
-            .set_visible(SecretRevealTarget::SyncWebdavPassword, false);
-        i18n::string("settings.sync.vault.notifications.locked_message")
+    pub(in crate::ui::shell) fn apply_application_vault_lock(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_sync_secret_inputs(window, cx);
+        self.hide_storage_backed_secret_visibility(window, cx);
+        self.clear_local_vault_passphrase_input(window, cx);
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn finish_local_vault_error(
@@ -1178,46 +1180,6 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn local_vault_lock_transition(&self) -> LocalVaultTransition {
         SettingsService::local_vault_lock_transition(&self.settings_store)
-    }
-
-    pub(in crate::ui::shell) fn sync_local_vault_auto_lock_task(&mut self, cx: &mut Context<Self>) {
-        self.local_vault_auto_lock_task = None;
-
-        if self.local_vault_status != LocalVaultStatus::Unlocked {
-            return;
-        }
-        let Some(duration) = self
-            .settings_store
-            .settings()
-            .local_vault_auto_lock_duration
-            .duration()
-        else {
-            return;
-        };
-
-        self.local_vault_auto_lock_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(duration).await;
-            if let Err(error) = this.update(cx, |this, cx| {
-                this.local_vault_auto_lock_task = None;
-                if this.local_vault_status != LocalVaultStatus::Unlocked
-                    || this
-                        .settings_store
-                        .settings()
-                        .local_vault_auto_lock_duration
-                        .duration()
-                        .is_none()
-                {
-                    return;
-                }
-
-                this.local_vault_operation_results
-                    .push_back(LocalVaultOperationResult::AutoLock);
-                cx.emit(AppCommand::CredentialsChanged);
-                cx.notify();
-            }) {
-                log::debug!("failed to publish local vault auto-lock result: {error:?}");
-            }
-        }));
     }
 }
 

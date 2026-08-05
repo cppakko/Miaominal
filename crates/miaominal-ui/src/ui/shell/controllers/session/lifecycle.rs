@@ -108,7 +108,8 @@ impl SessionController {
         drop(session);
 
         self.terminal_port().close_session(tab_id);
-        if let Some(commands) = commands
+        if should_close_commands_when_retiring(purpose)
+            && let Some(commands) = commands
             && let Err(error) = commands.close()
         {
             log::debug!("failed to close tab {tab_id} cleanly: {error:?}");
@@ -202,5 +203,24 @@ impl SessionController {
             session.reconnect_task = Some(reconnect_task);
         }
         cx.notify();
+    }
+}
+
+fn should_close_commands_when_retiring(purpose: SessionPurpose) -> bool {
+    purpose != SessionPurpose::PortForwarding
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retiring_port_forward_status_tab_preserves_shared_connection() {
+        assert!(!should_close_commands_when_retiring(
+            SessionPurpose::PortForwarding
+        ));
+        assert!(should_close_commands_when_retiring(
+            SessionPurpose::Terminal
+        ));
     }
 }

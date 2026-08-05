@@ -1,45 +1,4 @@
 use super::*;
-use miaominal_services::{ChatService, LoadedAppData as LoadedServiceData};
-use miaominal_storage::chat_store::ChatSessionRecord;
-
-pub(in crate::ui::shell) fn load_app_data(
-    runtime: TokioHandle,
-    local_vault_enabled: bool,
-    open_ssh_integration_mode: miaominal_settings::OpenSshIntegrationMode,
-    ssh_bridge_config: miaominal_settings::SshBridgeConfig,
-) -> LoadedAppData {
-    let LoadedServiceData {
-        services,
-        known_hosts_entries,
-        managed_keys,
-        chat_service,
-        chat_sessions,
-        sessions,
-        proxies,
-        snippets,
-        selected_profile,
-        status_message,
-    } = AppServices::load(
-        runtime,
-        local_vault_enabled,
-        open_ssh_integration_mode,
-        ssh_bridge_config,
-    );
-
-    LoadedAppData {
-        profiles: sessions,
-        proxies,
-        selected_profile,
-        known_hosts_entries,
-        snippets,
-        selected_snippet: None,
-        managed_keys,
-        chat_service,
-        chat_sessions,
-        services,
-        status_message,
-    }
-}
 
 pub(in crate::ui::shell) fn initial_profile_selection(
     profiles: &[SessionProfile],
@@ -68,20 +27,6 @@ pub(in crate::ui::shell) fn initial_profile_selection(
         selected_group,
         selected_existing_group,
     }
-}
-
-pub(in crate::ui::shell) struct LoadedAppData {
-    pub(in crate::ui::shell) services: AppServices,
-    pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
-    pub(in crate::ui::shell) proxies: Vec<miaominal_core::proxy::ProxyProfile>,
-    pub(in crate::ui::shell) selected_profile: Option<usize>,
-    pub(in crate::ui::shell) known_hosts_entries: Vec<miaominal_core::known_host::KnownHostEntry>,
-    pub(in crate::ui::shell) snippets: Vec<SnippetRecord>,
-    pub(in crate::ui::shell) selected_snippet: Option<usize>,
-    pub(in crate::ui::shell) managed_keys: Vec<ManagedKeyRecord>,
-    pub(in crate::ui::shell) chat_service: Option<ChatService>,
-    pub(in crate::ui::shell) chat_sessions: Vec<ChatSessionRecord>,
-    pub(in crate::ui::shell) status_message: String,
 }
 
 pub(in crate::ui::shell) struct InitialProfileSelection {

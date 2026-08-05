@@ -74,7 +74,7 @@ fn default_session_charset() -> String {
     DEFAULT_SESSION_CHARSET.into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionProfile {
     pub id: String,
     pub name: String,

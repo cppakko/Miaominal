@@ -2,6 +2,7 @@ use crate::ui::components::{
     SectionCard, SegmentedSwitch, editor_button, md3_select, md3_spinner, md3_switch,
 };
 use crate::ui::i18n;
+use miaominal_services::PortForwardRuntimeState;
 
 use super::super::super::*;
 use super::super::empty_state::shell_empty_page;
@@ -21,6 +22,55 @@ struct ForwardRuleConnectionUiState {
     session_active: bool,
     connected: bool,
     connecting: bool,
+}
+
+impl ForwardRuleConnectionUiState {
+    fn from_runtime(state: Option<&PortForwardRuntimeState>) -> Self {
+        Self {
+            session_active: state.is_some_and(PortForwardRuntimeState::is_active),
+            connected: matches!(state, Some(PortForwardRuntimeState::Running)),
+            connecting: matches!(
+                state,
+                Some(
+                    PortForwardRuntimeState::Starting
+                        | PortForwardRuntimeState::Reconnecting { .. }
+                        | PortForwardRuntimeState::Stopping
+                )
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod connection_ui_state_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_state_drives_forwarding_status_without_a_status_tab() {
+        let running =
+            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Running));
+        assert!(running.session_active);
+        assert!(running.connected);
+        assert!(!running.connecting);
+
+        let reconnecting = ForwardRuleConnectionUiState::from_runtime(Some(
+            &PortForwardRuntimeState::Reconnecting {
+                error: "retry".into(),
+                attempt: 1,
+                max_attempts: 10,
+                retry_after_secs: 1,
+            },
+        ));
+        assert!(reconnecting.session_active);
+        assert!(!reconnecting.connected);
+        assert!(reconnecting.connecting);
+
+        let stopped =
+            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Stopped));
+        assert!(!stopped.session_active);
+        assert!(!stopped.connected);
+        assert!(!stopped.connecting);
+    }
 }
 
 fn render_forward_rule_connection_control(
@@ -675,11 +725,8 @@ impl SessionController {
         };
 
         for (_profile_index, profile, rule) in rules_with_profiles {
-            let state = ForwardRuleConnectionUiState {
-                session_active: self.has_port_forward_rule_session(&profile.id, &rule.id),
-                connected: self.has_port_forward_rule_connection(&profile.id, &rule.id),
-                connecting: self.is_port_forward_rule_connecting(&profile.id, &rule.id),
-            };
+            let runtime_state = self.port_forward_rule_runtime_state(&profile.id, &rule.id);
+            let state = ForwardRuleConnectionUiState::from_runtime(runtime_state.as_ref());
 
             if is_list {
                 rules = rules.child(render_forward_rule_list_row(

@@ -1022,13 +1022,6 @@ impl AppView {
         let _ = schedule_reconnect_error;
 
         match removal {
-            Some(SessionEventTabRemoval::PortForward { status_message, .. }) => {
-                let _ = self.remove_tab_metadata_after_controller_close(tab_id, cx);
-                self.prune_closed_tab_references();
-                self.shell.status_message = status_message;
-                cx.notify();
-                return;
-            }
             Some(SessionEventTabRemoval::ConnectionTest { status_message }) => {
                 let _ = self.remove_tab_metadata_after_controller_close(tab_id, cx);
                 self.prune_closed_tab_references();
