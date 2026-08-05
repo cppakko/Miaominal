@@ -1095,7 +1095,37 @@ fn cleanup_stale_atomic_write_files_in(
 /// The temporary file is created in the destination directory so the final
 /// persist operation stays on the same filesystem and can be atomic.
 pub fn atomic_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
-    let path = path.as_ref();
+    atomic_write_with_protection(
+        path.as_ref(),
+        contents.as_ref(),
+        AtomicFileProtection::Default,
+    )
+}
+
+/// Durably replace a file and restrict it to the current user and SYSTEM on Windows.
+///
+/// This is intended for files consumed by Win32-OpenSSH, which rejects files
+/// inheriting access entries for unrelated local users. Unix atomic writes are
+/// already restricted to mode `0600`.
+pub fn atomic_write_user_only(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
+    atomic_write_with_protection(
+        path.as_ref(),
+        contents.as_ref(),
+        AtomicFileProtection::CurrentUserOnly,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AtomicFileProtection {
+    Default,
+    CurrentUserOnly,
+}
+
+fn atomic_write_with_protection(
+    path: &Path,
+    contents: &[u8],
+    protection: AtomicFileProtection,
+) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
@@ -1114,9 +1144,11 @@ pub fn atomic_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
             .with_context(|| format!("failed to copy permissions for {}", path.display()))?;
     }
     restrict_temporary_file_permissions(temporary.as_file(), path)?;
+    protect_atomic_path(temporary.path(), path, protection)?;
+    protect_existing_destination(path, protection)?;
 
     temporary
-        .write_all(contents.as_ref())
+        .write_all(contents)
         .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
     temporary
         .flush()
@@ -1129,6 +1161,7 @@ pub fn atomic_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
         .persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("failed to atomically replace {}", path.display()))?;
+    protect_atomic_path(path, path, protection)?;
 
     sync_parent_directory(parent)?;
     Ok(())
@@ -1145,19 +1178,44 @@ pub fn atomic_replace_and_read_previous(
     path: impl AsRef<Path>,
     contents: impl AsRef<[u8]>,
 ) -> Result<Option<Vec<u8>>> {
-    let path = path.as_ref();
+    atomic_replace_with_protection(
+        path.as_ref(),
+        contents.as_ref(),
+        AtomicFileProtection::Default,
+    )
+}
+
+/// Atomically replace a file, return its previous contents, and restrict the
+/// resulting file to the current user and SYSTEM on Windows.
+pub fn atomic_replace_user_only_and_read_previous(
+    path: impl AsRef<Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<Option<Vec<u8>>> {
+    atomic_replace_with_protection(
+        path.as_ref(),
+        contents.as_ref(),
+        AtomicFileProtection::CurrentUserOnly,
+    )
+}
+
+fn atomic_replace_with_protection(
+    path: &Path,
+    contents: &[u8],
+    protection: AtomicFileProtection,
+) -> Result<Option<Vec<u8>>> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
 
-    let temporary = prepare_atomic_replacement(path, contents.as_ref())?;
-    match temporary.persist_noclobber(path) {
+    let temporary = prepare_atomic_replacement(path, contents, protection)?;
+    protect_existing_destination(path, protection)?;
+    let previous = match temporary.persist_noclobber(path) {
         Ok(file) => {
             file.sync_all()
                 .with_context(|| format!("failed to sync {}", path.display()))?;
             sync_parent_directory(parent)?;
-            Ok(None)
+            None
         }
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
             let (file, replacement) = error
@@ -1166,14 +1224,23 @@ pub fn atomic_replace_and_read_previous(
                 .map_err(|error| error.error)
                 .with_context(|| format!("failed to retain replacement for {}", path.display()))?;
             drop(file);
-            exchange_existing_file(path, &replacement)
+            exchange_existing_file(path, &replacement)?
         }
-        Err(error) => Err(error.error)
-            .with_context(|| format!("failed to create {} without overwriting it", path.display())),
-    }
+        Err(error) => {
+            return Err(error.error).with_context(|| {
+                format!("failed to create {} without overwriting it", path.display())
+            });
+        }
+    };
+    protect_atomic_path(path, path, protection)?;
+    Ok(previous)
 }
 
-fn prepare_atomic_replacement(path: &Path, contents: &[u8]) -> Result<tempfile::NamedTempFile> {
+fn prepare_atomic_replacement(
+    path: &Path,
+    contents: &[u8],
+    protection: AtomicFileProtection,
+) -> Result<tempfile::NamedTempFile> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
@@ -1190,6 +1257,7 @@ fn prepare_atomic_replacement(path: &Path, contents: &[u8]) -> Result<tempfile::
             .with_context(|| format!("failed to copy permissions for {}", path.display()))?;
     }
     restrict_temporary_file_permissions(temporary.as_file(), path)?;
+    protect_atomic_path(temporary.path(), path, protection)?;
     temporary
         .write_all(contents)
         .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
@@ -1201,6 +1269,29 @@ fn prepare_atomic_replacement(path: &Path, contents: &[u8]) -> Result<tempfile::
         .sync_all()
         .with_context(|| format!("failed to sync temporary file for {}", path.display()))?;
     Ok(temporary)
+}
+
+fn protect_existing_destination(path: &Path, protection: AtomicFileProtection) -> Result<()> {
+    if protection == AtomicFileProtection::CurrentUserOnly && path.exists() {
+        restrict_path_to_current_user(path)?;
+    }
+    Ok(())
+}
+
+fn protect_atomic_path(
+    actual_path: &Path,
+    destination: &Path,
+    protection: AtomicFileProtection,
+) -> Result<()> {
+    if protection == AtomicFileProtection::CurrentUserOnly {
+        restrict_path_to_current_user(actual_path).with_context(|| {
+            format!(
+                "failed to restrict atomic file for {}",
+                destination.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1426,6 +1517,126 @@ fn restrict_temporary_file_permissions(file: &fs::File, path: &Path) -> Result<(
     permissions.set_readonly(false);
     file.set_permissions(permissions)
         .with_context(|| format!("failed to set permissions for {}", path.display()))
+}
+
+#[cfg(unix)]
+fn restrict_path_to_current_user(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to restrict permissions for {}", path.display()))
+}
+
+#[cfg(windows)]
+fn restrict_path_to_current_user(path: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetTokenInformation, PROTECTED_DACL_SECURITY_INFORMATION,
+        SetFileSecurityW, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to open the current process token");
+    }
+
+    let mut size = 0_u32;
+    unsafe {
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut size);
+    }
+    if size == 0 {
+        unsafe {
+            CloseHandle(token);
+        }
+        return Err(std::io::Error::last_os_error())
+            .context("failed to size the current process user token");
+    }
+
+    let mut buffer = vec![0_u8; size as usize];
+    let loaded = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            size,
+            &mut size,
+        )
+    };
+    unsafe {
+        CloseHandle(token);
+    }
+    if loaded == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to read the current process user token");
+    }
+
+    let token_user = unsafe { &*(buffer.as_ptr().cast::<TOKEN_USER>()) };
+    let mut string_sid = std::ptr::null_mut();
+    if unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut string_sid) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to encode the current process user SID");
+    }
+    let mut sid_length = 0;
+    while unsafe { *string_sid.add(sid_length) } != 0 {
+        sid_length += 1;
+    }
+    let sid =
+        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(string_sid, sid_length) });
+    unsafe {
+        LocalFree(string_sid.cast());
+    }
+
+    let sddl = format!("D:P(A;;FA;;;{sid})(A;;FA;;;SY)")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut descriptor = std::ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!("failed to build security descriptor for {}", path.display())
+        });
+    }
+
+    let wide_path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let applied = unsafe {
+        SetFileSecurityW(
+            wide_path.as_ptr(),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor,
+        )
+    };
+    unsafe {
+        LocalFree(descriptor);
+    }
+    if applied == 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("failed to restrict permissions for {}", path.display()));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn restrict_path_to_current_user(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

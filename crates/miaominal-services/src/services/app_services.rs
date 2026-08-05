@@ -5,7 +5,7 @@ use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::SecretStore;
 use miaominal_settings::{OpenSshIntegrationMode, SshBridgeConfig};
-use miaominal_ssh::SshBridgeEndpoint;
+use miaominal_ssh::{SshBridgeEndpoint, SshBridgeStatus};
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
@@ -236,21 +236,32 @@ impl AppServices {
         services
             .ssh_bridge_service
             .refresh_routes(sessions.clone(), proxies.clone());
-        if let Err(error) = services.open_ssh_integration_service.sync(
+        if open_ssh_integration_mode == OpenSshIntegrationMode::Bridge {
+            services
+                .open_ssh_integration_service
+                .defer_bridge_activation(sessions.clone(), proxies.clone());
+            let service = services.ssh_bridge_service.clone();
+            let integration = services.open_ssh_integration_service.clone();
+            service.set_desired_enabled(true);
+            services.runtime.spawn(async move {
+                if let Err(error) = service.reconcile_desired_state().await {
+                    log::warn!("failed to restore SSH Bridge: {error:?}");
+                    return;
+                }
+                if matches!(service.status(), SshBridgeStatus::Running { .. })
+                    && let Err(error) = integration.set_mode(OpenSshIntegrationMode::Bridge)
+                {
+                    log::warn!(
+                        "failed to activate managed OpenSSH Bridge config after startup: {error:?}"
+                    );
+                }
+            });
+        } else if let Err(error) = services.open_ssh_integration_service.sync(
             open_ssh_integration_mode,
             sessions.clone(),
             proxies.clone(),
         ) {
             log::warn!("failed to synchronize managed OpenSSH config: {error:?}");
-        }
-        if open_ssh_integration_mode == OpenSshIntegrationMode::Bridge {
-            let service = services.ssh_bridge_service.clone();
-            service.set_desired_enabled(true);
-            services.runtime.spawn(async move {
-                if let Err(error) = service.reconcile_desired_state().await {
-                    log::warn!("failed to restore SSH Bridge: {error:?}");
-                }
-            });
         }
 
         LoadedAppData {

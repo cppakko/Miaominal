@@ -122,7 +122,11 @@ fn apply_open_ssh_integration_mode_change(
     mode: OpenSshIntegrationMode,
 ) -> Result<SshBridgeSyncResult> {
     let previous = settings_store.settings().open_ssh_integration_mode;
-    let result = integration_service.set_mode(mode)?;
+    let result = if mode == OpenSshIntegrationMode::Bridge {
+        integration_service.defer_current_bridge_activation()
+    } else {
+        integration_service.set_mode(mode)?
+    };
     let mut next = settings_store.settings().clone();
     next.open_ssh_integration_mode = mode;
     if let Err(error) = settings_store.replace(next) {
@@ -2294,6 +2298,7 @@ impl SettingsController {
 
         self.ssh_bridge_sync_result = Some(result);
         let bridge = self.ssh_bridge_service.clone();
+        let integration = self.open_ssh_integration_service.clone();
         bridge.set_desired_enabled(matches!(
             ssh_bridge_lifecycle_action(mode),
             SshBridgeLifecycleAction::Enable
@@ -2301,6 +2306,15 @@ impl SettingsController {
         self.runtime.spawn(async move {
             if let Err(error) = bridge.reconcile_desired_state().await {
                 log::warn!("failed to reconcile SSH Bridge lifecycle: {error:?}");
+                return;
+            }
+            if mode == OpenSshIntegrationMode::Bridge
+                && matches!(bridge.status(), SshBridgeStatus::Running { .. })
+                && let Err(error) = integration.set_mode(OpenSshIntegrationMode::Bridge)
+            {
+                log::warn!(
+                    "failed to activate managed OpenSSH Bridge config after startup: {error:?}"
+                );
             }
         });
         cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -3359,10 +3373,7 @@ mod tests {
         );
         assert_eq!(integration.mode(), OpenSshIntegrationMode::Disabled);
         assert!(!integration.config_path().exists());
-        assert_eq!(
-            std::fs::read_to_string(ssh.path().join("config")).unwrap(),
-            ""
-        );
+        assert!(!ssh.path().join("config").exists());
     }
 
     #[test]
@@ -3397,10 +3408,10 @@ mod tests {
         profile.name = "Production".into();
         profile.host = "example.com".into();
         profile.username = "akko".into();
+        runtime.block_on(bridge.enable()).unwrap();
         integration
             .sync(OpenSshIntegrationMode::Bridge, vec![profile], vec![])
             .unwrap();
-        runtime.block_on(bridge.enable()).unwrap();
         let original_sidecar = std::fs::read(&known_hosts_path).unwrap();
 
         let settings_path = settings_directory.path().join("settings.toml");

@@ -90,6 +90,10 @@ impl OpenSshIntegrationService {
         let instance_dir = self.instance_dir();
         let config_path = self.config_path();
         let known_hosts_path = self.bridge.known_hosts_path().to_path_buf();
+        if mode == OpenSshIntegrationMode::Bridge && !self.bridge.ensure_known_hosts_sidecar()? {
+            self.replace_state(mode, profiles, proxies, None);
+            bail!("SSH Bridge is not running; refusing to activate its OpenSSH config");
+        }
 
         match mode {
             OpenSshIntegrationMode::Disabled => {
@@ -101,7 +105,7 @@ impl OpenSshIntegrationService {
                 std::fs::create_dir_all(&instance_dir)
                     .with_context(|| format!("failed to create {}", instance_dir.display()))?;
                 let contents = render_direct_config(&profiles, &refresh)?;
-                miaominal_paths::atomic_write(&config_path, contents.as_bytes())?;
+                miaominal_paths::atomic_write_user_only(&config_path, contents.as_bytes())?;
                 remove_if_exists(&known_hosts_path)?;
                 self.update_root_include(true)?;
             }
@@ -116,8 +120,7 @@ impl OpenSshIntegrationService {
                     &known_hosts_path,
                     &self.helper_executable,
                 )?;
-                miaominal_paths::atomic_write(&config_path, contents.as_bytes())?;
-                self.bridge.ensure_known_hosts_sidecar()?;
+                miaominal_paths::atomic_write_user_only(&config_path, contents.as_bytes())?;
                 self.update_root_include(true)?;
             }
         }
@@ -128,15 +131,43 @@ impl OpenSshIntegrationService {
             exported_profile_count: refresh.exported_profile_count(),
             skipped_profile_count: refresh.skipped_profile_count(),
         };
-        if let Ok(mut state) = self.state.write() {
-            *state = ProjectionState {
-                mode,
-                profiles,
-                proxies,
-                last_sync: Some(result.clone()),
-            };
-        }
+        self.replace_state(mode, profiles, proxies, Some(result.clone()));
         Ok(result)
+    }
+
+    /// Cache the desired Bridge projection without touching shared OpenSSH files.
+    /// The owner process activates it only after binding the Bridge endpoint and
+    /// generating the matching host identity.
+    pub fn defer_bridge_activation(
+        &self,
+        profiles: Vec<SessionProfile>,
+        proxies: Vec<ProxyProfile>,
+    ) -> SshBridgeSyncResult {
+        let refresh = self
+            .bridge
+            .refresh_routes(profiles.clone(), proxies.clone());
+        let result = SshBridgeSyncResult {
+            config_path: self.config_path(),
+            known_hosts_path: self.bridge.known_hosts_path().to_path_buf(),
+            exported_profile_count: refresh.exported_profile_count(),
+            skipped_profile_count: refresh.skipped_profile_count(),
+        };
+        self.replace_state(OpenSshIntegrationMode::Bridge, profiles, proxies, None);
+        result
+    }
+
+    pub fn defer_current_bridge_activation(&self) -> SshBridgeSyncResult {
+        let state = self
+            .state
+            .read()
+            .map(|state| state.clone())
+            .unwrap_or(ProjectionState {
+                mode: OpenSshIntegrationMode::Disabled,
+                profiles: Vec::new(),
+                proxies: Vec::new(),
+                last_sync: None,
+            });
+        self.defer_bridge_activation(state.profiles, state.proxies)
     }
 
     pub fn set_mode(&self, mode: OpenSshIntegrationMode) -> Result<SshBridgeSyncResult> {
@@ -178,6 +209,23 @@ impl OpenSshIntegrationService {
 
     fn instance_dir(&self) -> PathBuf {
         self.ssh_dir.join("miaominal").join(&self.instance_id)
+    }
+
+    fn replace_state(
+        &self,
+        mode: OpenSshIntegrationMode,
+        profiles: Vec<SessionProfile>,
+        proxies: Vec<ProxyProfile>,
+        last_sync: Option<SshBridgeSyncResult>,
+    ) {
+        if let Ok(mut state) = self.state.write() {
+            *state = ProjectionState {
+                mode,
+                profiles,
+                proxies,
+                last_sync,
+            };
+        }
     }
 
     fn update_root_include(&self, enabled: bool) -> Result<()> {
@@ -236,7 +284,7 @@ fn update_root_config_atomically(
     mut render: impl FnMut(&str) -> Result<String>,
 ) -> Result<()> {
     update_root_config_with(root_config, &mut render, |path, contents| {
-        miaominal_paths::atomic_replace_and_read_previous(path, contents.as_bytes())
+        miaominal_paths::atomic_replace_user_only_and_read_previous(path, contents.as_bytes())
     })
 }
 
@@ -552,65 +600,6 @@ mod tests {
     use miaominal_storage::{BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore};
     use tokio::runtime::Runtime;
 
-    #[cfg(windows)]
-    fn secure_for_windows_openssh(path: &Path) {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Foundation::LocalFree;
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-        };
-        use windows_sys::Win32::Security::{
-            DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW,
-        };
-
-        let whoami = std::process::Command::new("whoami")
-            .args(["/user", "/fo", "csv", "/nh"])
-            .output()
-            .expect("query current Windows user SID");
-        assert!(whoami.status.success(), "query current Windows user SID");
-        let output = String::from_utf8_lossy(&whoami.stdout);
-        let sid = output
-            .trim()
-            .rsplit(',')
-            .next()
-            .map(|value| value.trim().trim_matches('"'))
-            .filter(|value| value.starts_with("S-1-"))
-            .expect("whoami should return a Windows user SID");
-        let mut sddl = format!("D:P(A;;FA;;;{sid})(A;;FA;;;SY)")
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let mut descriptor = std::ptr::null_mut();
-        let converted = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_mut_ptr(),
-                SDDL_REVISION_1,
-                &mut descriptor,
-                std::ptr::null_mut(),
-            )
-        };
-        assert_ne!(converted, 0, "build OpenSSH test file ACL");
-        let wide_path = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let applied = unsafe {
-            SetFileSecurityW(
-                wide_path.as_ptr(),
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                descriptor,
-            )
-        };
-        unsafe {
-            LocalFree(descriptor);
-        }
-        assert_ne!(applied, 0, "apply OpenSSH test file ACL");
-    }
-
-    #[cfg(not(windows))]
-    fn secure_for_windows_openssh(_path: &Path) {}
-
     fn profile(id: &str, name: &str) -> SessionProfile {
         let mut profile = SessionProfile::blank(id, 1);
         profile.name = name.into();
@@ -619,7 +608,11 @@ mod tests {
         profile
     }
 
-    fn service(runtime: &Runtime, root: &Path, ssh_dir: &Path) -> OpenSshIntegrationService {
+    fn unstarted_service(
+        runtime: &Runtime,
+        root: &Path,
+        ssh_dir: &Path,
+    ) -> OpenSshIntegrationService {
         let endpoint = SshBridgeEndpoint::derive(root).unwrap();
         let instance_id = SshBridgeEndpoint::instance_id(root).unwrap();
         let bridge = SshBridgeService::new_with_stores(
@@ -639,6 +632,64 @@ mod tests {
                 .map_err(|error| format!("{error:#}")),
         );
         OpenSshIntegrationService::new(bridge, ssh_dir.to_path_buf(), instance_id)
+    }
+
+    fn service(runtime: &Runtime, root: &Path, ssh_dir: &Path) -> OpenSshIntegrationService {
+        let integration = unstarted_service(runtime, root, ssh_dir);
+        runtime
+            .block_on(integration.bridge.enable())
+            .expect("test SSH Bridge should start");
+        integration
+    }
+
+    #[test]
+    fn bridge_projection_is_not_activated_before_the_bridge_owns_its_endpoint() {
+        let runtime = Runtime::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let service = unstarted_service(&runtime, root.path(), ssh.path());
+
+        service.defer_bridge_activation(vec![profile("prod", "Production")], vec![]);
+        let error = service
+            .set_mode(OpenSshIntegrationMode::Bridge)
+            .expect_err("an unstarted Bridge must not activate OpenSSH files");
+
+        assert!(error.to_string().contains("SSH Bridge is not running"));
+        assert!(!service.config_path().exists());
+        assert!(!service.bridge.known_hosts_path().exists());
+        assert!(!ssh.path().join("config").exists());
+    }
+
+    #[test]
+    fn endpoint_conflict_does_not_change_the_owner_open_ssh_files() {
+        let runtime = Runtime::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let owner = service(&runtime, root.path(), ssh.path());
+        owner
+            .sync(
+                OpenSshIntegrationMode::Bridge,
+                vec![profile("owner", "Owner")],
+                vec![],
+            )
+            .unwrap();
+        let root_config = ssh.path().join("config");
+        let generated_config = owner.config_path();
+        let known_hosts = owner.bridge.known_hosts_path().to_path_buf();
+        let before_root = std::fs::read(&root_config).unwrap();
+        let before_generated = std::fs::read(&generated_config).unwrap();
+        let before_known_hosts = std::fs::read(&known_hosts).unwrap();
+
+        let contender = unstarted_service(&runtime, root.path(), ssh.path());
+        contender.defer_bridge_activation(vec![profile("other", "Other")], vec![]);
+        runtime
+            .block_on(contender.bridge.enable())
+            .expect_err("the second Bridge must not acquire the shared endpoint");
+
+        assert_eq!(std::fs::read(root_config).unwrap(), before_root);
+        assert_eq!(std::fs::read(generated_config).unwrap(), before_generated);
+        assert_eq!(std::fs::read(known_hosts).unwrap(), before_known_hosts);
+        runtime.block_on(owner.bridge.disable());
     }
 
     #[test]
@@ -824,7 +875,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let result = service
+        service
             .sync(
                 OpenSshIntegrationMode::Bridge,
                 vec![profile("prod", "Production")],
@@ -841,8 +892,6 @@ mod tests {
         } else {
             PathBuf::from("ssh")
         };
-        secure_for_windows_openssh(&root_config);
-        secure_for_windows_openssh(&result.config_path);
         let output = std::process::Command::new(ssh_executable)
             .args([
                 "-G",
@@ -885,7 +934,6 @@ mod tests {
         } else {
             PathBuf::from("ssh")
         };
-        secure_for_windows_openssh(&result.config_path);
         let output = std::process::Command::new(&ssh_executable)
             .args([
                 "-G",
@@ -986,7 +1034,6 @@ mod tests {
         } else {
             PathBuf::from("ssh")
         };
-        secure_for_windows_openssh(&result.config_path);
         let output = std::process::Command::new(ssh_executable)
             .args([
                 "-G",

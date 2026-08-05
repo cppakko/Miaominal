@@ -98,6 +98,40 @@ impl SshBridgeRouteResponse {
             error: Some(message.into()),
         }
     }
+
+    fn bounded_failure(message: &str) -> Self {
+        let response = Self::failure(message);
+        if serde_json::to_vec(&response)
+            .is_ok_and(|payload| payload.len() <= SSH_BRIDGE_MAX_CONTROL_FRAME)
+        {
+            return response;
+        }
+
+        const TRUNCATED_SUFFIX: &str = "…";
+        let mut boundaries = message
+            .char_indices()
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        boundaries.push(message.len());
+        let mut low = 0;
+        let mut high = boundaries.len().saturating_sub(1);
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            let candidate = format!("{}{}", &message[..boundaries[middle]], TRUNCATED_SUFFIX);
+            let fits = serde_json::to_vec(&Self::failure(candidate))
+                .is_ok_and(|payload| payload.len() <= SSH_BRIDGE_MAX_CONTROL_FRAME);
+            if fits {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Self::failure(format!(
+            "{}{}",
+            &message[..boundaries[low]],
+            TRUNCATED_SUFFIX
+        ))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -256,7 +290,8 @@ where
         }
         Err(error) => {
             let message = format!("{error:#}");
-            let _ = write_control_frame(stream, &SshBridgeRouteResponse::failure(&message)).await;
+            let response = SshBridgeRouteResponse::bounded_failure(&message);
+            let _ = write_control_frame(stream, &response).await;
             #[cfg(windows)]
             {
                 // The transport ends after a failure response. This byte is outside the framed
@@ -405,6 +440,8 @@ struct PlatformListener {
     pending: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
     #[cfg(test)]
     fail_next_instance_creation: bool,
+    #[cfg(test)]
+    fail_next_connect: bool,
 }
 
 #[cfg(windows)]
@@ -489,6 +526,8 @@ impl PlatformListener {
             pending: Some(pending),
             #[cfg(test)]
             fail_next_instance_creation: false,
+            #[cfg(test)]
+            fail_next_connect: false,
         })
     }
 
@@ -496,14 +535,30 @@ impl PlatformListener {
         if self.pending.is_none() {
             self.pending = Some(self.create_next_instance()?);
         }
-        let server = self
-            .pending
-            .as_mut()
-            .ok_or_else(|| anyhow!("SSH Bridge named-pipe listener is unavailable"))?;
-        server
-            .connect()
-            .await
-            .with_context(|| format!("failed to accept SSH Bridge pipe {}", self.pipe_name))?;
+        #[cfg(test)]
+        let injected_failure = std::mem::take(&mut self.fail_next_connect);
+        #[cfg(not(test))]
+        let injected_failure = false;
+        let connect_result = if injected_failure {
+            Err(std::io::Error::other(
+                "injected SSH Bridge named-pipe connect failure",
+            ))
+        } else {
+            self.pending
+                .as_ref()
+                .ok_or_else(|| anyhow!("SSH Bridge named-pipe listener is unavailable"))?
+                .connect()
+                .await
+        };
+        if let Err(error) = connect_result {
+            if let Some(server) = self.pending.take() {
+                let _ = server.disconnect();
+                drop(server);
+            }
+            self.pending = Some(self.create_next_instance()?);
+            return Err(error)
+                .with_context(|| format!("failed to accept SSH Bridge pipe {}", self.pipe_name));
+        }
         let server = self
             .pending
             .take()
@@ -1251,6 +1306,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn failure_response_truncates_to_the_control_frame_limit() {
+        let message = "quoted \"error\"\n".repeat(SSH_BRIDGE_MAX_CONTROL_FRAME);
+        let response = SshBridgeRouteResponse::bounded_failure(&message);
+        let payload = serde_json::to_vec(&response).expect("failure response should serialize");
+
+        assert!(payload.len() <= SSH_BRIDGE_MAX_CONTROL_FRAME);
+        assert!(
+            response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.ends_with('…'))
+        );
+    }
+
     #[tokio::test]
     async fn route_handshake_succeeds_and_preserves_following_raw_bytes() {
         let table = SshBridgeRouteTable::default();
@@ -1490,6 +1560,34 @@ mod tests {
             .expect("listener should accept after recovery");
         assert_eq!(accepted.read_u8().await.unwrap(), 2);
         second.await.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn named_pipe_listener_rebuilds_instance_after_connect_failure() {
+        let directory = tempfile::tempdir().expect("endpoint directory");
+        let endpoint = SshBridgeEndpoint::derive(directory.path()).expect("endpoint");
+        let mut listener = SshBridgeListener::bind(&endpoint)
+            .await
+            .expect("bind listener");
+        listener.inner.fail_next_connect = true;
+
+        assert!(
+            listener.accept().await.is_err(),
+            "injected connect failure should reject the pending instance"
+        );
+
+        let client_endpoint = endpoint.clone();
+        let client = tokio::spawn(async move {
+            let mut stream = connect_endpoint(&client_endpoint).await.unwrap();
+            stream.write_all(&[3]).await.unwrap();
+        });
+        let mut accepted = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .expect("rebuilt listener should not hang")
+            .expect("rebuilt listener should accept a client");
+        assert_eq!(accepted.read_u8().await.unwrap(), 3);
+        client.await.unwrap();
     }
 
     #[test]

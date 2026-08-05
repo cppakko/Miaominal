@@ -357,10 +357,8 @@ impl BridgeFixture {
             instance_id,
             helper_executable.to_path_buf(),
         );
-        let sync = integration.sync(OpenSshIntegrationMode::Bridge, vec![profile], vec![])?;
         service.enable().await?;
-        secure_for_windows_openssh(&sync.config_path)?;
-        secure_for_windows_openssh(&sync.known_hosts_path)?;
+        let sync = integration.sync(OpenSshIntegrationMode::Bridge, vec![profile], vec![])?;
         Ok(Self {
             _root: root,
             _ssh_dir: ssh_dir,
@@ -375,59 +373,6 @@ impl BridgeFixture {
         self.service.disable().await;
         self.upstream.shutdown().await;
     }
-}
-
-#[cfg(windows)]
-fn secure_for_windows_openssh(path: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW,
-    };
-
-    let mut sddl = "D:P(A;;FA;;;OW)(A;;FA;;;SY)"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let mut descriptor = std::ptr::null_mut();
-    let converted = unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            sddl.as_mut_ptr(),
-            SDDL_REVISION_1,
-            &mut descriptor,
-            std::ptr::null_mut(),
-        )
-    };
-    if converted == 0 {
-        return Err(std::io::Error::last_os_error()).context("build OpenSSH test file ACL");
-    }
-    let wide_path = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let applied = unsafe {
-        SetFileSecurityW(
-            wide_path.as_ptr(),
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            descriptor,
-        )
-    };
-    unsafe {
-        LocalFree(descriptor);
-    }
-    if applied == 0 {
-        return Err(std::io::Error::last_os_error()).context("apply OpenSSH test file ACL");
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn secure_for_windows_openssh(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 fn system_ssh() -> Option<PathBuf> {

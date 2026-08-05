@@ -56,14 +56,13 @@ impl SshBridgeServerIdentity {
             .to_openssh()
             .context("failed to encode SSH Bridge public host key")?;
         let contents = format!("{} {}\n", self.host_key_alias, public_key.trim());
-        miaominal_paths::atomic_write(&self.known_hosts_path, contents.as_bytes()).with_context(
-            || {
+        miaominal_paths::atomic_write_user_only(&self.known_hosts_path, contents.as_bytes())
+            .with_context(|| {
                 format!(
                     "failed to write SSH Bridge known-hosts sidecar {}",
                     self.known_hosts_path.display()
                 )
-            },
-        )
+            })
     }
 }
 
