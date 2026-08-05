@@ -1,4 +1,5 @@
 use crate::theme as material_theme;
+use miaominal_core::ssh_bridge_security::BridgeSecurityPolicy;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "desktop-ui")]
 use std::sync::OnceLock;
@@ -709,6 +710,8 @@ pub struct SshBridgeConfig {
     pub max_connections: u16,
     #[serde(default = "default_ssh_bridge_max_channels_per_connection")]
     pub max_channels_per_connection: u16,
+    #[serde(default)]
+    pub security_policy: BridgeSecurityPolicy,
 }
 
 impl Default for SshBridgeConfig {
@@ -716,6 +719,7 @@ impl Default for SshBridgeConfig {
         Self {
             max_connections: default_ssh_bridge_max_connections(),
             max_channels_per_connection: default_ssh_bridge_max_channels_per_connection(),
+            security_policy: BridgeSecurityPolicy::default(),
         }
     }
 }
@@ -724,6 +728,10 @@ impl SshBridgeConfig {
     pub fn sanitize(&mut self) {
         self.max_connections = self.max_connections.clamp(1, 128);
         self.max_channels_per_connection = self.max_channels_per_connection.clamp(1, 256);
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.security_policy.level.validate().map(|_| ())
     }
 }
 

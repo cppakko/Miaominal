@@ -13,6 +13,7 @@ fontdb = { workspace = true, optional = true }
 gpui = { workspace = true, optional = true }
 gpui-component = { workspace = true, optional = true }
 material-colors.workspace = true
+miaominal-core = { path = "../miaominal-core" }
 serde.workspace = true
 serde_json.workspace = true
 sys-locale.workspace = true

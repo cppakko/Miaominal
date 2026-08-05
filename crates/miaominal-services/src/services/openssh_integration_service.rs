@@ -549,7 +549,7 @@ mod tests {
     use miaominal_secrets::SecretStore;
     use miaominal_settings::SshBridgeConfig;
     use miaominal_ssh::SshBridgeEndpoint;
-    use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
+    use miaominal_storage::{BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore};
     use tokio::runtime::Runtime;
 
     #[cfg(windows)]
@@ -633,7 +633,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.join("upstream_known_hosts")),
-            BridgeSecurityStore::open(&root.join("ssh_bridge_security.db"))
+            BridgeSecuritySettingsStore::open(&root.join("settings.toml"))
                 .map_err(|error| format!("{error:#}")),
             BridgeAuditLog::open(&root.join("ssh_bridge_audit.log"))
                 .map_err(|error| format!("{error:#}")),

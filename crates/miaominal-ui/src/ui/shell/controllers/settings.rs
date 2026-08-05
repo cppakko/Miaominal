@@ -3192,7 +3192,7 @@ mod tests {
     use miaominal_core::profile::SessionProfile;
     use miaominal_settings::{AiProviderConfig, SshBridgeConfig};
     use miaominal_ssh::SshBridgeEndpoint;
-    use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
+    use miaominal_storage::{BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore};
     use tokio::runtime::Runtime;
 
     #[test]
@@ -3327,7 +3327,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
-            BridgeSecurityStore::open(&root.path().join("ssh_bridge_security.db"))
+            BridgeSecuritySettingsStore::open(&root.path().join("settings.toml"))
                 .map_err(|error| format!("{error:#}")),
             BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
                 .map_err(|error| format!("{error:#}")),
@@ -3386,7 +3386,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(root.path().join("upstream_known_hosts")),
-            BridgeSecurityStore::open(&root.path().join("ssh_bridge_security.db"))
+            BridgeSecuritySettingsStore::open(&root.path().join("settings.toml"))
                 .map_err(|error| format!("{error:#}")),
             BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
                 .map_err(|error| format!("{error:#}")),

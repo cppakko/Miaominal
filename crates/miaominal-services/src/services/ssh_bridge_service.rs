@@ -15,7 +15,7 @@ use miaominal_ssh::{
     SshBridgeServerIdentity, SshBridgeStatus, accept_route_request_with,
     is_bridge_vault_locked_error, run_ssh_bridge_server_with_shutdown,
 };
-use miaominal_storage::{BridgeAuditLog, BridgeSecurityStore, KnownHostsStore};
+use miaominal_storage::{BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -73,7 +73,7 @@ struct Inner {
     status: watch::Sender<SshBridgeStatus>,
     control: StdMutex<ServiceControl>,
     operation: Mutex<()>,
-    security_store: Option<BridgeSecurityStore>,
+    security_store: Option<BridgeSecuritySettingsStore>,
     audit_log: Option<BridgeAuditLog>,
     audit_log_error: Option<String>,
     policy: RwLock<BridgeSecurityPolicy>,
@@ -238,7 +238,7 @@ impl SshBridgeService {
         known_hosts: KnownHostsStore,
     ) -> Self {
         let security_store =
-            BridgeSecurityStore::open_default().map_err(|error| format!("{error:#}"));
+            BridgeSecuritySettingsStore::open_default().map_err(|error| format!("{error:#}"));
         let audit_log = BridgeAuditLog::open_default().map_err(|error| format!("{error:#}"));
         Self::new_with_stores(
             runtime,
@@ -262,7 +262,7 @@ impl SshBridgeService {
         config: SshBridgeConfig,
         secrets: SecretStore,
         known_hosts: KnownHostsStore,
-        security_store: std::result::Result<BridgeSecurityStore, String>,
+        security_store: std::result::Result<BridgeSecuritySettingsStore, String>,
         audit_log: std::result::Result<BridgeAuditLog, String>,
     ) -> Self {
         let (security_store, policy, policy_store_error) = match security_store {
@@ -1723,11 +1723,12 @@ mod tests {
     use tokio::sync::watch;
     use tokio::task::{JoinHandle, JoinSet};
 
-    fn test_security_store(
+    fn test_security_settings_store(
         directory: &std::path::Path,
         name: &str,
-    ) -> std::result::Result<BridgeSecurityStore, String> {
-        BridgeSecurityStore::open(&directory.join(name)).map_err(|error| format!("{error:#}"))
+    ) -> std::result::Result<BridgeSecuritySettingsStore, String> {
+        BridgeSecuritySettingsStore::open(&directory.join(name))
+            .map_err(|error| format!("{error:#}"))
     }
 
     fn test_audit_log(
@@ -1748,7 +1749,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.join("upstream_known_hosts")),
-            test_security_store(directory, "security.db"),
+            test_security_settings_store(directory, "settings.toml"),
             test_audit_log(directory, "audit.log"),
         )
     }
@@ -2174,7 +2175,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("upstream_known_hosts")),
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         service.enable().await.unwrap();
@@ -2208,7 +2209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_security_database_prevents_bridge_start() {
+    async fn unavailable_security_settings_prevent_bridge_start() {
         let directory = tempfile::tempdir().unwrap();
         let endpoint = SshBridgeEndpoint::derive(directory.path()).unwrap();
         let instance_id = SshBridgeEndpoint::instance_id(directory.path()).unwrap();
@@ -2237,7 +2238,7 @@ mod tests {
             .unwrap();
         let endpoint = SshBridgeEndpoint::derive(directory.path()).unwrap();
         let instance_id = SshBridgeEndpoint::instance_id(directory.path()).unwrap();
-        let security_path = directory.path().join("security.db");
+        let security_path = directory.path().join("settings.toml");
         let running_service = SshBridgeService::new_with_stores(
             TokioHandle::current(),
             endpoint.clone(),
@@ -2246,7 +2247,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             known_hosts,
-            BridgeSecurityStore::open(&security_path).map_err(|error| format!("{error:#}")),
+            BridgeSecuritySettingsStore::open(&security_path).map_err(|error| format!("{error:#}")),
             test_audit_log(directory.path(), "audit.log"),
         );
         let settings_service = SshBridgeService::new_with_stores(
@@ -2257,7 +2258,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("settings_upstream_known_hosts")),
-            BridgeSecurityStore::open(&security_path).map_err(|error| format!("{error:#}")),
+            BridgeSecuritySettingsStore::open(&security_path).map_err(|error| format!("{error:#}")),
             test_audit_log(directory.path(), "settings_audit.log"),
         );
         let mut target = profile("cross-instance-policy");
@@ -2320,7 +2321,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             known_hosts,
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         let mut target = profile("approval-target");
@@ -2415,7 +2416,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             known_hosts,
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             BridgeAuditLog::open(&audit_blocked_path.join("audit.log"))
                 .map_err(|error| format!("{error:#}")),
         );
@@ -2712,7 +2713,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("upstream_known_hosts")),
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         service.refresh_routes(vec![profile("one")], vec![]);
@@ -2730,7 +2731,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("other_upstream_known_hosts")),
-            test_security_store(directory.path(), "other_security.db"),
+            test_security_settings_store(directory.path(), "other_settings.toml"),
             test_audit_log(directory.path(), "other_audit.log"),
         );
         assert!(competing.enable().await.is_err());
@@ -2761,7 +2762,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("upstream_known_hosts")),
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
 
@@ -2793,7 +2794,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("upstream_known_hosts")),
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         let (release, delayed) = tokio::sync::oneshot::channel();
@@ -2829,7 +2830,7 @@ mod tests {
             },
             SecretStore::new_locked_vault(),
             KnownHostsStore::with_path(directory.path().join("upstream_known_hosts")),
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         let refresh = service.refresh_routes(vec![profile("limited")], vec![]);
@@ -2882,7 +2883,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             known_hosts,
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         let mut target = profile("target");
@@ -3068,7 +3069,7 @@ mod tests {
             SshBridgeConfig::default(),
             SecretStore::new_locked_vault(),
             known_hosts,
-            test_security_store(directory.path(), "security.db"),
+            test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
         let mut target = profile("stored-password");

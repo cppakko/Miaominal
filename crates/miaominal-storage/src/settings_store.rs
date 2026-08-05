@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use fs2::FileExt as _;
 use miaominal_paths::{self as paths, atomic_write};
 use miaominal_settings::{AppSettings, CURRENT_ONBOARDING_VERSION, changed, install};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,8 @@ impl SettingsStore {
         }
 
         settings.sanitize();
+        let repaired_invalid_bridge_policy =
+            repair_invalid_bridge_policy(&mut settings, &settings_file);
         install(settings.clone());
 
         let store = Self {
@@ -57,7 +60,14 @@ impl SettingsStore {
             settings,
         };
 
-        if (migrated_legacy_onboarding
+        if repaired_invalid_bridge_policy {
+            let repair_result = SettingsFileLock::acquire(&store.settings_file).and_then(|_lock| {
+                persist_settings_document_unlocked(&store.settings_file, &store.settings)
+            });
+            if let Err(error) = repair_result {
+                log::warn!("failed to persist repaired SSH Bridge policy: {error:?}");
+            }
+        } else if (migrated_legacy_onboarding
             || migrated_terminal_font_family
             || migrated_open_ssh_integration)
             && let Err(error) = store.persist()
@@ -99,8 +109,14 @@ impl SettingsStore {
     pub fn replace(&mut self, mut settings: AppSettings) -> Result<bool> {
         let before = self.settings.clone();
         settings.sanitize();
+        validate_settings(&settings)?;
         if changed(&before, &settings) {
-            self.persist_settings(&settings)?;
+            let _lock = SettingsFileLock::acquire(&self.settings_file)?;
+            if self.settings_file.exists() {
+                let latest = load_settings_document_unlocked(&self.settings_file)?;
+                preserve_newer_bridge_policy(&mut settings, &latest);
+            }
+            persist_settings_document_unlocked(&self.settings_file, &settings)?;
             self.settings = settings;
             install(self.settings.clone());
             Ok(true)
@@ -114,15 +130,105 @@ impl SettingsStore {
     }
 
     fn persist_settings(&self, settings: &AppSettings) -> Result<()> {
-        if let Some(parent) = self.settings_file.parent() {
+        validate_settings(settings)?;
+        let _lock = SettingsFileLock::acquire(&self.settings_file)?;
+        let mut settings = settings.clone();
+        if self.settings_file.exists() {
+            let latest = load_settings_document_unlocked(&self.settings_file)?;
+            preserve_newer_bridge_policy(&mut settings, &latest);
+        }
+        persist_settings_document_unlocked(&self.settings_file, &settings)
+    }
+}
+
+pub(crate) struct SettingsFileLock {
+    file: File,
+}
+
+impl SettingsFileLock {
+    pub(crate) fn acquire(settings_file: &Path) -> Result<Self> {
+        if let Some(parent) = settings_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        let serialized =
-            toml::to_string_pretty(settings).context("failed to serialize settings")?;
-        atomic_write(&self.settings_file, serialized)?;
-        Ok(())
+        let lock_path = settings_lock_path(settings_file);
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open {}", lock_path.display()))?;
+        file.lock_exclusive()
+            .with_context(|| format!("failed to lock {}", lock_path.display()))?;
+        Ok(Self { file })
     }
+}
+
+impl Drop for SettingsFileLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+pub(crate) fn load_settings_document_unlocked(settings_file: &Path) -> Result<AppSettings> {
+    let mut settings = if settings_file.exists() {
+        read_settings_file(settings_file)?.0
+    } else {
+        AppSettings::default_for_system()
+    };
+    settings.sanitize();
+    validate_settings(&settings)?;
+    Ok(settings)
+}
+
+pub(crate) fn persist_settings_document_unlocked(
+    settings_file: &Path,
+    settings: &AppSettings,
+) -> Result<()> {
+    validate_settings(settings)?;
+    if let Some(parent) = settings_file.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let serialized = toml::to_string_pretty(settings).context("failed to serialize settings")?;
+    atomic_write(settings_file, serialized)
+}
+
+fn validate_settings(settings: &AppSettings) -> Result<()> {
+    settings
+        .ssh_bridge
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .context("invalid SSH Bridge settings")
+}
+
+fn repair_invalid_bridge_policy(settings: &mut AppSettings, settings_file: &Path) -> bool {
+    let Err(error) = settings.ssh_bridge.validate() else {
+        return false;
+    };
+    log::warn!(
+        "invalid SSH Bridge policy in {}; using the default policy: {error}",
+        settings_file.display()
+    );
+    settings.ssh_bridge.security_policy = Default::default();
+    true
+}
+
+fn preserve_newer_bridge_policy(settings: &mut AppSettings, latest: &AppSettings) {
+    let latest_policy = &latest.ssh_bridge.security_policy;
+    let requested_policy = &settings.ssh_bridge.security_policy;
+    if latest_policy.generation > requested_policy.generation
+        || (latest_policy.generation == requested_policy.generation
+            && latest_policy != requested_policy)
+    {
+        settings.ssh_bridge.security_policy = latest_policy.clone();
+    }
+}
+
+fn settings_lock_path(settings_file: &Path) -> PathBuf {
+    let mut path = settings_file.as_os_str().to_os_string();
+    path.push(".lock");
+    path.into()
 }
 
 fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, bool)> {
@@ -171,11 +277,12 @@ fn has_existing_app_data(settings_file: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    let settings_lock_file = settings_lock_path(settings_file);
     for entry in fs::read_dir(config_dir)
         .with_context(|| format!("failed to read {}", config_dir.display()))?
     {
         let entry = entry.with_context(|| format!("failed to read {}", config_dir.display()))?;
-        if entry.path() == settings_file {
+        if entry.path() == settings_file || entry.path() == settings_lock_file {
             continue;
         }
         return Ok(true);
@@ -187,6 +294,8 @@ fn has_existing_app_data(settings_file: &Path) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BridgeSecuritySettingsStore;
+    use miaominal_core::ssh_bridge_security::BridgeSecurityLevel;
     use uuid::Uuid;
 
     struct TestSettingsPath {
@@ -225,6 +334,23 @@ mod tests {
 
         assert!(store.settings().should_show_onboarding());
         assert_eq!(store.settings().completed_onboarding_version, 0);
+        assert!(!paths.settings_file.exists());
+    }
+
+    #[test]
+    fn settings_lock_file_does_not_count_as_existing_app_data() {
+        let paths = TestSettingsPath::new();
+        let policy_store = BridgeSecuritySettingsStore::open(&paths.settings_file)
+            .expect("policy store should open");
+        assert_eq!(
+            policy_store.policy().unwrap(),
+            miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
+        );
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("fresh settings should load");
+
+        assert!(store.settings().should_show_onboarding());
         assert!(!paths.settings_file.exists());
     }
 
@@ -375,5 +501,71 @@ mod tests {
 
         assert!(store.settings().should_show_onboarding());
         assert_eq!(store.settings().completed_onboarding_version, 0);
+    }
+
+    #[test]
+    fn ordinary_settings_updates_preserve_newer_bridge_policy() {
+        let paths = TestSettingsPath::new();
+        let mut settings_store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("settings should load");
+        let policy_store = BridgeSecuritySettingsStore::open(&paths.settings_file)
+            .expect("policy store should open");
+        let policy = policy_store
+            .set_policy(
+                BridgeSecurityLevel::RequireApproval { timeout_secs: 30 },
+                42,
+            )
+            .expect("policy should persist");
+
+        assert!(settings_store.update(|settings| settings.font_size = 18.0));
+
+        assert_eq!(policy_store.policy().unwrap(), policy);
+        assert_eq!(settings_store.settings().ssh_bridge.security_policy, policy);
+    }
+
+    #[test]
+    fn invalid_bridge_policy_is_repaired_without_discarding_other_settings() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            concat!(
+                "completed_onboarding_version = 1\n",
+                "font_size = 18.0\n",
+                "[ssh_bridge.security_policy]\n",
+                "updated_at = 1\n",
+                "generation = 1\n",
+                "[ssh_bridge.security_policy.level]\n",
+                "kind = \"require_approval\"\n",
+                "timeout_secs = 4\n",
+            ),
+        )
+        .expect("invalid settings should be written");
+
+        let mut store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("invalid bridge policy should not discard all settings");
+        assert_eq!(store.settings().font_size, 18.0);
+        assert_eq!(
+            store.settings().ssh_bridge.security_policy,
+            miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
+        );
+
+        let policy_store = BridgeSecuritySettingsStore::open(&paths.settings_file)
+            .expect("policy store should open");
+        assert_eq!(
+            policy_store
+                .policy()
+                .expect("repaired policy should be valid on disk"),
+            miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
+        );
+
+        assert!(store.update(|settings| settings.font_size = 19.0));
+        let repaired = load_settings_document_unlocked(&paths.settings_file)
+            .expect("repaired settings should remain valid on disk");
+        assert_eq!(repaired.font_size, 19.0);
+        assert_eq!(
+            repaired.ssh_bridge.security_policy,
+            miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
+        );
     }
 }

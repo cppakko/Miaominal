@@ -304,6 +304,7 @@ mod tests {
         let serialized = toml::to_string(&modified.synced_settings()).expect("sync settings");
         assert!(!serialized.contains("open_ssh_integration_mode"));
         assert!(!serialized.contains("ssh_bridge"));
+        assert!(!serialized.contains("security_policy"));
         assert!(!serialized.contains("managed_open_ssh_integration_enabled"));
         assert!(!serialized.contains("bridge_security_policy"));
         assert!(!serialized.contains("bridge_audit_records"));
