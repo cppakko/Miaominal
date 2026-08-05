@@ -86,13 +86,27 @@ impl AppInstanceEndpoint {
         {
             let uid = current_effective_uid();
             Self::UnixSocket(
-                std::env::temp_dir()
+                app_instance_socket_temp_dir()
                     .join(format!("miaominal-{uid}"))
                     .join(instance_id)
                     .join("app.sock"),
             )
         }
     }
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn app_instance_socket_temp_dir() -> PathBuf {
+    // macOS gives applications a long per-user TMPDIR under /var/folders, while
+    // sockaddr_un::sun_path only has room for 104 bytes. /tmp keeps the socket
+    // address short; the UID-specific directory is still ownership-checked and
+    // restricted to mode 0700 before the socket is created.
+    PathBuf::from("/tmp")
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn app_instance_socket_temp_dir() -> PathBuf {
+    std::env::temp_dir()
 }
 
 pub(crate) enum AppInstanceDisposition {
@@ -759,6 +773,18 @@ mod tests {
         assert_eq!(first_id, instance_id_for_path(&first_path));
         assert_ne!(first_id, instance_id_for_path(&second_path));
         assert_eq!(first_id.len(), 32);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_endpoint_uses_short_tmp_socket_path() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let endpoint = AppInstanceEndpoint::derive("0123456789abcdef0123456789abcdef");
+        let AppInstanceEndpoint::UnixSocket(socket_path) = endpoint;
+
+        assert!(socket_path.starts_with("/tmp"));
+        assert!(socket_path.as_os_str().as_bytes().len() < 104);
     }
 
     #[tokio::test]
