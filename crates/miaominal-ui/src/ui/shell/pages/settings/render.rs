@@ -565,7 +565,8 @@ fn openssh_page(settings: Entity<SettingsController>) -> NamedSettingPage {
                         let entity = settings.clone();
                         move |_, _, cx| render_ssh_bridge_policy(entity.clone(), cx)
                     }),
-                ),
+                )
+                .layout(Axis::Vertical),
             ]),
         SettingsGroupId::SshBridgeSecurityPending => SettingGroup::new()
             .title(i18n::string(
@@ -1113,60 +1114,14 @@ fn render_ssh_bridge_pending(entity: Entity<SettingsController>, cx: &App) -> An
 }
 
 fn render_ssh_bridge_policy(entity: Entity<SettingsController>, cx: &App) -> AnyElement {
-    let (policy, system_auth_available, pending_downgrade) = {
+    let (policy, system_auth_available) = {
         let controller = entity.read(cx);
         (
             controller.ssh_bridge_security_policy(),
             controller.ssh_bridge_security().system_auth_available,
-            controller.pending_ssh_bridge_policy_downgrade().cloned(),
         )
     };
     let level = policy.level;
-    let roles = miaominal_settings::current_theme().material.roles;
-    let downgrade_confirmation = pending_downgrade.map(|downgrade_level| {
-        let cancel_entity = entity.clone();
-        let confirm_entity = entity.clone();
-        v_flex()
-            .w_full()
-            .gap_2()
-            .p_3()
-            .rounded(px(8.0))
-            .bg(rgb(roles.error_container))
-            .child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Input.scaled())
-                    .text_color(rgb(roles.on_error_container))
-                    .child(i18n::string_args(
-                        "settings.openssh_integration.security.downgrade_confirm",
-                        &[("level", &bridge_security_level_label(downgrade_level))],
-                    )),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_end()
-                    .gap_2()
-                    .child(settings_compact_button(
-                        "ssh-bridge-policy-downgrade-cancel",
-                        i18n::string("settings.openssh_integration.security.cancel"),
-                        move |_, cx| {
-                            cancel_entity.update(cx, |controller, cx| {
-                                controller.cancel_ssh_bridge_policy_downgrade(cx);
-                            });
-                        },
-                    ))
-                    .child(settings_compact_button(
-                        "ssh-bridge-policy-downgrade-confirm",
-                        i18n::string("settings.openssh_integration.security.confirm"),
-                        move |_, cx| {
-                            confirm_entity.update(cx, |controller, cx| {
-                                controller.confirm_ssh_bridge_policy_downgrade(cx);
-                            });
-                        },
-                    )),
-            )
-            .into_any_element()
-    });
     let security_level_entity = entity.clone();
     let system_auth_tooltip = if system_auth_available {
         bridge_security_level_tooltip(BridgeSecurityLevel::RequireSystemAuth)
@@ -1243,9 +1198,6 @@ fn render_ssh_bridge_policy(entity: Entity<SettingsController>, cx: &App) -> Any
                 )
             },
         )
-        .when_some(downgrade_confirmation, |panel, confirmation| {
-            panel.child(confirmation)
-        })
         .into_any_element()
 }
 

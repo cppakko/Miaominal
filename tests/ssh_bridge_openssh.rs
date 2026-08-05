@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use miaominal_core::profile::SessionProfile;
+use miaominal_core::ssh_bridge_security::BridgeSecurityLevel;
 use miaominal_secrets::{
     APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretKind, SecretStore,
     VaultCredentialBackend, set_vault_test_parameters,
@@ -351,6 +352,7 @@ impl BridgeFixture {
             BridgeAuditLog::open(&root.path().join("ssh_bridge_audit.log"))
                 .map_err(|error| format!("{error:#}")),
         );
+        service.set_security_policy(BridgeSecurityLevel::Standard)?;
         let integration = OpenSshIntegrationService::new_with_executable(
             service.clone(),
             ssh_dir.path().to_path_buf(),

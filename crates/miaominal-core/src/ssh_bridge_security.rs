@@ -5,15 +5,20 @@ pub const MIN_BRIDGE_APPROVAL_TIMEOUT_SECS: u32 = 5;
 pub const MAX_BRIDGE_APPROVAL_TIMEOUT_SECS: u32 = 120;
 pub const BRIDGE_SYSTEM_AUTH_TIMEOUT_SECS: u32 = 60;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BridgeSecurityLevel {
-    #[default]
     Standard,
-    RequireApproval {
-        timeout_secs: u32,
-    },
+    RequireApproval { timeout_secs: u32 },
     RequireSystemAuth,
+}
+
+impl Default for BridgeSecurityLevel {
+    fn default() -> Self {
+        Self::RequireApproval {
+            timeout_secs: DEFAULT_BRIDGE_APPROVAL_TIMEOUT_SECS,
+        }
+    }
 }
 
 impl BridgeSecurityLevel {
@@ -283,10 +288,12 @@ mod tests {
     }
 
     #[test]
-    fn standard_is_the_default_level() {
+    fn approval_is_the_default_level() {
         assert_eq!(
             BridgeSecurityLevel::default(),
-            BridgeSecurityLevel::Standard
+            BridgeSecurityLevel::RequireApproval {
+                timeout_secs: DEFAULT_BRIDGE_APPROVAL_TIMEOUT_SECS,
+            }
         );
     }
 

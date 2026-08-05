@@ -1986,6 +1986,9 @@ mod tests {
         let running_service = test_service(directory.path());
         let settings_service = test_service(directory.path());
 
+        settings_service
+            .set_security_policy(BridgeSecurityLevel::Standard)
+            .unwrap();
         let stale_standard = running_service.inner.refresh_policy_from_store().unwrap();
         assert_eq!(stale_standard.level, BridgeSecurityLevel::Standard);
         settings_service
@@ -2420,6 +2423,9 @@ mod tests {
             BridgeAuditLog::open(&audit_blocked_path.join("audit.log"))
                 .map_err(|error| format!("{error:#}")),
         );
+        service
+            .set_security_policy(BridgeSecurityLevel::Standard)
+            .unwrap();
         let mut target = profile("standard-target");
         target.host = "127.0.0.1".into();
         target.port = upstream.port;
@@ -2886,6 +2892,9 @@ mod tests {
             test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
+        service
+            .set_security_policy(BridgeSecurityLevel::Standard)
+            .unwrap();
         let mut target = profile("target");
         target.host = "127.0.0.1".into();
         target.port = upstream_a.port;
@@ -3018,6 +3027,9 @@ mod tests {
     async fn locked_request_can_be_cancelled_without_attempting_upstream() {
         let directory = tempfile::tempdir().unwrap();
         let service = test_service(directory.path());
+        service
+            .set_security_policy(BridgeSecurityLevel::Standard)
+            .unwrap();
         let mut target = profile("cancel-locked");
         target.has_stored_password = true;
         let refresh = service.refresh_routes(vec![target], vec![]);
@@ -3072,6 +3084,9 @@ mod tests {
             test_security_settings_store(directory.path(), "settings.toml"),
             test_audit_log(directory.path(), "audit.log"),
         );
+        service
+            .set_security_policy(BridgeSecurityLevel::Standard)
+            .unwrap();
         let mut target = profile("stored-password");
         target.host = "127.0.0.1".into();
         target.port = upstream.port;

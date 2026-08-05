@@ -61,7 +61,7 @@ pub(in crate::ui::shell) use settings::{
     OnboardingStep, OnboardingStepTransition, OnboardingStepTransitionPhase,
     PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
     PendingLocalDataResetConfirmationPopupState, PendingLocalVaultDisableConfirmState,
-    PendingProxyConfigPopupState, PendingSyncDirectionState,
+    PendingProxyConfigPopupState, PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
     PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
     PendingWebSearchConfigPopupState, ProxySaveDraft, SettingsController, SettingsControllerArgs,

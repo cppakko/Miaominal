@@ -1124,6 +1124,16 @@ impl AppView {
             .local_data_reset_confirm()
     }
 
+    pub(in crate::ui::shell) fn pending_ssh_bridge_policy_downgrade_prompt(
+        &self,
+        cx: &App,
+    ) -> Option<PendingSshBridgePolicyDowngradeState> {
+        self.controllers
+            .settings
+            .read(cx)
+            .pending_ssh_bridge_policy_downgrade()
+    }
+
     pub(in crate::ui::shell) fn pending_local_data_reset_confirmation_popup(
         &self,
         cx: &App,

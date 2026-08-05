@@ -151,6 +151,8 @@ impl Render for AppView {
         let pending_local_vault_disable_confirm =
             self.pending_local_vault_disable_confirm_prompt(cx);
         let pending_local_data_reset_confirm = self.pending_local_data_reset_confirm_prompt(cx);
+        let pending_ssh_bridge_policy_downgrade =
+            self.pending_ssh_bridge_policy_downgrade_prompt(cx);
         let pending_local_data_reset_confirmation_popup =
             self.pending_local_data_reset_confirmation_popup(cx);
         let pending_sync_passphrase_clear_confirm_popup =
@@ -363,6 +365,9 @@ impl Render for AppView {
                     &prompt,
                     None,
                 ))
+            })
+            .when_some(pending_ssh_bridge_policy_downgrade, |this, prompt| {
+                this.child(self.render_ssh_bridge_policy_downgrade_prompt(&prompt, None))
             })
             .when_some(
                 pending_local_data_reset_confirmation_popup,
@@ -1478,6 +1483,55 @@ impl AppView {
             "managed-key-delete",
             i18n::string("dialogs.managed_key_delete.title"),
             Some(subtitle),
+            None,
+            actions.into_any_element(),
+            exit_progress,
+        )
+    }
+
+    fn render_ssh_bridge_policy_downgrade_prompt(
+        &self,
+        prompt: &PendingSshBridgePolicyDowngradeState,
+        exit_progress: Option<f32>,
+    ) -> gpui::AnyElement {
+        let supporting_text = i18n::string_args(
+            "settings.openssh_integration.security.downgrade_confirm",
+            &[("level", &bridge_security_level_label(prompt.level))],
+        );
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_confirm = self.controllers.settings.clone();
+        let actions = h_flex()
+            .gap_2()
+            .justify_end()
+            .child(
+                basic_dialog_action_button(
+                    "ssh-bridge-policy-downgrade-cancel",
+                    i18n::string("settings.openssh_integration.security.cancel"),
+                    BasicDialogActionTone::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    controller_cancel.update(cx, |controller, cx| {
+                        controller.cancel_ssh_bridge_policy_downgrade(cx);
+                    });
+                }),
+            )
+            .child(
+                basic_dialog_action_button(
+                    "ssh-bridge-policy-downgrade-confirm",
+                    i18n::string("settings.openssh_integration.security.confirm"),
+                    BasicDialogActionTone::Destructive,
+                )
+                .on_click(move |_, _, cx| {
+                    controller_confirm.update(cx, |controller, cx| {
+                        controller.confirm_ssh_bridge_policy_downgrade(cx);
+                    });
+                }),
+            );
+
+        render_basic_dialog(
+            "ssh-bridge-policy-downgrade",
+            i18n::string("settings.openssh_integration.security_policy_group.title"),
+            Some(supporting_text),
             None,
             actions.into_any_element(),
             exit_progress,
@@ -3722,6 +3776,9 @@ impl AppView {
             }
             DialogOverlaySnapshot::LocalDataResetConfirm(prompt) => {
                 self.render_local_data_reset_confirm_prompt(entity, &prompt, Some(exit_progress))
+            }
+            DialogOverlaySnapshot::SshBridgePolicyDowngrade(prompt) => {
+                self.render_ssh_bridge_policy_downgrade_prompt(&prompt, Some(exit_progress))
             }
             DialogOverlaySnapshot::LocalDataResetConfirmationPopup(popup) => self
                 .render_local_data_reset_confirmation_popup(

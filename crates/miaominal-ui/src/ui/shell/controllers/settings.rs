@@ -7,9 +7,9 @@ use crate::ui::shell::{
     BridgeSecurityNotificationView, bridge_security_notification_window_options,
 };
 use crate::ui::shell::{
-    LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget, SelectOption,
-    SftpBrowserSide, SidebarSection, ai_provider_kind_label_key, ai_provider_select_options,
-    bridge_security_level_label, last_tab_close_behavior_label,
+    DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget,
+    SelectOption, SftpBrowserSide, SidebarSection, ai_provider_kind_label_key,
+    ai_provider_select_options, bridge_security_level_label, last_tab_close_behavior_label,
     local_vault_auto_lock_duration_label, localized_profile_import_source_label,
     localized_secret_placeholder, monitor_history_duration_label, new_input_state,
     set_input_placeholder, set_input_value, theme_id_label, warning_action_notification,
@@ -368,6 +368,11 @@ pub(in crate::ui::shell) struct PendingAiProviderPopupState;
 pub(in crate::ui::shell) struct PendingWebSearchConfigPopupState;
 
 #[derive(Debug, Clone, Copy)]
+pub(in crate::ui::shell) struct PendingSshBridgePolicyDowngradeState {
+    pub(in crate::ui::shell) level: BridgeSecurityLevel,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingSyncProviderConfigPopupState {
     pub(in crate::ui::shell) provider: SyncProvider,
 }
@@ -588,7 +593,7 @@ pub(in crate::ui::shell) struct SettingsController {
         WindowHandle<BridgeSecurityNotificationView>,
         BridgeSecurityNotificationKey,
     )>,
-    pending_ssh_bridge_policy_downgrade: Option<BridgeSecurityLevel>,
+    pending_ssh_bridge_policy_downgrade: Option<PendingSshBridgePolicyDowngradeState>,
     ssh_bridge_settings_instance_generation: Cell<u64>,
     ssh_bridge_security_initial_selection_pending: Cell<bool>,
     pub(in crate::ui::shell) forms: SettingsForms,
@@ -2045,7 +2050,8 @@ impl SettingsController {
     ) {
         let current = self.ssh_bridge_service.security_policy().level;
         if bridge_security_rank(level) < bridge_security_rank(current) {
-            self.pending_ssh_bridge_policy_downgrade = Some(level);
+            self.pending_ssh_bridge_policy_downgrade =
+                Some(PendingSshBridgePolicyDowngradeState { level });
             cx.notify();
             return;
         }
@@ -2075,8 +2081,8 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn pending_ssh_bridge_policy_downgrade(
         &self,
-    ) -> Option<&BridgeSecurityLevel> {
-        self.pending_ssh_bridge_policy_downgrade.as_ref()
+    ) -> Option<PendingSshBridgePolicyDowngradeState> {
+        self.pending_ssh_bridge_policy_downgrade
     }
 
     fn sync_ssh_bridge_security_level_select(&mut self, window: &mut Window, cx: &mut App) {
@@ -2119,8 +2125,11 @@ impl SettingsController {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        if let Some(level) = self.pending_ssh_bridge_policy_downgrade.take() {
-            self.apply_ssh_bridge_security_policy(level, cx);
+        if let Some(prompt) = self.pending_ssh_bridge_policy_downgrade.take() {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::SshBridgePolicyDowngrade(prompt),
+            ));
+            self.apply_ssh_bridge_security_policy(prompt.level, cx);
         }
     }
 
@@ -2128,7 +2137,11 @@ impl SettingsController {
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        self.pending_ssh_bridge_policy_downgrade = None;
+        if let Some(prompt) = self.pending_ssh_bridge_policy_downgrade.take() {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::SshBridgePolicyDowngrade(prompt),
+            ));
+        }
         self.sync_ssh_bridge_security_level_select_via_active_window(cx);
         cx.notify();
     }
