@@ -427,15 +427,18 @@ async fn call_tool_on_worker(
     cancellation: AgentToolCancellation,
     request: AgentToolCallRequest,
 ) -> Result<crate::AgentToolCallResponse, AgentError> {
-    run_cancellable_tool_worker(cancellation, move || async move {
-        channel.call_tool(request).await
-    })
+    run_cancellable_tool_worker(
+        cancellation,
+        move || async move { channel.call_tool(request).await },
+        None,
+    )
     .await
 }
 
 async fn run_cancellable_tool_worker<T, Build, Work>(
     cancellation: AgentToolCancellation,
     build_work: Build,
+    armed: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<T, AgentError>
 where
     T: Send + 'static,
@@ -446,7 +449,7 @@ where
     let worker_cancellation = cancellation.clone();
     let handle = tokio::task::spawn_blocking(move || {
         let _worker_permit = worker_permit;
-        execute_cancellable_tool_worker(&worker_cancellation, worker_id, stop, build_work)
+        execute_cancellable_tool_worker(&worker_cancellation, worker_id, stop, build_work, armed)
     });
     let mut worker = AgentToolWorkerJoin::new(handle, cancellation.clone());
     cancellation.register_worker(worker_id, worker.abort_handle());
@@ -465,6 +468,7 @@ fn execute_cancellable_tool_worker<T, Build, Work>(
     worker_id: u64,
     mut stop: watch::Receiver<bool>,
     build_work: Build,
+    armed: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<T, AgentError>
 where
     Build: FnOnce() -> Work,
@@ -486,8 +490,16 @@ where
             biased;
             result = &mut work => result,
             _ = wait_for_tool_cancellation(&mut stop) => Err(tool_cancelled_error()),
+            _ = signal_armed(armed) => unreachable!("the armed signal never completes"),
         }
     })
+}
+
+async fn signal_armed(armed: Option<tokio::sync::oneshot::Sender<()>>) {
+    if let Some(armed) = armed {
+        let _ = armed.send(());
+    }
+    std::future::pending::<()>().await
 }
 
 async fn wait_for_tool_cancellation(stop: &mut watch::Receiver<bool>) {
@@ -929,11 +941,15 @@ mod tests {
         let worker_dropped = dropped.clone();
         let worker_cancellation = cancellation.clone();
         let task = tokio::spawn(async move {
-            run_cancellable_tool_worker(worker_cancellation, move || async move {
-                let _drop_flag = DropFlag(worker_dropped);
-                let _ = started_sender.send(());
-                std::future::pending::<Result<(), AgentError>>().await
-            })
+            run_cancellable_tool_worker(
+                worker_cancellation,
+                move || async move {
+                    let _drop_flag = DropFlag(worker_dropped);
+                    let _ = started_sender.send(());
+                    std::future::pending::<Result<(), AgentError>>().await
+                },
+                None,
+            )
             .await
         });
         started_receiver
@@ -965,10 +981,16 @@ mod tests {
         cancellation.cancel();
 
         let build_called_by_worker = build_called.clone();
-        let result = execute_cancellable_tool_worker(&cancellation, worker_id, stop, move || {
-            build_called_by_worker.store(true, std::sync::atomic::Ordering::Release);
-            std::future::ready(Ok::<_, AgentError>(()))
-        });
+        let result = execute_cancellable_tool_worker(
+            &cancellation,
+            worker_id,
+            stop,
+            move || {
+                build_called_by_worker.store(true, std::sync::atomic::Ordering::Release);
+                std::future::ready(Ok::<_, AgentError>(()))
+            },
+            None,
+        );
         drop(worker_permit);
 
         assert!(matches!(result, Err(AgentError::Cancelled)));
@@ -992,10 +1014,16 @@ mod tests {
             release_receiver
                 .recv()
                 .expect("reserved worker should be released by the test");
-            execute_cancellable_tool_worker(&worker_cancellation, worker_id, stop, move || {
-                build_called_by_worker.store(true, std::sync::atomic::Ordering::Release);
-                std::future::ready(Ok::<_, AgentError>(()))
-            })
+            execute_cancellable_tool_worker(
+                &worker_cancellation,
+                worker_id,
+                stop,
+                move || {
+                    build_called_by_worker.store(true, std::sync::atomic::Ordering::Release);
+                    std::future::ready(Ok::<_, AgentError>(()))
+                },
+                None,
+            )
         });
         let mut worker = AgentToolWorkerJoin::new(handle, cancellation.clone());
         cancellation.register_worker(worker_id, worker.abort_handle());
@@ -1019,7 +1047,6 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn completed_worker_wins_stop_and_the_next_worker_never_starts() {
         struct CompleteWhenReleased {
-            started: Option<tokio::sync::oneshot::Sender<()>>,
             ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
         }
 
@@ -1027,12 +1054,9 @@ mod tests {
             type Output = Result<&'static str, AgentError>;
 
             fn poll(
-                mut self: std::pin::Pin<&mut Self>,
+                self: std::pin::Pin<&mut Self>,
                 _cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
-                if let Some(started) = self.started.take() {
-                    let _ = started.send(());
-                }
                 if self.ready.load(std::sync::atomic::Ordering::Acquire) {
                     std::task::Poll::Ready(Ok("first completed"))
                 } else {
@@ -1043,21 +1067,23 @@ mod tests {
 
         let cancellation = AgentToolCancellation::new();
         let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (armed_sender, armed_receiver) = tokio::sync::oneshot::channel();
         let first_cancellation = cancellation.clone();
         let first_ready = ready.clone();
         let first = tokio::spawn(async move {
-            run_cancellable_tool_worker(first_cancellation, move || CompleteWhenReleased {
-                started: Some(started_sender),
-                ready: first_ready,
-            })
+            run_cancellable_tool_worker(
+                first_cancellation,
+                move || CompleteWhenReleased { ready: first_ready },
+                Some(armed_sender),
+            )
             .await
         });
-        started_receiver
+        armed_receiver
             .await
-            .expect("first tool worker should begin polling");
+            .expect("first tool worker should arm its cancellation watcher");
 
-        // Make the in-flight result and Stop observable on the same worker poll. The completed
+        // The armed signal fires only after the cancellation watcher registered its first poll, so
+        // the completion below and Stop are both observable on the same worker poll. The completed
         // result wins, while the cancellation state still rejects every later reservation.
         ready.store(true, std::sync::atomic::Ordering::Release);
         cancellation.cancel();
@@ -1072,10 +1098,14 @@ mod tests {
 
         let second_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let second_started_in_worker = second_started.clone();
-        let second = run_cancellable_tool_worker(cancellation, move || {
-            second_started_in_worker.store(true, std::sync::atomic::Ordering::Release);
-            std::future::ready(Ok::<_, AgentError>("second completed"))
-        })
+        let second = run_cancellable_tool_worker(
+            cancellation,
+            move || {
+                second_started_in_worker.store(true, std::sync::atomic::Ordering::Release);
+                std::future::ready(Ok::<_, AgentError>("second completed"))
+            },
+            None,
+        )
         .await;
 
         assert!(matches!(second, Err(AgentError::Cancelled)));
@@ -1100,11 +1130,15 @@ mod tests {
         let task = tokio::spawn({
             let cancellation = cancellation.clone();
             async move {
-                run_cancellable_tool_worker(cancellation, move || async move {
-                    let _drop_flag = DropFlag(Some(dropped_sender));
-                    let _ = started_sender.send(());
-                    std::future::pending::<Result<(), AgentError>>().await
-                })
+                run_cancellable_tool_worker(
+                    cancellation,
+                    move || async move {
+                        let _drop_flag = DropFlag(Some(dropped_sender));
+                        let _ = started_sender.send(());
+                        std::future::pending::<Result<(), AgentError>>().await
+                    },
+                    None,
+                )
                 .await
             }
         });
