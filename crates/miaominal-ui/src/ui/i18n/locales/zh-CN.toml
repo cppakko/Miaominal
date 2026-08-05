@@ -1,3 +1,9 @@
+[startup.single_instance]
+already_running_title = "Miaominal 已在运行"
+activation_failed = "另一个 Miaominal 实例正在使用此数据目录，但无法激活它的窗口。\n\n{error}"
+startup_failed_title = "Miaominal 无法启动"
+startup_failed = "无法初始化单实例协调。\n\n{error}"
+
 [settings.pages.appearance]
 title = "外观"
 description = "配置终端和应用界面的字体、布局与主题。"

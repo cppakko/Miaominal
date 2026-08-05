@@ -11,7 +11,7 @@ use settings::Settings as _;
 pub use shell::AppView;
 pub use system_tray::{
     configure_main_window_close, initialize_system_tray, request_main_window_close,
-    sync_system_tray,
+    restore_main_window, sync_system_tray,
 };
 
 pub fn init_markdown(_cx: &mut gpui::App) {

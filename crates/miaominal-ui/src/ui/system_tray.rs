@@ -54,6 +54,7 @@ impl Global for SystemTrayState {}
 
 pub fn initialize_system_tray(main_window: AnyWindowHandle, cx: &mut App) {
     if cx.has_global::<SystemTrayState>() {
+        cx.global_mut::<SystemTrayState>().main_window = main_window;
         sync_system_tray(cx);
         return;
     }
@@ -114,24 +115,30 @@ fn main_window_should_close(window: &mut Window, cx: &mut App) -> bool {
 
 fn handle_tray_command(command: TrayCommand, cx: &mut App) {
     match command {
-        TrayCommand::Show => show_main_window(cx),
+        TrayCommand::Show => {
+            restore_main_window(cx);
+        }
         TrayCommand::Quit => cx.quit(),
     }
 }
 
-fn show_main_window(cx: &mut App) {
+pub fn restore_main_window(cx: &mut App) -> bool {
     let Some(main_window) = cx
         .try_global::<SystemTrayState>()
         .map(|state| state.main_window)
     else {
-        return;
+        return false;
     };
     cx.activate(true);
-    if let Err(error) = main_window.update(cx, |_, window, _| {
+    match main_window.update(cx, |_, window, _| {
         platform::show_window(window);
         window.activate_window();
     }) {
-        log::debug!("failed to restore main window from tray: {error:?}");
+        Ok(()) => true,
+        Err(error) => {
+            log::debug!("failed to restore main window from tray: {error:?}");
+            false
+        }
     }
 }
 

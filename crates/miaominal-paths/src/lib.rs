@@ -18,6 +18,7 @@ const LEGACY_APPLICATION: &str = "miaominal";
 const ATOMIC_TEMP_PREFIX: &str = ".miaominal-";
 const ATOMIC_TEMP_SUFFIX: &str = ".tmp";
 const DATA_LOCATION_FILE: &str = "data_location.toml";
+pub const APP_INSTANCE_LOCK_FILE: &str = ".miaominal-instance.lock";
 const MIGRATION_MARKER_FILE: &str = ".miaominal-migration.toml";
 const PORTABLE_FLAG_FILE: &str = "portable.flag";
 const PORTABLE_DATA_DIR: &str = "data";
@@ -402,14 +403,19 @@ pub fn schedule_data_dir_change(target: impl AsRef<Path>) -> Result<()> {
 
 pub fn clear_active_data_dir() -> Result<()> {
     let context = initialize_runtime()?;
+    clear_active_data_dir_with(&context)
+}
+
+fn clear_active_data_dir_with(context: &RuntimeContext) -> Result<()> {
     let location_file = context.bootstrap_dir().join(DATA_LOCATION_FILE);
+    let instance_lock_file = context.active_data_dir().join(APP_INSTANCE_LOCK_FILE);
+    let mut retained = vec![instance_lock_file.as_path()];
     if context.mode() == RuntimeMode::Standard
         && paths_refer_to_same_location(context.active_data_dir(), context.bootstrap_dir())
     {
-        clear_directory_except(context.active_data_dir(), &[location_file.as_path()])?;
-    } else {
-        clear_directory_except(context.active_data_dir(), &[])?;
+        retained.push(location_file.as_path());
     }
+    clear_directory_except(context.active_data_dir(), &retained)?;
     fs::create_dir_all(context.active_data_dir()).with_context(|| {
         format!(
             "failed to recreate data directory {}",
@@ -1975,6 +1981,47 @@ mod tests {
 
         assert!(location_file.is_file());
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn clearing_active_data_keeps_the_live_instance_lock() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let active_data_dir = directory.path().to_path_buf();
+        let lock_path = active_data_dir.join(APP_INSTANCE_LOCK_FILE);
+        let owner = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("instance lock should open");
+        owner.try_lock().expect("instance lock should be acquired");
+        fs::write(active_data_dir.join("settings.toml"), "font_size = 14\n")
+            .expect("settings should be written");
+        let context = RuntimeContext {
+            mode: RuntimeMode::Portable,
+            active_data_dir: active_data_dir.clone(),
+            default_data_dir: active_data_dir.clone(),
+            bootstrap_dir: active_data_dir.clone(),
+            config_initialization: ConfigDirInitialization::Current {
+                path: active_data_dir.clone(),
+            },
+            warning: None,
+            warning_kind: None,
+        };
+
+        clear_active_data_dir_with(&context).expect("active data should be cleared");
+
+        assert!(lock_path.is_file());
+        assert!(!active_data_dir.join("settings.toml").exists());
+        let competitor = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("retained instance lock should open");
+        assert!(matches!(
+            competitor.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
     }
 
     #[cfg(unix)]

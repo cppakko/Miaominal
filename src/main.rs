@@ -5,6 +5,7 @@
 
 mod app;
 
+use futures::StreamExt;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::WindowDecorations;
 #[cfg(target_os = "macos")]
@@ -119,6 +120,43 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) -> AnyWindowHandle {
     .into()
 }
 
+fn activate_main_window(cx: &mut App, runtime: TokioHandle) {
+    if miaominal_ui::restore_main_window(cx) {
+        return;
+    }
+
+    if cx.windows().is_empty() {
+        let main_window = open_main_window(cx, runtime);
+        miaominal_ui::initialize_system_tray(main_window, cx);
+    }
+
+    let window = cx
+        .active_window()
+        .or_else(|| {
+            cx.window_stack()
+                .and_then(|windows| windows.into_iter().next())
+        })
+        .or_else(|| cx.windows().into_iter().next());
+    if let Some(window) = window
+        && let Err(error) = window.update(cx, |_, window, _| window.activate_window())
+    {
+        log::debug!("failed to activate existing Miaominal window: {error:?}");
+    }
+    cx.activate(true);
+}
+
+fn show_startup_error(title: String, message: String) {
+    eprintln!("{title}: {message}");
+    if ensure_graphical_session().is_ok() {
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(&title)
+            .set_description(&message)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+}
+
 fn run_hidden_ssh_bridge_helper() -> Option<i32> {
     let arguments = match miaominal_ssh::parse_ssh_bridge_helper_args(std::env::args_os()) {
         Ok(Some(arguments)) => arguments,
@@ -158,6 +196,7 @@ fn main() {
     }
 
     init_logging();
+    miaominal_ui::i18n::init();
 
     let runtime_context = match miaominal_paths::initialize_runtime() {
         Ok(context) => context,
@@ -198,6 +237,34 @@ fn main() {
         log::warn!("{warning}");
     }
 
+    let instance_guard =
+        match app::instance::AppInstanceGuard::acquire(runtime_context.active_data_dir()) {
+            Ok(app::instance::AppInstanceDisposition::Primary(guard)) => guard,
+            Ok(app::instance::AppInstanceDisposition::Secondary(client)) => {
+                match client.activate_existing_blocking() {
+                    Ok(()) => return,
+                    Err(error) => {
+                        let error = format!("{error:#}");
+                        let (title, message) =
+                            miaominal_ui::i18n::single_instance_activation_error(&error);
+                        show_startup_error(title, message);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                let (title, message) = miaominal_ui::i18n::single_instance_startup_error(&error);
+                show_startup_error(title, message);
+                std::process::exit(1);
+            }
+        };
+    log::debug!(
+        "acquired app instance ownership {} for {}",
+        instance_guard.instance_id(),
+        runtime_context.active_data_dir().display()
+    );
+
     if let Err(error) = miaominal_paths::cleanup_stale_atomic_write_files() {
         log::warn!("failed to clean stale atomic-write files: {error:?}");
     }
@@ -208,27 +275,48 @@ fn main() {
     }
 
     let runtime = app::runtime::start_tokio();
+    let (activation_sender, mut activation_receiver) = futures::channel::mpsc::unbounded();
+    let instance_server = match runtime.block_on(instance_guard.start_server(activation_sender)) {
+        Ok(server) => server,
+        Err(error) => {
+            let error = format!("{error:#}");
+            let (title, message) = miaominal_ui::i18n::single_instance_startup_error(&error);
+            show_startup_error(title, message);
+            std::process::exit(1);
+        }
+    };
 
     let application = gpui_platform::application().with_assets(AppAssets);
     application.on_reopen({
         let runtime = runtime.clone();
         move |cx: &mut App| {
-            if cx.windows().is_empty() {
-                let _ = open_main_window(cx, runtime.clone());
-            }
-            cx.activate(true);
+            activate_main_window(cx, runtime.clone());
         }
     });
 
+    let application_runtime = runtime.clone();
     application.run(move |cx: &mut App| {
         gpui_component::init(cx);
         miaominal_ui::init_markdown(cx);
-        miaominal_ui::i18n::init();
         app::install_app_menus(cx);
 
-        let main_window = open_main_window(cx, runtime.clone());
+        let activation_runtime = application_runtime.clone();
+        cx.spawn(async move |cx| {
+            while let Some(app::instance::AppInstanceCommand::Activate) =
+                activation_receiver.next().await
+            {
+                let runtime = activation_runtime.clone();
+                cx.update(move |cx| activate_main_window(cx, runtime));
+            }
+        })
+        .detach();
+
+        let main_window = open_main_window(cx, application_runtime.clone());
         miaominal_ui::initialize_system_tray(main_window, cx);
 
         cx.activate(true);
     });
+
+    runtime.block_on(instance_server.shutdown());
+    drop(instance_guard);
 }

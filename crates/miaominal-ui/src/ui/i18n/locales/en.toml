@@ -1,3 +1,9 @@
+[startup.single_instance]
+already_running_title = "Miaominal is already running"
+activation_failed = "Another Miaominal instance is using this data directory, but its window could not be activated.\n\n{error}"
+startup_failed_title = "Miaominal could not start"
+startup_failed = "Single-instance coordination could not be initialized.\n\n{error}"
+
 [settings.pages.appearance]
 title = "Appearance"
 description = "Configure fonts, layout, and themes for the terminal and application interface."

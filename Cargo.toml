@@ -151,15 +151,27 @@ russh-sftp.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sys-locale.workspace = true
 time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
 toml.workspace = true
 unicode-segmentation.workspace = true
 uuid.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { workspace = true, features = ["png"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+] }
 
 [build-dependencies]
 image = { workspace = true, features = ["ico", "png"] }
@@ -174,13 +186,6 @@ miaominal-services = { path = "crates/miaominal-services" }
 miaominal-settings = { path = "crates/miaominal-settings", default-features = false }
 miaominal-storage = { path = "crates/miaominal-storage" }
 tempfile.workspace = true
-
-[target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-] }
 
 [package.metadata.bundle]
 identifier = "dev.akko.miaominal"

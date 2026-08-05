@@ -45,6 +45,26 @@ pub fn string_args(key: &str, arguments: &[(&str, &str)]) -> String {
     render_template(&lookup_message(current_language(), key), arguments)
 }
 
+pub fn single_instance_activation_error(error: &str) -> (String, String) {
+    (
+        string("startup.single_instance.already_running_title"),
+        string_args(
+            "startup.single_instance.activation_failed",
+            &[("error", error)],
+        ),
+    )
+}
+
+pub fn single_instance_startup_error(error: &str) -> (String, String) {
+    (
+        string("startup.single_instance.startup_failed_title"),
+        string_args(
+            "startup.single_instance.startup_failed",
+            &[("error", error)],
+        ),
+    )
+}
+
 fn lookup_message(language: AppLanguage, key: &str) -> String {
     let primary_catalog = match language {
         AppLanguage::English => &CATALOGS.english,
