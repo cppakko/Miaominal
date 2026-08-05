@@ -7,7 +7,7 @@ use std::{
 
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, ScrollHandle,
-    Subscription, Window,
+    Subscription, WeakEntity, Window,
 };
 use gpui_component::{
     WindowExt as _,
@@ -200,6 +200,41 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) purpose: SessionPurpose,
     pub(in crate::ui::shell) port_forward_revision: u64,
     pub(in crate::ui::shell) port_forward_log_len: usize,
+    pub(in crate::ui::shell) owner_route: Option<Entity<SessionTabOwnerRoute>>,
+}
+
+pub(in crate::ui::shell) struct SessionTabOwnerRoute {
+    owner: WeakEntity<SessionController>,
+}
+
+impl SessionTabOwnerRoute {
+    fn new(owner: WeakEntity<SessionController>) -> Self {
+        Self { owner }
+    }
+
+    fn retarget(&mut self, owner: WeakEntity<SessionController>) {
+        self.owner = owner;
+    }
+}
+
+pub(in crate::ui::shell) struct TransferredSessionTab {
+    state: SessionTabState,
+    terminal_lease: Option<TerminalLeaseEntry>,
+    shared_monitoring: Option<SessionMonitoringState>,
+    was_monitor_source: bool,
+}
+
+pub(in crate::ui::shell) struct TransferredSessionWorkspaceUi {
+    side_panel_open: bool,
+    side_panel_view: SessionSidePanelView,
+    terminal_search_query: String,
+    terminal_search_open: bool,
+    terminal_search_total: usize,
+    terminal_search_current: Option<usize>,
+    terminal_search_status: Option<String>,
+    snippets_filter: String,
+    snippets_package_filter: Option<String>,
+    keyboard_interactive_values: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4606,6 +4641,7 @@ impl SessionController {
             purpose: SessionPurpose::Terminal,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            owner_route: None,
         };
         (
             TabState::new(
@@ -4666,6 +4702,7 @@ impl SessionController {
             purpose: SessionPurpose::PortForwarding,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            owner_route: None,
         };
         (
             TabState::new(
@@ -4708,6 +4745,7 @@ impl SessionController {
             purpose: SessionPurpose::ConnectionTest,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            owner_route: None,
         };
         (
             TabState::new(
@@ -4738,11 +4776,111 @@ impl SessionController {
         RefMut::filter_map(self.tabs.borrow_mut(), |tabs| tabs.get_mut(&tab_id)).ok()
     }
 
+    pub(super) fn ensure_tab_owner_route(
+        &self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SessionTabOwnerRoute>> {
+        let owner = cx.weak_entity();
+        let mut session = self.tab_mut(tab_id)?;
+        if let Some(route) = session.owner_route.as_ref() {
+            route.update(cx, |route, _| route.retarget(owner));
+            return Some(route.clone());
+        }
+        let route = cx.new(|_| SessionTabOwnerRoute::new(owner));
+        session.owner_route = Some(route.clone());
+        Some(route)
+    }
+
     pub(in crate::ui::shell) fn insert_tab(&self, tab_id: TabId, tab: SessionTabState) {
         assert!(
             self.tabs.borrow_mut().insert(tab_id, tab).is_none(),
             "duplicate session tab payload for {tab_id}"
         );
+    }
+
+    pub(in crate::ui::shell) fn take_tab_for_transfer(
+        &self,
+        tab_id: TabId,
+    ) -> Option<TransferredSessionTab> {
+        let state = self.tabs.borrow_mut().remove(&tab_id)?;
+        let profile_id = state.profile_id.clone();
+        let is_terminal = state.purpose == SessionPurpose::Terminal;
+        let shared_monitoring = is_terminal
+            .then(|| {
+                self.shared_profile_monitoring
+                    .borrow()
+                    .get(&profile_id)
+                    .cloned()
+            })
+            .flatten();
+        let was_monitor_source = is_terminal
+            && self.monitor_source_tabs.borrow().get(&profile_id).copied() == Some(tab_id);
+        if was_monitor_source {
+            self.monitor_source_tabs.borrow_mut().remove(&profile_id);
+        }
+        let has_remaining_profile_tab = is_terminal
+            && self.tabs.borrow().values().any(|session| {
+                session.purpose == SessionPurpose::Terminal && session.profile_id == profile_id
+            });
+        if is_terminal && !has_remaining_profile_tab {
+            self.shared_profile_monitoring
+                .borrow_mut()
+                .remove(&profile_id);
+            self.monitor_source_tabs.borrow_mut().remove(&profile_id);
+        }
+        let mut ports = self.ports.borrow_mut();
+        let terminal_lease = ports.terminal_leases.remove(&tab_id);
+        ports.snapshot.sessions.remove(&tab_id);
+        ports.snapshot.terminal_order.retain(|id| *id != tab_id);
+        if ports.snapshot.active_terminal_tab_id == Some(tab_id) {
+            ports.snapshot.active_terminal_tab_id = None;
+        }
+        Some(TransferredSessionTab {
+            state,
+            terminal_lease,
+            shared_monitoring,
+            was_monitor_source,
+        })
+    }
+
+    pub(in crate::ui::shell) fn insert_transferred_tab(
+        &mut self,
+        tab_id: TabId,
+        transferred: TransferredSessionTab,
+        cx: &mut Context<Self>,
+    ) {
+        let TransferredSessionTab {
+            state,
+            terminal_lease,
+            shared_monitoring,
+            was_monitor_source,
+        } = transferred;
+        let profile_id = state.profile_id.clone();
+        if let Some(route) = state.owner_route.as_ref() {
+            let owner = cx.weak_entity();
+            route.update(cx, |route, _| route.retarget(owner));
+        }
+        assert!(
+            self.tabs.borrow_mut().insert(tab_id, state).is_none(),
+            "duplicate transferred session tab payload for {tab_id}"
+        );
+        if let Some(shared_monitoring) = shared_monitoring {
+            self.shared_profile_monitoring
+                .borrow_mut()
+                .insert(profile_id.clone(), shared_monitoring);
+        }
+        if was_monitor_source {
+            self.monitor_source_tabs
+                .borrow_mut()
+                .insert(profile_id, tab_id);
+        }
+        if let Some(terminal_lease) = terminal_lease {
+            self.ports
+                .borrow_mut()
+                .terminal_leases
+                .insert(tab_id, terminal_lease);
+        }
     }
 
     pub(in crate::ui::shell) fn remove_tab(&self, tab_id: TabId) -> Option<SessionTabState> {
@@ -4826,6 +4964,149 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn take_selected_known_host(&self) -> Option<(String, u16, String)> {
         self.panel.borrow_mut().selected_known_host.take()
+    }
+
+    pub(in crate::ui::shell) fn take_workspace_ui_for_transfer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TransferredSessionWorkspaceUi {
+        let (side_panel_open, side_panel_view) = {
+            let mut panel = self.panel.borrow_mut();
+            let state = (panel.open, panel.view);
+            panel.open = false;
+            panel.view = SessionSidePanelView::default();
+            panel.visible = false;
+            panel.transition = None;
+            state
+        };
+
+        let (
+            terminal_search_input,
+            terminal_search_query,
+            terminal_search_open,
+            terminal_search_total,
+            terminal_search_current,
+            terminal_search_status,
+            snippets_input,
+            snippets_filter,
+            snippets_package_filter,
+        ) = {
+            let mut forms = self.forms().borrow_mut();
+            let terminal_search_query = forms.search.input.read(cx).value().to_string();
+            let snippets_filter = forms
+                .snippets_panel
+                .filter_input
+                .read(cx)
+                .value()
+                .to_string();
+            let state = (
+                forms.search.input.clone(),
+                terminal_search_query,
+                forms.search.open,
+                forms.search.total,
+                forms.search.current,
+                forms.search.status.clone(),
+                forms.snippets_panel.filter_input.clone(),
+                snippets_filter,
+                forms.snippets_panel.selected_package_filter.clone(),
+            );
+            forms.search.open = false;
+            forms.search.visible = false;
+            forms.search.visibility = 0.0;
+            forms.search.animation = None;
+            forms.search.total = 0;
+            forms.search.current = None;
+            forms.search.status = None;
+            forms.snippets_panel.selected_package_filter = None;
+            state
+        };
+
+        self.search_target.set(None);
+        set_input_value(&terminal_search_input, "", window, cx);
+        set_input_value(&snippets_input, "", window, cx);
+        let keyboard_interactive_values = self
+            .keyboard_interactive_inputs()
+            .into_iter()
+            .map(|input| input.read(cx).value().to_string())
+            .collect();
+
+        TransferredSessionWorkspaceUi {
+            side_panel_open,
+            side_panel_view,
+            terminal_search_query,
+            terminal_search_open,
+            terminal_search_total,
+            terminal_search_current,
+            terminal_search_status,
+            snippets_filter,
+            snippets_package_filter,
+            keyboard_interactive_values,
+        }
+    }
+
+    pub(in crate::ui::shell) fn restore_workspace_ui_after_transfer(
+        &mut self,
+        transferred: TransferredSessionWorkspaceUi,
+        active_tab_id: Option<TabId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let TransferredSessionWorkspaceUi {
+            side_panel_open,
+            side_panel_view,
+            terminal_search_query,
+            terminal_search_open,
+            terminal_search_total,
+            terminal_search_current,
+            terminal_search_status,
+            snippets_filter,
+            snippets_package_filter,
+            keyboard_interactive_values,
+        } = transferred;
+
+        {
+            let mut panel = self.panel.borrow_mut();
+            panel.open = side_panel_open;
+            panel.view = side_panel_view;
+            panel.visible = side_panel_open;
+            panel.transition = None;
+        }
+
+        let (terminal_search_input, snippets_input) = {
+            let mut forms = self.forms().borrow_mut();
+            forms.search.open = terminal_search_open;
+            forms.search.visible = terminal_search_open;
+            forms.search.visibility = if terminal_search_open { 1.0 } else { 0.0 };
+            forms.search.animation = None;
+            forms.search.total = terminal_search_total;
+            forms.search.current = terminal_search_current;
+            forms.search.status = terminal_search_status;
+            forms.snippets_panel.selected_package_filter = snippets_package_filter;
+            (
+                forms.search.input.clone(),
+                forms.snippets_panel.filter_input.clone(),
+            )
+        };
+
+        self.search_target.set(None);
+        set_input_value(&terminal_search_input, terminal_search_query, window, cx);
+        set_input_value(&snippets_input, snippets_filter, window, cx);
+        self.search_target
+            .set(terminal_search_open.then_some(active_tab_id).flatten());
+
+        let challenge = active_tab_id.and_then(|tab_id| {
+            self.tab(tab_id)
+                .and_then(|session| session.pending_keyboard_interactive.clone())
+        });
+        self.sync_keyboard_interactive_inputs(challenge, false, window, cx);
+        for (input, value) in self
+            .keyboard_interactive_inputs()
+            .into_iter()
+            .zip(keyboard_interactive_values)
+        {
+            set_input_value(&input, value, window, cx);
+        }
     }
 
     pub(in crate::ui::shell) fn pending_host_key_prompt(
@@ -5982,6 +6263,7 @@ mod tests {
             purpose: SessionPurpose::Terminal,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            owner_route: None,
         }
     }
 
@@ -6015,6 +6297,48 @@ mod tests {
             SessionPurpose::Terminal,
             None,
         )
+    }
+
+    #[test]
+    fn transferring_monitor_source_carries_shared_history_and_clears_source_ownership() {
+        let controller = SessionController::new_for_test();
+        let tab_id = TabId::new(17);
+        controller.insert_tab(tab_id, session_payload("profile-a"));
+        let mut monitoring = SessionMonitoringState::new(true);
+        monitoring.last_error = Some("previous sample failed".to_string());
+        controller
+            .shared_profile_monitoring
+            .borrow_mut()
+            .insert("profile-a".to_string(), monitoring);
+        controller
+            .monitor_source_tabs
+            .borrow_mut()
+            .insert("profile-a".to_string(), tab_id);
+
+        let transferred = controller
+            .take_tab_for_transfer(tab_id)
+            .expect("session transfer exists");
+
+        assert!(transferred.was_monitor_source);
+        assert_eq!(
+            transferred
+                .shared_monitoring
+                .as_ref()
+                .and_then(|state| state.last_error.as_deref()),
+            Some("previous sample failed")
+        );
+        assert!(
+            !controller
+                .shared_profile_monitoring
+                .borrow()
+                .contains_key("profile-a")
+        );
+        assert!(
+            !controller
+                .monitor_source_tabs
+                .borrow()
+                .contains_key("profile-a")
+        );
     }
 
     fn ports() -> (SessionQueryPort, SessionTerminalPort) {

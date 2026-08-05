@@ -285,6 +285,15 @@ impl TabRegistry {
         self.order.push(tab_id);
     }
 
+    pub(in crate::ui::shell) fn insert(&mut self, index: usize, tab: TabState) {
+        let (tab_id, descriptor) = tab.into_parts();
+        assert!(
+            self.entries.insert(tab_id, descriptor).is_none(),
+            "duplicate tab id {tab_id}"
+        );
+        self.order.insert(index.min(self.order.len()), tab_id);
+    }
+
     pub(in crate::ui::shell) fn remove(&mut self, index: usize) -> TabState {
         let tab_id = self.order.remove(index);
         let descriptor = self
@@ -378,6 +387,12 @@ impl WorkspaceModel {
 
     pub(in crate::ui::shell) fn allocate_tab_id(&mut self) -> TabId {
         take_next_tab_id(&mut self.next_tab_id)
+    }
+
+    pub(in crate::ui::shell) fn advance_next_tab_id_past(&mut self, tab_id: TabId) {
+        if self.next_tab_id.raw() <= tab_id.raw() {
+            self.next_tab_id = TabId::new(tab_id.raw().saturating_add(1));
+        }
     }
 
     pub(in crate::ui::shell) fn park_workspace(
@@ -981,6 +996,36 @@ mod tests {
         assert_eq!(registry.at(0).map(|tab| tab.id), Some(second));
         assert_eq!(registry.get(first).map(|tab| tab.id), Some(first));
         assert_eq!(registry.index_of(first), Some(1));
+    }
+
+    #[test]
+    fn registry_insert_restores_original_order_without_changing_ids() {
+        let first = TabId::new(1);
+        let moved = TabId::new(7);
+        let last = TabId::new(9);
+        let mut registry =
+            TabRegistry::from_tabs([TabState::new_hosts(first), TabState::new_hosts(last)]);
+
+        registry.insert(1, TabState::new_hosts(moved));
+
+        assert_eq!(registry.ids().collect::<Vec<_>>(), vec![first, moved, last]);
+        assert_eq!(registry.get(moved).map(|tab| tab.id), Some(moved));
+    }
+
+    #[test]
+    fn advancing_next_tab_id_skips_every_transferred_identity() {
+        let cx = gpui::TestAppContext::single();
+        let focus = cx.read(|app| app.focus_handle());
+        let mut model = WorkspaceModel::new(
+            TabState::new_hosts(TabId::new(0)),
+            TabId::new(1),
+            TabWorkspaceState::new(None, focus),
+        );
+
+        model.advance_next_tab_id_past(TabId::new(42));
+
+        assert_eq!(model.allocate_tab_id(), TabId::new(43));
+        cx.quit();
     }
 
     #[test]

@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result};
 use futures::StreamExt;
 use gpui::{
     AppContext as _, Bounds, Context, Entity, EventEmitter, Pixels, Point, ScrollHandle,
-    SharedString, Subscription, Window, px,
+    SharedString, Subscription, WeakEntity, Window, px,
 };
 use gpui_component::{
     WindowExt as _,
@@ -818,6 +818,53 @@ struct SftpInteractionState {
     edit_sessions: HashMap<String, SftpEditSession>,
     event_task: Option<gpui::Task<()>>,
     progress_task: Option<gpui::Task<()>>,
+    owner_route: Option<Entity<SftpTabOwnerRoute>>,
+}
+
+struct SftpTabOwnerRoute {
+    owner: WeakEntity<SftpController>,
+}
+
+impl SftpTabOwnerRoute {
+    fn new(owner: WeakEntity<SftpController>) -> Self {
+        Self { owner }
+    }
+
+    fn retarget(&mut self, owner: WeakEntity<SftpController>) {
+        self.owner = owner;
+    }
+}
+
+pub(in crate::ui::shell) struct TransferredSftpTab {
+    state: SftpTabState,
+    interaction: Option<SftpInteractionState>,
+}
+
+pub(in crate::ui::shell) struct TransferredSftpWindowUi {
+    tab_id: TabId,
+    local_path_value: String,
+    remote_path_value: String,
+    local_path_editing: bool,
+    remote_path_editing: bool,
+    remote_path_submit_pending: bool,
+    prompt_value: String,
+    inline_rename_value: String,
+    session_progress_layout: Option<(bool, f32)>,
+}
+
+fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
+    state.local_drag_candidate = None;
+    state.remote_drag_candidate = None;
+    state.local_drag_selection = None;
+    state.remote_drag_selection = None;
+    state.drag_selection_context = None;
+    state.drag_selection_generation = state.drag_selection_generation.wrapping_add(1);
+    state.suppress_local_clear_click = false;
+    state.suppress_remote_clear_click = false;
+    state.layout.progress_center_transition = None;
+    state.layout.browser_container_width = px(0.0);
+    state.layout.page_container_height = px(0.0);
+    state.layout.drag = None;
 }
 
 impl SftpController {
@@ -1354,13 +1401,24 @@ impl SftpController {
 
         cx.notify();
         if editing {
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(Duration::ZERO).await;
-                let _ = this.update(cx, |controller, cx| {
-                    controller.focus_path_input_in_active_window(side, cx);
-                });
-            })
-            .detach();
+            let Some(tab_id) = self.browser_tab_id(cx) else {
+                return;
+            };
+            let route = self.ensure_tab_owner_route(tab_id, cx);
+            route
+                .update(cx, |_, cx| {
+                    cx.spawn(async move |route, cx| {
+                        cx.background_executor().timer(Duration::ZERO).await;
+                        let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                            Ok(owner) => owner,
+                            Err(_) => return,
+                        };
+                        let _ = owner.update(cx, |controller, cx| {
+                            controller.focus_path_input_in_active_window(side, cx);
+                        });
+                    })
+                })
+                .detach();
         }
     }
 
@@ -1368,6 +1426,136 @@ impl SftpController {
         self.set_local_path_editing(false);
         self.set_remote_path_editing(false);
         self.set_remote_path_submit_pending(false);
+    }
+
+    pub(in crate::ui::shell) fn take_window_ui_for_transfer(
+        &mut self,
+        tab_id: TabId,
+        include_session_progress_layout: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TransferredSftpWindowUi> {
+        if self.tab(tab_id).is_none() || self.browser_tab_id(cx) != Some(tab_id) {
+            return None;
+        }
+
+        let (
+            local_path_input,
+            remote_path_input,
+            prompt_input,
+            inline_rename_input,
+            local_path_editing,
+            remote_path_editing,
+            remote_path_submit_pending,
+        ) = {
+            let mut forms = self.forms.borrow_mut();
+            let state = (
+                forms.local_path_input.clone(),
+                forms.remote_path_input.clone(),
+                forms.prompt_input.clone(),
+                forms.inline_rename_input.clone(),
+                forms.local_path_editing,
+                forms.remote_path_editing,
+                forms.remote_path_submit_pending,
+            );
+            forms.local_path_editing = false;
+            forms.remote_path_editing = false;
+            forms.remote_path_submit_pending = false;
+            state
+        };
+        let local_path_value = local_path_input.read(cx).value().to_string();
+        let remote_path_value = remote_path_input.read(cx).value().to_string();
+        let prompt_value = prompt_input.read(cx).value().to_string();
+        let inline_rename_value = inline_rename_input.read(cx).value().to_string();
+        set_input_value(&local_path_input, "", window, cx);
+        set_input_value(&remote_path_input, "", window, cx);
+        set_input_value(&prompt_input, "", window, cx);
+        set_input_value(&inline_rename_input, "", window, cx);
+
+        let session_progress_layout = include_session_progress_layout.then(|| {
+            let mut layout = self.progress_layout.borrow_mut();
+            let state = (layout.session_visible, layout.session_flex);
+            layout.session_visible = false;
+            layout.session_transition = None;
+            layout.session_flex = SESSION_SFTP_PROGRESS_DEFAULT_FLEX;
+            layout.session_drag = None;
+            state
+        });
+
+        Some(TransferredSftpWindowUi {
+            tab_id,
+            local_path_value,
+            remote_path_value,
+            local_path_editing,
+            remote_path_editing,
+            remote_path_submit_pending,
+            prompt_value,
+            inline_rename_value,
+            session_progress_layout,
+        })
+    }
+
+    pub(in crate::ui::shell) fn restore_window_ui_after_transfer(
+        &mut self,
+        transferred: TransferredSftpWindowUi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let TransferredSftpWindowUi {
+            tab_id,
+            local_path_value,
+            remote_path_value,
+            local_path_editing,
+            remote_path_editing,
+            remote_path_submit_pending,
+            prompt_value,
+            inline_rename_value,
+            session_progress_layout,
+        } = transferred;
+        if self.tab(tab_id).is_none() {
+            return;
+        }
+
+        let (local_path_input, remote_path_input, prompt_input, inline_rename_input) = {
+            let mut forms = self.forms.borrow_mut();
+            forms.local_path_editing = local_path_editing;
+            forms.remote_path_editing = remote_path_editing;
+            forms.remote_path_submit_pending = remote_path_submit_pending;
+            (
+                forms.local_path_input.clone(),
+                forms.remote_path_input.clone(),
+                forms.prompt_input.clone(),
+                forms.inline_rename_input.clone(),
+            )
+        };
+        set_input_value(&local_path_input, local_path_value, window, cx);
+        set_input_value(&remote_path_input, remote_path_value, window, cx);
+        set_input_value(&prompt_input, prompt_value, window, cx);
+        set_input_value(&inline_rename_input, inline_rename_value, window, cx);
+
+        if let Some((visible, flex)) = session_progress_layout {
+            let mut layout = self.progress_layout.borrow_mut();
+            layout.session_visible = visible;
+            layout.session_transition = None;
+            layout.session_flex = flex;
+            layout.session_drag = None;
+        }
+
+        match self.inline_rename(tab_id) {
+            Some(InlineRenameState::Local { from, .. }) => {
+                self.local_table().update(cx, |table, cx| {
+                    table.delegate_mut().inline_rename_path = Some(from.display().to_string());
+                    table.refresh(cx);
+                });
+            }
+            Some(InlineRenameState::Remote { from, .. }) => {
+                self.remote_table().update(cx, |table, cx| {
+                    table.delegate_mut().inline_rename_path = Some(from);
+                    table.refresh(cx);
+                });
+            }
+            None => {}
+        }
     }
 
     fn commit_local_path(&mut self, cx: &mut Context<Self>) {
@@ -1813,77 +2001,86 @@ impl SftpController {
             return;
         };
 
-        cx.spawn(async move |this, cx| {
-            let scan_path = path.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move { Self::read_local_entries(&scan_path) })
-                .await;
-            let _ = this.update(cx, move |this, cx| {
-                let Some(mut tab) = this.tab_mut(tab_id) else {
-                    return;
-                };
-                if tab.local_scan_generation != generation || tab.local_path != path {
-                    return;
-                }
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        route
+            .update(cx, |_, cx| {
+                cx.spawn(async move |route, cx| {
+                    let scan_path = path.clone();
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move { Self::read_local_entries(&scan_path) })
+                        .await;
+                    let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => return,
+                    };
+                    let _ = owner.update(cx, move |this, cx| {
+                        let Some(mut tab) = this.tab_mut(tab_id) else {
+                            return;
+                        };
+                        if tab.local_scan_generation != generation || tab.local_path != path {
+                            return;
+                        }
 
-                match result {
-                    Ok(entries) => {
-                        tab.local_entries = entries;
-                        let available_paths = tab
-                            .local_entries
-                            .iter()
-                            .map(|entry| entry.path.clone())
-                            .collect::<HashSet<_>>();
-                        tab.selected_local_paths
-                            .retain(|selected| available_paths.contains(selected));
-                        if let Some(selected) = tab.selected_local_path.as_ref()
-                            && !tab
-                                .local_entries
-                                .iter()
-                                .any(|entry| &entry.path == selected)
-                        {
-                            tab.selected_local_path = None;
+                        match result {
+                            Ok(entries) => {
+                                tab.local_entries = entries;
+                                let available_paths = tab
+                                    .local_entries
+                                    .iter()
+                                    .map(|entry| entry.path.clone())
+                                    .collect::<HashSet<_>>();
+                                tab.selected_local_paths
+                                    .retain(|selected| available_paths.contains(selected));
+                                if let Some(selected) = tab.selected_local_path.as_ref()
+                                    && !tab
+                                        .local_entries
+                                        .iter()
+                                        .any(|entry| &entry.path == selected)
+                                {
+                                    tab.selected_local_path = None;
+                                }
+                                if tab.selected_local_path.is_none() {
+                                    tab.selected_local_path =
+                                        tab.selected_local_paths.first().cloned();
+                                }
+                                if let Some(selected) = tab.selected_local_path.clone()
+                                    && !tab
+                                        .selected_local_paths
+                                        .iter()
+                                        .any(|path| path == &selected)
+                                {
+                                    tab.selected_local_paths.insert(0, selected);
+                                }
+                                if let Some(anchor) = tab.local_selection_anchor.as_ref()
+                                    && !tab.local_entries.iter().any(|entry| &entry.path == anchor)
+                                {
+                                    tab.local_selection_anchor = None;
+                                }
+                                drop(tab);
+                                this.sync_visible_path_input_in_active_window(
+                                    tab_id,
+                                    SftpBrowserSide::Local,
+                                    cx,
+                                );
+                                this.sync_table_for_side(tab_id, SftpBrowserSide::Local, cx);
+                            }
+                            Err(error) => {
+                                tab.last_error = Some(error.to_string());
+                                let path = tab.local_path.display().to_string();
+                                let error = error.to_string();
+                                drop(tab);
+                                cx.emit(AppCommand::Feedback(i18n::string_args(
+                                    "sftp.messages.local_read_failed",
+                                    &[("path", &path), ("error", &error)],
+                                )));
+                            }
                         }
-                        if tab.selected_local_path.is_none() {
-                            tab.selected_local_path = tab.selected_local_paths.first().cloned();
-                        }
-                        if let Some(selected) = tab.selected_local_path.clone()
-                            && !tab
-                                .selected_local_paths
-                                .iter()
-                                .any(|path| path == &selected)
-                        {
-                            tab.selected_local_paths.insert(0, selected);
-                        }
-                        if let Some(anchor) = tab.local_selection_anchor.as_ref()
-                            && !tab.local_entries.iter().any(|entry| &entry.path == anchor)
-                        {
-                            tab.local_selection_anchor = None;
-                        }
-                        drop(tab);
-                        this.sync_visible_path_input_in_active_window(
-                            tab_id,
-                            SftpBrowserSide::Local,
-                            cx,
-                        );
-                        this.sync_table_for_side(tab_id, SftpBrowserSide::Local, cx);
-                    }
-                    Err(error) => {
-                        tab.last_error = Some(error.to_string());
-                        let path = tab.local_path.display().to_string();
-                        let error = error.to_string();
-                        drop(tab);
-                        cx.emit(AppCommand::Feedback(i18n::string_args(
-                            "sftp.messages.local_read_failed",
-                            &[("path", &path), ("error", &error)],
-                        )));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+                        cx.notify();
+                    });
+                })
+            })
+            .detach();
     }
 
     fn local_attributes(metadata: &std::fs::Metadata) -> Option<String> {
@@ -1966,45 +2163,55 @@ impl SftpController {
         match side {
             SftpBrowserSide::Local => {
                 let path_buf = PathBuf::from(&path);
-                cx.spawn(async move |this, cx| {
-                    let result = cx
-                        .background_executor()
-                        .spawn(async move { Self::read_local_entries(&path_buf) })
-                        .await;
-                    let _ = this.update(cx, move |this, cx| {
-                        if this.tab(tab_id).is_none() {
-                            return;
-                        }
-                        let local_table = this.local_table();
-                        match result {
-                            Ok(entries) => {
-                                let children = entries
-                                    .iter()
-                                    .map(SftpBrowserTableRow::from_local)
-                                    .collect::<Vec<_>>();
-                                local_table.update(cx, |table, cx| {
-                                    if table.delegate().tab_id() == Some(tab_id) {
-                                        table.delegate_mut().receive_children(path, children, cx);
+                let route = self.ensure_tab_owner_route(tab_id, cx);
+                route
+                    .update(cx, |_, cx| {
+                        cx.spawn(async move |route, cx| {
+                            let result = cx
+                                .background_executor()
+                                .spawn(async move { Self::read_local_entries(&path_buf) })
+                                .await;
+                            let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                                Ok(owner) => owner,
+                                Err(_) => return,
+                            };
+                            let _ = owner.update(cx, move |this, cx| {
+                                if this.tab(tab_id).is_none() {
+                                    return;
+                                }
+                                let local_table = this.local_table();
+                                match result {
+                                    Ok(entries) => {
+                                        let children = entries
+                                            .iter()
+                                            .map(SftpBrowserTableRow::from_local)
+                                            .collect::<Vec<_>>();
+                                        local_table.update(cx, |table, cx| {
+                                            if table.delegate().tab_id() == Some(tab_id) {
+                                                table
+                                                    .delegate_mut()
+                                                    .receive_children(path, children, cx);
+                                            }
+                                        });
                                     }
-                                });
-                            }
-                            Err(error) => {
-                                let error = error.to_string();
-                                cx.emit(AppCommand::Feedback(i18n::string_args(
-                                    "status.sftp.expand_local_failed",
-                                    &[("path", &path), ("error", &error)],
-                                )));
-                                local_table.update(cx, |table, cx| {
-                                    if table.delegate().tab_id() == Some(tab_id) {
-                                        table.delegate_mut().cancel_expand(&path);
-                                        cx.notify();
+                                    Err(error) => {
+                                        let error = error.to_string();
+                                        cx.emit(AppCommand::Feedback(i18n::string_args(
+                                            "status.sftp.expand_local_failed",
+                                            &[("path", &path), ("error", &error)],
+                                        )));
+                                        local_table.update(cx, |table, cx| {
+                                            if table.delegate().tab_id() == Some(tab_id) {
+                                                table.delegate_mut().cancel_expand(&path);
+                                                cx.notify();
+                                            }
+                                        });
                                     }
-                                });
-                            }
-                        }
-                    });
-                })
-                .detach();
+                                }
+                            });
+                        })
+                    })
+                    .detach();
             }
             SftpBrowserSide::Remote => {
                 let commands = self.tab(tab_id).and_then(|tab| tab.commands.clone());
@@ -2067,37 +2274,45 @@ impl SftpController {
         let generation = tab.directory_refresh_generation;
         drop(tab);
 
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(SFTP_DIRECTORY_REFRESH_DEBOUNCE)
-                .await;
-            let _ = this.update(cx, move |this, cx| {
-                let Some(mut tab) = this.tab_mut(tab_id) else {
-                    return;
-                };
-                if tab.directory_refresh_generation != generation {
-                    return;
-                }
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        route
+            .update(cx, |_, cx| {
+                cx.spawn(async move |route, cx| {
+                    cx.background_executor()
+                        .timer(SFTP_DIRECTORY_REFRESH_DEBOUNCE)
+                        .await;
+                    let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => return,
+                    };
+                    let _ = owner.update(cx, move |this, cx| {
+                        let Some(mut tab) = this.tab_mut(tab_id) else {
+                            return;
+                        };
+                        if tab.directory_refresh_generation != generation {
+                            return;
+                        }
 
-                let local_paths = std::mem::take(&mut tab.pending_local_refresh_paths);
-                let remote_paths = std::mem::take(&mut tab.pending_remote_refresh_paths);
-                let refresh_local = local_paths.contains(&tab.local_path);
-                let remote_path = Self::debounced_remote_refresh_target(
-                    &remote_paths,
-                    &tab.remote_path,
-                    tab.requested_remote_path.as_deref(),
-                );
-                drop(tab);
+                        let local_paths = std::mem::take(&mut tab.pending_local_refresh_paths);
+                        let remote_paths = std::mem::take(&mut tab.pending_remote_refresh_paths);
+                        let refresh_local = local_paths.contains(&tab.local_path);
+                        let remote_path = Self::debounced_remote_refresh_target(
+                            &remote_paths,
+                            &tab.remote_path,
+                            tab.requested_remote_path.as_deref(),
+                        );
+                        drop(tab);
 
-                if refresh_local {
-                    this.refresh_local_directory(tab_id, cx);
-                }
-                if let Some(path) = remote_path {
-                    this.request_remote_directory(tab_id, path, cx);
-                }
-            });
-        })
-        .detach();
+                        if refresh_local {
+                            this.refresh_local_directory(tab_id, cx);
+                        }
+                        if let Some(path) = remote_path {
+                            this.request_remote_directory(tab_id, path, cx);
+                        }
+                    });
+                })
+            })
+            .detach();
     }
 
     fn transfer_remote_parent_path(path: &str) -> String {
@@ -2841,24 +3056,32 @@ impl SftpController {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(SFTP_DRAG_AUTO_SCROLL_INTERVAL)
-                    .await;
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        route
+            .update(cx, |_, cx| {
+                cx.spawn(async move |route, cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(SFTP_DRAG_AUTO_SCROLL_INTERVAL)
+                            .await;
 
-                let keep_scrolling = this
-                    .update(cx, |this, cx| {
-                        this.tick_drag_selection_auto_scroll(tab_id, generation, cx)
-                    })
-                    .unwrap_or(false);
+                        let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                            Ok(owner) => owner,
+                            Err(_) => break,
+                        };
+                        let keep_scrolling = owner
+                            .update(cx, |this, cx| {
+                                this.tick_drag_selection_auto_scroll(tab_id, generation, cx)
+                            })
+                            .unwrap_or(false);
 
-                if !keep_scrolling {
-                    break;
-                }
-            }
-        })
-        .detach();
+                        if !keep_scrolling {
+                            break;
+                        }
+                    }
+                })
+            })
+            .detach();
     }
 
     fn tick_drag_selection_auto_scroll(
@@ -3371,6 +3594,23 @@ impl SftpController {
         self.tabs.borrow_mut().insert(tab_id, tab);
     }
 
+    fn ensure_tab_owner_route(
+        &self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) -> Entity<SftpTabOwnerRoute> {
+        let owner = cx.weak_entity();
+        let mut interactions = self.interactions.borrow_mut();
+        let interaction = interactions.entry(tab_id).or_default();
+        if let Some(route) = interaction.owner_route.as_ref() {
+            route.update(cx, |route, _| route.retarget(owner));
+            return route.clone();
+        }
+        let route = cx.new(|_| SftpTabOwnerRoute::new(owner));
+        interaction.owner_route = Some(route.clone());
+        route
+    }
+
     pub(in crate::ui::shell) fn start_tab(
         &mut self,
         tab_id: TabId,
@@ -3414,43 +3654,57 @@ impl SftpController {
         mut progress: SftpProgressReceiver,
         cx: &mut Context<Self>,
     ) {
-        let event_task = cx.spawn(async move |this, cx| {
-            while let Some(event) = events.next().await {
-                if this
-                    .update(cx, |this, cx| {
-                        this.handle_event(tab_id, event, cx);
-                    })
-                    .is_err()
-                {
-                    break;
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        let event_route = route.clone();
+        let event_task = event_route.update(cx, |_, cx| {
+            cx.spawn(async move |this, cx| {
+                while let Some(event) = events.next().await {
+                    let owner = match this.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => break,
+                    };
+                    if owner
+                        .update(cx, |controller, cx| {
+                            controller.handle_event(tab_id, event, cx)
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-            }
+            })
         });
 
-        let progress_task = cx.spawn(async move |this, cx| {
-            while let Some(first) = progress.recv().await {
-                cx.background_executor()
-                    .timer(SFTP_PROGRESS_REFRESH_INTERVAL)
-                    .await;
+        let progress_task = route.update(cx, |_, cx| {
+            cx.spawn(async move |this, cx| {
+                while let Some(first) = progress.recv().await {
+                    cx.background_executor()
+                        .timer(SFTP_PROGRESS_REFRESH_INTERVAL)
+                        .await;
 
-                let mut latest = HashMap::new();
-                latest.insert(first.transfer_id, first);
-                while let Some(update) = progress.try_recv() {
-                    latest.insert(update.transfer_id, update);
-                }
+                    let mut latest = HashMap::new();
+                    latest.insert(first.transfer_id, first);
+                    while let Some(update) = progress.try_recv() {
+                        latest.insert(update.transfer_id, update);
+                    }
 
-                if this
-                    .update(cx, |this, cx| {
-                        for update in latest.into_values() {
-                            this.handle_progress(tab_id, update);
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
+                    let owner = match this.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => break,
+                    };
+                    if owner
+                        .update(cx, |this, cx| {
+                            for update in latest.into_values() {
+                                this.handle_progress(tab_id, update);
+                            }
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-            }
+            })
         });
 
         let interaction = self.interactions.get_mut().entry(tab_id).or_default();
@@ -4062,16 +4316,25 @@ impl SftpController {
         if prompt_for_destination {
             let destination =
                 choose_sftp_download_destination(selected_entries, &local_base, window);
-            cx.spawn(async move |this, cx| {
-                let Some(prepared) = destination.await else {
-                    return;
-                };
-                this.update(cx, |this, cx| {
-                    this.queue_prepared_downloads(tab_id, prepared, cx);
+            let route = self.ensure_tab_owner_route(tab_id, cx);
+            route
+                .update(cx, |_, cx| {
+                    cx.spawn(async move |route, cx| {
+                        let Some(prepared) = destination.await else {
+                            return;
+                        };
+                        let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                            Ok(owner) => owner,
+                            Err(_) => return,
+                        };
+                        owner
+                            .update(cx, |this, cx| {
+                                this.queue_prepared_downloads(tab_id, prepared, cx);
+                            })
+                            .ok();
+                    })
                 })
-                .ok();
-            })
-            .detach();
+                .detach();
             return;
         }
 
@@ -4325,40 +4588,48 @@ impl SftpController {
         entries: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { delete_local_entries(entries) })
-                .await;
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        route
+            .update(cx, |_, cx| {
+                cx.spawn(async move |route, cx| {
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move { delete_local_entries(entries) })
+                        .await;
 
-            let _ = this.update(cx, move |this, cx| {
-                if result.deleted_count > 0 {
-                    let message = if result.deleted_count == 1 {
-                        i18n::string("sftp.messages.removed_one_local_entry")
-                    } else {
-                        let count = result.deleted_count.to_string();
-                        i18n::string_args(
-                            "sftp.messages.removed_local_entries",
-                            &[("count", &count)],
-                        )
+                    let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => return,
                     };
-                    cx.emit(AppCommand::Feedback(message));
-                    this.refresh_local_directory(tab_id, cx);
-                    cx.notify();
-                    return;
-                }
+                    let _ = owner.update(cx, move |this, cx| {
+                        if result.deleted_count > 0 {
+                            let message = if result.deleted_count == 1 {
+                                i18n::string("sftp.messages.removed_one_local_entry")
+                            } else {
+                                let count = result.deleted_count.to_string();
+                                i18n::string_args(
+                                    "sftp.messages.removed_local_entries",
+                                    &[("count", &count)],
+                                )
+                            };
+                            cx.emit(AppCommand::Feedback(message));
+                            this.refresh_local_directory(tab_id, cx);
+                            cx.notify();
+                            return;
+                        }
 
-                if let Some((path, error)) = result.first_error {
-                    let path = path.display().to_string();
-                    cx.emit(AppCommand::Feedback(i18n::string_args(
-                        "sftp.messages.delete_failed_for",
-                        &[("path", &path), ("error", &error)],
-                    )));
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+                        if let Some((path, error)) = result.first_error {
+                            let path = path.display().to_string();
+                            cx.emit(AppCommand::Feedback(i18n::string_args(
+                                "sftp.messages.delete_failed_for",
+                                &[("path", &path), ("error", &error)],
+                            )));
+                            cx.notify();
+                        }
+                    });
+                })
+            })
+            .detach();
     }
 
     pub(in crate::ui::shell) fn delete_remote_selected(
@@ -4903,19 +5174,26 @@ impl SftpController {
 
         let remote_path_for_task = remote_path.clone();
         let temp_path_for_task = temp_path.clone();
-        let watch_task = cx.spawn(async move |this, cx| {
-            while receiver.next().await.is_some() {
-                let remote_path = remote_path_for_task.clone();
-                let temp_path = temp_path_for_task.clone();
-                if this
-                    .update(cx, |this, cx| {
-                        this.schedule_edit_upload_for_tab(tab_id, remote_path, temp_path, cx);
-                    })
-                    .is_err()
-                {
-                    break;
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        let watch_task = route.update(cx, |_, cx| {
+            cx.spawn(async move |route, cx| {
+                while receiver.next().await.is_some() {
+                    let remote_path = remote_path_for_task.clone();
+                    let temp_path = temp_path_for_task.clone();
+                    let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => break,
+                    };
+                    if owner
+                        .update(cx, |this, cx| {
+                            this.schedule_edit_upload_for_tab(tab_id, remote_path, temp_path, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-            }
+            })
         });
 
         let session = SftpEditSession {
@@ -4953,18 +5231,25 @@ impl SftpController {
         }
 
         let remote_path_for_task = remote_path.clone();
-        let debounce_task = cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(500))
-                .await;
-            if let Err(error) = commands.queue_upload(temp_path, remote_path_for_task) {
-                let error = error.to_string();
-                let message =
-                    i18n::string_args("sftp.messages.edit_upload_failed", &[("error", &error)]);
-                let _ = this.update(cx, |this, cx| {
-                    this.emit(AppCommand::Feedback(message), cx);
-                });
-            }
+        let route = self.ensure_tab_owner_route(tab_id, cx);
+        let debounce_task = route.update(cx, |_, cx| {
+            cx.spawn(async move |route, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                if let Err(error) = commands.queue_upload(temp_path, remote_path_for_task) {
+                    let error = error.to_string();
+                    let message =
+                        i18n::string_args("sftp.messages.edit_upload_failed", &[("error", &error)]);
+                    let owner = match route.update(cx, |route, _| route.owner.clone()) {
+                        Ok(owner) => owner,
+                        Err(_) => return,
+                    };
+                    let _ = owner.update(cx, |this, cx| {
+                        this.emit(AppCommand::Feedback(message), cx);
+                    });
+                }
+            })
         });
 
         let mut interactions = self.interactions.borrow_mut();
@@ -4992,6 +5277,39 @@ impl SftpController {
     pub(in crate::ui::shell) fn remove_tab_state(&self, tab_id: TabId) -> Option<SftpTabState> {
         self.interactions.borrow_mut().remove(&tab_id);
         self.tabs.borrow_mut().remove(tab_id)
+    }
+
+    pub(in crate::ui::shell) fn take_tab_for_transfer(
+        &self,
+        tab_id: TabId,
+    ) -> Option<TransferredSftpTab> {
+        let state = self.tabs.borrow_mut().remove(tab_id)?;
+        let interaction = self.interactions.borrow_mut().remove(&tab_id);
+        Some(TransferredSftpTab { state, interaction })
+    }
+
+    pub(in crate::ui::shell) fn insert_transferred_tab(
+        &mut self,
+        tab_id: TabId,
+        transferred: TransferredSftpTab,
+        cx: &mut Context<Self>,
+    ) {
+        let TransferredSftpTab {
+            mut state,
+            mut interaction,
+        } = transferred;
+        prepare_transferred_sftp_tab_for_window(&mut state);
+        if let Some(route) = interaction
+            .as_ref()
+            .and_then(|interaction| interaction.owner_route.as_ref())
+        {
+            let owner = cx.weak_entity();
+            route.update(cx, |route, _| route.retarget(owner));
+        }
+        self.tabs.borrow_mut().insert(tab_id, state);
+        if let Some(interaction) = interaction.take() {
+            self.interactions.borrow_mut().insert(tab_id, interaction);
+        }
     }
 
     pub(in crate::ui::shell) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
@@ -5139,6 +5457,61 @@ mod tests {
         profile.host = "example.com".into();
         let _ = tab_id;
         SftpTabState::new(&profile)
+    }
+
+    #[test]
+    fn transferred_sftp_tab_keeps_business_state_and_resets_window_transients() {
+        let mut tab = tab_state("transfer", TabId::new(3));
+        tab.local_path = PathBuf::from("C:/workspace");
+        tab.remote_path = "/srv/project".to_string();
+        tab.selected_remote_paths = vec!["/srv/project/file.txt".to_string()];
+        tab.layout.local_panel_flex = Some(0.37);
+        tab.layout.browser_area_flex = Some(0.62);
+        tab.layout.progress_center_visible = true;
+        tab.local_drag_candidate = Some(Point::new(px(1.0), px(2.0)));
+        tab.remote_drag_selection = Some(SftpDragSelectionState::new(Point::new(px(3.0), px(4.0))));
+        tab.drag_selection_context = Some(SftpDragSelectionContext {
+            side: SftpBrowserSide::Remote,
+            tab_id: TabId::new(3),
+            last_position: Point::new(px(5.0), px(6.0)),
+            panel_bounds: Bounds::from_corners(
+                Point::new(px(0.0), px(0.0)),
+                Point::new(px(100.0), px(100.0)),
+            ),
+            row_height: px(20.0),
+            anchor_content_y: 10.0,
+            generation: 8,
+        });
+        tab.drag_selection_generation = 8;
+        tab.suppress_local_clear_click = true;
+        tab.layout.browser_container_width = px(500.0);
+        tab.layout.page_container_height = px(400.0);
+        tab.layout.drag = Some(SftpSplitDragState {
+            divider: SftpSplitDivider::BrowserPanels,
+            initial_pointer: 200.0,
+            initial_flex_a: 0.4,
+            container_size: 500.0,
+        });
+
+        prepare_transferred_sftp_tab_for_window(&mut tab);
+
+        assert_eq!(tab.local_path, PathBuf::from("C:/workspace"));
+        assert_eq!(tab.remote_path, "/srv/project");
+        assert_eq!(
+            tab.selected_remote_paths,
+            vec!["/srv/project/file.txt".to_string()]
+        );
+        assert_eq!(tab.layout.local_panel_flex, Some(0.37));
+        assert_eq!(tab.layout.browser_area_flex, Some(0.62));
+        assert!(tab.layout.progress_center_visible);
+        assert!(tab.local_drag_candidate.is_none());
+        assert!(tab.remote_drag_selection.is_none());
+        assert!(tab.drag_selection_context.is_none());
+        assert_eq!(tab.drag_selection_generation, 9);
+        assert!(!tab.suppress_local_clear_click);
+        assert_eq!(tab.layout.browser_container_width, px(0.0));
+        assert_eq!(tab.layout.page_container_height, px(0.0));
+        assert!(tab.layout.drag.is_none());
     }
 
     fn remote_entry(path: &str, kind: miaominal_sftp::SftpEntryKind) -> SftpEntry {

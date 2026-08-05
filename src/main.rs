@@ -20,6 +20,7 @@ use miaominal_ui::AppAssets;
 use std::io::Cursor;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::sync::{Arc, LazyLock};
+use std::{cell::RefCell, rc::Rc};
 use tokio::runtime::Handle as TokioHandle;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -60,6 +61,24 @@ fn main_window_titlebar() -> Option<TitlebarOptions> {
     }
 }
 
+fn app_window_options(cx: &App) -> WindowOptions {
+    let bounds = Bounds::centered(None, size(px(1240.0), px(800.0)), cx);
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(720.0), px(480.0))),
+        titlebar: main_window_titlebar(),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        window_decorations: Some(WindowDecorations::Client),
+        #[cfg(target_os = "macos")]
+        is_movable: false,
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        app_id: Some(DESKTOP_APP_ID.to_string()),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        icon: APP_ICON.as_ref().cloned(),
+        ..Default::default()
+    }
+}
+
 fn init_logging() {
     let default_filter = if cfg!(debug_assertions) {
         "info"
@@ -93,31 +112,32 @@ fn ensure_graphical_session() -> Result<(), String> {
 }
 
 fn open_main_window(cx: &mut App, runtime: TokioHandle) -> AnyWindowHandle {
-    let bounds = Bounds::centered(None, size(px(1240.0), px(800.0)), cx);
-
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(720.0), px(480.0))),
-            titlebar: main_window_titlebar(),
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            window_decorations: Some(WindowDecorations::Client),
-            #[cfg(target_os = "macos")]
-            is_movable: false,
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            app_id: Some(DESKTOP_APP_ID.to_string()),
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            icon: APP_ICON.as_ref().cloned(),
-            ..Default::default()
-        },
-        |window, cx| {
-            miaominal_ui::configure_main_window_close(window, cx);
-            let view = cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx));
-            cx.new(|cx| Root::new(view, window, cx))
-        },
-    )
+    cx.open_window(app_window_options(cx), |window, cx| {
+        miaominal_ui::configure_main_window_close(window, cx);
+        let view = cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx));
+        cx.new(|cx| Root::new(view, window, cx))
+    })
     .expect("failed to open main window")
     .into()
+}
+
+fn open_detached_window(
+    cx: &mut App,
+    runtime: TokioHandle,
+) -> anyhow::Result<miaominal_ui::DetachedWindowTarget> {
+    let view_slot = Rc::new(RefCell::new(None));
+    let closure_view_slot = view_slot.clone();
+    let handle = cx.open_window(app_window_options(cx), move |window, cx| {
+        let view = cx.new(|cx| miaominal_ui::AppView::new_detached(runtime, window, cx));
+        miaominal_ui::configure_detached_window_close(&view, window, cx);
+        closure_view_slot.borrow_mut().replace(view.clone());
+        cx.new(|cx| Root::new(view, window, cx))
+    })?;
+    let view = view_slot
+        .borrow_mut()
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("detached window view was not initialized"))?;
+    Ok(miaominal_ui::DetachedWindowTarget::new(handle.into(), view))
 }
 
 fn activate_main_window(cx: &mut App, runtime: TokioHandle) {
@@ -300,6 +320,11 @@ fn main() {
         miaominal_ui::initialize_application_state(application_runtime.clone(), cx);
         miaominal_ui::init_markdown(cx);
         app::install_app_menus(cx);
+
+        let detached_window_runtime = application_runtime.clone();
+        miaominal_ui::register_detached_window_opener(cx, move |cx| {
+            open_detached_window(cx, detached_window_runtime.clone())
+        });
 
         let activation_runtime = application_runtime.clone();
         cx.spawn(async move |cx| {

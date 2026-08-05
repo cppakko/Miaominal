@@ -1,6 +1,8 @@
 use gpui::Context;
 
-use super::{AppCommand, SessionConnectionState, SessionController, SessionPurpose};
+use super::{
+    AppCommand, SessionConnectionState, SessionController, SessionPurpose, SessionTabOwnerRoute,
+};
 use crate::ui::{
     i18n,
     shell::{SessionProfile, TabId},
@@ -158,51 +160,81 @@ impl SessionController {
             .copied()
             .unwrap_or(30);
         let delay = std::time::Duration::from_secs(delay_secs);
-        let reconnect_task = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(delay).await;
-            if this
-                .update(cx, |this, cx| {
-                    let Some(profile_id) =
-                        this.tab(tab_id).map(|session| session.profile_id.clone())
-                    else {
-                        return;
-                    };
-                    let profile = this
-                        .profiles
-                        .borrow()
-                        .iter()
-                        .find(|profile| profile.id == profile_id)
-                        .cloned();
-                    if let Some(mut session) = this.tab_mut(tab_id) {
-                        if let Some(profile) = profile {
-                            session.commands = None;
-                            session.pending_profile = Some(profile);
-                            session.set_connection_state(SessionConnectionState::Connecting);
-                            session.terminal.push_text(&i18n::string_args(
-                                "session.terminal.reconnecting_attempt_marker",
-                                &[("attempt", &next_attempt.to_string())],
-                            ));
-                        } else {
-                            session.set_connection_state(SessionConnectionState::Failed {
-                                error: error.clone(),
-                                status: None,
-                            });
-                            session.reconnect_attempt = 0;
-                        }
-                        session.reconnect_task = None;
-                    }
-                    cx.notify();
-                })
-                .is_err()
-            {
-                log::debug!("reconnect task: SessionController entity was dropped");
-            }
+        let Some(route) = self.ensure_tab_owner_route(tab_id, cx) else {
+            return;
+        };
+        let reconnect_task = route.update(cx, |route, cx| {
+            route.spawn_reconnect_timer(tab_id, next_attempt, error, delay, cx)
         });
 
         if let Some(mut session) = self.tab_mut(tab_id) {
             session.reconnect_task = Some(reconnect_task);
         }
         cx.notify();
+    }
+
+    fn handle_reconnect_timer(
+        &mut self,
+        tab_id: TabId,
+        next_attempt: u32,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile_id) = self.tab(tab_id).map(|session| session.profile_id.clone()) else {
+            return;
+        };
+        let profile = self
+            .profiles
+            .borrow()
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned();
+        if let Some(mut session) = self.tab_mut(tab_id) {
+            if let Some(profile) = profile {
+                session.commands = None;
+                session.pending_profile = Some(profile);
+                session.set_connection_state(SessionConnectionState::Connecting);
+                session.terminal.push_text(&i18n::string_args(
+                    "session.terminal.reconnecting_attempt_marker",
+                    &[("attempt", &next_attempt.to_string())],
+                ));
+            } else {
+                session.set_connection_state(SessionConnectionState::Failed {
+                    error,
+                    status: None,
+                });
+                session.reconnect_attempt = 0;
+            }
+            session.reconnect_task = None;
+        }
+        cx.notify();
+    }
+}
+
+impl SessionTabOwnerRoute {
+    fn spawn_reconnect_timer(
+        &mut self,
+        tab_id: TabId,
+        next_attempt: u32,
+        error: String,
+        delay: std::time::Duration,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let owner = match this.update(cx, |route, _| route.owner.clone()) {
+                Ok(owner) => owner,
+                Err(_) => return,
+            };
+            if owner
+                .update(cx, |controller, cx| {
+                    controller.handle_reconnect_timer(tab_id, next_attempt, error, cx)
+                })
+                .is_err()
+            {
+                log::debug!("reconnect task: current SessionController entity was dropped");
+            }
+        })
     }
 }
 

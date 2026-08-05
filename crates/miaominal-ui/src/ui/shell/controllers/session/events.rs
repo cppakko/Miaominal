@@ -7,7 +7,7 @@ use miaominal_ssh::{SessionEvent, SessionEventReceiver};
 use super::{
     AppCommand, SessionConnectionState, SessionController, SessionEventOutcome,
     SessionEventTabRemoval, SessionFailureStatus, SessionNotificationRequest,
-    SessionNotificationTone, SessionPurpose,
+    SessionNotificationTone, SessionPurpose, SessionTabOwnerRoute,
 };
 use crate::ui::{i18n, shell::TabId};
 
@@ -40,7 +40,7 @@ impl SessionController {
     pub(in crate::ui::shell) fn spawn_session_event_loop(
         &self,
         tab_id: TabId,
-        mut events: SessionEventReceiver,
+        events: SessionEventReceiver,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -54,47 +54,12 @@ impl SessionController {
             return;
         };
 
-        cx.spawn(async move |this, cx| {
-            let mut pending_event = None;
-
-            loop {
-                let event = if let Some(event) = pending_event.take() {
-                    event
-                } else {
-                    let Some(event) = events.next().await else {
-                        break;
-                    };
-                    event
-                };
-                let event = match event {
-                    SessionEvent::Output(chunk) => {
-                        let (chunk, pending) = coalesce_session_output(chunk, &mut events);
-                        pending_event = pending;
-                        terminal.push_bytes(&chunk);
-                        cx.background_executor()
-                            .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
-                            .await;
-                        while terminal.has_pending_input() {
-                            cx.background_executor()
-                                .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
-                                .await;
-                        }
-                        SessionEvent::Output(chunk)
-                    }
-                    event => event,
-                };
-
-                if this
-                    .update(cx, |controller, cx| {
-                        controller.handle_session_event_from_worker(tab_id, event, cx)
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        let Some(route) = self.ensure_tab_owner_route(tab_id, cx) else {
+            return;
+        };
+        route.update(cx, |route, cx| {
+            route.spawn_event_loop(tab_id, terminal, events, cx);
+        });
     }
 
     fn handle_session_event_from_worker(
@@ -139,7 +104,65 @@ impl SessionController {
         cx.emit(AppCommand::SessionEventApplied { tab_id, outcome });
         cx.notify();
     }
+}
 
+impl SessionTabOwnerRoute {
+    fn spawn_event_loop(
+        &mut self,
+        tab_id: TabId,
+        terminal: miaominal_terminal::TerminalState,
+        mut events: SessionEventReceiver,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            let mut pending_event = None;
+
+            loop {
+                let event = if let Some(event) = pending_event.take() {
+                    event
+                } else {
+                    let Some(event) = events.next().await else {
+                        break;
+                    };
+                    event
+                };
+                let event = match event {
+                    SessionEvent::Output(chunk) => {
+                        let (chunk, pending) = coalesce_session_output(chunk, &mut events);
+                        pending_event = pending;
+                        terminal.push_bytes(&chunk);
+                        cx.background_executor()
+                            .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
+                            .await;
+                        while terminal.has_pending_input() {
+                            cx.background_executor()
+                                .timer(TERMINAL_OUTPUT_WAKEUP_INTERVAL)
+                                .await;
+                        }
+                        SessionEvent::Output(chunk)
+                    }
+                    event => event,
+                };
+
+                let owner = match this.update(cx, |route, _| route.owner.clone()) {
+                    Ok(owner) => owner,
+                    Err(_) => break,
+                };
+                if owner
+                    .update(cx, |controller, cx| {
+                        controller.handle_session_event_from_worker(tab_id, event, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+impl SessionController {
     pub(in crate::ui::shell) fn apply_session_event(
         &self,
         tab_id: TabId,
@@ -476,6 +499,7 @@ mod tests {
                 purpose: SessionPurpose::ConnectionTest,
                 port_forward_revision: 0,
                 port_forward_log_len: 0,
+                owner_route: None,
             },
         );
         (controller, tab_id)

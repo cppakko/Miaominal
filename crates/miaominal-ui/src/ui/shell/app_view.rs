@@ -2,6 +2,12 @@ use std::cell::{Ref, RefMut};
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppWindowRole {
+    Primary,
+    Detached,
+}
+
 fn should_prompt_terminal_sftp_download(
     active_sftp_tab_id: Option<TabId>,
     session_sftp_tab_id: Option<TabId>,
@@ -17,6 +23,7 @@ pub struct AppView {
     pub(in crate::ui::shell) application_generations:
         crate::ui::application::ApplicationGenerations,
     pub(in crate::ui::shell) applying_application_snapshot: bool,
+    pub(in crate::ui::shell) window_role: AppWindowRole,
     pub(in crate::ui::shell) _subscriptions: RootSubscriptions,
 }
 

@@ -1,6 +1,7 @@
-use gpui::{AnyWindowHandle, App, Global, Window};
+use gpui::{AnyWindowHandle, App, Entity, Global, Window};
 use miaominal_settings::WindowCloseBehavior;
 
+use super::AppView;
 use super::i18n;
 
 const SHOW_MENU_ID: &str = "miaominal-tray-show";
@@ -17,6 +18,12 @@ enum CloseAction {
     Exit,
     HideToTray,
     Minimize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrimaryExitRoute {
+    NativeWindowClose,
+    QuitApplication,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +99,18 @@ pub fn configure_main_window_close(window: &Window, cx: &App) {
     window.on_window_should_close(cx, |window, cx| main_window_should_close(window, cx));
 }
 
+pub fn configure_detached_window_close(view: &Entity<AppView>, window: &Window, cx: &App) {
+    let view = view.downgrade();
+    window.on_window_should_close(cx, move |window, cx| {
+        if let Some(view) = view.upgrade() {
+            let _ = view.update(cx, |view, cx| {
+                view.prepare_detached_window_close(window, cx);
+            });
+        }
+        true
+    });
+}
+
 pub fn request_main_window_close(window: &mut Window, cx: &mut App) {
     if main_window_should_close(window, cx) {
         window.remove_window();
@@ -104,7 +123,17 @@ fn main_window_should_close(window: &mut Window, cx: &mut App) -> bool {
         .try_global::<SystemTrayState>()
         .is_some_and(|state| state.platform.available());
     match close_action(behavior, current_platform(), tray_available) {
-        CloseAction::Exit => true,
+        CloseAction::Exit => match primary_exit_route(cx.windows().len()) {
+            // Preserve GPUI's original single-window close path so its native window teardown and
+            // application shutdown behavior remain unchanged when no detached window exists.
+            PrimaryExitRoute::NativeWindowClose => true,
+            PrimaryExitRoute::QuitApplication => {
+                // GPUI's App::quit clears all windows without invoking each window's
+                // on_window_should_close callback, so retire detached tab resources first.
+                quit_application(cx);
+                false
+            }
+        },
         CloseAction::HideToTray => !platform::hide_window(window),
         CloseAction::Minimize => {
             window.minimize_window();
@@ -118,7 +147,20 @@ fn handle_tray_command(command: TrayCommand, cx: &mut App) {
         TrayCommand::Show => {
             restore_main_window(cx);
         }
-        TrayCommand::Quit => cx.quit(),
+        TrayCommand::Quit => quit_application(cx),
+    }
+}
+
+fn quit_application(cx: &mut App) {
+    crate::ui::windowing::prepare_detached_windows_for_application_quit(cx);
+    cx.quit();
+}
+
+const fn primary_exit_route(open_window_count: usize) -> PrimaryExitRoute {
+    if open_window_count <= 1 {
+        PrimaryExitRoute::NativeWindowClose
+    } else {
+        PrimaryExitRoute::QuitApplication
     }
 }
 
@@ -537,6 +579,12 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn primary_exit_preserves_native_close_without_detached_windows() {
+        assert_eq!(primary_exit_route(1), PrimaryExitRoute::NativeWindowClose);
+        assert_eq!(primary_exit_route(2), PrimaryExitRoute::QuitApplication);
+    }
 
     #[test]
     fn close_action_preserves_direct_exit_on_every_platform() {

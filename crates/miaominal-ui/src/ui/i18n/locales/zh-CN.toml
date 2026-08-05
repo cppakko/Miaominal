@@ -681,8 +681,13 @@ click_to_focus = "点击以聚焦"
 rename_tab = "重命名标签页"
 duplicate_profile = "复制配置"
 open_sftp_tab = "打开 SFTP 标签页"
+open_in_new_window = "在新窗口中打开"
 close_other_tabs = "关闭其他标签页"
 close_tab = "关闭标签页"
+
+[chrome.messages]
+opened_in_new_window = "标签页已移动到新窗口"
+open_in_new_window_failed = "无法打开新窗口：{error}"
 
 [workspace.menu]
 cut = "剪切"

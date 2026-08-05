@@ -819,8 +819,13 @@ click_to_focus = "Click to focus"
 rename_tab = "Rename tab"
 duplicate_profile = "Duplicate profile"
 open_sftp_tab = "Open SFTP tab"
+open_in_new_window = "Open in new window"
 close_other_tabs = "Close other tabs"
 close_tab = "Close tab"
+
+[chrome.messages]
+opened_in_new_window = "Tab moved to a new window"
+open_in_new_window_failed = "Could not open a new window: {error}"
 
 [workspace.menu]
 cut = "Cut"

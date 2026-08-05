@@ -135,16 +135,30 @@ impl Render for DraggedTab {
     }
 }
 
-#[derive(Default)]
 pub(in crate::ui::shell) struct ShellState {
     pub(in crate::ui::shell) sidebar_section: SidebarSection,
     pub(in crate::ui::shell) page_editor_sidebar_transition: Option<PageEditorSidebarTransition>,
     pub(in crate::ui::shell) visible_page_editor_sidebar: Option<PageEditorSidebarKind>,
 }
 
+impl Default for ShellState {
+    fn default() -> Self {
+        Self {
+            sidebar_section: SidebarSection::Hosts,
+            page_editor_sidebar_transition: None,
+            visible_page_editor_sidebar: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_state_starts_on_ssh_profiles() {
+        assert_eq!(ShellState::default().sidebar_section, SidebarSection::Hosts);
+    }
 
     fn session_state(
         purpose: SessionPurpose,
@@ -169,6 +183,7 @@ mod tests {
             purpose,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            owner_route: None,
         }
     }
 

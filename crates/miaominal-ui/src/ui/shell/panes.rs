@@ -239,7 +239,10 @@ impl AppView {
         self.workspace.workspace.active_pane_id
     }
 
-    fn park_loaded_workspace(&mut self, cx: &mut Context<Self>) -> TabWorkspaceState {
+    pub(in crate::ui::shell) fn park_loaded_workspace(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> TabWorkspaceState {
         TabWorkspaceState {
             active_tab: self.workspace.workspace.active_tab.take(),
             active_pane_id: self.workspace.workspace.active_pane_id,
@@ -327,7 +330,7 @@ impl AppView {
         }
     }
 
-    fn restore_loaded_workspace(&mut self, workspace: TabWorkspaceState) {
+    pub(in crate::ui::shell) fn restore_loaded_workspace(&mut self, workspace: TabWorkspaceState) {
         self.workspace.workspace.active_tab = workspace.active_tab;
         self.workspace.workspace.active_pane_id = workspace.active_pane_id;
         self.workspace.workspace.active_pane.terminal_focus = workspace.active_pane.terminal_focus;
@@ -382,6 +385,46 @@ impl AppView {
 
     pub(in crate::ui::shell) fn reset_loaded_workspace(&mut self, cx: &mut Context<Self>) {
         self.restore_loaded_workspace(TabWorkspaceState::new(None, cx.focus_handle()));
+    }
+
+    pub(in crate::ui::shell) fn prepare_transferred_workspace_for_window(
+        workspace: &mut TabWorkspaceState,
+        cx: &mut Context<Self>,
+    ) {
+        workspace.active_pane.terminal_focus = cx.focus_handle();
+        workspace.active_pane.terminal_bounds = None;
+        workspace.active_pane.terminal_mouse_gesture = None;
+        workspace
+            .active_pane
+            .terminal_suppressed_key_releases
+            .clear();
+        workspace.active_pane.terminal_mouse_reporting_active = false;
+        workspace.active_pane.last_reported_mouse_cell = None;
+        workspace.active_pane.terminal_pointer_position = None;
+        workspace.active_pane.terminal_link_query = None;
+        workspace.active_pane.terminal_hovered_link = None;
+        workspace.active_pane.terminal_link_open_modifier = false;
+        workspace.active_pane.terminal_scrollbar_drag = None;
+        workspace.active_pane.terminal_scrollbar_last_interaction_at = None;
+
+        for pane in workspace.parked_panes.values_mut() {
+            pane.terminal_focus = cx.focus_handle();
+            pane.terminal_bounds = None;
+            pane.terminal_mouse_gesture = None;
+            pane.terminal_suppressed_key_releases.clear();
+            pane.terminal_mouse_reporting_active = false;
+            pane.last_reported_mouse_cell = None;
+            pane.terminal_pointer_position = None;
+            pane.terminal_link_query = None;
+            pane.terminal_hovered_link = None;
+            pane.terminal_link_open_modifier = false;
+            pane.terminal_scrollbar_drag = None;
+            pane.terminal_scrollbar_last_interaction_at = None;
+        }
+
+        workspace.pane_split_drag = None;
+        workspace.pane_split_animation = None;
+        workspace.pane_tab_drop_target = None;
     }
 
     pub(in crate::ui::shell) fn unload_active_topbar_workspace(&mut self, cx: &mut Context<Self>) {

@@ -263,10 +263,15 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
 impl AppView {
     pub fn new(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::ui::initialize_application_state(runtime, cx);
-        Self::bootstrap(window, cx)
+        Self::bootstrap(AppWindowRole::Primary, window, cx)
     }
 
-    fn bootstrap(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new_detached(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::ui::initialize_application_state(runtime, cx);
+        Self::bootstrap(AppWindowRole::Detached, window, cx)
+    }
+
+    fn bootstrap(window_role: AppWindowRole, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal_focus = cx.focus_handle();
         let application = crate::ui::application::application_state(cx);
         let ApplicationBootstrapSnapshot {
@@ -436,6 +441,7 @@ impl AppView {
             },
             application_generations: generations,
             applying_application_snapshot: false,
+            window_role,
             _subscriptions: RootSubscriptions::new(
                 build_subscriptions(AppViewSubscriptionsArgs {
                     rename_subscription,

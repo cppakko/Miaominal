@@ -196,6 +196,7 @@ enum TopbarAction {
     Rename(TabId),
     Duplicate(TabId),
     OpenSftp(TabId),
+    OpenInNewWindow(TabId),
     CloseOthers(TabId),
     Close(TabId),
 }
@@ -241,6 +242,9 @@ impl TopbarHost for AppView {
                 if self.workspace.tabs.get(tab_id).is_some() {
                     self.open_sftp_tab_for_session(Some(tab_id), window, cx);
                 }
+            }
+            TopbarAction::OpenInNewWindow(tab_id) => {
+                self.open_tab_in_new_window(tab_id, window, cx);
             }
             TopbarAction::CloseOthers(tab_id) => {
                 if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
@@ -325,11 +329,13 @@ fn build_tab_context_menu<V: TopbarHost>(
     entity: Entity<V>,
     tab_id: TabId,
     is_session: bool,
+    can_open_in_new_window: bool,
 ) -> PopupMenu {
     let rename_entity = entity.clone();
     let close_others_entity = entity.clone();
     let duplicate_entity = entity.clone();
     let sftp_entity = entity.clone();
+    let open_in_new_window_entity = entity.clone();
     let close_entity = entity;
 
     let menu = menu.item(
@@ -360,6 +366,21 @@ fn build_tab_context_menu<V: TopbarHost>(
                     let entity = sftp_entity.clone();
                     entity.update(cx, |this, cx| {
                         this.handle_topbar_action(TopbarAction::OpenSftp(tab_id), window, cx)
+                    });
+                },
+            ),
+        )
+    } else {
+        menu
+    };
+
+    let menu = if can_open_in_new_window {
+        menu.item(
+            PopupMenuItem::new(i18n::string("chrome.menu.open_in_new_window")).on_click(
+                move |_, window, cx| {
+                    let entity = open_in_new_window_entity.clone();
+                    entity.update(cx, |this, cx| {
+                        this.handle_topbar_action(TopbarAction::OpenInNewWindow(tab_id), window, cx)
                     });
                 },
             ),
@@ -467,7 +488,27 @@ fn maximize_window_control_button(window: &Window) -> impl IntoElement {
     )
 }
 
-fn window_controls_group(window: &Window) -> impl IntoElement {
+fn request_window_close(
+    entity: &Entity<AppView>,
+    role: AppWindowRole,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if role == AppWindowRole::Primary {
+        crate::ui::request_main_window_close(window, cx);
+        return;
+    }
+    entity.update(cx, |view, cx| {
+        view.prepare_detached_window_close(window, cx);
+    });
+    window.remove_window();
+}
+
+fn window_controls_group(
+    entity: Entity<AppView>,
+    role: AppWindowRole,
+    window: &Window,
+) -> impl IntoElement {
     if cfg!(target_os = "macos") {
         return div()
             .w(px(topbar_window_controls_width(window)))
@@ -477,6 +518,7 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
     }
 
     if window_controls_on_left() {
+        let close_entity = entity.clone();
         h_flex()
             .items_center()
             .gap(px(TOPBAR_TAB_GAP))
@@ -484,8 +526,8 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
                 "window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, cx| {
-                    crate::ui::request_main_window_close(window, cx);
+                move |window, cx| {
+                    request_window_close(&close_entity, role, window, cx);
                 },
             ))
             .child(window_control_button(
@@ -499,6 +541,7 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
             .child(maximize_window_control_button(window))
             .into_any_element()
     } else {
+        let close_entity = entity;
         h_flex()
             .items_center()
             .gap(px(TOPBAR_TAB_GAP))
@@ -515,8 +558,8 @@ fn window_controls_group(window: &Window) -> impl IntoElement {
                 "window-close",
                 AppIcon::Close,
                 WindowControlArea::Close,
-                |window, cx| {
-                    crate::ui::request_main_window_close(window, cx);
+                move |window, cx| {
+                    request_window_close(&close_entity, role, window, cx);
                 },
             ))
             .into_any_element()
@@ -744,6 +787,7 @@ impl ChromeAppViewExt for AppView {
         window: &mut Window,
         cx: &App,
     ) -> impl IntoElement {
+        let window_role = self.window_role;
         let roles = miaominal_settings::current_theme().material.roles;
         let topbar_title_line_height = miaominal_settings::scaled_line_height(14.0).as_f32();
         let topbar_rename_height = topbar_tab_rename_height(topbar_title_line_height);
@@ -841,7 +885,11 @@ impl ChromeAppViewExt for AppView {
                     .min_w(px(0.0))
                     .gap(px(TOPBAR_SECTION_GAP))
                     .when(show_macos_traffic_light_space(window), |this| {
-                        this.child(window_controls_group(window))
+                        this.child(window_controls_group(
+                            entity.clone(),
+                            window_role,
+                            window,
+                        ))
                     })
                     .child(
                         h_flex()
@@ -912,6 +960,8 @@ impl ChromeAppViewExt for AppView {
                                                     );
                                                     let is_active = current_active_tab_id == Some(tab_id);
                                                     let is_session = snapshot.kind == TopbarTabVisualKind::Session;
+                                                    let can_open_in_new_window =
+                                                        self.can_open_tab_in_new_window(tab_id, cx);
                                                     let tab_kind_icon = topbar_tab_icon(snapshot.kind);
                                                     let is_renaming = self.workspace.renaming_tab == Some(tab_id);
                                                     let status_color = snapshot.status_color;
@@ -1084,6 +1134,7 @@ impl ChromeAppViewExt for AppView {
                                                                 menu_entity.clone(),
                                                                 tab_id,
                                                                 is_session,
+                                                                can_open_in_new_window,
                                                             )
                                                         })
                                                         .child(
@@ -1355,7 +1406,11 @@ impl ChromeAppViewExt for AppView {
                             })
                     )
                     .when(!window_controls_on_left(), |this| {
-                        this.child(window_controls_group(window))
+                        this.child(window_controls_group(
+                            entity.clone(),
+                            window_role,
+                            window,
+                        ))
                     }),
             )
     }

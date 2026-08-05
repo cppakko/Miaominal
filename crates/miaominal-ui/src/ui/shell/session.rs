@@ -813,6 +813,14 @@ impl AppView {
                 .clear_tab_activity(active_session_tab_id);
         }
 
+        if self.window_role == AppWindowRole::Detached
+            && !self.workspace.tabs.iter().any(|tab| tab.is_top_level())
+        {
+            self.prepare_detached_window_close(window, cx);
+            window.remove_window();
+            return;
+        }
+
         if self.workspace.tabs.is_empty() {
             self.workspace.active_topbar_tab = None;
             self.workspace.workspace.active_tab = None;

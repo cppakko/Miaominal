@@ -51,7 +51,7 @@ pub(in crate::ui::shell) use session::{
     SessionNotificationTone, SessionPortSession, SessionPortSnapshot, SessionPurpose,
     SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
     SessionTerminalTarget, TerminalLease, TerminalLeaseError, TerminalLeaseGrant,
-    TrustedHostFilter,
+    TransferredSessionTab, TransferredSessionWorkspaceUi, TrustedHostFilter,
 };
 #[cfg(test)]
 pub(in crate::ui::shell) use session::{SESSION_MONITOR_HISTORY_LIMIT, SessionMonitoringState};
@@ -70,7 +70,8 @@ pub(in crate::ui::shell) use settings::{
 pub(in crate::ui::shell) use sftp::{
     LocalSftpEntry, SessionSftpProgressCenterDragState, SftpController, SftpControllerArgs,
     SftpDragSelectionState, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
-    SftpTabState, SftpTransferChildStatus, SftpTransferRow, SftpTransferStatus,
+    SftpTabState, SftpTransferChildStatus, SftpTransferRow, SftpTransferStatus, TransferredSftpTab,
+    TransferredSftpWindowUi,
 };
 
 #[derive(Clone, Debug)]

@@ -64,11 +64,12 @@ mod sftp_browser;
 mod state;
 mod support;
 mod system_file_icons;
+mod tab_transfer;
 mod terminal;
 mod workspace;
 
-pub use app_view::AppView;
 use app_view::ShellUiState;
+pub use app_view::{AppView, AppWindowRole};
 
 pub(crate) use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
@@ -127,7 +128,8 @@ pub(in crate::ui::shell) use controllers::{
     SftpControllerArgs, SftpDeferredCommand, SftpDragSelectionState, SftpPromptKind,
     SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus,
     SftpTransferRow, SftpTransferStatus, SyncPullConfirmReason, TerminalLease, TerminalLeaseError,
-    TerminalLeaseGrant, TerminalMenuCommand, TrustedHostFilter, split_message_into_blocks,
+    TerminalLeaseGrant, TerminalMenuCommand, TransferredSessionTab, TransferredSessionWorkspaceUi,
+    TransferredSftpTab, TransferredSftpWindowUi, TrustedHostFilter, split_message_into_blocks,
 };
 #[cfg(test)]
 pub(in crate::ui::shell) use controllers::{
