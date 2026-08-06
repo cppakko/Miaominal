@@ -5,7 +5,7 @@ use miaominal_core::profile::SessionProfile;
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_core::ssh_bridge_security::BridgeSecuritySnapshot;
-use miaominal_secrets::{ProtectedPassphrase, SecretStore};
+use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
     AgentService, AppServices, ChatService, LoadedAppData, LocalVaultMode, LocalVaultTransition,
     PortForwardManagerSnapshot, SettingsService,
@@ -44,6 +44,24 @@ impl From<LocalVaultMode> for ApplicationVaultStatus {
             LocalVaultMode::Locked => Self::Locked,
             LocalVaultMode::Unlocked => Self::Unlocked,
         }
+    }
+}
+
+fn initial_application_vault_status(
+    local_vault_enabled: bool,
+    credential_policy: Option<miaominal_paths::CredentialPolicy>,
+    vault_store_exists: Result<bool, ()>,
+) -> ApplicationVaultStatus {
+    if !local_vault_enabled {
+        return ApplicationVaultStatus::Disabled;
+    }
+
+    if credential_policy == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
+        && vault_store_exists == Ok(false)
+    {
+        ApplicationVaultStatus::Disabled
+    } else {
+        ApplicationVaultStatus::Locked
     }
 }
 
@@ -149,6 +167,21 @@ impl ApplicationState {
         i18n::set_language(settings_store.settings().language);
 
         let local_vault_enabled = settings_store.settings().local_vault_enabled;
+        let credential_policy = match miaominal_paths::credential_policy() {
+            Ok(policy) => Some(policy),
+            Err(error) => {
+                log::warn!("credential policy unavailable while resolving vault state: {error:?}");
+                None
+            }
+        };
+        let vault_store_exists = VaultCredentialBackend::default_store_exists().map_err(|error| {
+            log::warn!("failed to inspect local vault file: {error:?}");
+        });
+        let vault_status = initial_application_vault_status(
+            local_vault_enabled,
+            credential_policy,
+            vault_store_exists,
+        );
         let LoadedAppData {
             services,
             known_hosts_entries,
@@ -190,11 +223,7 @@ impl ApplicationState {
             chat_status_message: None,
             status_message,
             sync_engine,
-            vault_status: if local_vault_enabled {
-                ApplicationVaultStatus::Locked
-            } else {
-                ApplicationVaultStatus::Disabled
-            },
+            vault_status,
             session_passphrase: None,
             last_vault_lock_was_automatic: false,
             vault_unlocked_at: None,
@@ -736,6 +765,62 @@ mod tests {
                 later,
             ),
             None
+        );
+    }
+
+    #[test]
+    fn initial_vault_status_requires_creation_for_missing_portable_vault() {
+        assert_eq!(
+            initial_application_vault_status(
+                true,
+                Some(miaominal_paths::CredentialPolicy::LocalVaultRequired),
+                Ok(false),
+            ),
+            ApplicationVaultStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn initial_vault_status_locks_existing_portable_vault() {
+        assert_eq!(
+            initial_application_vault_status(
+                true,
+                Some(miaominal_paths::CredentialPolicy::LocalVaultRequired),
+                Ok(true),
+            ),
+            ApplicationVaultStatus::Locked
+        );
+    }
+
+    #[test]
+    fn initial_vault_status_preserves_non_portable_behavior() {
+        assert_eq!(
+            initial_application_vault_status(
+                false,
+                Some(miaominal_paths::CredentialPolicy::SystemKeyring),
+                Ok(false),
+            ),
+            ApplicationVaultStatus::Disabled
+        );
+        assert_eq!(
+            initial_application_vault_status(
+                true,
+                Some(miaominal_paths::CredentialPolicy::SystemKeyring),
+                Ok(false),
+            ),
+            ApplicationVaultStatus::Locked
+        );
+    }
+
+    #[test]
+    fn initial_vault_status_fails_closed_when_store_inspection_fails() {
+        assert_eq!(
+            initial_application_vault_status(
+                true,
+                Some(miaominal_paths::CredentialPolicy::LocalVaultRequired),
+                Err(()),
+            ),
+            ApplicationVaultStatus::Locked
         );
     }
 

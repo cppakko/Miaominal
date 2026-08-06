@@ -33,7 +33,7 @@ use miaominal_core::ssh_bridge_security::{
     BridgeAuthorizationDecision, BridgePendingPhase, BridgeSecurityLevel, BridgeSecurityPolicy,
     BridgeSecuritySnapshot, DEFAULT_BRIDGE_APPROVAL_TIMEOUT_SECS,
 };
-use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
+use miaominal_secrets::{ProtectedPassphrase, SecretStore};
 use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, OpenSshIntegrationService,
     ProxyPasswordUpdate, ProxyService, SettingsService, SshBridgeService, SyncService,
@@ -558,6 +558,7 @@ pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub settings_store: SettingsStore,
     pub secrets: SecretStore,
     pub sync_engine: SyncEngine,
+    pub local_vault_status: LocalVaultStatus,
     pub ssh_bridge_service: SshBridgeService,
     pub open_ssh_integration_service: OpenSshIntegrationService,
 }
@@ -667,11 +668,11 @@ impl SettingsController {
         settings_store: &SettingsStore,
         proxies: &[ProxyProfile],
         sync_engine: SyncEngine,
+        local_vault_status: LocalVaultStatus,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> SettingsBootstrap {
         let settings = settings_store.settings();
-        let local_vault_enabled = settings.local_vault_enabled;
         let sync_secrets = sync_engine
             .config_store
             .get_secrets()
@@ -1211,16 +1212,7 @@ impl SettingsController {
                 visible_onboarding_step: OnboardingStep::Welcome,
                 onboarding_step_transition: None,
             },
-            local_vault_status: if miaominal_paths::credential_policy().ok()
-                == Some(miaominal_paths::CredentialPolicy::LocalVaultRequired)
-                && !VaultCredentialBackend::default_store_exists().unwrap_or(false)
-            {
-                LocalVaultStatus::Disabled
-            } else if local_vault_enabled {
-                LocalVaultStatus::Locked
-            } else {
-                LocalVaultStatus::Disabled
-            },
+            local_vault_status,
         }
     }
 
@@ -1585,6 +1577,7 @@ impl SettingsController {
             &args.settings_store,
             &args.proxies,
             args.sync_engine.clone(),
+            args.local_vault_status,
             window,
             cx,
         );

@@ -400,6 +400,7 @@ impl AppView {
                 settings_store,
                 secrets: vault.secrets.clone(),
                 sync_engine: vault.sync_engine.clone(),
+                local_vault_status,
                 ssh_bridge_service: services.ssh_bridge_service.clone(),
                 open_ssh_integration_service: services.open_ssh_integration_service.clone(),
             },
@@ -407,7 +408,6 @@ impl AppView {
             cx,
         );
         controllers.settings.update(cx, |controller, cx| {
-            controller.set_local_vault_status(local_vault_status);
             controller.set_local_vault_session_passphrase(vault.session_passphrase.clone());
             controller.apply_application_bridge_snapshot(
                 bridge_status,

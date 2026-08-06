@@ -279,11 +279,15 @@ fn has_existing_app_data(settings_file: &Path) -> Result<bool> {
     }
 
     let settings_lock_file = settings_lock_path(settings_file);
+    let app_instance_lock_file = config_dir.join(paths::APP_INSTANCE_LOCK_FILE);
     for entry in fs::read_dir(config_dir)
         .with_context(|| format!("failed to read {}", config_dir.display()))?
     {
         let entry = entry.with_context(|| format!("failed to read {}", config_dir.display()))?;
-        if entry.path() == settings_file || entry.path() == settings_lock_file {
+        if entry.path() == settings_file
+            || entry.path() == settings_lock_file
+            || entry.path() == app_instance_lock_file
+        {
             continue;
         }
         return Ok(true);
@@ -352,6 +356,24 @@ mod tests {
             .expect("fresh settings should load");
 
         assert!(store.settings().should_show_onboarding());
+        assert!(!paths.settings_file.exists());
+    }
+
+    #[test]
+    fn app_instance_lock_file_does_not_count_as_existing_app_data() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            paths.root.join(miaominal_paths::APP_INSTANCE_LOCK_FILE),
+            b"",
+        )
+        .expect("app instance lock file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("fresh settings should load");
+
+        assert!(store.settings().should_show_onboarding());
+        assert_eq!(store.settings().completed_onboarding_version, 0);
         assert!(!paths.settings_file.exists());
     }
 
