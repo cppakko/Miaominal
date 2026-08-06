@@ -31,8 +31,9 @@ pub fn configure_notification_window(window: &gpui::Window) -> anyhow::Result<()
     use raw_window_handle::RawWindowHandle;
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Dwm::{
-        DWM_WINDOW_CORNER_PREFERENCE, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
-        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+        DWMNCRENDERINGPOLICY, DWM_WINDOW_CORNER_PREFERENCE, DWMNCRP_DISABLED, DWMWA_BORDER_COLOR,
+        DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute,
     };
     use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, HGDIOBJ, SetWindowRgn};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -71,6 +72,21 @@ pub fn configure_notification_window(window: &gpui::Window) -> anyhow::Result<()
             std::mem::size_of::<u32>() as u32,
         ) {
             log::debug!("failed to disable SSH Bridge notification window border: {error:?}");
+        }
+        // Win11 DWM can still draw an accent/highlight border on some builds even
+        // when DWMWA_BORDER_COLOR is set to NONE. Disabling non-client rendering
+        // entirely removes the compositor-layer outline. The rounded shape is
+        // already enforced by SetWindowRgn below so nothing visual is lost.
+        let ncr_policy = DWMNCRP_DISABLED;
+        if let Err(error) = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            (&ncr_policy as *const DWMNCRENDERINGPOLICY).cast(),
+            std::mem::size_of_val(&ncr_policy) as u32,
+        ) {
+            log::debug!(
+                "failed to disable SSH Bridge notification window NC rendering: {error:?}"
+            );
         }
         let corner_preference: DWM_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND;
         if let Err(error) = DwmSetWindowAttribute(
