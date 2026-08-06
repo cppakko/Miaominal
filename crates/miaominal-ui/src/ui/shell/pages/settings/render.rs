@@ -1122,16 +1122,21 @@ fn render_ssh_bridge_policy(entity: Entity<SettingsController>, cx: &App) -> Any
         )
     };
     let level = policy.level;
+    let show_legacy_system_auth = matches!(level, BridgeSecurityLevel::RequireSystemAuth);
     let security_level_entity = entity.clone();
     let system_auth_tooltip = if system_auth_available {
         bridge_security_level_tooltip(BridgeSecurityLevel::RequireSystemAuth)
     } else {
         i18n::string("settings.openssh_integration.security.system_auth_unavailable")
     };
-    let security_level_switch =
+    let mut security_level_switch =
         SegmentedSwitch::new("settings-ssh-bridge-security-level")
             .selected_index(bridge_security_level_index(level))
-            .width(252.0)
+            .width(if show_legacy_system_auth {
+                252.0
+            } else {
+                168.0
+            })
             .height(34.0)
             .padding(2.0)
             .item_with_tooltip(
@@ -1143,20 +1148,22 @@ fn render_ssh_bridge_policy(entity: Entity<SettingsController>, cx: &App) -> Any
                     SettingsController::default_bridge_approval_level(),
                 ),
                 bridge_security_level_tooltip(SettingsController::default_bridge_approval_level()),
-            )
-            .item_with_tooltip_disabled(
-                bridge_security_level_segment_label(BridgeSecurityLevel::RequireSystemAuth),
-                system_auth_tooltip,
-                !system_auth_available,
-            )
-            .on_click(move |index, _, cx| {
-                let Some(selected_level) = bridge_security_level_at(index, level) else {
-                    return;
-                };
-                security_level_entity.update(cx, |controller, cx| {
-                    controller.request_ssh_bridge_security_policy(selected_level, cx);
-                });
-            });
+            );
+    if show_legacy_system_auth {
+        security_level_switch = security_level_switch.item_with_tooltip_disabled(
+            bridge_security_level_segment_label(BridgeSecurityLevel::RequireSystemAuth),
+            system_auth_tooltip,
+            true,
+        );
+    }
+    let security_level_switch = security_level_switch.on_click(move |index, _, cx| {
+        let Some(selected_level) = bridge_security_level_at(index, level) else {
+            return;
+        };
+        security_level_entity.update(cx, |controller, cx| {
+            controller.request_ssh_bridge_security_policy(selected_level, cx);
+        });
+    });
     v_flex()
         .w_full()
         .gap_2()
