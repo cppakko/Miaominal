@@ -14,7 +14,7 @@ use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::SettingsStore;
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_sync::SyncEngine;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Instant;
 use tokio::runtime::Handle as TokioHandle;
 
@@ -92,7 +92,7 @@ pub(crate) struct ApplicationBootstrapSnapshot {
     pub(crate) known_hosts_entries: Vec<KnownHostEntry>,
     pub(crate) snippets: Vec<SnippetRecord>,
     pub(crate) managed_keys: Vec<ManagedKeyRecord>,
-    pub(crate) chat_service: Option<Arc<ChatService>>,
+    pub(crate) chat_service: Option<Rc<ChatService>>,
     pub(crate) chat_sessions: Vec<ChatSessionRecord>,
     pub(crate) chat_status_message: Option<String>,
     pub(crate) status_message: String,
@@ -113,7 +113,7 @@ pub(crate) struct ApplicationState {
     known_hosts_entries: Vec<KnownHostEntry>,
     snippets: Vec<SnippetRecord>,
     managed_keys: Vec<ManagedKeyRecord>,
-    chat_service: Option<Arc<ChatService>>,
+    chat_service: Option<Rc<ChatService>>,
     chat_sessions: Vec<ChatSessionRecord>,
     chat_status_message: Option<String>,
     status_message: String,
@@ -405,7 +405,7 @@ impl ApplicationState {
                                 );
                                 Vec::new()
                             });
-                            self.chat_service = Some(Arc::new(service));
+                            self.chat_service = Some(Rc::new(service));
                             self.chat_sessions = sessions;
                             self.chat_status_message = None;
                         }

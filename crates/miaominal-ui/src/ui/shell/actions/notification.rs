@@ -9,6 +9,8 @@ const NOTIFICATION_ICON_CONTAINER_SIZE: f32 = 44.0;
 const NOTIFICATION_CLOSE_BUTTON_SIZE: f32 = 30.0;
 const NOTIFICATION_CLOSE_BUTTON_RADIUS: f32 = 10.0;
 
+type NotificationAction = dyn Fn(&mut Window, &mut App);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NotificationTone {
     Success,
@@ -108,7 +110,7 @@ pub(in crate::ui::shell) fn warning_action_notification(
     let title = title.into();
     let message = message.into();
     let action_label = action_label.into();
-    let on_action: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(on_action);
+    let on_action: Rc<NotificationAction> = Rc::new(on_action);
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let accent = material.extended.warning.color;

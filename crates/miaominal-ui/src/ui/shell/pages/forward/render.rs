@@ -41,38 +41,6 @@ impl ForwardRuleConnectionUiState {
     }
 }
 
-#[cfg(test)]
-mod connection_ui_state_tests {
-    use super::*;
-
-    #[test]
-    fn runtime_state_drives_forwarding_status_without_a_status_tab() {
-        let running =
-            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Running));
-        assert!(running.session_active);
-        assert!(running.connected);
-        assert!(!running.connecting);
-
-        let reconnecting = ForwardRuleConnectionUiState::from_runtime(Some(
-            &PortForwardRuntimeState::Reconnecting {
-                error: "retry".into(),
-                attempt: 1,
-                max_attempts: 10,
-                retry_after_secs: 1,
-            },
-        ));
-        assert!(reconnecting.session_active);
-        assert!(!reconnecting.connected);
-        assert!(reconnecting.connecting);
-
-        let stopped =
-            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Stopped));
-        assert!(!stopped.session_active);
-        assert!(!stopped.connected);
-        assert!(!stopped.connecting);
-    }
-}
-
 fn render_forward_rule_connection_control(
     actions: ForwardRuleActions,
     profile_id: String,
@@ -845,5 +813,37 @@ impl SessionController {
                     )),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod connection_ui_state_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_state_drives_forwarding_status_without_a_status_tab() {
+        let running =
+            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Running));
+        assert!(running.session_active);
+        assert!(running.connected);
+        assert!(!running.connecting);
+
+        let reconnecting = ForwardRuleConnectionUiState::from_runtime(Some(
+            &PortForwardRuntimeState::Reconnecting {
+                error: "retry".into(),
+                attempt: 1,
+                max_attempts: 10,
+                retry_after_secs: 1,
+            },
+        ));
+        assert!(reconnecting.session_active);
+        assert!(!reconnecting.connected);
+        assert!(reconnecting.connecting);
+
+        let stopped =
+            ForwardRuleConnectionUiState::from_runtime(Some(&PortForwardRuntimeState::Stopped));
+        assert!(!stopped.session_active);
+        assert!(!stopped.connected);
+        assert!(!stopped.connecting);
     }
 }

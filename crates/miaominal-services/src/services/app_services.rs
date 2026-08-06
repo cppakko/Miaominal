@@ -10,7 +10,7 @@ use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, known_hosts_store::KnownHostsStore};
-use std::sync::Arc;
+use std::rc::Rc;
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::{
@@ -36,7 +36,7 @@ pub struct LoadedAppData {
     pub services: AppServices,
     pub known_hosts_entries: Vec<KnownHostEntry>,
     pub managed_keys: Vec<ManagedKeyRecord>,
-    pub chat_service: Option<Arc<ChatService>>,
+    pub chat_service: Option<Rc<ChatService>>,
     pub chat_sessions: Vec<ChatSessionRecord>,
     pub sessions: Vec<SessionProfile>,
     pub proxies: Vec<ProxyProfile>,
@@ -225,7 +225,7 @@ impl AppServices {
                     log::warn!("failed to list chat sessions: {error:?}");
                     Vec::new()
                 });
-                (Some(Arc::new(service)), sessions)
+                (Some(Rc::new(service)), sessions)
             }
             Err(error) => {
                 log::warn!("chat service unavailable: {error:?}");

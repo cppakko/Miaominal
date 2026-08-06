@@ -2201,6 +2201,7 @@ mod tests {
         let lock_path = active_data_dir.join(APP_INSTANCE_LOCK_FILE);
         let owner = fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)

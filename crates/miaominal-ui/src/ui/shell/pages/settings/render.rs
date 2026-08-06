@@ -398,24 +398,24 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
 }
 
 fn closing_behavior_items(settings: Entity<SettingsController>) -> Vec<SettingItem> {
-    let mut items = Vec::new();
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    items.push(
-        SettingItem::new(
-            i18n::string("settings.connections.window_close_behavior.label"),
-            SettingField::element(WindowCloseBehaviorField::new(settings.clone())),
-        )
-        .description(i18n::string(
-            "settings.connections.window_close_behavior.description",
-        )),
-    );
-    items.push(
+    let mut items = vec![
         SettingItem::new(
             i18n::string("settings.connections.last_tab_close_behavior.label"),
-            SettingField::element(LastTabCloseBehaviorField::new(settings)),
+            SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
         )
         .description(i18n::string(
             "settings.connections.last_tab_close_behavior.description",
+        )),
+    ];
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    items.insert(
+        0,
+        SettingItem::new(
+            i18n::string("settings.connections.window_close_behavior.label"),
+            SettingField::element(WindowCloseBehaviorField::new(settings)),
+        )
+        .description(i18n::string(
+            "settings.connections.window_close_behavior.description",
         )),
     );
     items

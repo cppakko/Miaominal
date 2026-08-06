@@ -82,7 +82,7 @@ pub fn initialize_system_tray(main_window: AnyWindowHandle, cx: &mut App) {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(10))
                 .await;
-            let _ = cx.update(|cx| handle_tray_command(command, cx));
+            cx.update(|cx| handle_tray_command(command, cx));
         }
     })
     .detach();
@@ -96,14 +96,14 @@ pub fn sync_system_tray(cx: &mut App) {
 }
 
 pub fn configure_main_window_close(window: &Window, cx: &App) {
-    window.on_window_should_close(cx, |window, cx| main_window_should_close(window, cx));
+    window.on_window_should_close(cx, main_window_should_close);
 }
 
 pub fn configure_detached_window_close(view: &Entity<AppView>, window: &Window, cx: &App) {
     let view = view.downgrade();
     window.on_window_should_close(cx, move |window, cx| {
         if let Some(view) = view.upgrade() {
-            let _ = view.update(cx, |view, cx| {
+            view.update(cx, |view, cx| {
                 view.prepare_detached_window_close(window, cx);
             });
         }

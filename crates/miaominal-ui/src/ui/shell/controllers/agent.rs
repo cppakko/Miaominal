@@ -20,7 +20,7 @@ use miaominal_services::{AgentService, ChatService};
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use std::cell::{Ref, RefCell, RefMut};
-use std::sync::Arc;
+use std::rc::Rc;
 use tokio::runtime::Handle as TokioHandle;
 
 mod attachments;
@@ -174,7 +174,7 @@ pub(in crate::ui::shell) struct AgentControllerArgs {
     pub(in crate::ui::shell) agent_service: AgentService,
     pub(in crate::ui::shell) secrets: SecretStore,
     pub(in crate::ui::shell) known_hosts: KnownHostsStore,
-    pub(in crate::ui::shell) chat_service: Option<Arc<ChatService>>,
+    pub(in crate::ui::shell) chat_service: Option<Rc<ChatService>>,
     pub(in crate::ui::shell) chat_sessions: Vec<ChatSessionRecord>,
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
 }
@@ -207,7 +207,7 @@ pub(in crate::ui::shell) struct AgentController {
     session_terminal: SessionTerminalPort,
     forms: WorkspaceAgentForms,
     focus: FocusHandle,
-    chat_service: Option<Arc<ChatService>>,
+    chat_service: Option<Rc<ChatService>>,
     chat_sessions: Vec<ChatSessionRecord>,
     runtime: RefCell<AgentRuntimeStore>,
     conversation_view_observer: Entity<AgentConversationViewObserver>,
@@ -693,7 +693,7 @@ impl AgentController {
 
     pub(in crate::ui::shell) fn replace_chat_state(
         &mut self,
-        chat_service: Option<Arc<ChatService>>,
+        chat_service: Option<Rc<ChatService>>,
         chat_sessions: Vec<ChatSessionRecord>,
         cx: &mut Context<Self>,
     ) {
@@ -715,7 +715,7 @@ impl AgentController {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.chat_service = Some(Arc::new(
+        self.chat_service = Some(Rc::new(
             if miaominal_paths::credential_policy()?
                 == miaominal_paths::CredentialPolicy::LocalVaultRequired
             {

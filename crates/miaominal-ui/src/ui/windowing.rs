@@ -5,6 +5,8 @@ use gpui::{AnyWindowHandle, App, Entity, Global, WeakEntity};
 
 use super::AppView;
 
+type DetachedWindowOpener = dyn Fn(&mut App) -> Result<DetachedWindowTarget>;
+
 pub struct DetachedWindowTarget {
     window: AnyWindowHandle,
     view: Entity<AppView>,
@@ -21,7 +23,7 @@ impl DetachedWindowTarget {
 }
 
 struct DetachedWindowFactory {
-    opener: Rc<dyn Fn(&mut App) -> Result<DetachedWindowTarget>>,
+    opener: Rc<DetachedWindowOpener>,
 }
 
 impl Global for DetachedWindowFactory {}
@@ -81,7 +83,7 @@ pub(crate) fn prepare_detached_windows_for_application_quit(cx: &mut App) {
             continue;
         };
         if let Err(error) = registration.window.update(cx, move |_, window, cx| {
-            let _ = view.update(cx, |view, cx| {
+            view.update(cx, |view, cx| {
                 view.prepare_detached_window_close(window, cx);
             });
         }) {

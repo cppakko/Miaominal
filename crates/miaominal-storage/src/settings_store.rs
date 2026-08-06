@@ -154,6 +154,7 @@ impl SettingsFileLock {
         let lock_path = settings_lock_path(settings_file);
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)

@@ -608,14 +608,11 @@ impl KeychainController {
                                                     if let Err(error) = window_handle.update(
                                                         cx,
                                                         move |_, window, cx| {
-                                                            let _ = entity.update(
-                                                                cx,
-                                                                |this, cx| {
-                                                                    this.set_managed_key_import_file_path(
-                                                                        path, window, cx,
-                                                                    );
-                                                                },
-                                                            );
+                                                            entity.update(cx, |this, cx| {
+                                                                this.set_managed_key_import_file_path(
+                                                                    path, window, cx,
+                                                                );
+                                                            });
                                                         },
                                                     ) {
                                                         log::debug!(

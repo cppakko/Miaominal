@@ -6,8 +6,8 @@ use super::*;
 use crate::ui::i18n;
 
 enum DetachedTabPayload {
-    Session(TransferredSessionTab),
-    Sftp(TransferredSftpTab),
+    Session(Box<TransferredSessionTab>),
+    Sftp(Box<TransferredSftpTab>),
 }
 
 struct DetachedTabEntry {
@@ -247,21 +247,21 @@ impl AppView {
         let mut transferred = Vec::with_capacity(entries.len());
         for (original_index, tab) in entries {
             let payload = if tab.is_session() {
-                DetachedTabPayload::Session(
+                DetachedTabPayload::Session(Box::new(
                     self.controllers
                         .session
                         .read(cx)
                         .take_tab_for_transfer(tab.id)
                         .expect("validated session transfer payload remains available"),
-                )
+                ))
             } else {
-                DetachedTabPayload::Sftp(
+                DetachedTabPayload::Sftp(Box::new(
                     self.controllers
                         .sftp
                         .read(cx)
                         .take_tab_for_transfer(tab.id)
                         .expect("validated SFTP transfer payload remains available"),
-                )
+                ))
             };
             self.workspace
                 .tabs
@@ -325,12 +325,12 @@ impl AppView {
             match entry.payload {
                 DetachedTabPayload::Session(transferred) => {
                     self.controllers.session.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, transferred, cx);
+                        controller.insert_transferred_tab(tab_id, *transferred, cx);
                     });
                 }
                 DetachedTabPayload::Sftp(transferred) => {
                     self.controllers.sftp.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, transferred, cx);
+                        controller.insert_transferred_tab(tab_id, *transferred, cx);
                     });
                 }
             }
@@ -395,12 +395,12 @@ impl AppView {
             match entry.payload {
                 DetachedTabPayload::Session(transferred) => {
                     self.controllers.session.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, transferred, cx);
+                        controller.insert_transferred_tab(tab_id, *transferred, cx);
                     });
                 }
                 DetachedTabPayload::Sftp(transferred) => {
                     self.controllers.sftp.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, transferred, cx);
+                        controller.insert_transferred_tab(tab_id, *transferred, cx);
                     });
                 }
             }
