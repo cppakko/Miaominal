@@ -151,7 +151,7 @@ fn handle_tray_command(command: TrayCommand, cx: &mut App) {
     }
 }
 
-fn quit_application(cx: &mut App) {
+pub fn quit_application(cx: &mut App) {
     crate::ui::windowing::prepare_detached_windows_for_application_quit(cx);
     cx.quit();
 }

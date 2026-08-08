@@ -182,6 +182,24 @@ pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgb
     gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
 }
 
+/// Switches the active window's sidebar to the Settings section.
+///
+/// Invoked from the macOS application menu (Preferences, Cmd+,). Safely does
+/// nothing when there is no active window or the active window's root view is
+/// not an `AppView` (for example a detached window with a different root).
+pub fn open_settings_from_menu(cx: &mut App) {
+    let Some(window) = cx.active_window() else {
+        return;
+    };
+    let _ = window.update(cx, |root, _window, cx| {
+        if let Ok(view) = root.downcast::<AppView>() {
+            view.update(cx, |view, cx| {
+                view.set_sidebar_section(SidebarSection::Settings, cx);
+            });
+        }
+    });
+}
+
 const APP_TITLE: &str = "Miaominal";
 pub(in crate::ui::shell) const SESSION_MONITOR_PANEL_WIDTH: f32 = 356.0;
 pub(in crate::ui::shell) const SESSION_SFTP_PROGRESS_DEFAULT_FLEX: f32 = 0.26;

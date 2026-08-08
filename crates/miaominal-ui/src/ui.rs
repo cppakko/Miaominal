@@ -11,10 +11,10 @@ mod windowing;
 
 pub use application::{initialize_application_state, reload_application_state};
 use settings::Settings as _;
-pub use shell::{AppView, AppWindowRole};
+pub use shell::{AppView, AppWindowRole, open_settings_from_menu};
 pub use system_tray::{
     configure_detached_window_close, configure_main_window_close, initialize_system_tray,
-    request_main_window_close, restore_main_window, sync_system_tray,
+    quit_application, request_main_window_close, restore_main_window, sync_system_tray,
 };
 pub use windowing::{DetachedWindowTarget, register_detached_window_opener};
 
