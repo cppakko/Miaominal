@@ -2,6 +2,8 @@
 mod agent_service;
 #[path = "services/app_services.rs"]
 mod app_services;
+#[path = "services/auto_sync.rs"]
+mod auto_sync;
 #[path = "services/chat_service.rs"]
 mod chat_service;
 #[path = "services/keychain_service.rs"]
@@ -20,6 +22,8 @@ mod settings_service;
 mod sftp_service;
 #[path = "services/ssh_bridge_service.rs"]
 mod ssh_bridge_service;
+#[path = "services/sync_executor.rs"]
+mod sync_executor;
 #[path = "services/sync_service.rs"]
 mod sync_service;
 #[path = "services/terminal_service.rs"]
@@ -27,6 +31,7 @@ mod terminal_service;
 
 pub use agent_service::AgentService;
 pub use app_services::{AppServices, LoadedAppData};
+pub use auto_sync::{AutoSyncPhase, AutoSyncService, AutoSyncSnapshot};
 pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
 pub use openssh_integration_service::OpenSshIntegrationService;
@@ -41,5 +46,6 @@ pub use settings_service::{
 };
 pub use sftp_service::{PlannedSftpDownload, SftpService};
 pub use ssh_bridge_service::{SshBridgeRouteRefresh, SshBridgeService};
+pub use sync_executor::SyncExecutor;
 pub use sync_service::{SyncReloadResult, SyncService, SyncTaskResult};
 pub use terminal_service::TerminalService;
