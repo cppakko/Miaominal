@@ -1730,6 +1730,25 @@ label = "用户名"
 [settings.sync.webdav.password]
 label = "密码"
 
+[settings.sync.auto_sync_group]
+title = "自动同步"
+description = "本地配置变更后自动推送，并定期检查远端更新。默认关闭，开启前请先配置同步提供方与加密口令。"
+
+[settings.sync.auto_sync]
+label = "启用自动同步"
+description = "配置变更（设置、会话、代理、片段、托管密钥及凭据）约 5 秒后自动推送；每 60 秒检查一次远端，远端有新内容且本地无未同步修改时自动拉取。"
+
+[settings.sync.auto_sync.status]
+label = "自动同步状态"
+description = "自动同步当前所处的阶段。"
+disabled = "已关闭"
+watching = "监听中"
+debouncing = "等待防抖"
+pushing = "推送中"
+pulling = "拉取中"
+pull_required = "需要手动确认"
+vault_locked = "保险库已锁定，暂停"
+retry = "等待重试"
 [settings.sync.encryption_group]
 title = "端到端加密"
 description = "密码和 SSH 私钥会使用由该口令通过 Argon2id 派生的密钥进行 AES-256-GCM 加密。启用同步前必须先设置加密口令。"

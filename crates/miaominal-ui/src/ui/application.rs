@@ -7,8 +7,9 @@ use miaominal_core::snippet::SnippetRecord;
 use miaominal_core::ssh_bridge_security::BridgeSecuritySnapshot;
 use miaominal_secrets::{ProtectedPassphrase, SecretStore, VaultCredentialBackend};
 use miaominal_services::{
-    AgentService, AppServices, ChatService, LoadedAppData, LocalVaultMode, LocalVaultTransition,
-    PortForwardManagerSnapshot, SettingsService,
+    AgentService, AppServices, AutoSyncService, AutoSyncSnapshot, ChatService, LoadedAppData,
+    LocalVaultMode, LocalVaultTransition, PortForwardManagerSnapshot, SettingsService,
+    SyncExecutor, SyncService, SyncTaskResult,
 };
 use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::SettingsStore;
@@ -28,6 +29,7 @@ pub(crate) struct ApplicationGenerations {
     pub(crate) chat: u64,
     pub(crate) port_forwards: u64,
     pub(crate) bridge: u64,
+    pub(crate) auto_sync: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +121,8 @@ pub(crate) struct ApplicationBootstrapSnapshot {
     pub(crate) bridge_status: SshBridgeStatus,
     pub(crate) bridge_sync_result: Option<SshBridgeSyncResult>,
     pub(crate) bridge_security: BridgeSecuritySnapshot,
+    pub(crate) sync_executor: Option<SyncExecutor>,
+    pub(crate) auto_sync: AutoSyncSnapshot,
     pub(crate) generations: ApplicationGenerations,
 }
 
@@ -144,6 +148,11 @@ pub(crate) struct ApplicationState {
     port_forward_snapshot: PortForwardManagerSnapshot,
     runtime_observer_task: Option<gpui::Task<()>>,
     bridge_observer_task: Option<gpui::Task<()>>,
+    auto_sync_observer_task: Option<gpui::Task<()>>,
+    sync_executor: Option<SyncExecutor>,
+    auto_sync: Option<AutoSyncService>,
+    auto_sync_snapshot: AutoSyncSnapshot,
+    last_auto_sync_revision: u64,
     bridge_status: SshBridgeStatus,
     bridge_sync_result: Option<SshBridgeSyncResult>,
     bridge_security: BridgeSecuritySnapshot,
@@ -194,7 +203,7 @@ impl ApplicationState {
             selected_profile,
             status_message,
         } = AppServices::load(
-            runtime,
+            runtime.clone(),
             local_vault_enabled,
             settings_store.settings().open_ssh_integration_mode,
             settings_store.settings().ssh_bridge.clone(),
@@ -208,6 +217,38 @@ impl ApplicationState {
         let bridge_status = services.ssh_bridge_service.status();
         let bridge_sync_result = services.open_ssh_integration_service.last_sync_result();
         let bridge_security = services.ssh_bridge_service.security_snapshot();
+        let sync_executor = SyncService::new(
+            runtime.clone(),
+            services.session_store.clone(),
+            services.proxy_store.clone(),
+            services.snippet_store.clone(),
+            services.keychain_store.clone(),
+            services.secrets.clone(),
+        )
+        .map(SyncExecutor::new)
+        .map_err(|error| log::warn!("sync service unavailable: {error:?}"))
+        .ok();
+        let auto_sync = sync_executor.as_ref().map(|executor| {
+            AutoSyncService::new(
+                runtime.clone(),
+                executor.clone(),
+                settings_store.clone(),
+                sync_engine.clone(),
+                vault_status == ApplicationVaultStatus::Locked,
+            )
+        });
+        let auto_sync_snapshot = auto_sync
+            .as_ref()
+            .map(|service| service.subscribe().borrow().clone())
+            .unwrap_or_else(|| AutoSyncSnapshot {
+                revision: 0,
+                enabled: false,
+                phase: miaominal_services::AutoSyncPhase::Disabled,
+                message: None,
+                last_result: None,
+                dirty: false,
+                retry_at_unix: None,
+            });
 
         Self {
             services,
@@ -231,6 +272,11 @@ impl ApplicationState {
             port_forward_snapshot,
             runtime_observer_task: None,
             bridge_observer_task: None,
+            auto_sync_observer_task: None,
+            sync_executor,
+            auto_sync,
+            auto_sync_snapshot,
+            last_auto_sync_revision: 0,
             generations: ApplicationGenerations {
                 catalogs: 1,
                 settings: 1,
@@ -238,6 +284,7 @@ impl ApplicationState {
                 chat: 1,
                 port_forwards: 1,
                 bridge: 1,
+                auto_sync: 1,
             },
             bridge_status,
             bridge_sync_result,
@@ -246,6 +293,9 @@ impl ApplicationState {
     }
 
     fn reload(&mut self, runtime: TokioHandle, cx: &mut Context<Self>) {
+        if let Some(auto_sync) = &self.auto_sync {
+            auto_sync.shutdown();
+        }
         let mut replacement = Self::load(runtime);
         replacement.generations = generations_after_reload(self.generations);
         let previous = std::mem::replace(self, replacement);
@@ -280,6 +330,8 @@ impl ApplicationState {
             bridge_status: self.bridge_status.clone(),
             bridge_sync_result: self.bridge_sync_result.clone(),
             bridge_security: self.bridge_security.clone(),
+            sync_executor: self.sync_executor.clone(),
+            auto_sync: self.auto_sync_snapshot.clone(),
             generations: self.generations,
         }
     }
@@ -349,6 +401,12 @@ impl ApplicationState {
         if auto_lock_duration_changed {
             self.sync_vault_auto_lock_task(cx);
         }
+        if sync_changed && let Some(auto_sync) = &self.auto_sync {
+            auto_sync.set_engine(self.sync_engine.clone());
+        }
+        if settings_changed && let Some(auto_sync) = &self.auto_sync {
+            auto_sync.set_settings_store(self.settings_store.clone());
+        }
         cx.notify();
     }
 
@@ -375,6 +433,98 @@ impl ApplicationState {
         }
         self.chat_sessions = chat_sessions;
         self.generations.chat = next_generation(self.generations.chat);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_auto_sync_snapshot(
+        &mut self,
+        snapshot: AutoSyncSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if snapshot.revision == self.last_auto_sync_revision {
+            return;
+        }
+        self.last_auto_sync_revision = snapshot.revision;
+        self.auto_sync_snapshot = snapshot.clone();
+        let mut catalogs_changed = false;
+        let mut settings_changed = false;
+        let mut managed_keys_changed = false;
+        if let Some(result) = &snapshot.last_result
+            && self.sync_engine.config_store.config != result.updated_config
+        {
+            self.sync_engine.config_store.config = result.updated_config.clone();
+            if let Some(reload) = &result.reload {
+                if let Ok(store) = &reload.settings {
+                    settings_changed = miaominal_settings::changed(
+                        self.settings_store.settings(),
+                        store.settings(),
+                    );
+                    self.settings_store = store.clone();
+                }
+                if let Ok(profiles) = &reload.sessions {
+                    self.profiles = profiles.clone();
+                    catalogs_changed = true;
+                }
+                if let Ok(proxies) = &reload.proxies {
+                    self.proxies = proxies.clone();
+                    catalogs_changed = true;
+                }
+                if let Ok(snippets) = &reload.snippets {
+                    self.snippets = snippets.clone();
+                    catalogs_changed = true;
+                }
+                if let Ok(keys) = &reload.managed_keys {
+                    self.managed_keys = keys.clone();
+                    managed_keys_changed = true;
+                }
+            }
+        }
+        if catalogs_changed {
+            self.services
+                .ssh_bridge_service
+                .refresh_routes(self.profiles.clone(), self.proxies.clone());
+            self.services
+                .port_forward_manager
+                .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+            self.generations.catalogs = next_generation(self.generations.catalogs);
+        }
+        if managed_keys_changed {
+            self.generations.catalogs = next_generation(self.generations.catalogs);
+        }
+        if settings_changed {
+            self.generations.settings = next_generation(self.generations.settings);
+        }
+        self.generations.auto_sync = next_generation(self.generations.auto_sync);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_manual_sync_result(
+        &mut self,
+        result: SyncTaskResult,
+        cx: &mut Context<Self>,
+    ) {
+        let sync_changed = self.sync_engine.config_store.config != result.updated_config;
+        self.sync_engine.config_store.config = result.updated_config.clone();
+
+        let mut settings_changed = false;
+        if let Some(reload) = &result.reload
+            && let Ok(store) = &reload.settings
+        {
+            settings_changed =
+                miaominal_settings::changed(self.settings_store.settings(), store.settings());
+            self.settings_store = store.clone();
+        }
+
+        if sync_changed || settings_changed {
+            self.generations.settings = next_generation(self.generations.settings);
+        }
+        if let Some(auto_sync) = &self.auto_sync {
+            auto_sync.reconcile_manual_sync(
+                result.status,
+                self.sync_engine.clone(),
+                self.settings_store.clone(),
+            );
+        }
         cx.notify();
     }
 
@@ -415,7 +565,14 @@ impl ApplicationState {
         self.services
             .port_forward_manager
             .replace_secrets(self.services.secrets.clone());
+        if let Some(sync_executor) = &self.sync_executor {
+            sync_executor.replace_secrets(self.services.secrets.clone());
+        }
         self.sync_engine = sync_engine;
+        if let Some(auto_sync) = &self.auto_sync {
+            auto_sync.set_engine(self.sync_engine.clone());
+            auto_sync.set_vault_locked(next_status == ApplicationVaultStatus::Locked);
+        }
         self.vault_status = next_status;
         self.session_passphrase = session_passphrase;
         self.last_vault_lock_was_automatic = next_status == ApplicationVaultStatus::Locked
@@ -561,6 +718,26 @@ impl ApplicationState {
         }));
 
         let bridge = self.services.ssh_bridge_service.clone();
+
+        if let Some(auto_sync) = &self.auto_sync {
+            let mut auto_sync_rx = auto_sync.subscribe();
+            self.auto_sync_observer_task = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    if auto_sync_rx.changed().await.is_err() {
+                        break;
+                    }
+                    let snapshot = auto_sync_rx.borrow_and_update().clone();
+                    if this
+                        .update(cx, |state, cx| {
+                            state.apply_auto_sync_snapshot(snapshot, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
         cx.spawn(async move |_this, _cx| {
             let available = crate::ui::bridge_security_platform::system_auth_available().await;
             bridge.set_system_auth_available(available);
@@ -661,6 +838,7 @@ fn generations_after_reload(current: ApplicationGenerations) -> ApplicationGener
         chat: next_generation(current.chat),
         port_forwards: next_generation(current.port_forwards),
         bridge: next_generation(current.bridge),
+        auto_sync: next_generation(current.auto_sync),
     }
 }
 
@@ -686,6 +864,9 @@ pub fn reload_application_state(runtime: TokioHandle, cx: &mut App) {
 
 impl Drop for ApplicationState {
     fn drop(&mut self) {
+        if let Some(auto_sync) = &self.auto_sync {
+            auto_sync.shutdown();
+        }
         self.services.port_forward_manager.stop_all();
     }
 }
@@ -862,6 +1043,7 @@ mod tests {
             chat: 40,
             port_forwards: 50,
             bridge: 60,
+            auto_sync: 70,
         };
 
         assert_eq!(
@@ -873,6 +1055,7 @@ mod tests {
                 chat: 41,
                 port_forwards: 51,
                 bridge: 61,
+                auto_sync: 71,
             }
         );
     }

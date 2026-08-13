@@ -2531,9 +2531,19 @@ impl SessionController {
         let deleted_selected_profile = self.selected_profile() == Some(index);
         let service = self.profile_service();
         let mut selected_profile = self.selected_profile();
-        let outcome = {
+        let outcome = match {
             let mut profiles = self.profiles.borrow_mut();
-            service.delete_profile(&mut profiles, &mut selected_profile, index)
+            service.delete_and_persist_profile(&mut profiles, &mut selected_profile, index)
+        } {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                cx.emit(AppCommand::Feedback(i18n::string_args(
+                    "profile.messages.deleted_local_save_failed",
+                    &[("name", profile_name), ("error", &error.to_string())],
+                )));
+                cx.notify();
+                return;
+            }
         };
         let Some(outcome) = outcome else {
             return;
@@ -2544,19 +2554,12 @@ impl SessionController {
             self.set_host_editor_state(false, false);
         }
 
-        let message = match self.persist_profiles() {
-            Err(error) => i18n::string_args(
-                "profile.messages.deleted_local_save_failed",
-                &[
-                    ("name", &outcome.removed.name),
-                    ("error", &error.to_string()),
-                ],
-            ),
-            Ok(()) => i18n::string_args(
-                "profile.messages.deleted",
-                &[("name", &outcome.removed.name)],
-            ),
-        };
+        self.sync_port_profiles();
+        self.refresh_ssh_bridge_routes();
+        let message = i18n::string_args(
+            "profile.messages.deleted",
+            &[("name", &outcome.removed.name)],
+        );
 
         if reload_inputs_after_delete {
             self.load_selected_profile_into_inputs(managed_key_options, window, cx);
@@ -3013,14 +3016,14 @@ impl SessionController {
         profile: SessionProfile,
     ) -> anyhow::Result<SessionProfile> {
         let service = self.profile_service();
-        service.commit_profile_secrets(&profile)?;
         let mut selected_profile = self.selected_profile();
         {
             let mut profiles = self.profiles.borrow_mut();
-            service.upsert_profile(&mut profiles, &mut selected_profile, profile.clone());
+            service.save_profile(&mut profiles, &mut selected_profile, profile.clone())?;
         }
         self.selected_profile.set(selected_profile);
-        self.persist_profiles()?;
+        self.sync_port_profiles();
+        self.refresh_ssh_bridge_routes();
         Ok(profile)
     }
 
@@ -3065,9 +3068,7 @@ impl SessionController {
             .name("post-unlock-profile-save".to_string())
             .spawn(move || {
                 let result = (|| -> anyhow::Result<SaveProfileAfterUnlockResult> {
-                    service.commit_profile_secrets(&profile)?;
-                    service.upsert_profile(&mut profiles, &mut selected_profile, profile.clone());
-                    service.persist_sessions(&profiles)?;
+                    service.save_profile(&mut profiles, &mut selected_profile, profile.clone())?;
                     Ok(SaveProfileAfterUnlockResult {
                         profile,
                         profiles,

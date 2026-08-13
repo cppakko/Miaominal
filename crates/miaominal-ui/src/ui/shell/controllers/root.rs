@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::application::application_state;
 
 impl AppView {
     fn profile_for_session_tab_id(
@@ -934,6 +935,11 @@ impl AppView {
                     cx.notify();
                 });
             }
+            AppCommand::ManualSyncCompleted(result) => {
+                application_state(cx).update(cx, |application, cx| {
+                    application.apply_manual_sync_result((**result).clone(), cx);
+                });
+            }
             _ => self.handle_app_command(command, cx),
         }
     }
@@ -961,6 +967,7 @@ impl AppView {
             | AppCommand::ImportProfilesRequested(_)
             | AppCommand::SessionEventApplied { .. }
             | AppCommand::ProxiesChanged(_)
+            | AppCommand::ManualSyncCompleted(_)
             | AppCommand::SyncReloaded(_) => {}
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),

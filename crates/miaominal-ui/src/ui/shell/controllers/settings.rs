@@ -36,7 +36,7 @@ use miaominal_core::ssh_bridge_security::{
 use miaominal_secrets::{ProtectedPassphrase, SecretStore};
 use miaominal_services::{
     LocalVaultPassphraseChangeOutcome, LocalVaultTransition, OpenSshIntegrationService,
-    ProxyPasswordUpdate, ProxyService, SettingsService, SshBridgeService, SyncService,
+    ProxyPasswordUpdate, ProxyService, SettingsService, SshBridgeService, SyncExecutor,
 };
 use miaominal_settings::{
     AiProviderKind, AiReasoningEffort, AppLanguage, AppSettings, KeyBinding, LastTabCloseBehavior,
@@ -45,11 +45,7 @@ use miaominal_settings::{
     WindowCloseBehavior,
 };
 use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
-use miaominal_storage::{
-    ProxyStore, SettingsStore,
-    config_store::store::{SessionStore, SnippetStore},
-    keychain_store::ManagedKeyStore,
-};
+use miaominal_storage::{ProxyStore, SettingsStore};
 use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus, engine::SyncEngine};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -550,9 +546,6 @@ pub(in crate::ui::shell) struct SettingsForms {
 
 pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub runtime: TokioHandle,
-    pub session_store: Option<SessionStore>,
-    pub snippet_store: Option<SnippetStore>,
-    pub keychain_store: Option<ManagedKeyStore>,
     pub proxy_store: Option<ProxyStore>,
     pub proxies: Vec<ProxyProfile>,
     pub settings_store: SettingsStore,
@@ -561,6 +554,8 @@ pub(in crate::ui::shell) struct SettingsControllerArgs {
     pub local_vault_status: LocalVaultStatus,
     pub ssh_bridge_service: SshBridgeService,
     pub open_ssh_integration_service: OpenSshIntegrationService,
+    pub sync_executor: Option<SyncExecutor>,
+    pub auto_sync: miaominal_services::AutoSyncSnapshot,
 }
 
 struct SettingsBootstrap {
@@ -572,9 +567,6 @@ struct SettingsBootstrap {
 
 pub(in crate::ui::shell) struct SettingsController {
     runtime: TokioHandle,
-    session_store: Option<SessionStore>,
-    snippet_store: Option<SnippetStore>,
-    keychain_store: Option<ManagedKeyStore>,
     proxy_store: Option<ProxyStore>,
     proxies: Vec<ProxyProfile>,
     session_query: SessionQueryPort,
@@ -585,6 +577,8 @@ pub(in crate::ui::shell) struct SettingsController {
     secrets: SecretStore,
     ssh_bridge_service: SshBridgeService,
     open_ssh_integration_service: OpenSshIntegrationService,
+    sync_executor: Option<SyncExecutor>,
+    auto_sync_snapshot: miaominal_services::AutoSyncSnapshot,
     ssh_bridge_status: SshBridgeStatus,
     ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
     ssh_bridge_security: BridgeSecuritySnapshot,
@@ -1863,9 +1857,6 @@ impl SettingsController {
         let ssh_bridge_notification_main_window = window.window_handle();
         let mut controller = Self {
             runtime: args.runtime,
-            session_store: args.session_store,
-            snippet_store: args.snippet_store,
-            keychain_store: args.keychain_store,
             proxy_store: args.proxy_store,
             proxies: args.proxies,
             session_query,
@@ -1876,6 +1867,8 @@ impl SettingsController {
             secrets: args.secrets,
             ssh_bridge_service: args.ssh_bridge_service,
             open_ssh_integration_service: args.open_ssh_integration_service,
+            sync_executor: args.sync_executor,
+            auto_sync_snapshot: args.auto_sync,
             ssh_bridge_status,
             ssh_bridge_sync_result,
             ssh_bridge_security,
@@ -1983,17 +1976,6 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn secrets(&self) -> SecretStore {
         self.secrets.clone()
-    }
-
-    pub(in crate::ui::shell) fn sync_service(&self) -> Result<SyncService> {
-        SyncService::new(
-            self.runtime.clone(),
-            self.session_store.clone(),
-            self.proxy_store.clone(),
-            self.snippet_store.clone(),
-            self.keychain_store.clone(),
-            self.secrets.clone(),
-        )
     }
 
     pub(in crate::ui::shell) fn settings(&self) -> &AppSettings {
@@ -2498,6 +2480,39 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn sync_status(&self) -> &SyncStatus {
         &self.sync.sync_status
+    }
+
+    pub(in crate::ui::shell) fn auto_sync_enabled(&self) -> bool {
+        self.sync_config().auto_sync_enabled
+    }
+
+    pub(in crate::ui::shell) fn auto_sync_snapshot(&self) -> &miaominal_services::AutoSyncSnapshot {
+        &self.auto_sync_snapshot
+    }
+
+    pub(in crate::ui::shell) fn apply_auto_sync_snapshot(
+        &mut self,
+        snapshot: miaominal_services::AutoSyncSnapshot,
+        sync_engine: SyncEngine,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_sync_engine(sync_engine);
+        self.auto_sync_snapshot = snapshot;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn set_auto_sync_enabled(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) =
+            SettingsService::set_auto_sync_enabled(&mut self.sync.sync_engine, enabled)
+        {
+            log::warn!("failed to persist auto-sync preference: {error:?}");
+            return;
+        }
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn set_sync_provider(

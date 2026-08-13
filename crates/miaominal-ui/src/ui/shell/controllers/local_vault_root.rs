@@ -1047,6 +1047,7 @@ mod tests {
             chat: 4,
             port_forwards: 5,
             bridge: 6,
+            auto_sync: 7,
         };
         let incoming = crate::ui::application::ApplicationGenerations {
             catalogs: 10,
@@ -1055,6 +1056,7 @@ mod tests {
             chat: 40,
             port_forwards: 50,
             bridge: 60,
+            auto_sync: 70,
         };
 
         acknowledge_local_vault_generations(&mut current, incoming);

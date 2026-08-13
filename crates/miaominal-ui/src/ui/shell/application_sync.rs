@@ -28,6 +28,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.applying_application_snapshot = true;
+        let snapshot_sync_engine = snapshot.vault.sync_engine.clone();
 
         if snapshot.generations.catalogs != self.application_generations.catalogs {
             self.controllers
@@ -61,7 +62,7 @@ impl AppView {
             self.controllers.settings.update(cx, |controller, cx| {
                 controller.replace_application_settings(
                     snapshot.settings_store,
-                    snapshot.vault.sync_engine.clone(),
+                    snapshot_sync_engine.clone(),
                     window,
                     cx,
                 );
@@ -161,6 +162,17 @@ impl AppView {
                 );
             });
             self.application_generations.bridge = snapshot.generations.bridge;
+        }
+
+        if snapshot.generations.auto_sync != self.application_generations.auto_sync {
+            self.controllers.settings.update(cx, |controller, cx| {
+                controller.apply_auto_sync_snapshot(
+                    snapshot.auto_sync.clone(),
+                    snapshot_sync_engine,
+                    cx,
+                );
+            });
+            self.application_generations.auto_sync = snapshot.generations.auto_sync;
         }
 
         self.applying_application_snapshot = false;

@@ -17,6 +17,7 @@ pub(in crate::ui::shell) struct WebSearchSaveDraft {
 
 struct WebSearchSaveTaskResult {
     config: WebSearchConfig,
+    settings_store: SettingsStore,
 }
 
 impl SettingsController {
@@ -363,8 +364,7 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let config = task_result.config;
-        self.settings_store
-            .update(|settings| settings.web_search = config.clone());
+        self.settings_store = task_result.settings_store;
         set_input_value(&self.forms.web_search_api_key_input, "", window, cx);
         set_input_placeholder(
             &self.forms.web_search_api_key_input,
@@ -418,8 +418,7 @@ impl SettingsController {
 
         let message = match result {
             Ok(task_result) => {
-                self.settings_store
-                    .update(|settings| settings.web_search = task_result.config);
+                self.settings_store = task_result.settings_store;
                 self.secret_visibility
                     .set_visible(SecretRevealTarget::WebSearchApiKey, false);
                 i18n::string("settings.web_search.notifications.saved_message")
@@ -446,6 +445,7 @@ impl SettingsController {
         cx.notify();
 
         let secrets = self.secrets.clone();
+        let mut settings_store = self.settings_store.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("web-search-save".to_string())
@@ -455,16 +455,16 @@ impl SettingsController {
                     api_key,
                 } = draft;
 
-                let result = if api_key.is_empty() {
-                    Ok(WebSearchSaveTaskResult { config })
-                } else {
-                    secrets
-                        .set("web_search", SecretKind::WebSearchApiKey, &api_key)
-                        .map(|()| {
-                            config.has_api_key = true;
-                            WebSearchSaveTaskResult { config }
-                        })
-                };
+                let result = SettingsService::persist_web_search(
+                    &mut settings_store,
+                    &secrets,
+                    &mut config,
+                    (!api_key.is_empty()).then_some(api_key.as_str()),
+                )
+                .map(|_| WebSearchSaveTaskResult {
+                    config,
+                    settings_store,
+                });
 
                 tx.send(result).ok();
             });

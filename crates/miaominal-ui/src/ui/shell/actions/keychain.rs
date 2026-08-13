@@ -812,7 +812,7 @@ impl KeychainController {
             return;
         }
 
-        match service.import_key(
+        match service.import_and_persist_key(
             &self.managed_keys,
             import_name,
             source,
@@ -822,27 +822,12 @@ impl KeychainController {
         ) {
             Ok(imported) => {
                 self.managed_keys.push(imported.record.clone());
-                if let Err(error) = self.persist_managed_keys_after_user_change(&service, cx) {
-                    self.managed_keys.retain(|key| key.id != imported.record.id);
-                    self.secrets.delete_managed_key(&imported.record.id);
-                    let error = error.to_string();
-                    let message =
-                        i18n::string_args("keychain.messages.import_failed", &[("error", &error)]);
-                    self.notify_validation_failure_in_window(
-                        window,
-                        ValidationNotificationKind::InvalidInput,
-                        message,
-                        cx,
-                    );
-                    return;
-                } else {
-                    self.clear_keychain_inputs(window, cx);
-                    self.editor_open = false;
-                    let summary = imported.record.summary();
-                    self.status_message =
-                        i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
-                    cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Added));
-                }
+                self.clear_keychain_inputs(window, cx);
+                self.editor_open = false;
+                let summary = imported.record.summary();
+                self.status_message =
+                    i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
+                cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Added));
             }
             Err(error) => {
                 let error = error.to_string();
@@ -940,7 +925,6 @@ impl KeychainController {
         };
 
         let existing_keys = self.managed_keys.clone();
-        let secrets = self.secrets.clone();
         let notification_window = cx.active_window();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
@@ -956,7 +940,7 @@ impl KeychainController {
                             String::new()
                         };
 
-                    let imported = service.import_key(
+                    let imported = service.import_and_persist_key(
                         &existing_keys,
                         request.import_name,
                         request.source,
@@ -967,11 +951,6 @@ impl KeychainController {
 
                     let mut updated_keys = existing_keys.clone();
                     updated_keys.push(imported.record.clone());
-
-                    if let Err(error) = service.persist_keys(&updated_keys) {
-                        secrets.delete_managed_key(&imported.record.id);
-                        return Err(error);
-                    }
 
                     Ok(ManagedKeyImportAfterUnlockResult {
                         record: imported.record,
@@ -1277,10 +1256,21 @@ impl KeychainController {
             return;
         };
 
-        let Some(removed) = service.delete_key_record(&mut self.managed_keys, key_id) else {
-            self.status_message = i18n::string("keychain.messages.not_found");
-            cx.notify();
-            return;
+        let removed = match service.delete_and_persist_key(&mut self.managed_keys, key_id) {
+            Ok(Some(removed)) => removed,
+            Ok(None) => {
+                self.status_message = i18n::string("keychain.messages.not_found");
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.status_message = i18n::string_args(
+                    "keychain.messages.removed_locally_save_failed",
+                    &[("error", &error.to_string())],
+                );
+                cx.notify();
+                return;
+            }
         };
         let removed_id = removed.id.clone();
 
@@ -1288,19 +1278,6 @@ impl KeychainController {
             self.deploy_key_id = None;
             self.editor_mode = KeychainEditorMode::Import;
             self.editor_open = false;
-        }
-
-        if let Err(error) = self.persist_managed_keys_after_user_change(&service, cx) {
-            let error = error.to_string();
-            self.status_message = i18n::string_args(
-                "keychain.messages.removed_locally_save_failed",
-                &[("error", &error)],
-            );
-            cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Removed {
-                key_id: removed_id,
-            }));
-            cx.notify();
-            return;
         }
 
         let summary = removed.summary();

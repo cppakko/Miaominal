@@ -17,6 +17,8 @@ pub(in crate::ui::shell) struct AiProviderSaveDraft {
 
 struct AiProviderSaveTaskResult {
     provider: AiProviderConfig,
+    settings_store: SettingsStore,
+    changed: bool,
 }
 
 struct AiProviderApiKeyLoadTaskResult {
@@ -454,25 +456,6 @@ impl SettingsController {
         });
     }
 
-    fn upsert_ai_provider(&mut self, provider: AiProviderConfig, cx: &mut Context<Self>) -> bool {
-        let provider_id = provider.id.clone();
-        let changed = self.settings_store.update(|settings| {
-            if let Some(existing) = settings
-                .ai_providers
-                .iter_mut()
-                .find(|existing| existing.id == provider_id)
-            {
-                *existing = provider;
-            } else {
-                settings.ai_providers.push(provider);
-            }
-        });
-        if changed {
-            cx.notify();
-        }
-        changed
-    }
-
     fn apply_ai_provider_save_result(
         &mut self,
         task_result: AiProviderSaveTaskResult,
@@ -480,7 +463,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let provider_id = task_result.provider.id.clone();
-        let changed = self.upsert_ai_provider(task_result.provider, cx);
+        let changed = task_result.changed;
+        self.settings_store = task_result.settings_store;
         self.editing_ai_provider_id = Some(provider_id.clone());
         if changed {
             self.refresh_ai_provider_select(Some(&provider_id), window, cx);
@@ -527,7 +511,7 @@ impl SettingsController {
         let message = match result {
             Ok(task_result) => {
                 let provider_id = task_result.provider.id.clone();
-                self.upsert_ai_provider(task_result.provider, cx);
+                self.settings_store = task_result.settings_store;
                 self.editing_ai_provider_id = Some(provider_id.clone());
                 self.secret_visibility
                     .set_visible(SecretRevealTarget::AiProviderApiKey(provider_id), false);
@@ -550,6 +534,7 @@ impl SettingsController {
         cx.notify();
 
         let secrets = self.secrets.clone();
+        let mut settings_store = self.settings_store.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let spawn_result = std::thread::Builder::new()
             .name("ai-provider-save".to_string())
@@ -558,16 +543,17 @@ impl SettingsController {
                     mut provider,
                     api_key,
                 } = draft;
-                let result = if api_key.is_empty() {
-                    Ok(AiProviderSaveTaskResult { provider })
-                } else {
-                    secrets
-                        .set(&provider.id, SecretKind::AiProviderApiKey, &api_key)
-                        .map(|()| {
-                            provider.has_api_key = true;
-                            AiProviderSaveTaskResult { provider }
-                        })
-                };
+                let changed = SettingsService::persist_ai_provider(
+                    &mut settings_store,
+                    &secrets,
+                    &mut provider,
+                    (!api_key.is_empty()).then_some(api_key.as_str()),
+                );
+                let result = changed.map(|changed| AiProviderSaveTaskResult {
+                    provider,
+                    settings_store,
+                    changed,
+                });
                 tx.send(result).ok();
             });
 

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ui::i18n;
 use miaominal_secrets::SecretStore;
-use miaominal_services::SyncReloadResult;
+use miaominal_services::{SyncReloadResult, SyncTaskResult};
 use miaominal_settings::AppSettings;
 
 mod agent;
@@ -94,6 +94,7 @@ pub(in crate::ui::shell) enum AppCommand {
     OverlayDismissed(DialogOverlaySnapshot),
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,
+    ManualSyncCompleted(Box<SyncTaskResult>),
     SyncReloaded(Box<SyncReloadResult>),
     ProxiesChanged(Vec<miaominal_core::proxy::ProxyProfile>),
     ManagedKeysChanged(ManagedKeysChange),

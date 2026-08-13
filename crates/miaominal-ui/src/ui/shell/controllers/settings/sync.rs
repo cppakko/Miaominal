@@ -236,20 +236,17 @@ impl SettingsController {
             ManualSyncGate::Ready => {}
         }
 
-        let service = match self.sync_service() {
-            Ok(service) => service,
-            Err(error) => {
-                let status = SyncStatus::Error(error.to_string());
-                self.sync.sync_status = status.clone();
-                let message = Self::show_manual_sync_result(window, &status, cx);
-                cx.emit(AppCommand::Feedback(message));
-                cx.notify();
-                return;
-            }
+        let Some(executor) = self.sync_executor.clone() else {
+            let status = SyncStatus::Error("sync service unavailable".into());
+            self.sync.sync_status = status.clone();
+            let message = Self::show_manual_sync_result(window, &status, cx);
+            cx.emit(AppCommand::Feedback(message));
+            cx.notify();
+            return;
         };
         let settings_store = self.settings_store.clone();
         let engine = self.sync.sync_engine.clone();
-        let runtime = service.runtime().clone();
+        let runtime = self.runtime.clone();
         let notification_window = cx.active_window();
 
         self.sync.sync_status = SyncStatus::Syncing;
@@ -258,9 +255,9 @@ impl SettingsController {
         let (tx, rx) = std::sync::mpsc::sync_channel::<anyhow::Result<SyncTaskResult>>(1);
         runtime.spawn(async move {
             let result = match action {
-                ManualSyncAction::Push => service.push(engine, settings_store).await,
-                ManualSyncAction::ForcePush => service.push_force(engine, settings_store).await,
-                ManualSyncAction::Pull => service.pull(engine, settings_store).await,
+                ManualSyncAction::Push => executor.push(engine, settings_store).await,
+                ManualSyncAction::ForcePush => executor.push_force(engine, settings_store).await,
+                ManualSyncAction::Pull => executor.pull(engine, settings_store).await,
             };
             tx.send(result).ok();
         });
@@ -277,6 +274,7 @@ impl SettingsController {
             if let Err(error) = this.update(cx, move |controller, cx| {
                 match result {
                     Ok(result) => {
+                        let application_result = result.clone();
                         let status = result.status;
                         let pull_confirm_reason =
                             Self::manual_push_pull_confirm_reason(action, &status);
@@ -293,6 +291,9 @@ impl SettingsController {
                         if let Some(reload) = result.reload {
                             cx.emit(AppCommand::SyncReloaded(Box::new(reload)));
                         }
+                        cx.emit(AppCommand::ManualSyncCompleted(Box::new(
+                            application_result,
+                        )));
 
                         if let Some(window_handle) = notification_window {
                             let gist_id_input = controller.forms.sync_github_gist_id_input.clone();

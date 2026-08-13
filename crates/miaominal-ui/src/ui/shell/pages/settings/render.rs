@@ -3117,6 +3117,7 @@ fn sync_page(settings: Entity<SettingsController>) -> SettingPage {
         .resettable(false)
         .groups(vec![
             sync_status_group(settings.clone()),
+            sync_auto_sync_group(settings.clone()),
             sync_encryption_group(settings.clone()),
             sync_provider_group(settings),
         ])
@@ -3482,5 +3483,78 @@ fn sync_status_group(settings: Entity<SettingsController>) -> SettingGroup {
                 }),
             )
             .description(i18n::string("settings.sync.status.action.description")),
+        ])
+}
+
+fn auto_sync_phase_label(phase: miaominal_services::AutoSyncPhase) -> String {
+    let key = match phase {
+        miaominal_services::AutoSyncPhase::Disabled => "settings.sync.auto_sync.status.disabled",
+        miaominal_services::AutoSyncPhase::Watching => "settings.sync.auto_sync.status.watching",
+        miaominal_services::AutoSyncPhase::Debouncing => {
+            "settings.sync.auto_sync.status.debouncing"
+        }
+        miaominal_services::AutoSyncPhase::Pushing => "settings.sync.auto_sync.status.pushing",
+        miaominal_services::AutoSyncPhase::Pulling => "settings.sync.auto_sync.status.pulling",
+        miaominal_services::AutoSyncPhase::PullRequired => {
+            "settings.sync.auto_sync.status.pull_required"
+        }
+        miaominal_services::AutoSyncPhase::PausedVaultLocked => {
+            "settings.sync.auto_sync.status.vault_locked"
+        }
+        miaominal_services::AutoSyncPhase::RetryBackoff => "settings.sync.auto_sync.status.retry",
+    };
+    i18n::string(key)
+}
+
+fn sync_auto_sync_group(settings: Entity<SettingsController>) -> SettingGroup {
+    SettingGroup::new()
+        .title(i18n::string("settings.sync.auto_sync_group.title"))
+        .description(i18n::string("settings.sync.auto_sync_group.description"))
+        .items(vec![
+            SettingItem::new(
+                i18n::string("settings.sync.auto_sync.label"),
+                SettingField::switch(
+                    {
+                        let entity = settings.clone();
+                        move |cx: &App| entity.read(cx).auto_sync_enabled()
+                    },
+                    {
+                        let entity = settings.clone();
+                        move |enabled: bool, cx: &mut App| {
+                            entity.update(cx, |controller, cx| {
+                                controller.set_auto_sync_enabled(enabled, cx);
+                            });
+                        }
+                    },
+                ),
+            )
+            .description(i18n::string("settings.sync.auto_sync.description")),
+            SettingItem::new(
+                i18n::string("settings.sync.auto_sync.status.label"),
+                SettingField::render({
+                    let settings = settings.clone();
+                    move |_, _, cx| {
+                        let snapshot = settings.read(cx).auto_sync_snapshot();
+                        let status_text = auto_sync_phase_label(snapshot.phase);
+                        let text = match snapshot.message.as_deref() {
+                            Some(message) if !message.is_empty() => {
+                                format!("{status_text} · {message}")
+                            }
+                            _ => status_text,
+                        };
+                        let roles = miaominal_settings::current_theme().material.roles;
+                        div()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_size(miaominal_settings::FontSize::Input.scaled())
+                            .text_color(rgb(roles.on_surface_variant))
+                            .child(text)
+                            .into_any_element()
+                    }
+                }),
+            )
+            .description(i18n::string("settings.sync.auto_sync.status.description")),
         ])
 }

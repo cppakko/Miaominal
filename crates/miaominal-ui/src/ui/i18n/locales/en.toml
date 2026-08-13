@@ -1867,6 +1867,25 @@ label = "Username"
 [settings.sync.webdav.password]
 label = "Password"
 
+[settings.sync.auto_sync_group]
+title = "Auto Sync"
+description = "Automatically push local configuration changes and periodically check for remote updates. Disabled by default; configure a sync provider and passphrase first."
+
+[settings.sync.auto_sync]
+label = "Enable auto sync"
+description = "Push local changes (settings, sessions, proxies, snippets, managed keys, credentials) about 5 seconds after they change; check the remote every 60 seconds and auto-pull when the remote has new content and the local side is clean."
+
+[settings.sync.auto_sync.status]
+label = "Auto sync status"
+description = "The current phase of automatic synchronization."
+disabled = "Disabled"
+watching = "Watching"
+debouncing = "Debouncing"
+pushing = "Pushing"
+pulling = "Pulling"
+pull_required = "Manual confirmation required"
+vault_locked = "Paused, vault locked"
+retry = "Retrying"
 [settings.sync.encryption_group]
 title = "End-to-end Encryption"
 description = "Passwords and SSH private keys are encrypted with AES-256-GCM using a key derived from this passphrase with Argon2id. Set an encryption passphrase before enabling sync."

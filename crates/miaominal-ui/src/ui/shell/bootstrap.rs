@@ -293,6 +293,8 @@ impl AppView {
             bridge_status,
             bridge_sync_result,
             bridge_security,
+            sync_executor,
+            auto_sync,
         } = application.read(cx).snapshot();
         let initialization_warning =
             miaominal_paths::initialization_outcome()
@@ -392,9 +394,6 @@ impl AppView {
             },
             SettingsControllerArgs {
                 runtime: services.runtime.clone(),
-                session_store: services.session_store.clone(),
-                snippet_store: services.snippet_store.clone(),
-                keychain_store: services.keychain_store.clone(),
                 proxy_store: services.proxy_store.clone(),
                 proxies: proxies.clone(),
                 settings_store,
@@ -403,6 +402,8 @@ impl AppView {
                 local_vault_status,
                 ssh_bridge_service: services.ssh_bridge_service.clone(),
                 open_ssh_integration_service: services.open_ssh_integration_service.clone(),
+                sync_executor: sync_executor.clone(),
+                auto_sync: auto_sync.clone(),
             },
             window,
             cx,
