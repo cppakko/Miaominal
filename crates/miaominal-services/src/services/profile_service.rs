@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use miaominal_core::profile::{ImportIssue, ImportedBatch, SessionProfile};
-use miaominal_secrets::{SecretKind, SecretStore};
+use miaominal_secrets::{SecretKind, SecretStore, StoredProfileSecrets};
 use miaominal_storage::config_store::store::SessionStore;
 use std::collections::HashSet;
 
@@ -63,6 +63,7 @@ impl ProfileService {
     }
 
     pub fn commit_profile_secrets(&self, profile: &SessionProfile) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         if !profile.password.is_empty() {
             self.secrets
                 .set(&profile.id, SecretKind::Password, &profile.password)?;
@@ -81,11 +82,69 @@ impl ProfileService {
     }
 
     pub fn persist_sessions(&self, sessions: &[SessionProfile]) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         let store = self
             .session_store
             .as_ref()
             .ok_or_else(|| anyhow!("profile store unavailable"))?;
         store.save(sessions)
+    }
+
+    /// Commit a profile's credentials and session metadata as one local sync
+    /// transaction. The outer gate prevents payload readers from observing a
+    /// new credential paired with the previous sessions document.
+    pub fn save_profile(
+        &self,
+        sessions: &mut Vec<SessionProfile>,
+        selected_profile: &mut Option<usize>,
+        profile: SessionProfile,
+    ) -> Result<UpsertProfileOutcome> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let previous_sessions = sessions.clone();
+        let previous_selection = *selected_profile;
+        let previous_secrets = self.secrets.get_profile_secrets(&profile.id)?;
+
+        if let Err(error) = self.commit_profile_secrets(&profile) {
+            return match self.restore_profile_secrets(&profile.id, &previous_secrets) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(anyhow!(
+                    "failed to save profile credentials: {error:#}; restoring the previous credentials also failed: {rollback_error:#}"
+                )),
+            };
+        }
+
+        let outcome = self.upsert_profile(sessions, selected_profile, profile.clone());
+        if let Err(error) = self.persist_sessions(sessions) {
+            *sessions = previous_sessions;
+            *selected_profile = previous_selection;
+            return match self.restore_profile_secrets(&profile.id, &previous_secrets) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(anyhow!(
+                    "failed to persist profile metadata: {error:#}; restoring the previous credentials also failed: {rollback_error:#}"
+                )),
+            };
+        }
+
+        Ok(outcome)
+    }
+
+    fn restore_profile_secrets(
+        &self,
+        profile_id: &str,
+        previous: &StoredProfileSecrets,
+    ) -> Result<()> {
+        restore_secret(
+            &self.secrets,
+            profile_id,
+            SecretKind::Password,
+            previous.password.as_deref(),
+        )?;
+        restore_secret(
+            &self.secrets,
+            profile_id,
+            SecretKind::Passphrase,
+            previous.passphrase.as_deref(),
+        )
     }
 
     pub fn next_profile_id(&self, sessions: &[SessionProfile]) -> String {
@@ -171,11 +230,80 @@ impl ProfileService {
         Some(DeleteProfileOutcome { removed })
     }
 
+    /// Delete profile credentials and session metadata under one sync-data
+    /// gate. Both the in-memory list and credentials are restored if the
+    /// sessions document cannot be committed.
+    pub fn delete_and_persist_profile(
+        &self,
+        sessions: &mut Vec<SessionProfile>,
+        selected_profile: &mut Option<usize>,
+        index: usize,
+    ) -> Result<Option<DeleteProfileOutcome>> {
+        if index >= sessions.len() {
+            return Ok(None);
+        }
+
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let previous_sessions = sessions.clone();
+        let previous_selection = *selected_profile;
+        let profile_id = sessions[index].id.clone();
+        let previous_secrets = self.secrets.get_profile_secrets(&profile_id)?;
+
+        for (kind, previous) in [
+            (SecretKind::Password, previous_secrets.password.as_deref()),
+            (
+                SecretKind::Passphrase,
+                previous_secrets.passphrase.as_deref(),
+            ),
+        ] {
+            if previous.is_some()
+                && let Err(error) = self.secrets.delete(&profile_id, kind)
+            {
+                return match self.restore_profile_secrets(&profile_id, &previous_secrets) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(anyhow!(
+                        "failed to delete profile credentials: {error:#}; restoring the previous credentials also failed: {rollback_error:#}"
+                    )),
+                };
+            }
+        }
+
+        let removed = sessions.remove(index);
+        *selected_profile = match *selected_profile {
+            Some(selected) if selected == index => {
+                if sessions.is_empty() {
+                    None
+                } else if index >= sessions.len() {
+                    Some(sessions.len() - 1)
+                } else {
+                    Some(index)
+                }
+            }
+            Some(selected) if selected > index => Some(selected - 1),
+            other => other,
+        };
+        let outcome = DeleteProfileOutcome { removed };
+
+        if let Err(error) = self.persist_sessions(sessions) {
+            *sessions = previous_sessions;
+            *selected_profile = previous_selection;
+            return match self.restore_profile_secrets(&profile_id, &previous_secrets) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(anyhow!(
+                    "failed to persist profile deletion: {error:#}; restoring the previous credentials also failed: {rollback_error:#}"
+                )),
+            };
+        }
+
+        Ok(Some(outcome))
+    }
+
     pub fn import_profiles(
         &self,
         existing_sessions: &mut Vec<SessionProfile>,
         batch: ImportedBatch,
     ) -> Result<ImportedProfilesResult> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         let ImportedBatch { sessions, issues } = batch;
         let imported_count = sessions.len();
         let mut staged_profiles = Vec::with_capacity(imported_count);
@@ -209,6 +337,18 @@ impl ProfileService {
             imported_count,
             issues,
         })
+    }
+}
+
+fn restore_secret(
+    secrets: &SecretStore,
+    profile_id: &str,
+    kind: SecretKind,
+    previous: Option<&str>,
+) -> Result<()> {
+    match previous {
+        Some(value) => secrets.set(profile_id, kind, value),
+        None => secrets.delete(profile_id, kind),
     }
 }
 
@@ -368,5 +508,42 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(observed_values.lock().expect("values lock").is_empty());
+    }
+
+    #[test]
+    fn save_profile_rolls_back_credentials_when_session_persist_fails() {
+        let backend = FailPassphraseBackend::default();
+        let observed_values = backend.values.clone();
+        let secrets = SecretStore::with_credentials(CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            backend,
+        ));
+        let service = ProfileService::new(
+            Some(SessionStore::with_path(std::env::temp_dir())),
+            secrets.clone(),
+        );
+        let mut sessions = vec![profile("session-1", "Existing")];
+        let mut selected = Some(0);
+        secrets
+            .set("session-1", SecretKind::Password, "old-password")
+            .unwrap();
+        let mut replacement = profile("session-1", "Replacement");
+        replacement.password = "new-password".into();
+        replacement.has_stored_password = true;
+
+        service
+            .save_profile(&mut sessions, &mut selected, replacement)
+            .expect_err("saving to a directory path should fail");
+
+        assert_eq!(sessions[0].name, "Existing");
+        assert_eq!(selected, Some(0));
+        assert_eq!(
+            observed_values
+                .lock()
+                .expect("values lock")
+                .get("session-1:password")
+                .map(String::as_str),
+            Some("old-password")
+        );
     }
 }

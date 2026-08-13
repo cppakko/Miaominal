@@ -3,10 +3,13 @@ use anyhow::Context as _;
 use anyhow::Result;
 use miaominal_paths as paths;
 use miaominal_secrets::{
-    APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretStore,
+    APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretKind, SecretStore,
     VaultCredentialBackend,
 };
-use miaominal_settings::{FONT_SIZE_MAX, FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN};
+use miaominal_settings::{
+    AiProviderConfig, FONT_SIZE_MAX, FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
+    WebSearchConfig,
+};
 use miaominal_storage::SettingsStore;
 use miaominal_sync::SyncProvider;
 use miaominal_sync::{credential_migration, engine::SyncEngine};
@@ -45,6 +48,99 @@ pub enum LocalVaultPassphraseChangeOutcome {
 pub struct SettingsService;
 
 impl SettingsService {
+    pub fn persist_ai_provider(
+        settings_store: &mut SettingsStore,
+        secrets: &SecretStore,
+        provider: &mut AiProviderConfig,
+        api_key: Option<&str>,
+    ) -> Result<bool> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        settings_store.reload_from_disk()?;
+        let previous_api_key = match api_key {
+            Some(_) => secrets.get(&provider.id, SecretKind::AiProviderApiKey)?,
+            None => None,
+        };
+
+        if let Some(api_key) = api_key {
+            secrets.set(&provider.id, SecretKind::AiProviderApiKey, api_key)?;
+            provider.has_api_key = true;
+        }
+
+        let mut settings = settings_store.settings().clone();
+        if let Some(existing) = settings
+            .ai_providers
+            .iter_mut()
+            .find(|existing| existing.id == provider.id)
+        {
+            *existing = provider.clone();
+        } else {
+            settings.ai_providers.push(provider.clone());
+        }
+
+        match settings_store.replace(settings) {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                if api_key.is_none() {
+                    return Err(error);
+                }
+                match restore_secret(
+                    secrets,
+                    &provider.id,
+                    SecretKind::AiProviderApiKey,
+                    previous_api_key.as_deref(),
+                ) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(anyhow::anyhow!(
+                        "failed to persist AI provider settings: {error:#}; restoring the previous API key also failed: {rollback_error:#}"
+                    )),
+                }
+            }
+        }
+    }
+
+    pub fn persist_web_search(
+        settings_store: &mut SettingsStore,
+        secrets: &SecretStore,
+        config: &mut WebSearchConfig,
+        api_key: Option<&str>,
+    ) -> Result<bool> {
+        const SECRET_ID: &str = "web_search";
+
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        settings_store.reload_from_disk()?;
+        let previous_api_key = match api_key {
+            Some(_) => secrets.get(SECRET_ID, SecretKind::WebSearchApiKey)?,
+            None => None,
+        };
+
+        if let Some(api_key) = api_key {
+            secrets.set(SECRET_ID, SecretKind::WebSearchApiKey, api_key)?;
+            config.has_api_key = true;
+        }
+
+        let mut settings = settings_store.settings().clone();
+        settings.web_search = config.clone();
+        match settings_store.replace(settings) {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                if api_key.is_none() {
+                    return Err(error);
+                }
+                match restore_secret(
+                    secrets,
+                    SECRET_ID,
+                    SecretKind::WebSearchApiKey,
+                    previous_api_key.as_deref(),
+                ) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(anyhow::anyhow!(
+                        "failed to persist web search settings: {error:#}; restoring the previous API key also failed: {rollback_error:#}"
+                    )),
+                }
+            }
+        }
+    }
+
     pub fn adjust_font_size(settings_store: &mut SettingsStore, delta: f32) -> Option<f32> {
         let target =
             (settings_store.settings().font_size + delta).clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
@@ -63,9 +159,18 @@ impl SettingsService {
 
     pub fn set_sync_provider(sync_engine: &mut SyncEngine, provider: SyncProvider) -> Result<()> {
         sync_engine.config_store.update(|config| {
+            if config.provider != provider {
+                Self::clear_sync_baseline(config);
+            }
             config.provider = provider;
             config.normalize_legacy_provider_flags();
         })
+    }
+
+    pub fn set_auto_sync_enabled(sync_engine: &mut SyncEngine, enabled: bool) -> Result<()> {
+        sync_engine
+            .config_store
+            .update(|config| config.auto_sync_enabled = enabled)
     }
 
     pub fn persist_sync_github_token(sync_engine: &mut SyncEngine, token: &str) -> Result<()> {
@@ -82,6 +187,9 @@ impl SettingsService {
     ) -> Result<()> {
         sync_engine.config_store.set_github_token(token)?;
         sync_engine.config_store.update(|config| {
+            if config.gist_id != gist_id {
+                Self::clear_sync_baseline(config);
+            }
             config.gist_id = gist_id;
             config.has_github_token = !token.trim().is_empty();
         })
@@ -105,6 +213,9 @@ impl SettingsService {
     ) -> Result<()> {
         sync_engine.config_store.set_webdav_password(password)?;
         sync_engine.config_store.update(|config| {
+            if config.webdav_url != url || config.webdav_username != username {
+                Self::clear_sync_baseline(config);
+            }
             config.webdav_url = url;
             config.webdav_username = username;
             config.has_webdav_password = !password.trim().is_empty();
@@ -115,6 +226,7 @@ impl SettingsService {
         sync_engine: &mut SyncEngine,
         passphrase: Option<&str>,
     ) -> Result<bool> {
+        let previous = sync_engine.config_store.get_passphrase()?;
         let configured = match passphrase {
             Some(passphrase) => {
                 sync_engine.config_store.set_passphrase(passphrase)?;
@@ -125,12 +237,37 @@ impl SettingsService {
                 false
             }
         };
+        let changed = previous.as_deref() != passphrase;
 
-        sync_engine
-            .config_store
-            .update(|config| config.has_passphrase = configured)?;
+        if let Err(error) = sync_engine.config_store.update(|config| {
+            config.has_passphrase = configured;
+            if changed {
+                // The plaintext payload may be identical, but changing the
+                // encryption passphrase requires a fresh conditional push so
+                // the remote can be decrypted with the new passphrase.
+                config.last_synced_local_revision = None;
+            }
+        }) {
+            let rollback = match previous.as_deref() {
+                Some(previous) => sync_engine.config_store.set_passphrase(previous),
+                None => sync_engine.config_store.delete_passphrase(),
+            };
+            return match rollback {
+                Ok(()) => Err(error.context("failed to update sync passphrase configuration")),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "failed to update sync passphrase configuration: {error:#}; restoring the previous passphrase also failed: {rollback_error:#}"
+                )),
+            };
+        }
 
         Ok(configured)
+    }
+
+    fn clear_sync_baseline(config: &mut miaominal_sync::SyncConfig) {
+        config.last_sync_at = 0;
+        config.remote_etag = None;
+        config.remote_payload_id = None;
+        config.last_synced_local_revision = None;
     }
 
     pub fn local_vault_lock_transition(settings_store: &SettingsStore) -> LocalVaultTransition {
@@ -426,6 +563,18 @@ impl SettingsService {
     }
 }
 
+fn restore_secret(
+    secrets: &SecretStore,
+    id: &str,
+    kind: SecretKind,
+    previous: Option<&str>,
+) -> Result<()> {
+    match previous {
+        Some(value) => secrets.set(id, kind, value),
+        None => secrets.delete(id, kind),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,6 +605,13 @@ mod tests {
             "miaominal-settings-service-{label}-{}",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    fn test_settings_store(label: &str) -> (SettingsStore, PathBuf) {
+        let path = temp_config_dir(label).join("settings.toml");
+        let store = SettingsStore::load_with_path(path.clone())
+            .expect("test settings store should initialize");
+        (store, path)
     }
 
     fn protected(value: &str) -> ProtectedPassphrase {
@@ -529,12 +685,85 @@ mod tests {
 
     #[test]
     fn adjust_font_size_clamps_to_supported_range() {
-        let mut store = SettingsStore::fallback();
+        let (mut store, settings_path) = test_settings_store("adjust-font-size");
 
         let value =
             SettingsService::adjust_font_size(&mut store, 99.0).expect("font size should update");
 
         assert_eq!(value, FONT_SIZE_MAX);
+
+        let _ = fs::remove_dir_all(settings_path.parent().unwrap());
+    }
+
+    #[test]
+    fn persist_ai_provider_commits_key_and_settings_together() {
+        let (mut store, settings_path) = test_settings_store("persist-ai-provider");
+        let (secrets, _, _, secrets_path, sync_path) =
+            test_keyring_like_backend("persist-ai-provider");
+        let mut provider = AiProviderConfig::new(miaominal_settings::AiProviderKind::OpenAi);
+        let provider_id = provider.id.clone();
+
+        SettingsService::persist_ai_provider(
+            &mut store,
+            &secrets,
+            &mut provider,
+            Some("new-api-key"),
+        )
+        .expect("AI provider transaction should succeed");
+
+        assert!(provider.has_api_key);
+        assert!(
+            store
+                .settings()
+                .ai_providers
+                .iter()
+                .any(|saved| saved.id == provider_id && saved.has_api_key)
+        );
+        assert_eq!(
+            secrets
+                .get(&provider_id, SecretKind::AiProviderApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("new-api-key")
+        );
+
+        let _ = fs::remove_dir_all(settings_path.parent().unwrap());
+        cleanup_test_vault(&secrets_path);
+        let _ = fs::remove_file(sync_path);
+    }
+
+    #[test]
+    fn persist_web_search_preserves_unrelated_concurrent_settings() {
+        let (mut worker_store, settings_path) = test_settings_store("persist-web-search");
+        let mut ui_store = worker_store.clone();
+        let (secrets, _, _, secrets_path, sync_path) =
+            test_keyring_like_backend("persist-web-search");
+        ui_store.update(|settings| settings.font_size = 19.0);
+        let mut config = WebSearchConfig::default();
+        config.enabled = true;
+
+        SettingsService::persist_web_search(
+            &mut worker_store,
+            &secrets,
+            &mut config,
+            Some("web-api-key"),
+        )
+        .expect("web search transaction should succeed");
+
+        assert_eq!(worker_store.settings().font_size, 19.0);
+        assert!(worker_store.settings().web_search.enabled);
+        assert!(worker_store.settings().web_search.has_api_key);
+        assert_eq!(
+            secrets
+                .get("web_search", SecretKind::WebSearchApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("web-api-key")
+        );
+
+        let _ = fs::remove_dir_all(settings_path.parent().unwrap());
+        cleanup_test_vault(&secrets_path);
+        let _ = fs::remove_file(sync_path);
     }
 
     #[test]
@@ -583,6 +812,31 @@ mod tests {
     }
 
     #[test]
+    fn changing_sync_provider_clears_remote_and_local_baselines() {
+        let (mut engine, vault_path, config_path) =
+            test_vault_sync_engine("provider-baseline", "vault-passphrase");
+        engine
+            .config_store
+            .update(|config| {
+                config.provider = SyncProvider::GithubGist;
+                config.last_sync_at = 42;
+                config.remote_etag = Some("\"etag-v1\"".into());
+                config.remote_payload_id = Some("payload-v1".into());
+                config.last_synced_local_revision = Some("local-v1".into());
+            })
+            .unwrap();
+
+        SettingsService::set_sync_provider(&mut engine, SyncProvider::WebDav).unwrap();
+
+        assert_eq!(engine.config_store.config.last_sync_at, 0);
+        assert_eq!(engine.config_store.config.remote_etag, None);
+        assert_eq!(engine.config_store.config.remote_payload_id, None);
+        assert_eq!(engine.config_store.config.last_synced_local_revision, None);
+        cleanup_test_vault(&vault_path);
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
     fn persist_sync_passphrase_writes_and_clears_vault_secret() {
         let (mut engine, vault_path, config_path) =
             test_vault_sync_engine("persist-sync-passphrase", "vault-passphrase");
@@ -622,6 +876,60 @@ mod tests {
         let persisted = fs::read_to_string(&config_path).expect("sync config should persist");
         let persisted: SyncConfig = toml::from_str(&persisted).expect("sync config should parse");
         assert!(!persisted.has_passphrase);
+
+        cleanup_test_vault(&vault_path);
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn changing_existing_sync_passphrase_invalidates_local_sync_baseline() {
+        let (mut engine, vault_path, config_path) =
+            test_vault_sync_engine("change-sync-passphrase", "vault-passphrase");
+        SettingsService::persist_sync_passphrase(&mut engine, Some("old-sync-passphrase")).unwrap();
+        engine
+            .config_store
+            .update(|config| {
+                config.last_synced_local_revision = Some("local-v1".into());
+                config.remote_etag = Some("\"etag-v1\"".into());
+            })
+            .unwrap();
+
+        SettingsService::persist_sync_passphrase(&mut engine, Some("new-sync-passphrase")).unwrap();
+
+        assert_eq!(engine.config_store.config.last_synced_local_revision, None);
+        assert_eq!(
+            engine.config_store.config.remote_etag.as_deref(),
+            Some("\"etag-v1\"")
+        );
+        assert_eq!(
+            engine.config_store.get_passphrase().unwrap().as_deref(),
+            Some("new-sync-passphrase")
+        );
+
+        cleanup_test_vault(&vault_path);
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn saving_identical_sync_passphrase_keeps_local_sync_baseline() {
+        let (mut engine, vault_path, config_path) =
+            test_vault_sync_engine("same-sync-passphrase", "vault-passphrase");
+        SettingsService::persist_sync_passphrase(&mut engine, Some("sync-passphrase")).unwrap();
+        engine
+            .config_store
+            .update(|config| config.last_synced_local_revision = Some("local-v1".into()))
+            .unwrap();
+
+        SettingsService::persist_sync_passphrase(&mut engine, Some("sync-passphrase")).unwrap();
+
+        assert_eq!(
+            engine
+                .config_store
+                .config
+                .last_synced_local_revision
+                .as_deref(),
+            Some("local-v1")
+        );
 
         cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);

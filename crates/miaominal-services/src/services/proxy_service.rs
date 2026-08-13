@@ -106,6 +106,7 @@ impl ProxyService {
         mut proxy: ProxyProfile,
         password_update: ProxyPasswordUpdate,
     ) -> Result<UpsertProxyOutcome> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         let store = self
             .store
             .as_ref()
@@ -179,6 +180,7 @@ impl ProxyService {
         proxy_id: &str,
         sessions: &[SessionProfile],
     ) -> Result<ProxyProfile> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         let store = self
             .store
             .as_ref()

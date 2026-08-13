@@ -82,6 +82,7 @@ impl KeychainService {
         public_key_material: Option<&str>,
         passphrase: Option<&str>,
     ) -> Result<ImportedManagedKey> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         let (record, normalized_private_key) = self.store.import_private_key(
             existing_keys,
             name,
@@ -105,6 +106,86 @@ impl KeychainService {
 
     pub fn persist_keys(&self, keys: &[ManagedKeyRecord]) -> Result<()> {
         self.store.save(keys)
+    }
+
+    /// Import the private key secret and publish its metadata under one outer
+    /// sync-data gate so payload readers can never observe only one half.
+    pub fn import_and_persist_key(
+        &self,
+        existing_keys: &[ManagedKeyRecord],
+        name: String,
+        source: ManagedKeySource,
+        private_key_material: &str,
+        public_key_material: Option<&str>,
+        passphrase: Option<&str>,
+    ) -> Result<ImportedManagedKey> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let imported = self.import_key(
+            existing_keys,
+            name,
+            source,
+            private_key_material,
+            public_key_material,
+            passphrase,
+        )?;
+        let mut updated_keys = existing_keys.to_vec();
+        updated_keys.push(imported.record.clone());
+
+        if let Err(error) = self.persist_keys(&updated_keys) {
+            return match self
+                .secrets
+                .delete(&imported.record.id, SecretKind::ManagedPrivateKey)
+            {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "failed to persist managed key metadata: {error:#}; removing the imported private key also failed: {rollback_error:#}"
+                )),
+            };
+        }
+
+        Ok(imported)
+    }
+
+    /// Remove a managed-key secret and metadata record atomically with respect
+    /// to sync payload reads. If persisting the remaining records fails, the
+    /// previous private key is restored before the gate is released.
+    pub fn delete_and_persist_key(
+        &self,
+        managed_keys: &mut Vec<ManagedKeyRecord>,
+        key_id: &str,
+    ) -> Result<Option<ManagedKeyRecord>> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let Some(index) = managed_keys.iter().position(|key| key.id == key_id) else {
+            return Ok(None);
+        };
+        let previous_secret = self.secrets.get(key_id, SecretKind::ManagedPrivateKey)?;
+        let removed = managed_keys.remove(index);
+
+        if previous_secret.is_some()
+            && let Err(error) = self.secrets.delete(key_id, SecretKind::ManagedPrivateKey)
+        {
+            managed_keys.insert(index, removed);
+            return Err(error);
+        }
+        if let Err(error) = self.persist_keys(managed_keys) {
+            managed_keys.insert(index, removed.clone());
+            return match previous_secret.as_deref() {
+                Some(previous) => {
+                    match self
+                        .secrets
+                        .set(key_id, SecretKind::ManagedPrivateKey, previous)
+                    {
+                        Ok(()) => Err(error),
+                        Err(rollback_error) => Err(anyhow::anyhow!(
+                            "failed to persist managed key removal: {error:#}; restoring the private key also failed: {rollback_error:#}"
+                        )),
+                    }
+                }
+                None => Err(error),
+            };
+        }
+
+        Ok(Some(removed))
     }
 
     pub fn delete_key(
