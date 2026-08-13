@@ -220,6 +220,7 @@ impl SecretStore {
     }
 
     pub fn set(&self, profile_id: &str, kind: SecretKind, value: &str) -> Result<()> {
+        let _sync_guard = crate::lock_sync_data();
         let account = self.account(profile_id, kind);
         if kind != SecretKind::ManagedPrivateKey {
             return self.credentials.set(&account, value).with_context(|| {
@@ -292,6 +293,7 @@ impl SecretStore {
     }
 
     pub fn delete(&self, profile_id: &str, kind: SecretKind) -> Result<()> {
+        let _sync_guard = crate::lock_sync_data();
         let account = self.account(profile_id, kind);
         let manifest = if kind == SecretKind::ManagedPrivateKey {
             self.credentials
