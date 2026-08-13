@@ -47,6 +47,7 @@ impl ManagedKeyStore {
     }
 
     pub fn save(&self, keys: &[ManagedKeyRecord]) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         if let Some(parent) = self.keys_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;

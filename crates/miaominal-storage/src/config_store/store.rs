@@ -53,6 +53,7 @@ impl SessionStore {
     }
 
     pub fn save(&self, sessions: &[SessionProfile]) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         if let Some(parent) = self.sessions_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -110,6 +111,7 @@ impl SnippetStore {
     }
 
     pub fn save(&self, snippets: &[SnippetRecord]) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         if let Some(parent) = self.snippets_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;

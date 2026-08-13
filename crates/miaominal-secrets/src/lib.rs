@@ -3,6 +3,7 @@ pub mod credential_backend;
 mod model;
 mod protected_memory;
 mod secret_store;
+mod sync_data;
 
 pub use credential_backend::{
     APP_CREDENTIAL_SERVICE, CredentialStore, LockedCredentialBackend, VaultCredentialBackend,
@@ -10,4 +11,5 @@ pub use credential_backend::{
 };
 pub use model::SecretKind;
 pub use protected_memory::{MAX_VAULT_PASSPHRASE_BYTES, ProtectedPassphrase};
-pub use secret_store::{LocalVaultLockedError, SecretStore};
+pub use secret_store::{LocalVaultLockedError, SecretStore, StoredProfileSecrets};
+pub use sync_data::{SyncDataGuard, lock_sync_data};

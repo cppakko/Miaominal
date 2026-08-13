@@ -64,6 +64,7 @@ impl ProxyStore {
     }
 
     pub fn save(&self, proxies: &[ProxyProfile]) -> Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
         if let Some(parent) = self.proxies_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;

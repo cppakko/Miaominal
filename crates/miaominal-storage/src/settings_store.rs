@@ -94,10 +94,41 @@ impl SettingsStore {
         &self.settings
     }
 
+    /// Read the latest persisted settings without replacing this store's
+    /// in-memory snapshot or publishing them as the process-global settings.
+    ///
+    /// Background services use this when they need a coherent view of local
+    /// data while the UI may be committing through another `SettingsStore`
+    /// clone.
+    pub fn read_current(&self) -> Result<AppSettings> {
+        let _lock = SettingsFileLock::acquire(&self.settings_file)?;
+        load_settings_document_unlocked(&self.settings_file)
+    }
+
+    pub fn reload_from_disk(&mut self) -> Result<()> {
+        self.settings = self.read_current()?;
+        Ok(())
+    }
+
     pub fn update<F: FnOnce(&mut AppSettings)>(&mut self, f: F) -> bool {
-        let mut next = self.settings.clone();
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let _lock = match SettingsFileLock::acquire(&self.settings_file) {
+            Ok(lock) => lock,
+            Err(error) => {
+                log::warn!("failed to lock settings before update: {error:?}");
+                return false;
+            }
+        };
+        let latest = match self.latest_settings_unlocked() {
+            Ok(settings) => settings,
+            Err(error) => {
+                log::warn!("failed to reload settings before update: {error:?}");
+                return false;
+            }
+        };
+        let mut next = latest.clone();
         f(&mut next);
-        match self.replace(next) {
+        match self.replace_against_latest_unlocked(next, latest) {
             Ok(changed) => changed,
             Err(error) => {
                 log::warn!("failed to persist settings: {error:?}");
@@ -106,23 +137,36 @@ impl SettingsStore {
         }
     }
 
-    pub fn replace(&mut self, mut settings: AppSettings) -> Result<bool> {
-        let before = self.settings.clone();
+    pub fn replace(&mut self, settings: AppSettings) -> Result<bool> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let _lock = SettingsFileLock::acquire(&self.settings_file)?;
+        let latest = self.latest_settings_unlocked()?;
+        self.replace_against_latest_unlocked(settings, latest)
+    }
+
+    fn latest_settings_unlocked(&self) -> Result<AppSettings> {
+        if self.settings_file.exists() {
+            load_settings_document_unlocked(&self.settings_file)
+        } else {
+            Ok(self.settings.clone())
+        }
+    }
+
+    fn replace_against_latest_unlocked(
+        &mut self,
+        mut settings: AppSettings,
+        latest: AppSettings,
+    ) -> Result<bool> {
         settings.sanitize();
         validate_settings(&settings)?;
-        if changed(&before, &settings) {
-            let _lock = SettingsFileLock::acquire(&self.settings_file)?;
-            if self.settings_file.exists() {
-                let latest = load_settings_document_unlocked(&self.settings_file)?;
-                preserve_newer_bridge_policy(&mut settings, &latest);
-            }
+        preserve_newer_bridge_policy(&mut settings, &latest);
+        let settings_changed = changed(&latest, &settings);
+        if settings_changed {
             persist_settings_document_unlocked(&self.settings_file, &settings)?;
-            self.settings = settings;
-            install(self.settings.clone());
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        self.settings = settings;
+        install(self.settings.clone());
+        Ok(settings_changed)
     }
 
     fn persist(&self) -> Result<()> {
@@ -544,6 +588,28 @@ mod tests {
 
         assert_eq!(policy_store.policy().unwrap(), policy);
         assert_eq!(settings_store.settings().ssh_bridge.security_policy, policy);
+    }
+
+    #[test]
+    fn stale_store_can_update_latest_disk_value_back_to_its_old_value() {
+        let paths = TestSettingsPath::new();
+        let mut initial = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("initial settings should load");
+        assert!(initial.update(|settings| settings.font_size = 15.0));
+
+        let mut stale = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("stale settings copy should load");
+        let mut current = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("current settings copy should load");
+        assert!(current.update(|settings| settings.font_size = 17.0));
+        assert_eq!(stale.settings().font_size, 15.0);
+
+        assert!(stale.update(|settings| settings.font_size = 15.0));
+
+        let persisted = load_settings_document_unlocked(&paths.settings_file)
+            .expect("updated settings should remain readable");
+        assert_eq!(persisted.font_size, 15.0);
+        assert_eq!(stale.settings().font_size, 15.0);
     }
 
     #[test]
