@@ -17,6 +17,6 @@ pub mod store;
 #[path = "sync/webdav.rs"]
 mod webdav;
 
-pub use engine::SyncEngine;
+pub use engine::{RemoteSyncState, SyncEngine};
 pub use model::*;
 pub use store::SyncConfigStore;

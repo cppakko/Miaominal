@@ -7,10 +7,16 @@ use miaominal_secrets::{
 };
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 const ACCOUNT_GITHUB_TOKEN: &str = "sync:github-token";
 const ACCOUNT_WEBDAV_PASSWORD: &str = "sync:webdav-password";
 const ACCOUNT_PASSPHRASE: &str = "sync:encryption-passphrase";
+
+// Every SyncConfigStore instance in the process targets the same logical
+// configuration. Serialize read-modify-write cycles so a stale engine clone
+// cannot replace settings that were just saved by the UI.
+static SYNC_CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncSecrets {
@@ -24,6 +30,7 @@ pub struct SyncConfigStore {
     config_file: PathBuf,
     credentials: CredentialStore,
     pub config: SyncConfig,
+    loaded_config: SyncConfig,
 }
 
 impl SyncConfigStore {
@@ -61,13 +68,18 @@ impl SyncConfigStore {
             SyncConfig::default()
         };
 
+        let loaded_config = config.clone();
         if config.device_id.is_empty() {
             config.device_id = uuid::Uuid::new_v4().to_string();
         }
         config.normalize_legacy_provider_flags();
 
-        let store = Self::with_credentials(config_file, config, credentials);
-        store.persist()?;
+        let mut store = Self::with_credentials(config_file, config, credentials);
+        store.loaded_config = loaded_config;
+        // Re-read under the process-wide write lock before normalizing and
+        // persisting. Another store may have updated the file between the
+        // initial read above and this point.
+        store.update(|_| {})?;
         Ok(store)
     }
 
@@ -114,32 +126,78 @@ impl SyncConfigStore {
         Self {
             config_file,
             credentials,
+            loaded_config: config.clone(),
             config,
         }
     }
 
     pub fn update<F: FnOnce(&mut SyncConfig)>(&mut self, f: F) -> Result<()> {
-        let mut next = self.config.clone();
+        self.update_inner(None, f).map(|_| ())
+    }
+
+    /// Apply an update only if no other SyncConfig writer has committed since
+    /// `expected_revision` was observed. The check and write share the same
+    /// process-wide critical section.
+    pub fn update_if_revision<F: FnOnce(&mut SyncConfig)>(
+        &mut self,
+        expected_revision: u64,
+        f: F,
+    ) -> Result<bool> {
+        self.update_inner(Some(expected_revision), f)
+    }
+
+    fn update_inner<F: FnOnce(&mut SyncConfig)>(
+        &mut self,
+        expected_revision: Option<u64>,
+        f: F,
+    ) -> Result<bool> {
+        let _guard = SYNC_CONFIG_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let persisted_config = self.read_config()?;
+        let config_exists = persisted_config.is_some();
+        let mut next = persisted_config.unwrap_or_else(|| self.config.clone());
+        if expected_revision.is_some_and(|expected| next.config_revision != expected) {
+            self.config = next.clone();
+            self.loaded_config = next;
+            return Ok(false);
+        }
+        let persisted = next.clone();
+        merge_external_config_changes(&mut next, &self.loaded_config, &self.config);
+        let persisted_revision = persisted.config_revision;
+        let local_revision = self.config.config_revision;
         f(&mut next);
         next.normalize_legacy_provider_flags();
+        if config_exists && next == persisted {
+            self.config = next.clone();
+            self.loaded_config = next;
+            return Ok(true);
+        }
+        next.config_revision = persisted_revision.max(local_revision).saturating_add(1);
         self.persist_config(&next)?;
-        self.config = next;
-        Ok(())
+        self.config = next.clone();
+        self.loaded_config = next;
+        Ok(true)
     }
 
     pub fn sync_from_disk(&mut self) {
-        let Ok(content) = fs::read_to_string(&self.config_file) else {
-            return;
-        };
-        let Ok(persisted) = toml::from_str::<SyncConfig>(&content) else {
-            return;
-        };
-        self.config.last_sync_at = persisted.last_sync_at;
-        self.config.gist_id = persisted.gist_id;
+        if let Ok(Some(persisted)) = self.read_config() {
+            self.config = persisted.clone();
+            self.loaded_config = persisted;
+        }
     }
 
-    fn persist(&self) -> Result<()> {
-        self.persist_config(&self.config)
+    fn read_config(&self) -> Result<Option<SyncConfig>> {
+        match fs::read_to_string(&self.config_file) {
+            Ok(content) if content.trim().is_empty() => Ok(Some(SyncConfig::default())),
+            Ok(content) => toml::from_str(&content)
+                .with_context(|| format!("failed to parse {}", self.config_file.display()))
+                .map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to read {}", self.config_file.display()))
+            }
+        }
     }
 
     fn persist_config(&self, config: &SyncConfig) -> Result<()> {
@@ -226,6 +284,47 @@ impl SyncConfigStore {
     }
 }
 
+/// Preserve direct in-memory edits made by existing callers while still
+/// starting from the latest persisted config. Fields unchanged since this
+/// store was loaded are taken from disk; locally changed fields win and are
+/// then combined with the update closure under the same write lock.
+fn merge_external_config_changes(
+    target: &mut SyncConfig,
+    loaded: &SyncConfig,
+    current: &SyncConfig,
+) {
+    if current.config_revision > loaded.config_revision {
+        if current.config_revision >= target.config_revision {
+            *target = current.clone();
+        }
+        return;
+    }
+
+    macro_rules! merge_field {
+        ($field:ident) => {
+            if current.$field != loaded.$field {
+                target.$field = current.$field.clone();
+            }
+        };
+    }
+
+    merge_field!(provider);
+    merge_field!(gist_enabled);
+    merge_field!(webdav_enabled);
+    merge_field!(gist_id);
+    merge_field!(webdav_url);
+    merge_field!(webdav_username);
+    merge_field!(has_github_token);
+    merge_field!(has_webdav_password);
+    merge_field!(has_passphrase);
+    merge_field!(last_sync_at);
+    merge_field!(device_id);
+    merge_field!(auto_sync_enabled);
+    merge_field!(remote_etag);
+    merge_field!(remote_payload_id);
+    merge_field!(last_synced_local_revision);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_from_disk_updates_last_sync_at() {
+    fn sync_from_disk_updates_last_sync_at_and_remote_etag() {
         let config_path = temp_sync_config_path();
         let credentials =
             CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
@@ -312,19 +411,135 @@ mod tests {
             SyncConfig::default(),
             credentials.clone(),
         );
-        store.persist().expect("initial config should persist");
+        store.update(|_| {}).expect("initial config should persist");
 
         let updated_config = SyncConfig {
             last_sync_at: 42,
+            remote_etag: Some("\"etag-v2\"".into()),
             ..SyncConfig::default()
         };
-        SyncConfigStore::with_credentials(config_path.clone(), updated_config, credentials)
-            .persist()
-            .expect("updated config should persist");
+        let serialized = toml::to_string_pretty(&updated_config).unwrap();
+        atomic_write(&config_path, serialized).expect("updated config should persist");
 
         store.sync_from_disk();
 
         assert_eq!(store.config.last_sync_at, 42);
+        assert_eq!(store.config.remote_etag.as_deref(), Some("\"etag-v2\""));
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn sync_config_new_fields_default_off_and_roundtrip() {
+        let config = SyncConfig::default();
+        assert!(!config.auto_sync_enabled);
+        assert_eq!(config.remote_etag, None);
+
+        let config_path = temp_sync_config_path();
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+        let mut store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            SyncConfig::default(),
+            credentials,
+        );
+        store
+            .update(|config| {
+                config.auto_sync_enabled = true;
+                config.remote_etag = Some("\"etag-v1\"".into());
+            })
+            .expect("config update should persist");
+
+        let content = std::fs::read_to_string(&config_path).expect("config should be readable");
+        let loaded = toml::from_str::<SyncConfig>(&content).expect("config should parse");
+
+        assert!(loaded.auto_sync_enabled);
+        assert_eq!(loaded.remote_etag.as_deref(), Some("\"etag-v1\""));
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn concurrent_store_updates_merge_without_overwriting_unrelated_fields() {
+        let config_path = temp_sync_config_path();
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+        let initial = SyncConfig {
+            provider: crate::SyncProvider::WebDav,
+            webdav_url: "https://old.example/sync.json".into(),
+            remote_etag: Some("\"etag-v1\"".into()),
+            ..SyncConfig::default()
+        };
+        let mut settings_store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            initial.clone(),
+            credentials.clone(),
+        );
+        settings_store.update(|_| {}).unwrap();
+        let mut sync_store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            settings_store.config.clone(),
+            credentials,
+        );
+
+        settings_store
+            .update(|config| {
+                config.provider = crate::SyncProvider::GithubGist;
+                config.gist_id = Some("new-gist".into());
+                config.webdav_url.clear();
+                config.remote_etag = None;
+            })
+            .unwrap();
+        sync_store
+            .update(|config| {
+                config.last_sync_at = 42;
+                config.remote_etag = Some("\"stale-etag\"".into());
+                config.remote_payload_id = Some("payload-v2".into());
+            })
+            .unwrap();
+
+        let persisted: SyncConfig =
+            toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted.provider, crate::SyncProvider::GithubGist);
+        assert_eq!(persisted.gist_id.as_deref(), Some("new-gist"));
+        assert!(persisted.webdav_url.is_empty());
+        assert_eq!(persisted.last_sync_at, 42);
+        assert_eq!(persisted.remote_etag.as_deref(), Some("\"stale-etag\""));
+        assert_eq!(persisted.remote_payload_id.as_deref(), Some("payload-v2"));
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn revision_guard_rejects_sync_completion_after_settings_change() {
+        let config_path = temp_sync_config_path();
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+        let mut settings_store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            SyncConfig::default(),
+            credentials.clone(),
+        );
+        settings_store.update(|_| {}).unwrap();
+        let mut sync_store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            settings_store.config.clone(),
+            credentials,
+        );
+        let observed_revision = sync_store.config.config_revision;
+
+        settings_store
+            .update(|config| config.provider = crate::SyncProvider::WebDav)
+            .unwrap();
+        let committed = sync_store
+            .update_if_revision(observed_revision, |config| {
+                config.remote_etag = Some("\"old-provider-etag\"".into());
+            })
+            .unwrap();
+
+        assert!(!committed);
+        assert_eq!(sync_store.config.provider, crate::SyncProvider::WebDav);
+        assert_eq!(sync_store.config.remote_etag, None);
 
         let _ = fs::remove_file(config_path);
     }

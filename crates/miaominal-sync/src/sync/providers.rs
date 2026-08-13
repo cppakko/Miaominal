@@ -1,21 +1,38 @@
 use anyhow::{Result, anyhow};
 
-use super::github_gist::{GithubGistBackend, GithubGistPullOutcome};
+use super::github_gist::{GithubGistBackend, GithubGistPullOutcome, GithubGistPushOutcome};
 use super::store::SyncConfigStore;
-use super::webdav::WebDavBackend;
+use super::webdav::{WebDavBackend, WebDavPullOutcome, WebDavPushOutcome};
 use crate::SyncProvider;
 
 /// Outcome returned after a successful push. `provider_resource_id` lets
 /// providers (currently GitHub Gist) report a resource id that the engine must
-/// persist so subsequent pushes target the same remote object.
-pub(super) struct PushOutcome {
-    pub provider_resource_id: Option<String>,
+/// persist so subsequent pushes target the same remote object. `etag` lets the
+/// engine persist the remote representation for conditional pulls.
+pub(super) enum PushCondition {
+    IfMatch(String),
+    MustNotExist,
+    Unconditional,
+}
+
+pub(super) enum PushOutcome {
+    Pushed {
+        provider_resource_id: Option<String>,
+        etag: Option<String>,
+    },
+    Conflict,
+}
+
+pub(super) struct PullPayload {
+    pub json: String,
+    pub etag: Option<String>,
 }
 
 pub(super) enum PullOutcome {
     BindingRequired { provider: SyncProvider },
-    Missing,
-    Payload(String),
+    Missing { etag: Option<String> },
+    NotModified,
+    Payload(PullPayload),
 }
 
 /// Concrete backend handle constructed from `SyncConfigStore`. Encapsulates the
@@ -55,35 +72,53 @@ impl RemoteBackend {
         }
     }
 
-    pub(super) async fn push(&mut self, payload_json: &str) -> Result<PushOutcome> {
+    pub(super) async fn push(
+        &mut self,
+        payload_json: &str,
+        condition: &PushCondition,
+    ) -> Result<PushOutcome> {
         match self {
-            Self::Gist(backend) => {
-                let gist_id = backend.push(payload_json).await?;
-                Ok(PushOutcome {
+            Self::Gist(backend) => match backend.push(payload_json, condition).await? {
+                GithubGistPushOutcome::Pushed { gist_id, etag } => Ok(PushOutcome::Pushed {
                     provider_resource_id: Some(gist_id),
-                })
-            }
-            Self::WebDav(backend) => {
-                backend.push(payload_json).await?;
-                Ok(PushOutcome {
+                    etag,
+                }),
+                GithubGistPushOutcome::Conflict => Ok(PushOutcome::Conflict),
+            },
+            Self::WebDav(backend) => match backend.push(payload_json, condition).await? {
+                WebDavPushOutcome::Pushed { etag } => Ok(PushOutcome::Pushed {
                     provider_resource_id: None,
-                })
-            }
+                    etag,
+                }),
+                WebDavPushOutcome::Conflict => Ok(PushOutcome::Conflict),
+            },
         }
     }
 
-    pub(super) async fn pull(&self) -> Result<PullOutcome> {
+    pub(super) async fn pull(&self, etag: Option<&str>) -> Result<PullOutcome> {
         match self {
-            Self::Gist(backend) => match backend.pull().await? {
+            Self::Gist(backend) => match backend.pull(etag).await? {
                 GithubGistPullOutcome::BindingRequired => Ok(PullOutcome::BindingRequired {
                     provider: SyncProvider::GithubGist,
                 }),
-                GithubGistPullOutcome::Missing => Ok(PullOutcome::Missing),
-                GithubGistPullOutcome::Payload(payload) => Ok(PullOutcome::Payload(payload)),
+                GithubGistPullOutcome::Missing { etag } => Ok(PullOutcome::Missing { etag }),
+                GithubGistPullOutcome::NotModified => Ok(PullOutcome::NotModified),
+                GithubGistPullOutcome::Payload { content, etag } => {
+                    Ok(PullOutcome::Payload(PullPayload {
+                        json: content,
+                        etag,
+                    }))
+                }
             },
-            Self::WebDav(backend) => match backend.pull().await? {
-                Some(payload) => Ok(PullOutcome::Payload(payload)),
-                None => Ok(PullOutcome::Missing),
+            Self::WebDav(backend) => match backend.pull(etag).await? {
+                WebDavPullOutcome::Missing => Ok(PullOutcome::Missing { etag: None }),
+                WebDavPullOutcome::NotModified => Ok(PullOutcome::NotModified),
+                WebDavPullOutcome::Payload { content, etag } => {
+                    Ok(PullOutcome::Payload(PullPayload {
+                        json: content,
+                        etag,
+                    }))
+                }
             },
         }
     }

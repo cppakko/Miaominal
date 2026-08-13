@@ -1,8 +1,8 @@
 use super::encryption::{decrypt_with_aad, derive_key_with_params, encrypt_with_aad};
 use crate::{
     AiProviderSecret, KeySecret, LEGACY_SYNC_PAYLOAD_VERSION, PREVIOUS_SYNC_PAYLOAD_VERSION,
-    PlaintextSecrets, ProfileSecret, ProxySecret, SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload,
-    SyncPlaintextPayload, WebSearchSecret,
+    PROXYLESS_SYNC_PAYLOAD_VERSION, PlaintextSecrets, ProfileSecret, ProxySecret,
+    SYNC_PAYLOAD_VERSION, SyncKdf, SyncPayload, SyncPlaintextPayload, WebSearchSecret,
 };
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
@@ -17,17 +17,14 @@ use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, SettingsStore};
 use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_payload(
     device_id: &str,
-    sessions: &[SessionProfile],
-    proxies: &[ProxyProfile],
-    snippets: &[SnippetRecord],
-    managed_keys: &[ManagedKeyRecord],
-    settings: &SyncedSettings,
-    secret_store: &SecretStore,
+    parent_payload_id: Option<String>,
+    plaintext: &SyncPlaintextPayload,
     passphrase: &str,
 ) -> Result<SyncPayload> {
     let synced_at = std::time::SystemTime::now()
@@ -36,29 +33,49 @@ pub fn build_payload(
         .as_secs();
     let salt_bytes: [u8; 32] = rand::rng().random();
     let kdf = SyncKdf::argon2id(base64::engine::general_purpose::STANDARD.encode(salt_bytes));
-    let plaintext = SyncPlaintextPayload {
+    let mut payload = SyncPayload {
+        version: SYNC_PAYLOAD_VERSION,
+        device_id: device_id.to_string(),
+        synced_at,
+        payload_id: uuid::Uuid::new_v4().to_string(),
+        parent_payload_id,
+        kdf,
+        encrypted_payload: String::new(),
+    };
+    let key = derive_key_for_kdf(passphrase, &payload.kdf)?;
+    let plaintext_json =
+        serde_json::to_vec(plaintext).context("failed to serialize sync plaintext")?;
+    let aad = associated_data(&payload)?;
+    payload.encrypted_payload = encrypt_with_aad(&key, &plaintext_json, &aad)?;
+
+    Ok(payload)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn local_data_revision(payload: &SyncPlaintextPayload) -> Result<String> {
+    let serialized =
+        serde_json::to_vec(payload).context("failed to serialize local sync revision")?;
+    let digest = Sha256::digest(serialized);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_plaintext_payload(
+    sessions: &[SessionProfile],
+    proxies: &[ProxyProfile],
+    snippets: &[SnippetRecord],
+    managed_keys: &[ManagedKeyRecord],
+    settings: &SyncedSettings,
+    secret_store: &SecretStore,
+) -> Result<SyncPlaintextPayload> {
+    Ok(SyncPlaintextPayload {
         sessions: sessions.to_vec(),
         proxies: proxies.to_vec(),
         snippets: snippets.to_vec(),
         managed_keys: managed_keys.to_vec(),
         settings: settings.clone(),
         secrets: collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?,
-    };
-
-    let mut payload = SyncPayload {
-        version: SYNC_PAYLOAD_VERSION,
-        device_id: device_id.to_string(),
-        synced_at,
-        kdf,
-        encrypted_payload: String::new(),
-    };
-    let key = derive_key_for_kdf(passphrase, &payload.kdf)?;
-    let plaintext_json =
-        serde_json::to_vec(&plaintext).context("failed to serialize sync plaintext")?;
-    let aad = associated_data(&payload)?;
-    payload.encrypted_payload = encrypt_with_aad(&key, &plaintext_json, &aad)?;
-
-    Ok(payload)
+    })
 }
 
 pub fn parse_remote_payload(payload_json: &str) -> Result<SyncPayload> {
@@ -397,6 +414,7 @@ fn secret_kind_label(kind: SecretKind) -> &'static str {
 fn decrypt_payload(payload: &SyncPayload, passphrase: &str) -> Result<SyncPlaintextPayload> {
     if payload.version != SYNC_PAYLOAD_VERSION
         && payload.version != PREVIOUS_SYNC_PAYLOAD_VERSION
+        && payload.version != PROXYLESS_SYNC_PAYLOAD_VERSION
         && payload.version != LEGACY_SYNC_PAYLOAD_VERSION
     {
         if payload.version > SYNC_PAYLOAD_VERSION {
@@ -420,7 +438,9 @@ fn deserialize_plaintext_payload(
     match version {
         SYNC_PAYLOAD_VERSION => serde_json::from_slice(plaintext_json)
             .context("failed to deserialize decrypted sync payload"),
-        PREVIOUS_SYNC_PAYLOAD_VERSION => {
+        PREVIOUS_SYNC_PAYLOAD_VERSION => serde_json::from_slice(plaintext_json)
+            .context("failed to deserialize v3 decrypted sync payload"),
+        PROXYLESS_SYNC_PAYLOAD_VERSION => {
             let previous: PreviousSyncPlaintextPayload = serde_json::from_slice(plaintext_json)
                 .context("failed to deserialize v2 decrypted sync payload")?;
             Ok(SyncPlaintextPayload {
@@ -501,6 +521,10 @@ struct SyncPayloadAssociatedData<'a> {
     version: u32,
     device_id: &'a str,
     synced_at: u64,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    payload_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_payload_id: Option<&'a str>,
     kdf: &'a SyncKdf,
 }
 
@@ -529,6 +553,8 @@ fn associated_data(payload: &SyncPayload) -> Result<Vec<u8>> {
         version: payload.version,
         device_id: &payload.device_id,
         synced_at: payload.synced_at,
+        payload_id: &payload.payload_id,
+        parent_payload_id: payload.parent_payload_id.as_deref(),
         kdf: &payload.kdf,
     })
     .context("failed to serialize sync associated data")
@@ -806,6 +832,31 @@ mod tests {
     }
 
     #[test]
+    fn payload_rejects_parent_identity_tampering() {
+        let plaintext = sample_plaintext();
+        let mut payload = encrypted_payload("correct horse", &plaintext);
+        payload.parent_payload_id = Some("different-parent".into());
+
+        assert!(decrypt_payload(&payload, "correct horse").is_err());
+    }
+
+    #[test]
+    fn local_revision_is_stable_and_tracks_payload_content() {
+        let first = sample_plaintext();
+        let mut changed = first.clone();
+        changed.settings.recent_connections_count += 1;
+
+        assert_eq!(
+            local_data_revision(&first).unwrap(),
+            local_data_revision(&first).unwrap()
+        );
+        assert_ne!(
+            local_data_revision(&first).unwrap(),
+            local_data_revision(&changed).unwrap()
+        );
+    }
+
+    #[test]
     fn payload_rejects_unknown_version_before_decryption() {
         let mut payload = encrypted_payload("correct horse", &sample_plaintext());
         payload.version = SYNC_PAYLOAD_VERSION + 1;
@@ -871,7 +922,7 @@ mod tests {
         let decrypted = decrypt_payload(
             &encrypted_payload_with_version(
                 "correct horse",
-                PREVIOUS_SYNC_PAYLOAD_VERSION,
+                PROXYLESS_SYNC_PAYLOAD_VERSION,
                 &previous,
             ),
             "correct horse",
@@ -883,7 +934,24 @@ mod tests {
     }
 
     #[test]
-    fn v3_payload_round_trips_proxy_metadata_and_password() {
+    fn v3_payload_remains_decryptable() {
+        let plaintext = sample_proxy_plaintext();
+        let decrypted = decrypt_payload(
+            &encrypted_payload_with_version(
+                "correct horse",
+                PREVIOUS_SYNC_PAYLOAD_VERSION,
+                &plaintext,
+            ),
+            "correct horse",
+        )
+        .expect("v3 proxy payload should decrypt");
+
+        assert_eq!(decrypted.proxies.len(), 1);
+        assert_eq!(decrypted.secrets.proxy_secrets.len(), 1);
+    }
+
+    #[test]
+    fn v4_payload_round_trips_proxy_metadata_and_password() {
         let plaintext = sample_proxy_plaintext();
         let decrypted = decrypt_payload(
             &encrypted_payload("correct horse", &plaintext),
@@ -1320,6 +1388,12 @@ mod tests {
             version,
             device_id: "device-1".into(),
             synced_at: 42,
+            payload_id: if version == SYNC_PAYLOAD_VERSION {
+                "payload-1".into()
+            } else {
+                String::new()
+            },
+            parent_payload_id: None,
             kdf: SyncKdf::argon2id(salt),
             encrypted_payload: String::new(),
         };

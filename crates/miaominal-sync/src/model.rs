@@ -16,6 +16,10 @@ pub enum SyncProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncConfig {
+    /// Monotonic generation for optimistic coordination between independent
+    /// SyncConfigStore clones in this process.
+    #[serde(default)]
+    pub config_revision: u64,
     #[serde(default)]
     pub provider: SyncProvider,
     #[serde(default)]
@@ -38,11 +42,20 @@ pub struct SyncConfig {
     pub last_sync_at: u64,
     #[serde(default)]
     pub device_id: String,
+    #[serde(default)]
+    pub auto_sync_enabled: bool,
+    #[serde(default)]
+    pub remote_etag: Option<String>,
+    #[serde(default)]
+    pub remote_payload_id: Option<String>,
+    #[serde(default)]
+    pub last_synced_local_revision: Option<String>,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
+            config_revision: 0,
             provider: SyncProvider::None,
             gist_enabled: true,
             webdav_enabled: true,
@@ -54,6 +67,10 @@ impl Default for SyncConfig {
             has_passphrase: false,
             last_sync_at: 0,
             device_id: String::new(),
+            auto_sync_enabled: false,
+            remote_etag: None,
+            remote_payload_id: None,
+            last_synced_local_revision: None,
         }
     }
 }
@@ -66,8 +83,9 @@ impl SyncConfig {
 }
 
 pub const LEGACY_SYNC_PAYLOAD_VERSION: u32 = 1;
-pub const PREVIOUS_SYNC_PAYLOAD_VERSION: u32 = 2;
-pub const SYNC_PAYLOAD_VERSION: u32 = 3;
+pub const PROXYLESS_SYNC_PAYLOAD_VERSION: u32 = 2;
+pub const PREVIOUS_SYNC_PAYLOAD_VERSION: u32 = 3;
+pub const SYNC_PAYLOAD_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncKdf {
@@ -99,6 +117,10 @@ pub struct SyncPayload {
     pub version: u32,
     pub device_id: String,
     pub synced_at: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub payload_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_payload_id: Option<String>,
     pub kdf: SyncKdf,
     pub encrypted_payload: String,
 }
