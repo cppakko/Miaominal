@@ -21,6 +21,7 @@ const VAULT_VERSION: u32 = 1;
 const VAULT_OUTPUT_LEN: usize = 32;
 
 static VAULT_MEMORY_COST: AtomicU32 = AtomicU32::new(65536);
+
 static VAULT_TIME_COST: AtomicU32 = AtomicU32::new(3);
 static VAULT_PARALLELISM: AtomicU32 = AtomicU32::new(4);
 const VAULT_AAD: &[u8] = b"miaominal.secret-vault.v1";
