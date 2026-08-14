@@ -4,12 +4,13 @@ use super::payload::{
 };
 use super::providers::{PullOutcome, PushCondition, PushOutcome, RemoteBackend};
 use super::store::SyncConfigStore;
-use crate::{SyncPayload, SyncPlaintextPayload, SyncProvider, SyncStatus};
+use crate::{SyncInterventionReason, SyncPayload, SyncPlaintextPayload, SyncProvider, SyncStatus};
 use anyhow::{Context, Result};
 use miaominal_secrets::{CredentialStore, ProtectedPassphrase, SecretStore};
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, SettingsStore};
+use std::{error::Error as StdError, fmt};
 
 /// Result of a lightweight remote check. The payload is fetched (or answered
 /// with 304 when the persisted ETag matches) but never applied locally.
@@ -47,6 +48,17 @@ struct LocalSyncSnapshot {
     plaintext: SyncPlaintextPayload,
     revision: String,
 }
+
+#[derive(Debug)]
+struct SyncConfigurationChangedDuringPull;
+
+impl fmt::Display for SyncConfigurationChangedDuringPull {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("sync configuration changed while the remote payload was being applied")
+    }
+}
+
+impl StdError for SyncConfigurationChangedDuringPull {}
 
 pub struct SyncEngine {
     pub config_store: SyncConfigStore,
@@ -194,7 +206,8 @@ impl SyncEngine {
             RemotePayloadState::Changed(payload, etag) => {
                 if !force {
                     return Ok(SyncStatus::PullRequired {
-                        remote_at: payload.synced_at,
+                        remote_at: Some(payload.synced_at),
+                        reason: SyncInterventionReason::RemoteChangedBeforePush,
                     });
                 }
                 (
@@ -211,7 +224,8 @@ impl SyncEngine {
         // action is the user-confirmed escape hatch for such providers.
         if automatic_push_requires_confirmation(&condition, observed_remote_at, force) {
             return Ok(SyncStatus::PullRequired {
-                remote_at: observed_remote_at.unwrap_or(self.config_store.config.last_sync_at),
+                remote_at: observed_remote_at,
+                reason: SyncInterventionReason::UnsafeProviderWrite,
             });
         }
         let passphrase = self.sync_passphrase()?;
@@ -246,7 +260,8 @@ impl SyncEngine {
         } = outcome
         else {
             return Ok(SyncStatus::PullRequired {
-                remote_at: observed_remote_at.unwrap_or(self.config_store.config.last_sync_at),
+                remote_at: observed_remote_at,
+                reason: SyncInterventionReason::RemoteChangedBeforePush,
             });
         };
         let payload_id = payload.payload_id.clone();
@@ -266,7 +281,8 @@ impl SyncEngine {
             })?;
         if !persisted {
             return Ok(SyncStatus::PullRequired {
-                remote_at: synced_at,
+                remote_at: Some(synced_at),
+                reason: SyncInterventionReason::SyncConfigurationChanged,
             });
         }
 
@@ -372,14 +388,15 @@ impl SyncEngine {
         )?;
         if current_revision != start_revision {
             return Ok(SyncStatus::PullRequired {
-                remote_at: remote_synced_at,
+                remote_at: Some(remote_synced_at),
+                reason: SyncInterventionReason::LocalChangedDuringPull,
             });
         }
         settings_store.reload_from_disk()?;
         let applied_revision = local_data_revision(&plaintext)?;
         let remote_payload_id = non_empty_payload_id(&payload);
 
-        apply_plaintext_payload(
+        let apply_result = apply_plaintext_payload(
             &plaintext,
             session_store,
             proxy_store,
@@ -396,13 +413,25 @@ impl SyncEngine {
                             c.remote_payload_id = remote_payload_id.clone();
                             c.last_synced_local_revision = Some(applied_revision.clone());
                         })?;
-                anyhow::ensure!(
-                    persisted,
-                    "sync configuration changed while the remote payload was being applied"
-                );
+                if !persisted {
+                    return Err(SyncConfigurationChangedDuringPull.into());
+                }
                 Ok(())
             },
-        )?;
+        );
+        if let Err(error) = apply_result {
+            self.config_store.sync_from_disk();
+            if error
+                .downcast_ref::<SyncConfigurationChangedDuringPull>()
+                .is_some()
+            {
+                return Ok(SyncStatus::PullRequired {
+                    remote_at: Some(remote_synced_at),
+                    reason: SyncInterventionReason::SyncConfigurationChanged,
+                });
+            }
+            return Err(error);
+        }
 
         Ok(SyncStatus::Pulled {
             at: remote_synced_at,
@@ -539,6 +568,31 @@ fn non_empty_payload_id(payload: &SyncPayload) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_configuration_conflict_marker_survives_rollback_context() {
+        let error = anyhow::Error::new(SyncConfigurationChangedDuringPull)
+            .context("sync pull failed; local changes were rolled back");
+        assert!(
+            error
+                .downcast_ref::<SyncConfigurationChangedDuringPull>()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn ordinary_pull_io_errors_are_not_configuration_conflicts() {
+        let error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "simulated write failure",
+        ))
+        .context("sync pull failed; local changes were rolled back");
+        assert!(
+            error
+                .downcast_ref::<SyncConfigurationChangedDuringPull>()
+                .is_none()
+        );
+    }
 
     #[test]
     fn automatic_push_rejects_existing_remote_without_atomic_precondition() {

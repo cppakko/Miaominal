@@ -31,7 +31,7 @@ mod terminal_service;
 
 pub use agent_service::AgentService;
 pub use app_services::{AppServices, LoadedAppData};
-pub use auto_sync::{AutoSyncPhase, AutoSyncService, AutoSyncSnapshot};
+pub use auto_sync::{AutoSyncIntervention, AutoSyncPhase, AutoSyncService, AutoSyncSnapshot};
 pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
 pub use openssh_integration_service::OpenSshIntegrationService;

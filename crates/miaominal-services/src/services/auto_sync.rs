@@ -3,7 +3,9 @@ use super::sync_service::SyncTaskResult;
 use anyhow::Result;
 use miaominal_paths as paths;
 use miaominal_storage::SettingsStore;
-use miaominal_sync::{RemoteSyncState, SyncEngine, SyncProvider, SyncStatus};
+use miaominal_sync::{
+    RemoteSyncState, SyncEngine, SyncInterventionReason, SyncProvider, SyncStatus,
+};
 use notify::{RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -39,6 +41,13 @@ pub enum AutoSyncPhase {
     RetryBackoff,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoSyncIntervention {
+    pub id: String,
+    pub reason: SyncInterventionReason,
+    pub remote_at: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AutoSyncSnapshot {
     pub revision: u64,
@@ -48,6 +57,7 @@ pub struct AutoSyncSnapshot {
     pub last_result: Option<SyncTaskResult>,
     pub dirty: bool,
     pub retry_at_unix: Option<u64>,
+    pub intervention: Option<AutoSyncIntervention>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +140,7 @@ impl AutoSyncService {
             last_result: None,
             dirty: false,
             retry_at_unix: None,
+            intervention: None,
         });
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let task = Arc::new(tokio::sync::Mutex::new(None));
@@ -243,6 +254,7 @@ struct AutoSyncTask<S: SyncOps> {
     dirty: bool,
     remote_missing: bool,
     pending_conflict: bool,
+    intervention: Option<AutoSyncIntervention>,
     backoff_delay: Duration,
     retry_action: RetryAction,
     retry_deadline: Option<Instant>,
@@ -262,6 +274,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             last_result: self.last_result.clone(),
             dirty: self.dirty,
             retry_at_unix: self.retry_at_unix,
+            intervention: self.intervention.clone(),
         });
     }
 
@@ -272,12 +285,42 @@ impl<S: SyncOps> AutoSyncTask<S> {
         }
     }
 
+    fn clear_intervention(&mut self) {
+        self.pending_conflict = false;
+        self.intervention = None;
+    }
+
+    fn enter_intervention(&mut self, reason: SyncInterventionReason, remote_at: Option<u64>) {
+        self.pending_conflict = true;
+        let intervention_changed = match &mut self.intervention {
+            Some(intervention) => {
+                let changed = intervention.reason != reason || intervention.remote_at != remote_at;
+                intervention.reason = reason;
+                intervention.remote_at = remote_at;
+                changed
+            }
+            None => {
+                self.intervention = Some(AutoSyncIntervention {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    reason,
+                    remote_at,
+                });
+                true
+            }
+        };
+        if self.phase != AutoSyncPhase::PullRequired {
+            self.set_phase(AutoSyncPhase::PullRequired);
+        } else if intervention_changed {
+            self.publish();
+        }
+    }
+
     async fn apply_engine(&mut self, engine: SyncEngine) {
         self.engine = engine;
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
         self.fingerprint = Fingerprint::sample(&self.config_dir);
         self.remote_missing = false;
-        self.pending_conflict = false;
+        self.clear_intervention();
         self.reset_backoff();
         if self.enabled && !self.vault_locked {
             if let Err(error) = self.refresh_dirty_from_revision().await {
@@ -315,18 +358,18 @@ impl<S: SyncOps> AutoSyncTask<S> {
             SyncStatus::Pushed { .. } | SyncStatus::Pulled { .. } => {
                 self.fingerprint = current_fingerprint;
                 self.remote_missing = false;
-                self.pending_conflict = false;
+                self.clear_intervention();
             }
             SyncStatus::UpToDate { .. } => {
                 self.fingerprint = previous_fingerprint;
                 if current_fingerprint != self.fingerprint {
                     self.dirty = true;
                 }
-                self.pending_conflict = false;
+                self.clear_intervention();
             }
-            SyncStatus::PullRequired { .. } => {
+            SyncStatus::PullRequired { remote_at, reason } => {
                 self.dirty = true;
-                self.pending_conflict = true;
+                self.enter_intervention(reason, remote_at);
             }
             _ => {}
         }
@@ -388,17 +431,17 @@ impl<S: SyncOps> AutoSyncTask<S> {
     async fn push_if_dirty(&mut self) {
         const MAX_IMMEDIATE_PUSHES: usize = 2;
         for attempt in 0..MAX_IMMEDIATE_PUSHES {
+            if self.pending_conflict {
+                self.dirty = true;
+                self.set_phase(AutoSyncPhase::PullRequired);
+                return;
+            }
             if let Err(error) = self.refresh_dirty_from_revision().await {
                 self.dirty = true;
                 self.schedule_retry(RetryAction::Push, error);
                 return;
             }
-            if !self.dirty && !self.pending_conflict {
-                return;
-            }
-            if self.pending_conflict {
-                self.dirty = true;
-                self.set_phase(AutoSyncPhase::PullRequired);
+            if !self.dirty {
                 return;
             }
             self.set_phase(AutoSyncPhase::Pushing);
@@ -412,7 +455,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                         SyncStatus::Pushed { .. } => {
                             self.remote_missing = false;
                             self.fingerprint = Fingerprint::sample(&self.config_dir);
-                            self.pending_conflict = false;
+                            self.clear_intervention();
                             self.reset_backoff();
                             if let Err(error) = self.refresh_dirty_from_revision().await {
                                 self.dirty = true;
@@ -424,10 +467,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
                             }
                             self.set_phase(AutoSyncPhase::Watching);
                         }
-                        SyncStatus::PullRequired { .. } => {
+                        SyncStatus::PullRequired { remote_at, reason } => {
                             self.dirty = true;
-                            self.pending_conflict = true;
-                            self.set_phase(AutoSyncPhase::PullRequired);
+                            self.enter_intervention(reason, remote_at);
                         }
                         _ => {
                             self.reset_backoff();
@@ -458,7 +500,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             {
                 self.reset_backoff();
                 self.remote_missing = true;
-                self.pending_conflict = false;
+                self.clear_intervention();
                 self.dirty = true;
                 self.push_if_dirty().await;
             }
@@ -469,7 +511,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             Ok(RemoteSyncState::Missing) => {
                 self.reset_backoff();
                 self.remote_missing = true;
-                self.pending_conflict = false;
+                self.clear_intervention();
                 self.dirty = true;
                 self.push_if_dirty().await;
             }
@@ -483,8 +525,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     .is_none()
                 {
                     self.dirty = true;
-                    self.pending_conflict = true;
-                    self.set_phase(AutoSyncPhase::PullRequired);
+                    self.enter_intervention(SyncInterventionReason::MissingSyncBaseline, None);
                     return;
                 }
                 if let Err(error) = self.refresh_dirty_from_revision().await {
@@ -498,7 +539,21 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     AutoSyncPhase::Watching
                 });
             }
-            Ok(RemoteSyncState::Updated { .. }) => {
+            Ok(RemoteSyncState::Updated { synced_at, .. }) => {
+                if self
+                    .engine
+                    .config_store
+                    .config
+                    .last_synced_local_revision
+                    .is_none()
+                {
+                    self.dirty = true;
+                    self.enter_intervention(
+                        SyncInterventionReason::MissingSyncBaseline,
+                        Some(synced_at),
+                    );
+                    return;
+                }
                 if let Err(error) = self.refresh_dirty_from_revision().await {
                     self.dirty = true;
                     self.schedule_retry(RetryAction::Poll, error);
@@ -506,8 +561,10 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 }
                 if self.dirty {
                     self.dirty = true;
-                    self.pending_conflict = true;
-                    self.set_phase(AutoSyncPhase::PullRequired);
+                    self.enter_intervention(
+                        SyncInterventionReason::BothSidesChanged,
+                        Some(synced_at),
+                    );
                     return;
                 }
                 self.set_phase(AutoSyncPhase::Pulling);
@@ -526,7 +583,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                             SyncStatus::Pulled { .. } => {
                                 self.remote_missing = false;
                                 self.fingerprint = Fingerprint::sample(&self.config_dir);
-                                self.pending_conflict = false;
+                                self.clear_intervention();
                                 self.reset_backoff();
                                 if let Err(error) = self.refresh_dirty_from_revision().await {
                                     self.dirty = true;
@@ -535,10 +592,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
                                 }
                                 self.set_phase(AutoSyncPhase::Watching);
                             }
-                            SyncStatus::PullRequired { .. } => {
+                            SyncStatus::PullRequired { remote_at, reason } => {
                                 self.dirty = true;
-                                self.pending_conflict = true;
-                                self.set_phase(AutoSyncPhase::PullRequired);
+                                self.enter_intervention(reason, remote_at);
                             }
                             _ => {
                                 self.reset_backoff();
@@ -562,6 +618,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
             return;
         }
         self.push_if_dirty().await;
+        if self.pending_conflict {
+            return;
+        }
         if !matches!(
             self.phase,
             AutoSyncPhase::Pushing | AutoSyncPhase::RetryBackoff
@@ -602,6 +661,7 @@ async fn run_auto_sync<S: SyncOps>(
         dirty: false,
         remote_missing: false,
         pending_conflict: false,
+        intervention: None,
         backoff_delay: AUTO_SYNC_BACKOFF_INITIAL,
         retry_action: RetryAction::Poll,
         retry_deadline: None,
@@ -907,6 +967,7 @@ mod tests {
             last_result: None,
             dirty: false,
             retry_at_unix: None,
+            intervention: None,
         }
     }
 
@@ -941,6 +1002,7 @@ mod tests {
             dirty: false,
             remote_missing: false,
             pending_conflict: false,
+            intervention: None,
             backoff_delay: AUTO_SYNC_BACKOFF_INITIAL,
             retry_action: RetryAction::Poll,
             retry_deadline: None,
@@ -1070,6 +1132,77 @@ mod tests {
         assert_eq!(task.phase, AutoSyncPhase::PullRequired);
         assert!(task.dirty);
         assert!(task.pending_conflict);
+        let intervention = task
+            .intervention
+            .as_ref()
+            .expect("dirty remote update should create an intervention");
+        assert_eq!(
+            intervention.reason,
+            SyncInterventionReason::BothSidesChanged
+        );
+        assert_eq!(intervention.remote_at, Some(2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn intervention_id_is_stable_until_conflict_is_cleared() {
+        let dir = temp_config_dir("intervention-lifecycle");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.remote_state_result.lock().unwrap() = RemoteSyncState::Updated {
+            synced_at: 2,
+            etag: Some("\"etag-2\"".into()),
+            payload_id: Some("payload-2".into()),
+        };
+        let mut task = test_task(mock.clone(), &dir);
+        mock.set_local_revision("changed");
+
+        task.poll_remote().await;
+        let first_id = task
+            .intervention
+            .as_ref()
+            .expect("first conflict should create an intervention")
+            .id
+            .clone();
+        task.poll_remote().await;
+        assert_eq!(
+            task.intervention.as_ref().map(|item| item.id.as_str()),
+            Some(first_id.as_str()),
+            "the same unresolved conflict must retain its event id"
+        );
+
+        task.reconcile_manual_sync(
+            SyncStatus::Pulled { at: 2 },
+            task.engine.clone(),
+            task.settings_store.clone(),
+        )
+        .await;
+        assert!(task.intervention.is_none());
+
+        mock.set_local_revision("changed-again");
+        task.poll_remote().await;
+        let second_id = &task
+            .intervention
+            .as_ref()
+            .expect("a later conflict should create a new intervention")
+            .id;
+        assert_ne!(second_id, &first_id);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn missing_baseline_creates_structured_intervention() {
+        let dir = temp_config_dir("missing-baseline");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock, &dir);
+        task.engine.config_store.config.last_synced_local_revision = None;
+
+        task.poll_remote().await;
+
+        assert_eq!(task.phase, AutoSyncPhase::PullRequired);
+        assert_eq!(
+            task.intervention.as_ref().map(|item| &item.reason),
+            Some(&SyncInterventionReason::MissingSyncBaseline)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1091,6 +1224,31 @@ mod tests {
         task.on_tick().await;
         assert_eq!(*mock.push_calls.lock().unwrap(), 0);
         assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn on_tick_is_inert_while_manual_intervention_is_pending() {
+        let dir = temp_config_dir("pending-intervention");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock.clone(), &dir);
+        task.enter_intervention(SyncInterventionReason::BothSidesChanged, Some(2));
+        let intervention_id = task
+            .intervention
+            .as_ref()
+            .expect("intervention should exist")
+            .id
+            .clone();
+
+        task.on_tick().await;
+
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+        assert_eq!(task.phase, AutoSyncPhase::PullRequired);
+        assert_eq!(
+            task.intervention.as_ref().map(|item| item.id.as_str()),
+            Some(intervention_id.as_str())
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1179,6 +1337,7 @@ mod tests {
         task.apply_engine(engine).await;
 
         assert!(!task.pending_conflict);
+        assert!(task.intervention.is_none());
         assert!(task.dirty);
         assert_ne!(task.fingerprint, fingerprint);
         assert_eq!(task.phase, AutoSyncPhase::Watching);
@@ -1204,6 +1363,7 @@ mod tests {
         .await;
 
         assert!(!task.pending_conflict);
+        assert!(task.intervention.is_none());
         assert!(!task.dirty);
         assert!(task.message.is_none());
         assert_eq!(task.fingerprint, Fingerprint::sample(&dir));

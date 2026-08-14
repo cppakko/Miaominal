@@ -183,13 +183,34 @@ pub struct ProxySecret {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncInterventionReason {
+    BothSidesChanged,
+    RemoteChangedBeforePush,
+    UnsafeProviderWrite,
+    LocalChangedDuringPull,
+    MissingSyncBaseline,
+    SyncConfigurationChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncStatus {
     Idle,
     Syncing,
-    RemoteBindingRequired { provider: SyncProvider },
-    Pulled { at: u64 },
-    Pushed { at: u64 },
-    PullRequired { remote_at: u64 },
-    UpToDate { at: u64 },
+    RemoteBindingRequired {
+        provider: SyncProvider,
+    },
+    Pulled {
+        at: u64,
+    },
+    Pushed {
+        at: u64,
+    },
+    PullRequired {
+        remote_at: Option<u64>,
+        reason: SyncInterventionReason,
+    },
+    UpToDate {
+        at: u64,
+    },
     Error(String),
 }
