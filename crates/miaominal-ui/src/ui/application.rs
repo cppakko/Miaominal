@@ -153,6 +153,7 @@ pub(crate) struct ApplicationState {
     auto_sync: Option<AutoSyncService>,
     auto_sync_snapshot: AutoSyncSnapshot,
     last_auto_sync_revision: u64,
+    last_auto_sync_intervention_id: Option<String>,
     bridge_status: SshBridgeStatus,
     bridge_sync_result: Option<SshBridgeSyncResult>,
     bridge_security: BridgeSecuritySnapshot,
@@ -248,6 +249,7 @@ impl ApplicationState {
                 last_result: None,
                 dirty: false,
                 retry_at_unix: None,
+                intervention: None,
             });
 
         Self {
@@ -277,6 +279,7 @@ impl ApplicationState {
             auto_sync,
             auto_sync_snapshot,
             last_auto_sync_revision: 0,
+            last_auto_sync_intervention_id: None,
             generations: ApplicationGenerations {
                 catalogs: 1,
                 settings: 1,
@@ -445,6 +448,45 @@ impl ApplicationState {
             return;
         }
         self.last_auto_sync_revision = snapshot.revision;
+        if let Some(intervention) = newly_observed_auto_sync_intervention(
+            &snapshot,
+            &mut self.last_auto_sync_intervention_id,
+        ) {
+            let message_key = match intervention.reason {
+                miaominal_sync::SyncInterventionReason::BothSidesChanged => {
+                    "notifications.auto_sync_conflict.both_sides_changed"
+                }
+                miaominal_sync::SyncInterventionReason::RemoteChangedBeforePush => {
+                    "notifications.auto_sync_conflict.remote_changed_before_push"
+                }
+                miaominal_sync::SyncInterventionReason::UnsafeProviderWrite => {
+                    "notifications.auto_sync_conflict.unsafe_provider_write"
+                }
+                miaominal_sync::SyncInterventionReason::LocalChangedDuringPull => {
+                    "notifications.auto_sync_conflict.local_changed_during_pull"
+                }
+                miaominal_sync::SyncInterventionReason::MissingSyncBaseline => {
+                    "notifications.auto_sync_conflict.missing_sync_baseline"
+                }
+                miaominal_sync::SyncInterventionReason::SyncConfigurationChanged => {
+                    "notifications.auto_sync_conflict.sync_configuration_changed"
+                }
+            };
+            crate::ui::shell::publish_app_notification(
+                crate::ui::shell::AppNotification::new(
+                    crate::ui::shell::AppNotificationTone::Warning,
+                    crate::ui::shell::AppNotificationPriority::High,
+                    crate::ui::i18n::string("notifications.auto_sync_conflict.title"),
+                    crate::ui::i18n::string(message_key),
+                )
+                .stable_id(format!("auto-sync-intervention:{}", intervention.id))
+                .structured_action(
+                    crate::ui::shell::AppNotificationAction::OpenSyncSettings,
+                    crate::ui::i18n::string("notifications.auto_sync_conflict.open_sync"),
+                ),
+                cx,
+            );
+        }
         self.auto_sync_snapshot = snapshot.clone();
         let mut catalogs_changed = false;
         let mut settings_changed = false;
@@ -782,6 +824,21 @@ impl ApplicationState {
     }
 }
 
+fn newly_observed_auto_sync_intervention<'a>(
+    snapshot: &'a AutoSyncSnapshot,
+    last_id: &mut Option<String>,
+) -> Option<&'a miaominal_services::AutoSyncIntervention> {
+    let current_id = snapshot
+        .intervention
+        .as_ref()
+        .map(|intervention| intervention.id.clone());
+    if *last_id == current_id {
+        return None;
+    }
+    *last_id = current_id;
+    snapshot.intervention.as_ref()
+}
+
 fn vault_unlocked_at_after_transition(
     was_unlocked: bool,
     next_status: ApplicationVaultStatus,
@@ -881,6 +938,42 @@ mod tests {
     use miaominal_core::profile::{PortForwardKind, PortForwardRule};
     use miaominal_services::{PortForwardKey, PortForwardRuntimeSnapshot, PortForwardRuntimeState};
     use std::time::Duration;
+
+    fn intervention_snapshot(id: Option<&str>) -> AutoSyncSnapshot {
+        AutoSyncSnapshot {
+            revision: 1,
+            enabled: true,
+            phase: if id.is_some() {
+                miaominal_services::AutoSyncPhase::PullRequired
+            } else {
+                miaominal_services::AutoSyncPhase::Watching
+            },
+            message: None,
+            last_result: None,
+            dirty: id.is_some(),
+            retry_at_unix: None,
+            intervention: id.map(|id| miaominal_services::AutoSyncIntervention {
+                id: id.into(),
+                reason: miaominal_sync::SyncInterventionReason::BothSidesChanged,
+                remote_at: Some(1),
+            }),
+        }
+    }
+
+    #[test]
+    fn auto_sync_interventions_emit_once_per_lifecycle() {
+        let mut last_id = None;
+        let first = intervention_snapshot(Some("conflict-1"));
+        assert!(newly_observed_auto_sync_intervention(&first, &mut last_id).is_some());
+        assert!(newly_observed_auto_sync_intervention(&first, &mut last_id).is_none());
+
+        let clear = intervention_snapshot(None);
+        assert!(newly_observed_auto_sync_intervention(&clear, &mut last_id).is_none());
+        assert!(last_id.is_none());
+
+        let second = intervention_snapshot(Some("conflict-2"));
+        assert!(newly_observed_auto_sync_intervention(&second, &mut last_id).is_some());
+    }
 
     fn profile_with_enabled_forward() -> SessionProfile {
         let mut profile = SessionProfile::blank("profile", 1);
