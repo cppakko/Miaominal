@@ -159,6 +159,7 @@ pub(in crate::ui::shell) struct PaneViewState {
     pub terminal_bounds: Option<Bounds<Pixels>>,
     pub terminal_cell_width: f32,
     pub terminal_line_height: f32,
+    pub terminal_ime_anchor: Option<(TabId, Bounds<Pixels>)>,
     pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
     pub terminal_suppressed_key_releases: HashSet<String>,
     pub terminal_mouse_reporting_active: bool,
@@ -179,6 +180,7 @@ impl PaneViewState {
             terminal_bounds: None,
             terminal_cell_width: terminal_cell_width_default(),
             terminal_line_height: terminal_line_height_default(),
+            terminal_ime_anchor: None,
             terminal_mouse_gesture: None,
             terminal_suppressed_key_releases: HashSet::new(),
             terminal_mouse_reporting_active: false,
@@ -254,6 +256,7 @@ impl AppView {
                 terminal_bounds: self.workspace.workspace.active_pane.terminal_bounds.take(),
                 terminal_cell_width: self.workspace.workspace.active_pane.terminal_cell_width,
                 terminal_line_height: self.workspace.workspace.active_pane.terminal_line_height,
+                terminal_ime_anchor: None,
                 terminal_mouse_gesture: self
                     .workspace
                     .workspace
@@ -340,6 +343,7 @@ impl AppView {
             workspace.active_pane.terminal_cell_width;
         self.workspace.workspace.active_pane.terminal_line_height =
             workspace.active_pane.terminal_line_height;
+        self.workspace.workspace.active_pane.terminal_ime_anchor = None;
         self.workspace.workspace.active_pane.terminal_mouse_gesture =
             workspace.active_pane.terminal_mouse_gesture;
         self.workspace

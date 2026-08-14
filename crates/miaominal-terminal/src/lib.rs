@@ -155,6 +155,7 @@ pub struct TerminalSnapshot {
     pub screen_lines: usize,
     pub display_offset: usize,
     pub history_size: usize,
+    pub cursor: TerminalCursorPosition,
     #[allow(dead_code)]
     pub default_fg: Hsla,
     pub default_bg: Hsla,
@@ -163,6 +164,14 @@ pub struct TerminalSnapshot {
     pub search_total: usize,
     #[allow(dead_code)]
     pub search_current: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCursorPosition {
+    /// Cursor line relative to the current viewport. This can be outside the
+    /// visible range while the user is viewing scrollback.
+    pub viewport_line: i32,
+    pub column: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1279,14 +1288,17 @@ impl TerminalCore {
 
         let renderable = self.term.renderable_content();
         let display_offset = renderable.display_offset as i32;
-        let cursor = if focused
+        let cursor_position = TerminalCursorPosition {
+            viewport_line: renderable.cursor.point.line.0 + display_offset,
+            column: renderable.cursor.point.column.0,
+        };
+        let rendered_cursor = if focused
             && renderable.cursor.shape != CursorShape::Hidden
             && renderable.display_offset == 0
         {
-            let viewport_line = renderable.cursor.point.line.0 + display_offset;
-            usize::try_from(viewport_line)
+            usize::try_from(cursor_position.viewport_line)
                 .ok()
-                .map(|line| (line, renderable.cursor.point.column.0))
+                .map(|line| (line, cursor_position.column))
         } else {
             None
         };
@@ -1309,7 +1321,7 @@ impl TerminalCore {
                 continue;
             }
 
-            let is_cursor = cursor == Some((line_index, column));
+            let is_cursor = rendered_cursor == Some((line_index, column));
             let is_selected = selection_range
                 .map(|range| range.contains(indexed.point))
                 .unwrap_or(false);
@@ -1346,6 +1358,7 @@ impl TerminalCore {
             screen_lines,
             display_offset: renderable.display_offset,
             history_size: self.history_size(),
+            cursor: cursor_position,
             default_fg,
             default_bg,
             focused_cursor: focused,
@@ -2973,6 +2986,37 @@ mod tests {
         let changed = terminal.snapshot(false);
 
         assert!(!Arc::ptr_eq(&first, &changed));
+    }
+
+    #[test]
+    fn snapshot_cursor_position_does_not_depend_on_focus() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"\x1b[2;4H");
+
+        let focused = core.snapshot(true);
+        let unfocused = core.snapshot(false);
+        let expected = TerminalCursorPosition {
+            viewport_line: 1,
+            column: 3,
+        };
+
+        assert_eq!(focused.cursor, expected);
+        assert_eq!(unfocused.cursor, expected);
+        assert!(focused.cells[1][3].is_cursor);
+        assert!(!unfocused.cells.iter().flatten().any(|cell| cell.is_cursor));
+    }
+
+    #[test]
+    fn snapshot_cursor_position_can_be_below_a_scrolled_viewport() {
+        let mut core = TerminalCore::new(12, 3);
+        core.push_bytes(b"0\r\n1\r\n2\r\n3\r\n4\r\n5");
+        core.scroll(TerminalScroll::Top);
+
+        let snapshot = core.snapshot(true);
+
+        assert!(snapshot.display_offset > 0);
+        assert!(snapshot.cursor.viewport_line >= snapshot.screen_lines as i32);
+        assert!(!snapshot.cells.iter().flatten().any(|cell| cell.is_cursor));
     }
 
     #[test]

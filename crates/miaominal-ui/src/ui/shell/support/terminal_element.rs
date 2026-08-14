@@ -28,12 +28,14 @@ pub(in crate::ui::shell) struct TerminalCanvasPrepaint {
     focus: FocusHandle,
     input_controller: WeakEntity<SessionController>,
     tab_id: TabId,
+    ime_cursor_bounds: Option<Bounds<Pixels>>,
     drop_target: Option<TerminalFreeTypeTarget>,
 }
 
 struct TerminalImeHandler {
     controller: WeakEntity<SessionController>,
     tab_id: TabId,
+    cursor_bounds: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone, Copy)]
@@ -49,7 +51,10 @@ impl InputHandler for TerminalImeHandler {
         _window: &mut gpui::Window,
         _cx: &mut gpui::App,
     ) -> Option<UTF16Selection> {
-        None
+        Some(UTF16Selection {
+            range: 0..0,
+            reversed: false,
+        })
     }
 
     fn marked_text_range(
@@ -108,7 +113,7 @@ impl InputHandler for TerminalImeHandler {
         _window: &mut gpui::Window,
         _cx: &mut gpui::App,
     ) -> Option<Bounds<Pixels>> {
-        None
+        self.cursor_bounds
     }
 
     fn character_index_for_point(
@@ -178,6 +183,7 @@ pub(in crate::ui::shell) fn render_terminal_canvas_for_pane<V: TerminalCanvasHos
                     TerminalImeHandler {
                         controller: prepaint.input_controller.clone(),
                         tab_id: prepaint.tab_id,
+                        cursor_bounds: prepaint.ime_cursor_bounds,
                     },
                     cx,
                 );
@@ -391,12 +397,34 @@ fn prepare_terminal_canvas_prepaint(
         .session
         .read(cx)
         .terminal_snapshot(tab_id, focused)?;
+    let ime_cursor_bounds = terminal_ime_cursor_bounds(
+        bounds,
+        &snapshot,
+        cell_width,
+        line_height,
+        window.scale_factor(),
+    );
+
+    if pane_id == this.workspace.workspace.active_pane_id {
+        let ime_anchor = if focused {
+            ime_cursor_bounds.map(|bounds| (tab_id, bounds))
+        } else {
+            None
+        };
+        if this.workspace.workspace.active_pane.terminal_ime_anchor != ime_anchor {
+            this.workspace.workspace.active_pane.terminal_ime_anchor = ime_anchor;
+            if ime_anchor.is_some() {
+                window.invalidate_character_coordinates();
+            }
+        }
+    }
 
     Some(TerminalCanvasPrepaint {
         snapshot,
         focus,
         input_controller,
         tab_id,
+        ime_cursor_bounds,
         drop_target,
     })
 }
@@ -708,6 +736,41 @@ fn snapped_cell_bounds(
     }
 }
 
+fn terminal_ime_cursor_bounds(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSnapshot,
+    cell_width: f32,
+    line_height: f32,
+    scale: f32,
+) -> Option<Bounds<Pixels>> {
+    if snapshot.columns == 0
+        || snapshot.screen_lines == 0
+        || !cell_width.is_finite()
+        || cell_width <= 0.0
+        || !line_height.is_finite()
+        || line_height <= 0.0
+    {
+        return None;
+    }
+
+    let max_row = snapshot.screen_lines.saturating_sub(1);
+    let row = snapshot.cursor.viewport_line.clamp(0, max_row as i32) as usize;
+    let column = snapshot
+        .cursor
+        .column
+        .min(snapshot.columns.saturating_sub(1));
+
+    Some(snapped_cell_bounds(
+        bounds.origin,
+        px(cell_width),
+        px(line_height),
+        column,
+        1,
+        row,
+        scale,
+    ))
+}
+
 fn paint_unfocused_cursor(
     snapshot: &TerminalSnapshot,
     origin: Point<Pixels>,
@@ -977,7 +1040,7 @@ fn paint_scrollbar(bounds: Bounds<Pixels>, snapshot: &TerminalSnapshot, window: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_terminal::{default_background, default_foreground};
+    use miaominal_terminal::{TerminalCursorPosition, default_background, default_foreground};
 
     fn test_bounds(height: f32) -> Bounds<Pixels> {
         Bounds {
@@ -987,6 +1050,83 @@ mod tests {
             },
             size: size(px(120.0), px(height)),
         }
+    }
+
+    fn test_snapshot(
+        viewport_line: i32,
+        column: usize,
+        columns: usize,
+        screen_lines: usize,
+    ) -> TerminalSnapshot {
+        let fg = default_foreground();
+        let bg = default_background();
+        TerminalSnapshot {
+            cells: (0..screen_lines)
+                .map(|_| {
+                    (0..columns)
+                        .map(|_| miaominal_terminal::TerminalCell::blank(fg, bg))
+                        .collect()
+                })
+                .collect(),
+            columns,
+            screen_lines,
+            display_offset: 0,
+            history_size: 0,
+            cursor: TerminalCursorPosition {
+                viewport_line,
+                column,
+            },
+            default_fg: fg,
+            default_bg: bg,
+            focused_cursor: true,
+            search_total: 0,
+            search_current: None,
+        }
+    }
+
+    #[test]
+    fn ime_cursor_bounds_follow_terminal_cursor_and_canvas_origin() {
+        let bounds = Bounds {
+            origin: Point {
+                x: px(10.0),
+                y: px(20.0),
+            },
+            size: size(px(80.0), px(64.0)),
+        };
+        let snapshot = test_snapshot(2, 3, 10, 4);
+
+        let cursor = terminal_ime_cursor_bounds(bounds, &snapshot, 8.0, 16.0, 1.0)
+            .expect("expected IME cursor bounds");
+
+        assert_eq!(cursor.origin.x, px(34.0));
+        assert_eq!(cursor.origin.y, px(52.0));
+        assert_eq!(cursor.size, size(px(8.0), px(16.0)));
+    }
+
+    #[test]
+    fn ime_cursor_bounds_clamp_to_visible_terminal_edges() {
+        let bounds = test_bounds(64.0);
+        let below_and_right = test_snapshot(99, 99, 10, 4);
+        let above = test_snapshot(-10, 2, 10, 4);
+
+        let bottom_right = terminal_ime_cursor_bounds(bounds, &below_and_right, 8.0, 16.0, 1.0)
+            .expect("expected clamped IME cursor bounds");
+        let top = terminal_ime_cursor_bounds(bounds, &above, 8.0, 16.0, 1.0)
+            .expect("expected clamped IME cursor bounds");
+
+        assert_eq!(bottom_right.origin, Point::new(px(72.0), px(48.0)));
+        assert_eq!(top.origin, Point::new(px(16.0), px(0.0)));
+    }
+
+    #[test]
+    fn ime_cursor_bounds_require_valid_terminal_metrics() {
+        let empty = test_snapshot(0, 0, 0, 0);
+        let populated = test_snapshot(0, 0, 10, 4);
+
+        assert!(terminal_ime_cursor_bounds(test_bounds(64.0), &empty, 8.0, 16.0, 1.0).is_none());
+        assert!(
+            terminal_ime_cursor_bounds(test_bounds(64.0), &populated, 0.0, 16.0, 1.0).is_none()
+        );
     }
 
     #[test]

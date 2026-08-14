@@ -373,6 +373,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if new_id == self.workspace.workspace.active_pane_id {
+            self.workspace.workspace.active_pane.terminal_ime_anchor = None;
             self.workspace
                 .workspace
                 .active_pane
@@ -503,6 +504,7 @@ impl AppView {
                 incoming.terminal_scrollbar_last_interaction_at;
         }
         self.workspace.workspace.active_pane_id = new_id;
+        self.workspace.workspace.active_pane.terminal_ime_anchor = None;
         if self.controllers.session.read(cx).side_panel_open()
             && self.controllers.session.read(cx).side_panel_view() == SessionSidePanelView::Sftp
             && let Some(session_tab_id) = self
@@ -614,6 +616,7 @@ impl AppView {
         self.workspace.workspace.active_pane.terminal_bounds = None;
         self.workspace.workspace.active_pane.terminal_cell_width = terminal_cell_width_default();
         self.workspace.workspace.active_pane.terminal_line_height = terminal_line_height_default();
+        self.workspace.workspace.active_pane.terminal_ime_anchor = None;
         self.workspace.workspace.pane_split_drag = None;
 
         let split_animation =
