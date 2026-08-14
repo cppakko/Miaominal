@@ -146,18 +146,13 @@ impl PortForwardManager {
         }
     }
 
-    pub fn replace_catalogs(&self, profiles: Vec<SessionProfile>, proxies: Vec<ProxyProfile>) {
-        if let Ok(mut current) = self.inner.profiles.write() {
-            *current = profiles.clone();
-        }
-        if let Ok(mut current) = self.inner.proxies.write() {
-            *current = proxies;
-        }
-
+    pub fn replace_catalogs(&self, mut profiles: Vec<SessionProfile>, proxies: Vec<ProxyProfile>) {
         let mut updates = Vec::new();
         let mut stops = Vec::new();
-        if let Ok(state) = self.inner.state.lock() {
-            for (key, session) in &state.sessions {
+        let mut preserved = Vec::new();
+        if let Ok(mut state) = self.inner.state.lock() {
+            let mut snapshots_changed = false;
+            for (key, session) in &mut state.sessions {
                 let rule = profiles
                     .iter()
                     .find(|profile| profile.id == key.profile_id)
@@ -169,16 +164,49 @@ impl PortForwardManager {
                     })
                     .cloned();
                 match (rule, session.commands.clone()) {
-                    (Some(rule), Some(commands))
-                        if should_sync_catalog_rule(&session.snapshot.state, rule.enabled) =>
+                    (Some(mut rule), commands)
+                        if should_preserve_catalog_rule(&session.snapshot.state) =>
                     {
-                        updates.push((key.clone(), rule, commands));
+                        let restored_runtime_state = !rule.enabled;
+                        rule.enabled = true;
+                        preserved.push(key.clone());
+                        if session.snapshot.rule != rule || restored_runtime_state {
+                            session.snapshot.rule = rule.clone();
+                            session.snapshot.revision = next_revision(session.snapshot.revision);
+                            snapshots_changed = true;
+                        }
+                        if let Some(commands) = commands {
+                            updates.push((key.clone(), rule, commands));
+                        }
                     }
                     (Some(rule), _) if !rule.enabled => stops.push(key.clone()),
                     (None, _) => stops.push(key.clone()),
                     _ => {}
                 }
             }
+            if snapshots_changed {
+                self.publish_locked(&mut state);
+            }
+        }
+        for key in preserved {
+            if let Some(rule) = profiles
+                .iter_mut()
+                .find(|profile| profile.id == key.profile_id)
+                .and_then(|profile| {
+                    profile
+                        .port_forwarding_rules
+                        .iter_mut()
+                        .find(|rule| rule.id == key.rule_id)
+                })
+            {
+                rule.enabled = true;
+            }
+        }
+        if let Ok(mut current) = self.inner.profiles.write() {
+            *current = profiles;
+        }
+        if let Ok(mut current) = self.inner.proxies.write() {
+            *current = proxies;
         }
         for (_, rule, commands) in updates {
             let _ = commands.sync_port_forward_rules(vec![rule]);
@@ -622,8 +650,13 @@ fn push_log(log: &mut Vec<String>, message: String) {
     }
 }
 
-fn should_sync_catalog_rule(state: &PortForwardRuntimeState, rule_enabled: bool) -> bool {
-    rule_enabled && state.is_active() && !matches!(state, PortForwardRuntimeState::Stopping)
+fn should_preserve_catalog_rule(state: &PortForwardRuntimeState) -> bool {
+    matches!(
+        state,
+        PortForwardRuntimeState::Starting
+            | PortForwardRuntimeState::Running
+            | PortForwardRuntimeState::Reconnecting { .. }
+    )
 }
 
 fn next_revision(current: u64) -> u64 {
@@ -704,19 +737,71 @@ mod tests {
     }
 
     #[test]
-    fn catalog_sync_respects_disabled_and_stopping_rules() {
-        assert!(should_sync_catalog_rule(
-            &PortForwardRuntimeState::Running,
-            true
+    fn catalog_runtime_preservation_excludes_stopping_and_terminal_rules() {
+        assert!(should_preserve_catalog_rule(
+            &PortForwardRuntimeState::Starting
         ));
-        assert!(!should_sync_catalog_rule(
-            &PortForwardRuntimeState::Running,
-            false
+        assert!(should_preserve_catalog_rule(
+            &PortForwardRuntimeState::Running
         ));
-        assert!(!should_sync_catalog_rule(
-            &PortForwardRuntimeState::Stopping,
-            true
+        assert!(should_preserve_catalog_rule(
+            &PortForwardRuntimeState::Reconnecting {
+                error: "offline".into(),
+                attempt: 1,
+                max_attempts: 3,
+                retry_after_secs: 1,
+            }
         ));
+        assert!(!should_preserve_catalog_rule(
+            &PortForwardRuntimeState::Stopping
+        ));
+        assert!(!should_preserve_catalog_rule(
+            &PortForwardRuntimeState::Stopped
+        ));
+    }
+
+    #[test]
+    fn disabled_catalog_does_not_stop_a_running_forward() {
+        let (_runtime, manager) = test_manager();
+        let key = PortForwardKey::new("profile", "rule");
+        insert_test_session(&manager, key, 1, PortForwardRuntimeState::Running);
+        let mut profile = SessionProfile::blank("profile", 1);
+        let mut rule = test_rule();
+        rule.enabled = false;
+        profile.port_forwarding_rules.push(rule);
+
+        manager.replace_catalogs(vec![profile], Vec::new());
+
+        let snapshot = manager.snapshot();
+        let session = snapshot
+            .session("profile", "rule")
+            .expect("running session");
+        assert!(matches!(session.state, PortForwardRuntimeState::Running));
+        assert!(session.rule.enabled);
+        let profiles = manager.inner.profiles.read().expect("profile catalog");
+        assert!(profiles[0].port_forwarding_rules[0].enabled);
+    }
+
+    #[test]
+    fn catalog_changes_hot_update_a_running_forward_without_stopping_it() {
+        let (_runtime, manager) = test_manager();
+        let key = PortForwardKey::new("profile", "rule");
+        insert_test_session(&manager, key, 1, PortForwardRuntimeState::Running);
+        let mut profile = SessionProfile::blank("profile", 1);
+        let mut rule = test_rule();
+        rule.enabled = false;
+        rule.target_port = 2222;
+        profile.port_forwarding_rules.push(rule);
+
+        manager.replace_catalogs(vec![profile], Vec::new());
+
+        let snapshot = manager.snapshot();
+        let session = snapshot
+            .session("profile", "rule")
+            .expect("running session");
+        assert!(matches!(session.state, PortForwardRuntimeState::Running));
+        assert_eq!(session.rule.target_port, 2222);
+        assert!(session.rule.enabled);
     }
 
     #[test]

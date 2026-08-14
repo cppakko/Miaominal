@@ -277,6 +277,10 @@ impl SettingsController {
                 match result {
                     Ok(result) => {
                         let application_result = result.clone();
+                        let reload_failed = result
+                            .reload
+                            .as_ref()
+                            .is_some_and(miaominal_services::SyncReloadResult::any_failed);
                         let status = result.status;
                         let pull_confirm_reason =
                             Self::manual_push_pull_confirm_reason(action, &status);
@@ -289,9 +293,6 @@ impl SettingsController {
                         if let Some(reason) = pull_confirm_reason {
                             controller.sync_pull_confirm =
                                 Some(PendingSyncPullConfirmState { reason });
-                        }
-                        if let Some(reload) = result.reload {
-                            cx.emit(AppCommand::SyncReloaded(Box::new(reload)));
                         }
                         cx.emit(AppCommand::ManualSyncCompleted(Box::new(
                             application_result,
@@ -314,6 +315,20 @@ impl SettingsController {
                                     cx,
                                 );
                                 Self::show_manual_sync_result(window, &status, cx);
+                                if reload_failed {
+                                    crate::ui::shell::push_app_notification(
+                                        window,
+                                        error_notification(
+                                            i18n::string(
+                                                "settings.sync.status.notifications.reload_failed_title",
+                                            ),
+                                            i18n::string(
+                                                "settings.sync.status.notifications.reload_failed_message",
+                                            ),
+                                        ),
+                                        cx,
+                                    );
+                                }
                             });
                         }
                     }

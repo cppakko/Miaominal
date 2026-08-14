@@ -300,148 +300,6 @@ impl AppView {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn apply_sync_reload(
-        &mut self,
-        reload: SyncReloadResult,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let any_reload_failed = reload.any_failed();
-        let SyncReloadResult {
-            settings,
-            sessions,
-            proxies,
-            snippets,
-            managed_keys,
-        } = reload;
-        let mut settings = Some(settings);
-        let mut sessions = Some(sessions);
-        let mut proxies = Some(proxies);
-        let mut snippets = Some(snippets);
-        let mut managed_keys = Some(managed_keys);
-
-        for domain in sync_reload_domains() {
-            match domain {
-                SyncReloadDomain::Settings => match settings
-                    .take()
-                    .expect("settings reload is distributed once")
-                {
-                    Ok(store) => {
-                        self.controllers.settings.update(cx, |controller, cx| {
-                            controller.replace_settings_store(store, cx);
-                        });
-                        miaominal_settings::sync_component_theme(cx);
-                    }
-                    Err(error) => log::warn!("failed to reload settings after sync: {error}"),
-                },
-                SyncReloadDomain::Sessions => {
-                    match sessions.take().expect("session reload is distributed once") {
-                        Ok(sessions) => {
-                            self.controllers.session.read(cx).replace_profiles(sessions)
-                        }
-                        Err(error) => log::warn!("failed to reload sessions after sync: {error}"),
-                    }
-                }
-                SyncReloadDomain::Proxies => {
-                    match proxies.take().expect("proxy reload is distributed once") {
-                        Ok(proxies) => {
-                            self.controllers
-                                .session
-                                .read(cx)
-                                .replace_proxies(proxies.clone());
-                            self.controllers.settings.update(cx, |controller, cx| {
-                                controller.replace_proxies(proxies, window, cx);
-                            });
-                        }
-                        Err(error) => log::warn!("failed to reload proxies after sync: {error}"),
-                    }
-                }
-                SyncReloadDomain::Snippets => match snippets
-                    .take()
-                    .expect("snippet reload is distributed once")
-                {
-                    Ok(snippets) => self.controllers.session.read(cx).replace_snippets(snippets),
-                    Err(error) => log::warn!("failed to reload snippets after sync: {error}"),
-                },
-                SyncReloadDomain::ManagedKeys => match managed_keys
-                    .take()
-                    .expect("managed key reload is distributed once")
-                {
-                    Ok(keys) => self.controllers.keychain.update(cx, |controller, cx| {
-                        controller.replace_managed_keys(keys, cx);
-                    }),
-                    Err(error) => log::warn!("failed to reload keys after sync: {error}"),
-                },
-            }
-        }
-
-        if any_reload_failed {
-            let notification = crate::ui::shell::error_notification(
-                i18n::string("settings.sync.status.notifications.reload_failed_title"),
-                i18n::string("settings.sync.status.notifications.reload_failed_message"),
-            );
-            if let Some(window_handle) = cx.active_window() {
-                let _ = window_handle.update(cx, move |_, window, cx| {
-                    crate::ui::shell::push_app_notification(window, notification, cx);
-                });
-            }
-        }
-
-        let settings_controller = self.controllers.settings.read(cx);
-        let settings = settings_controller.settings().clone();
-        let settings_forms = settings_controller.forms();
-        let ai_provider_options = ai_provider_select_options(&settings);
-        let current_selected = settings_forms
-            .ai_provider_select
-            .read(cx)
-            .selected_value()
-            .cloned();
-        let selected_provider_id = current_selected
-            .as_deref()
-            .filter(|id| {
-                ai_provider_options
-                    .iter()
-                    .any(|option| option.value() == *id)
-            })
-            .or_else(|| {
-                ai_provider_options
-                    .first()
-                    .map(|option| option.value().as_str())
-            })
-            .map(ToOwned::to_owned);
-        if selected_provider_id.as_deref()
-            != Some(settings.selected_ai_provider_id.as_deref().unwrap_or(""))
-            && let Some(ref id) = selected_provider_id
-        {
-            let mut settings_store = self.controllers.settings.read(cx).settings_store();
-            settings_store.update(|settings| {
-                settings.selected_ai_provider_id = Some(id.clone());
-            });
-            self.controllers.settings.update(cx, |controller, cx| {
-                controller.replace_settings_store(settings_store, cx);
-            });
-        }
-        let ai_provider_select = settings_forms.ai_provider_select;
-        let provider_id = selected_provider_id.clone();
-        self.with_active_window(cx, move |window, cx| {
-            ai_provider_select.update(cx, |select, cx| {
-                select.set_items(ai_provider_options, window, cx);
-                if let Some(id) = provider_id.as_ref() {
-                    select.set_selected_value(id, window, cx);
-                } else {
-                    select.set_selected_index(None, window, cx);
-                }
-            });
-        });
-
-        let managed_key_options =
-            ManagedKeySelectItem::sorted_items(self.controllers.keychain.read(cx).managed_keys());
-        self.controllers.session.update(cx, |controller, cx| {
-            controller.sync_managed_key_select_in_active_window(managed_key_options, None, cx);
-        });
-        cx.notify();
-    }
-
     pub(in crate::ui::shell) fn edit_ai_provider(
         &mut self,
         provider_id: String,
@@ -945,13 +803,6 @@ impl AppView {
                     cx.notify();
                 });
             }
-            AppCommand::SyncReloaded(reload) => {
-                self.apply_sync_reload((**reload).clone(), window, cx);
-                self.controllers.session.update(cx, |controller, cx| {
-                    controller.refresh_entry_proxy_select(window, cx);
-                    cx.notify();
-                });
-            }
             AppCommand::ManualSyncCompleted(result) => {
                 application_state(cx).update(cx, |application, cx| {
                     application.apply_manual_sync_result((**result).clone(), cx);
@@ -984,8 +835,7 @@ impl AppView {
             | AppCommand::ImportProfilesRequested(_)
             | AppCommand::SessionEventApplied { .. }
             | AppCommand::ProxiesChanged(_)
-            | AppCommand::ManualSyncCompleted(_)
-            | AppCommand::SyncReloaded(_) => {}
+            | AppCommand::ManualSyncCompleted(_) => {}
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),
             AppCommand::EnsureSessionSftpRequested(tab_id) => {

@@ -53,6 +53,13 @@ impl AppView {
             self.controllers.keychain.update(cx, |controller, cx| {
                 controller.replace_managed_keys(snapshot.managed_keys, cx);
             });
+            let managed_key_options = ManagedKeySelectItem::sorted_items(
+                self.controllers.keychain.read(cx).managed_keys(),
+            );
+            self.controllers.session.update(cx, |controller, cx| {
+                controller.refresh_entry_proxy_select(window, cx);
+                controller.sync_managed_key_select_in_active_window(managed_key_options, None, cx);
+            });
             self.application_generations.catalogs = snapshot.generations.catalogs;
         }
 

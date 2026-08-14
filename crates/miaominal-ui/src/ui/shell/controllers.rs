@@ -6,12 +6,11 @@ use super::{
     AppView, AuthMethod, DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus,
     ManagedKeySelectItem, PaneId, SecretRevealTarget, SessionProfile, SftpBrowserSide,
     SidebarSection, SplitDirection, SyncProvider, TabId, TabPlacement, TabState,
-    WorkspaceTerminalInputExt, ai_provider_select_options, terminal_cell_width_default,
-    terminal_line_height_default,
+    WorkspaceTerminalInputExt, terminal_cell_width_default, terminal_line_height_default,
 };
 use crate::ui::i18n;
 use miaominal_secrets::SecretStore;
-use miaominal_services::{SyncReloadResult, SyncTaskResult};
+use miaominal_services::SyncTaskResult;
 use miaominal_settings::AppSettings;
 
 mod agent;
@@ -94,7 +93,6 @@ pub(in crate::ui::shell) enum AppCommand {
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,
     ManualSyncCompleted(Box<SyncTaskResult>),
-    SyncReloaded(Box<SyncReloadResult>),
     ProxiesChanged(Vec<miaominal_core::proxy::ProxyProfile>),
     ManagedKeysChanged(ManagedKeysChange),
     SessionMonitoringPreferenceChanged(bool),
@@ -231,25 +229,6 @@ fn clear_managed_key_profile_references(profiles: &mut [SessionProfile], key_id:
         }
     }
     changed
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SyncReloadDomain {
-    Settings,
-    Sessions,
-    Proxies,
-    Snippets,
-    ManagedKeys,
-}
-
-const fn sync_reload_domains() -> [SyncReloadDomain; 5] {
-    [
-        SyncReloadDomain::Settings,
-        SyncReloadDomain::Sessions,
-        SyncReloadDomain::Proxies,
-        SyncReloadDomain::Snippets,
-        SyncReloadDomain::ManagedKeys,
-    ]
 }
 
 fn terminal_metrics_changed(previous: &AppSettings, next: &AppSettings) -> bool {
@@ -439,20 +418,6 @@ mod tests {
             "missing"
         ));
         assert_eq!(profile.managed_key_id, "key-1");
-    }
-
-    #[test]
-    fn sync_reload_is_distributed_to_every_owned_domain() {
-        assert_eq!(
-            sync_reload_domains(),
-            [
-                SyncReloadDomain::Settings,
-                SyncReloadDomain::Sessions,
-                SyncReloadDomain::Proxies,
-                SyncReloadDomain::Snippets,
-                SyncReloadDomain::ManagedKeys,
-            ]
-        );
     }
 
     #[test]

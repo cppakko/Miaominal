@@ -488,56 +488,90 @@ impl ApplicationState {
             );
         }
         self.auto_sync_snapshot = snapshot.clone();
+        if let Some(result) = &snapshot.last_result {
+            self.apply_sync_task_data(result);
+        }
+        self.generations.auto_sync = next_generation(self.generations.auto_sync);
+        cx.notify();
+    }
+
+    fn apply_sync_task_data(&mut self, result: &SyncTaskResult) {
+        let sync_changed = self.sync_engine.config_store.config != result.updated_config;
+        self.sync_engine.config_store.config = result.updated_config.clone();
+
         let mut catalogs_changed = false;
+        let mut routes_changed = false;
         let mut settings_changed = false;
-        let mut managed_keys_changed = false;
-        if let Some(result) = &snapshot.last_result
-            && self.sync_engine.config_store.config != result.updated_config
-        {
-            self.sync_engine.config_store.config = result.updated_config.clone();
-            if let Some(reload) = &result.reload {
-                if let Ok(store) = &reload.settings {
-                    settings_changed = miaominal_settings::changed(
-                        self.settings_store.settings(),
-                        store.settings(),
-                    );
+        if let Some(reload) = &result.reload {
+            if let Ok(store) = &reload.settings {
+                settings_changed =
+                    miaominal_settings::changed(self.settings_store.settings(), store.settings());
+                if settings_changed {
                     self.settings_store = store.clone();
                 }
-                if let Ok(profiles) = &reload.sessions {
-                    self.profiles = profiles.clone();
-                    catalogs_changed = true;
+            } else if let Err(error) = &reload.settings {
+                log::warn!("failed to reload settings after sync: {error}");
+            }
+            if let Ok(profiles) = &reload.sessions {
+                let mut profiles = profiles.clone();
+                let runtime_state_changed =
+                    reconcile_port_forward_enabled(&mut profiles, &self.port_forward_snapshot);
+                if runtime_state_changed
+                    && let Some(store) = &self.services.session_store
+                    && let Err(error) = store.save(&profiles)
+                {
+                    log::warn!(
+                        "failed to preserve local port-forward runtime state after sync: {error:?}"
+                    );
                 }
-                if let Ok(proxies) = &reload.proxies {
+                if self.profiles != profiles {
+                    self.profiles = profiles;
+                    catalogs_changed = true;
+                    routes_changed = true;
+                }
+            } else if let Err(error) = &reload.sessions {
+                log::warn!("failed to reload sessions after sync: {error}");
+            }
+            if let Ok(proxies) = &reload.proxies {
+                if self.proxies != *proxies {
                     self.proxies = proxies.clone();
                     catalogs_changed = true;
+                    routes_changed = true;
                 }
-                if let Ok(snippets) = &reload.snippets {
+            } else if let Err(error) = &reload.proxies {
+                log::warn!("failed to reload proxies after sync: {error}");
+            }
+            if let Ok(snippets) = &reload.snippets {
+                if self.snippets != *snippets {
                     self.snippets = snippets.clone();
                     catalogs_changed = true;
                 }
-                if let Ok(keys) = &reload.managed_keys {
+            } else if let Err(error) = &reload.snippets {
+                log::warn!("failed to reload snippets after sync: {error}");
+            }
+            if let Ok(keys) = &reload.managed_keys {
+                if self.managed_keys != *keys {
                     self.managed_keys = keys.clone();
-                    managed_keys_changed = true;
+                    catalogs_changed = true;
                 }
+            } else if let Err(error) = &reload.managed_keys {
+                log::warn!("failed to reload managed keys after sync: {error}");
             }
         }
-        if catalogs_changed {
+        if routes_changed {
             self.services
                 .ssh_bridge_service
                 .refresh_routes(self.profiles.clone(), self.proxies.clone());
             self.services
                 .port_forward_manager
                 .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+        }
+        if catalogs_changed {
             self.generations.catalogs = next_generation(self.generations.catalogs);
         }
-        if managed_keys_changed {
-            self.generations.catalogs = next_generation(self.generations.catalogs);
-        }
-        if settings_changed {
+        if sync_changed || settings_changed {
             self.generations.settings = next_generation(self.generations.settings);
         }
-        self.generations.auto_sync = next_generation(self.generations.auto_sync);
-        cx.notify();
     }
 
     pub(crate) fn apply_manual_sync_result(
@@ -545,24 +579,11 @@ impl ApplicationState {
         result: SyncTaskResult,
         cx: &mut Context<Self>,
     ) {
-        let sync_changed = self.sync_engine.config_store.config != result.updated_config;
-        self.sync_engine.config_store.config = result.updated_config.clone();
-
-        let mut settings_changed = false;
-        if let Some(reload) = &result.reload
-            && let Ok(store) = &reload.settings
-        {
-            settings_changed =
-                miaominal_settings::changed(self.settings_store.settings(), store.settings());
-            self.settings_store = store.clone();
-        }
-
-        if sync_changed || settings_changed {
-            self.generations.settings = next_generation(self.generations.settings);
-        }
+        let status = result.status.clone();
+        self.apply_sync_task_data(&result);
         if let Some(auto_sync) = &self.auto_sync {
             auto_sync.reconcile_manual_sync(
-                result.status,
+                status,
                 self.sync_engine.clone(),
                 self.settings_store.clone(),
             );
@@ -870,16 +891,25 @@ fn reconcile_port_forward_enabled(
     let mut changed = false;
     for profile in profiles {
         for rule in &mut profile.port_forwarding_rules {
-            let active = snapshot
+            let enabled = snapshot
                 .session(&profile.id, &rule.id)
-                .is_some_and(|runtime| runtime.state.is_active());
-            if rule.enabled && !active {
-                rule.enabled = false;
+                .is_some_and(|runtime| port_forward_runtime_should_enable(&runtime.state));
+            if rule.enabled != enabled {
+                rule.enabled = enabled;
                 changed = true;
             }
         }
     }
     changed
+}
+
+fn port_forward_runtime_should_enable(state: &miaominal_services::PortForwardRuntimeState) -> bool {
+    matches!(
+        state,
+        miaominal_services::PortForwardRuntimeState::Starting
+            | miaominal_services::PortForwardRuntimeState::Running
+            | miaominal_services::PortForwardRuntimeState::Reconnecting { .. }
+    )
 }
 
 fn next_generation(current: u64) -> u64 {
@@ -1125,6 +1155,26 @@ mod tests {
 
         assert!(!reconcile_port_forward_enabled(&mut profiles, &snapshot));
         assert!(profiles[0].port_forwarding_rules[0].enabled);
+    }
+
+    #[test]
+    fn active_port_forward_state_restores_enabled_flag_after_sync_reload() {
+        let mut profile = profile_with_enabled_forward();
+        profile.port_forwarding_rules[0].enabled = false;
+        let mut profiles = vec![profile];
+        let snapshot = port_forward_snapshot(PortForwardRuntimeState::Running);
+
+        assert!(reconcile_port_forward_enabled(&mut profiles, &snapshot));
+        assert!(profiles[0].port_forwarding_rules[0].enabled);
+    }
+
+    #[test]
+    fn stopping_port_forward_state_does_not_restore_enabled_flag() {
+        let mut profiles = vec![profile_with_enabled_forward()];
+        let snapshot = port_forward_snapshot(PortForwardRuntimeState::Stopping);
+
+        assert!(reconcile_port_forward_enabled(&mut profiles, &snapshot));
+        assert!(!profiles[0].port_forwarding_rules[0].enabled);
     }
 
     #[test]

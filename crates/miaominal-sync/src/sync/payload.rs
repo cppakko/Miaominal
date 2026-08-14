@@ -18,7 +18,7 @@ use miaominal_storage::{ProxyStore, SettingsStore};
 use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_payload(
@@ -53,8 +53,10 @@ pub fn build_payload(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn local_data_revision(payload: &SyncPlaintextPayload) -> Result<String> {
+    let mut normalized = payload.clone();
+    clear_port_forward_runtime_state(&mut normalized.sessions);
     let serialized =
-        serde_json::to_vec(payload).context("failed to serialize local sync revision")?;
+        serde_json::to_vec(&normalized).context("failed to serialize local sync revision")?;
     let digest = Sha256::digest(serialized);
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
@@ -68,14 +70,51 @@ pub(super) fn build_plaintext_payload(
     settings: &SyncedSettings,
     secret_store: &SecretStore,
 ) -> Result<SyncPlaintextPayload> {
+    let secrets = collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?;
+    let mut sessions = sessions.to_vec();
+    clear_port_forward_runtime_state(&mut sessions);
     Ok(SyncPlaintextPayload {
-        sessions: sessions.to_vec(),
+        sessions,
         proxies: proxies.to_vec(),
         snippets: snippets.to_vec(),
         managed_keys: managed_keys.to_vec(),
         settings: settings.clone(),
-        secrets: collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?,
+        secrets,
     })
+}
+
+fn clear_port_forward_runtime_state(sessions: &mut [SessionProfile]) {
+    for session in sessions {
+        for rule in &mut session.port_forwarding_rules {
+            rule.enabled = false;
+        }
+    }
+}
+
+fn merge_local_port_forward_runtime_state(
+    incoming: &[SessionProfile],
+    local: &[SessionProfile],
+) -> Vec<SessionProfile> {
+    let enabled_by_rule = local
+        .iter()
+        .flat_map(|profile| {
+            profile
+                .port_forwarding_rules
+                .iter()
+                .map(move |rule| ((profile.id.clone(), rule.id.clone()), rule.enabled))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut merged = incoming.to_vec();
+    clear_port_forward_runtime_state(&mut merged);
+    for profile in &mut merged {
+        for rule in &mut profile.port_forwarding_rules {
+            rule.enabled = enabled_by_rule
+                .get(&(profile.id.clone(), rule.id.clone()))
+                .copied()
+                .unwrap_or(false);
+        }
+    }
+    merged
 }
 
 pub fn parse_remote_payload(payload_json: &str) -> Result<SyncPayload> {
@@ -205,8 +244,9 @@ fn apply_payload_changes(
         )?;
     }
 
+    let sessions = merge_local_port_forward_runtime_state(&payload.sessions, &old_sessions);
     proxy_store.save(&payload.proxies)?;
-    session_store.save(&payload.sessions)?;
+    session_store.save(&sessions)?;
     snippet_store.save(&payload.snippets)?;
     key_store.save(&payload.managed_keys)?;
     let mut merged_settings = settings_store.settings().clone();
@@ -793,6 +833,7 @@ fn validate_payload_proxies(payload: &SyncPlaintextPayload) -> Result<()> {
 mod tests {
     use super::*;
     use miaominal_core::keychain::ManagedKeySource;
+    use miaominal_core::profile::PortForwardRule;
     use miaominal_secrets::{
         APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, VaultCredentialBackend,
         set_vault_test_parameters,
@@ -854,6 +895,50 @@ mod tests {
             local_data_revision(&first).unwrap(),
             local_data_revision(&changed).unwrap()
         );
+    }
+
+    #[test]
+    fn port_forward_enabled_is_not_part_of_local_revision() {
+        let mut disabled = sample_plaintext();
+        let rule = test_port_forward_rule("forward-1", false);
+        disabled.sessions[0].port_forwarding_rules.push(rule);
+        let mut enabled = disabled.clone();
+        enabled.sessions[0].port_forwarding_rules[0].enabled = true;
+
+        assert_eq!(
+            local_data_revision(&disabled).unwrap(),
+            local_data_revision(&enabled).unwrap()
+        );
+    }
+
+    #[test]
+    fn sync_sessions_clear_runtime_enabled_without_mutating_input() {
+        let mut input = sample_plaintext().sessions;
+        let rule = test_port_forward_rule("forward-1", true);
+        input[0].port_forwarding_rules.push(rule);
+
+        let mut normalized = input.clone();
+        clear_port_forward_runtime_state(&mut normalized);
+
+        assert!(input[0].port_forwarding_rules[0].enabled);
+        assert!(!normalized[0].port_forwarding_rules[0].enabled);
+    }
+
+    #[test]
+    fn pull_preserves_only_matching_local_port_forward_runtime_state() {
+        let mut local = sample_plaintext().sessions;
+        let local_rule = test_port_forward_rule("existing", true);
+        local[0].port_forwarding_rules.push(local_rule);
+
+        let mut incoming = local.clone();
+        incoming[0].port_forwarding_rules[0].enabled = false;
+        let remote_only = test_port_forward_rule("remote-only", true);
+        incoming[0].port_forwarding_rules.push(remote_only);
+
+        let merged = merge_local_port_forward_runtime_state(&incoming, &local);
+
+        assert!(merged[0].port_forwarding_rules[0].enabled);
+        assert!(!merged[0].port_forwarding_rules[1].enabled);
     }
 
     #[test]
@@ -1430,6 +1515,19 @@ mod tests {
                 web_search_secret: None,
                 proxy_secrets: Vec::new(),
             },
+        }
+    }
+
+    fn test_port_forward_rule(id: &str, enabled: bool) -> PortForwardRule {
+        PortForwardRule {
+            id: id.into(),
+            label: String::new(),
+            kind: Default::default(),
+            listen_host: "127.0.0.1".into(),
+            listen_port: 1000,
+            target_host: "127.0.0.1".into(),
+            target_port: 2000,
+            enabled,
         }
     }
 
