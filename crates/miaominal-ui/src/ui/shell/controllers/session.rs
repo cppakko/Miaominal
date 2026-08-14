@@ -10,7 +10,6 @@ use gpui::{
     Subscription, WeakEntity, Window,
 };
 use gpui_component::{
-    WindowExt as _,
     input::{InputEvent, InputState, TabSize},
     select::{SearchableVec, SelectEvent, SelectItem, SelectState},
 };
@@ -2034,14 +2033,19 @@ impl SessionController {
                 if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
                     let message = validation.message.clone();
                     cx.emit(AppCommand::Feedback(message.clone()));
-                    window.push_notification(validation_notification(validation.kind, message), cx);
+                    crate::ui::shell::push_app_notification(
+                        window,
+                        validation_notification(validation.kind, message),
+                        cx,
+                    );
                 } else {
                     let message = error.to_string();
                     cx.emit(AppCommand::Feedback(i18n::string_args(
                         "profile.messages.test_connection_failed",
                         &[("message", &message)],
                     )));
-                    window.push_notification(
+                    crate::ui::shell::push_app_notification(
+                        window,
                         error_notification(
                             i18n::string("profile.messages.test_connection_failed_title"),
                             message,
@@ -2640,7 +2644,8 @@ impl SessionController {
         if let Err(error) = self.load_selected_profile_password_input(window, cx) {
             let message = error.to_string();
             cx.emit(AppCommand::Feedback(message.clone()));
-            window.push_notification(
+            crate::ui::shell::push_app_notification(
+                window,
                 error_notification(
                     i18n::string("settings.sync.vault.notifications.failed_title"),
                     message,
@@ -3036,7 +3041,11 @@ impl SessionController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            window.push_notification(validation_notification(validation.kind, message), cx);
+            crate::ui::shell::push_app_notification(
+                window,
+                validation_notification(validation.kind, message),
+                cx,
+            );
         } else {
             let message = error.to_string();
             cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -3662,7 +3671,11 @@ impl SessionController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            window.push_notification(validation_notification(validation.kind, message), cx);
+            crate::ui::shell::push_app_notification(
+                window,
+                validation_notification(validation.kind, message),
+                cx,
+            );
         } else {
             let message = error.to_string();
             cx.emit(AppCommand::Feedback(i18n::string_args(

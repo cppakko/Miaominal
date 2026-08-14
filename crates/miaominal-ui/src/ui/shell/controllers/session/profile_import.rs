@@ -177,7 +177,8 @@ impl SessionController {
         };
         cx.emit(AppCommand::Feedback(message.clone()));
         let presentation = profile_import_presentation(imported_count_value, warning_count);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             if matches!(presentation, ProfileImportPresentation::Success) {
                 success_notification(
                     i18n::string("settings.connections.import_messages.success_title"),
@@ -208,7 +209,8 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         cx.emit(AppCommand::Feedback(message.clone()));
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             validation_notification(ValidationNotificationKind::InvalidInput, message),
             cx,
         );

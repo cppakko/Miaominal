@@ -244,7 +244,11 @@ impl SessionController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            window.push_notification(validation_notification(validation.kind, message), cx);
+            crate::ui::shell::push_app_notification(
+                window,
+                validation_notification(validation.kind, message),
+                cx,
+            );
         } else {
             cx.emit(AppCommand::Feedback(i18n::string_args(
                 "snippets.messages.save_failed",

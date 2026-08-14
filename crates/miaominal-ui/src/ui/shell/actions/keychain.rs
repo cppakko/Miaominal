@@ -1,6 +1,5 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui_component::WindowExt as _;
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
 use miaominal_services::KeychainService;
 use std::fs;
@@ -163,7 +162,7 @@ impl KeychainController {
     ) {
         let message = message.into();
         self.status_message = message.clone();
-        window.push_notification(validation_notification(kind, message), cx);
+        crate::ui::shell::push_app_notification(window, validation_notification(kind, message), cx);
         cx.notify();
     }
 
@@ -1215,7 +1214,7 @@ impl KeychainController {
                         );
                         this.status_message = message;
                         this.with_active_window(cx, move |window, cx| {
-                            window.push_notification(notification, cx);
+                            crate::ui::shell::push_app_notification(window, notification, cx);
                         });
                     }
                     Err(error) => {
@@ -1234,7 +1233,7 @@ impl KeychainController {
                         );
                         this.status_message = message;
                         this.with_active_window(cx, move |window, cx| {
-                            window.push_notification(notification, cx);
+                            crate::ui::shell::push_app_notification(window, notification, cx);
                         });
                     }
                 }

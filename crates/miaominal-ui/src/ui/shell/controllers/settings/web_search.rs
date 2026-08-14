@@ -5,7 +5,6 @@ use crate::ui::shell::{
     error_notification, success_notification, validation_notification,
 };
 use gpui::App;
-use gpui_component::WindowExt as _;
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{WebSearchConfig, WebSearchProviderKind};
 
@@ -310,7 +309,11 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = failure.message;
-        window.push_notification(validation_notification(failure.kind, message.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            validation_notification(failure.kind, message.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }
@@ -322,7 +325,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = error.to_string();
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.vault.notifications.failed_title"),
                 message.clone(),
@@ -346,7 +350,8 @@ impl SettingsController {
                 ("error", &error.to_string()),
             ],
         );
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.save_feedback.failed_title"),
                 message.clone(),
@@ -380,7 +385,8 @@ impl SettingsController {
         }
 
         let message = i18n::string("settings.web_search.notifications.saved_message");
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             success_notification(
                 i18n::string("settings.web_search.notifications.saved_title"),
                 message.clone(),

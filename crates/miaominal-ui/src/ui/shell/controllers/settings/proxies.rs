@@ -3,7 +3,6 @@ use crate::ui::shell::{
     DeferredAppCommand, DialogOverlaySnapshot, SettingsDeferredCommand, ValidationFailure,
     error_notification, validation_notification,
 };
-use gpui_component::WindowExt as _;
 
 #[derive(Debug)]
 struct ProxySaveDraftInput {
@@ -385,7 +384,11 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = failure.message;
-        window.push_notification(validation_notification(failure.kind, message.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            validation_notification(failure.kind, message.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }
@@ -398,7 +401,11 @@ impl SettingsController {
     ) {
         let title = i18n::string("settings.proxies.messages.save_failed");
         let detail = format!("{error:#}");
-        window.push_notification(error_notification(title.clone(), detail.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            error_notification(title.clone(), detail.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(format!("{title}: {detail}")));
         cx.notify();
     }

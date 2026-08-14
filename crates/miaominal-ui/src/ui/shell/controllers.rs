@@ -1,7 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{App, AppContext as _, Context, Entity, Subscription, Window};
-use gpui_component::WindowExt as _;
 
 use super::{
     AppView, AuthMethod, DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus,

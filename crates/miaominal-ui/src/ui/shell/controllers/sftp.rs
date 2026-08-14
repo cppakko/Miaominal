@@ -14,7 +14,6 @@ use gpui::{
     SharedString, Subscription, WeakEntity, Window, px,
 };
 use gpui_component::{
-    WindowExt as _,
     input::{InputEvent, InputState},
     scroll::ScrollbarHandle as _,
     table::{TableEvent, TableState},
@@ -917,7 +916,7 @@ impl SftpController {
         let notification = validation_notification(kind, message);
         if let Some(window_handle) = cx.active_window() {
             let _ = window_handle.update(cx, move |_, window, cx| {
-                window.push_notification(notification, cx);
+                crate::ui::shell::push_app_notification(window, notification, cx);
             });
         }
         cx.notify();
@@ -932,7 +931,7 @@ impl SftpController {
         let notification = success_notification(title, body);
         if let Some(window_handle) = cx.active_window() {
             let _ = window_handle.update(cx, move |_, window, cx| {
-                window.push_notification(notification, cx);
+                crate::ui::shell::push_app_notification(window, notification, cx);
             });
         }
         cx.notify();
@@ -943,7 +942,7 @@ impl SftpController {
         let notification = error_notification(title, message);
         if let Some(window_handle) = cx.active_window() {
             let _ = window_handle.update(cx, move |_, window, cx| {
-                window.push_notification(notification, cx);
+                crate::ui::shell::push_app_notification(window, notification, cx);
             });
         }
         cx.notify();

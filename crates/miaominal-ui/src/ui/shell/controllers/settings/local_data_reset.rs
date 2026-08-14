@@ -1,10 +1,9 @@
 use super::super::AgentController;
 use super::*;
 use crate::ui::shell::{
-    DialogOverlaySnapshot, ValidationNotificationKind, validation_notification,
+    DialogOverlaySnapshot, ValidationNotificationKind, error_notification, validation_notification,
 };
 use gpui::App;
-use gpui_component::{WindowExt as _, notification::Notification};
 
 const LOCAL_DATA_RESET_CONFIRMATION_TOKEN: &str = "RESET";
 
@@ -84,7 +83,11 @@ impl SettingsController {
         };
 
         if let Some((kind, message)) = validation {
-            window.push_notification(validation_notification(kind, message.clone()), cx);
+            crate::ui::shell::push_app_notification(
+                window,
+                validation_notification(kind, message.clone()),
+                cx,
+            );
             cx.emit(AppCommand::Feedback(message));
             cx.notify();
             return;
@@ -173,10 +176,11 @@ impl SettingsController {
             let error = anyhow::anyhow!(error).context("failed to spawn local data reset worker");
             log::warn!("local data reset could not start: {error:#}");
             let message = i18n::string("settings.about.reset_local.notifications.failed.message");
-            let notification = Notification::error(message.clone()).title(i18n::string(
-                "settings.about.reset_local.notifications.failed.title",
-            ));
-            window.push_notification(notification, cx);
+            let notification = error_notification(
+                i18n::string("settings.about.reset_local.notifications.failed.title"),
+                message.clone(),
+            );
+            crate::ui::shell::push_app_notification(window, notification, cx);
             cx.emit(AppCommand::Feedback(message));
             cx.notify();
             return;
@@ -212,15 +216,16 @@ impl SettingsController {
                         let message = i18n::string(
                             "settings.about.reset_local.notifications.failed.message",
                         );
-                        let notification = Notification::error(message.clone()).title(
+                        let notification = error_notification(
                             i18n::string(
                                 "settings.about.reset_local.notifications.failed.title",
                             ),
+                            message.clone(),
                         );
                         if let Some(window_handle) = notification_window
                             && let Err(update_error) =
                                 window_handle.update(cx, move |_, window, cx| {
-                                    window.push_notification(notification, cx);
+                                    crate::ui::shell::push_app_notification(window, notification, cx);
                                 })
                         {
                             log::debug!(

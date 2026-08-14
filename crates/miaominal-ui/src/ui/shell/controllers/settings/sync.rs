@@ -5,8 +5,6 @@ use crate::ui::shell::{
     error_notification, success_notification, validation_notification,
 };
 use gpui::App;
-use gpui_component::WindowExt as _;
-use gpui_component::notification::Notification;
 use miaominal_services::SyncTaskResult;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -174,26 +172,30 @@ impl SettingsController {
     fn show_manual_sync_result(window: &mut Window, status: &SyncStatus, cx: &mut App) -> String {
         let message = crate::ui::shell::support::sync_status_summary(status);
         let notification = match status {
-            SyncStatus::Error(_) => Notification::error(message.clone()).title(i18n::string(
-                "settings.sync.status.notifications.failed_title",
-            )),
+            SyncStatus::Error(_) => error_notification(
+                i18n::string("settings.sync.status.notifications.failed_title"),
+                message.clone(),
+            ),
             SyncStatus::PullRequired { .. } | SyncStatus::RemoteBindingRequired { .. } => {
-                Notification::error(message.clone()).title(i18n::string(
-                    "settings.sync.status.notifications.action_required_title",
-                ))
+                error_notification(
+                    i18n::string("settings.sync.status.notifications.action_required_title"),
+                    message.clone(),
+                )
             }
-            _ => Notification::success(message.clone()).title(i18n::string(
-                "settings.sync.status.notifications.succeeded_title",
-            )),
+            _ => success_notification(
+                i18n::string("settings.sync.status.notifications.succeeded_title"),
+                message.clone(),
+            ),
         };
-        window.push_notification(notification, cx);
+        crate::ui::shell::push_app_notification(window, notification, cx);
         message
     }
 
     fn show_sync_provider_required_error(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let message = i18n::string("settings.sync.provider_required_error.message");
         self.sync.sync_status = SyncStatus::Error(message.clone());
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.provider_required_error.title"),
                 message.clone(),
@@ -1279,7 +1281,8 @@ impl SettingsController {
                         let message = i18n::string(
                             "settings.sync.encryption.passphrase.notifications.cleared_message",
                         );
-                        window.push_notification(
+                        crate::ui::shell::push_app_notification(
+                            window,
                             success_notification(
                                 i18n::string(
                                     "settings.sync.encryption.passphrase.notifications.cleared_title",
@@ -1299,7 +1302,8 @@ impl SettingsController {
                 }
                 SyncPassphraseOperation::Clear => {
                     let message = Self::sync_passphrase_clear_failed_message(&error);
-                    window.push_notification(
+                    crate::ui::shell::push_app_notification(
+                        window,
                         error_notification(
                             i18n::string(
                                 "settings.sync.encryption.passphrase.notifications.clear_failed_title",
@@ -1394,7 +1398,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = Self::sync_secret_saved_message(field_label);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             success_notification(
                 i18n::string("settings.sync.save_feedback.saved_title"),
                 message.clone(),
@@ -1413,7 +1418,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = Self::sync_secret_save_failed_message(field_label, error);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.save_feedback.failed_title"),
                 message.clone(),
@@ -1431,7 +1437,11 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = failure.message;
-        window.push_notification(validation_notification(failure.kind, message.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            validation_notification(failure.kind, message.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }

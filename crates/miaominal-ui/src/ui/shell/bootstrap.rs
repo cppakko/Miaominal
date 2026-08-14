@@ -263,11 +263,13 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
 impl AppView {
     pub fn new(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::ui::initialize_application_state(runtime, cx);
+        initialize_notification_center(cx);
         Self::bootstrap(AppWindowRole::Primary, window, cx)
     }
 
     pub fn new_detached(runtime: TokioHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::ui::initialize_application_state(runtime, cx);
+        initialize_notification_center(cx);
         Self::bootstrap(AppWindowRole::Detached, window, cx)
     }
 
@@ -421,6 +423,16 @@ impl AppView {
             );
         });
         let mut controller_subscriptions = controllers.root_subscriptions(window, cx);
+        if window_role == AppWindowRole::Primary {
+            controller_subscriptions.push(cx.observe_window_activation(
+                window,
+                |_view, window, cx| {
+                    if window.is_window_active() {
+                        show_pending_app_notifications(window, cx);
+                    }
+                },
+            ));
+        }
         controller_subscriptions.push(cx.observe_in(
             &application,
             window,
@@ -453,10 +465,12 @@ impl AppView {
         };
 
         if let Some(warning) = initialization_warning {
-            window.push_notification(
-                gpui_component::notification::Notification::error(warning).title(i18n::string(
-                    "settings.about.data_directory.migration_warning_title",
-                )),
+            crate::ui::shell::push_app_notification(
+                window,
+                error_notification(
+                    i18n::string("settings.about.data_directory.migration_warning_title"),
+                    warning,
+                ),
                 cx,
             );
         }

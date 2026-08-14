@@ -1,6 +1,5 @@
 use super::*;
 use crate::ui::i18n;
-use gpui_component::WindowExt as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LastTabCloseAction {
@@ -40,7 +39,7 @@ fn push_session_notification(
         SessionNotificationTone::Error => error_notification(title, message),
     }
     .id1::<AppView>(SharedString::from(id));
-    window.push_notification(notification, cx);
+    crate::ui::shell::push_app_notification(window, notification, cx);
 }
 
 impl AppView {
@@ -1241,6 +1240,7 @@ impl AppView {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use gpui_component::WindowExt as _;
 
     struct EmptyTestView;
 

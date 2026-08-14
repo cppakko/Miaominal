@@ -2,7 +2,6 @@ use super::{AgentController, AppCommand};
 use crate::ui::{i18n, shell::error_notification};
 use base64::Engine as _;
 use gpui::{Context, ImageFormat, Window};
-use gpui_component::WindowExt as _;
 use miaominal_core::chat_attachment::{
     ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
     MAX_IMAGE_DIMENSION, MAX_IMAGE_SIZE_BYTES, MAX_TEXT_FILE_SIZE_BYTES,
@@ -119,7 +118,7 @@ impl AgentController {
             let notification = error_notification(title, message);
             if let Some(window_handle) = cx.active_window()
                 && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                    window.push_notification(notification, cx);
+                    crate::ui::shell::push_app_notification(window, notification, cx);
                 })
             {
                 log::debug!("failed to show attachment notification: {error:?}");

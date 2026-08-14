@@ -4,7 +4,6 @@ use crate::ui::shell::{
     DialogOverlaySnapshot, ValidationNotificationKind, error_notification, success_notification,
     validation_notification,
 };
-use gpui_component::WindowExt as _;
 use miaominal_secrets::{MAX_VAULT_PASSPHRASE_BYTES, ProtectedPassphrase};
 use zeroize::Zeroizing;
 
@@ -590,7 +589,11 @@ impl SettingsController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.push_notification(validation_notification(kind, message.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            validation_notification(kind, message.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }
@@ -767,7 +770,8 @@ impl SettingsController {
     ) -> String {
         self.local_vault_unlock_in_progress = false;
         let message = Self::local_vault_change_passphrase_error_message(action, error);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.vault.notifications.failed_title"),
                 message.clone(),
@@ -864,7 +868,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) -> String {
         let message = Self::local_vault_error_message(action, error);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.vault.notifications.failed_title"),
                 message.clone(),
@@ -883,7 +888,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) -> String {
         let message = i18n::string(message_key);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             success_notification(i18n::string(title_key), message.clone()),
             cx,
         );

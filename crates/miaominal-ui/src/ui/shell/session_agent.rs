@@ -4,7 +4,6 @@ use crate::ui::shell::session_agent_stream_batch::{
     SESSION_AGENT_STREAM_UI_FLUSH_INTERVAL, SessionAgentStreamBatch,
     session_agent_event_is_finished, session_agent_event_requires_immediate_flush,
 };
-use gpui_component::WindowExt as _;
 use miaominal_agent::{
     AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
     AgentChatRole, AgentChatToolEvent, AgentError, AgentExecChannel, AgentMode, AgentResult,
@@ -1253,7 +1252,7 @@ impl AgentController {
             return;
         };
         let _ = window_handle.update(cx, move |_, window, cx| {
-            window.push_notification(notification, cx);
+            crate::ui::shell::push_app_notification(window, notification, cx);
         });
     }
 

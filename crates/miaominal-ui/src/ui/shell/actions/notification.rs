@@ -1,32 +1,5 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui_component::notification::Notification;
-use std::rc::Rc;
-
-const NOTIFICATION_CORNER_RADIUS: f32 = 20.0;
-const NOTIFICATION_ICON_SIZE: f32 = 28.0;
-const NOTIFICATION_ICON_CONTAINER_SIZE: f32 = 44.0;
-const NOTIFICATION_CLOSE_BUTTON_SIZE: f32 = 30.0;
-const NOTIFICATION_CLOSE_BUTTON_RADIUS: f32 = 10.0;
-
-type NotificationAction = dyn Fn(&mut Window, &mut App);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NotificationTone {
-    Success,
-    Warning,
-    Error,
-}
-
-impl NotificationTone {
-    fn icon(self) -> IconName {
-        match self {
-            Self::Success => IconName::CircleCheck,
-            Self::Warning => IconName::TriangleAlert,
-            Self::Error => IconName::CircleX,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum ValidationNotificationKind {
@@ -42,10 +15,10 @@ impl ValidationNotificationKind {
         })
     }
 
-    fn tone(self) -> NotificationTone {
+    fn tone(self) -> AppNotificationTone {
         match self {
-            Self::RequiredInputMissing => NotificationTone::Warning,
-            Self::InvalidInput => NotificationTone::Error,
+            Self::RequiredInputMissing => AppNotificationTone::Warning,
+            Self::InvalidInput => AppNotificationTone::Error,
         }
     }
 }
@@ -81,211 +54,51 @@ impl std::fmt::Display for ValidationFailure {
 impl std::error::Error for ValidationFailure {}
 
 pub(in crate::ui::shell) fn error_notification(
-    title: impl Into<SharedString>,
-    message: impl Into<SharedString>,
-) -> Notification {
-    custom_notification(NotificationTone::Error, title, message)
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> AppNotification {
+    AppNotification::new(
+        AppNotificationTone::Error,
+        AppNotificationPriority::Normal,
+        title,
+        message,
+    )
 }
 
 pub(in crate::ui::shell) fn success_notification(
-    title: impl Into<SharedString>,
-    message: impl Into<SharedString>,
-) -> Notification {
-    custom_notification(NotificationTone::Success, title, message)
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> AppNotification {
+    AppNotification::new(
+        AppNotificationTone::Success,
+        AppNotificationPriority::Low,
+        title,
+        message,
+    )
 }
 
 pub(in crate::ui::shell) fn warning_notification(
-    title: impl Into<SharedString>,
-    message: impl Into<SharedString>,
-) -> Notification {
-    custom_notification(NotificationTone::Warning, title, message)
-}
-
-pub(in crate::ui::shell) fn warning_action_notification(
-    title: impl Into<SharedString>,
-    message: impl Into<SharedString>,
-    action_label: impl Into<SharedString>,
-    on_action: impl Fn(&mut Window, &mut App) + 'static,
-) -> Notification {
-    let title = title.into();
-    let message = message.into();
-    let action_label = action_label.into();
-    let on_action: Rc<NotificationAction> = Rc::new(on_action);
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let accent = material.extended.warning.color;
-
-    style_notification(Notification::new().content(move |_, _, cx| {
-        let dismiss_entity = cx.entity().clone();
-        let dismiss_after_action = dismiss_entity.clone();
-        let on_action = on_action.clone();
-
-        v_flex()
-            .w_full()
-            .min_w(px(0.0))
-            .gap_3()
-            .child(
-                h_flex()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .items_start()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(40.0))
-                            .rounded(px(999.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(color_with_alpha(accent, 0x20))
-                            .child(
-                                Icon::new(IconName::TriangleAlert)
-                                    .size(px(24.0))
-                                    .text_color(rgb(accent)),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .line_height(miaominal_settings::scaled_line_height(20.0))
-                                    .text_color(rgb(roles.on_surface))
-                                    .child(title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .line_height(miaominal_settings::scaled_line_height(20.0))
-                                    .text_color(rgb(roles.on_surface_variant))
-                                    .child(message.clone()),
-                            ),
-                    )
-                    .child(div().flex_none().child(icon_button(
-                        AppIcon::Close,
-                        NOTIFICATION_CLOSE_BUTTON_SIZE,
-                        NOTIFICATION_CLOSE_BUTTON_RADIUS,
-                        Some(roles.surface_container_low),
-                        Some(roles.on_surface_variant),
-                        None,
-                        move |window, cx| {
-                            dismiss_entity.update(cx, |this, cx| {
-                                this.dismiss(window, cx);
-                            });
-                        },
-                    ))),
-            )
-            .child(
-                h_flex().w_full().justify_end().child(
-                    basic_dialog_action_button(
-                        "ssh-bridge-security-notification-action",
-                        action_label.clone(),
-                        BasicDialogActionTone::Default,
-                    )
-                    .on_click(move |_, window, cx| {
-                        on_action(window, cx);
-                        dismiss_after_action.update(cx, |this, cx| {
-                            this.dismiss(window, cx);
-                        });
-                    }),
-                ),
-            )
-            .into_any_element()
-    }))
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> AppNotification {
+    AppNotification::new(
+        AppNotificationTone::Warning,
+        AppNotificationPriority::Normal,
+        title,
+        message,
+    )
 }
 
 pub(in crate::ui::shell) fn validation_notification(
     kind: ValidationNotificationKind,
     message: String,
-) -> Notification {
-    let notification_id = SharedString::from(format!("validation-error-{message}"));
-    custom_notification(kind.tone(), kind.title(), message).id1::<AppView>(notification_id)
-}
-
-fn style_notification(notification: Notification) -> Notification {
-    let roles = miaominal_settings::current_theme().material.roles;
-
-    notification
-        .border_0()
-        .bg(rgb(roles.surface_container_highest))
-        .rounded(px(NOTIFICATION_CORNER_RADIUS))
-}
-
-fn custom_notification(
-    tone: NotificationTone,
-    title: impl Into<SharedString>,
-    message: impl Into<SharedString>,
-) -> Notification {
-    let title = title.into();
-    let message = message.into();
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let accent = match tone {
-        NotificationTone::Success => material.extended.success.color,
-        NotificationTone::Warning => material.extended.warning.color,
-        NotificationTone::Error => roles.error,
-    };
-    let icon = tone.icon();
-
-    style_notification(Notification::new().content(move |_, _, cx| {
-        let dismiss_entity = cx.entity().clone();
-
-        h_flex()
-            .w_full()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(NOTIFICATION_ICON_CONTAINER_SIZE))
-                    .rounded(px(999.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(color_with_alpha(accent, 0x18))
-                    .child(
-                        Icon::new(icon.clone())
-                            .size(px(NOTIFICATION_ICON_SIZE))
-                            .text_color(rgb(accent)),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(roles.on_surface))
-                            .child(title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .line_height(miaominal_settings::scaled_line_height(18.0))
-                            .text_color(rgb(roles.on_surface_variant))
-                            .child(message.clone()),
-                    ),
-            )
-            .child(div().flex_none().child(icon_button(
-                AppIcon::Close,
-                NOTIFICATION_CLOSE_BUTTON_SIZE,
-                NOTIFICATION_CLOSE_BUTTON_RADIUS,
-                Some(roles.surface_container_low),
-                Some(roles.on_surface_variant),
-                None,
-                move |window, cx| {
-                    dismiss_entity.update(cx, |this, cx| {
-                        this.dismiss(window, cx);
-                    });
-                },
-            )))
-            .into_any_element()
-    }))
+) -> AppNotification {
+    let notification_id = format!("validation-error-{message}");
+    AppNotification::new(
+        kind.tone(),
+        AppNotificationPriority::Normal,
+        kind.title(),
+        message,
+    )
+    .id1::<AppView>(notification_id)
 }

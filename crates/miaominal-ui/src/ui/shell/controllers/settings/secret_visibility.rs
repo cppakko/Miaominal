@@ -1,7 +1,6 @@
 use super::*;
 use crate::ui::shell::support::set_input_masked;
 use crate::ui::shell::{AppIcon, DeferredAppCommand, SettingsDeferredCommand, error_notification};
-use gpui_component::WindowExt as _;
 use miaominal_secrets::SecretKind;
 
 impl SettingsController {
@@ -172,7 +171,8 @@ impl SettingsController {
     ) {
         if let Err(error) = self.load_secret_input_for_reveal(&target, window, cx) {
             let message = error.to_string();
-            window.push_notification(
+            crate::ui::shell::push_app_notification(
+                window,
                 error_notification(
                     i18n::string("settings.sync.vault.notifications.failed_title"),
                     message.clone(),

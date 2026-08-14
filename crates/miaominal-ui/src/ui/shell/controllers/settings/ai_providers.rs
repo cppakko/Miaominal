@@ -5,7 +5,6 @@ use crate::ui::shell::{
     ai_provider_select_options, error_notification, success_notification, validation_notification,
 };
 use gpui::App;
-use gpui_component::WindowExt as _;
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 
@@ -473,7 +472,8 @@ impl SettingsController {
         self.set_ai_provider_api_key_visibility(&provider_id, false, false, window, cx);
 
         let message = i18n::string("settings.ai_providers.notifications.saved_message");
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             success_notification(
                 i18n::string("settings.ai_providers.notifications.saved_title"),
                 message.clone(),
@@ -800,7 +800,8 @@ impl SettingsController {
 
         if removed {
             let message = i18n::string("settings.ai_providers.notifications.deleted_message");
-            window.push_notification(
+            crate::ui::shell::push_app_notification(
+                window,
                 success_notification(
                     i18n::string("settings.ai_providers.notifications.deleted_title"),
                     message.clone(),
@@ -863,7 +864,11 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = failure.message;
-        window.push_notification(validation_notification(failure.kind, message.clone()), cx);
+        crate::ui::shell::push_app_notification(
+            window,
+            validation_notification(failure.kind, message.clone()),
+            cx,
+        );
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }
@@ -875,7 +880,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = error.to_string();
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.vault.notifications.failed_title"),
                 message.clone(),
@@ -906,7 +912,8 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let message = Self::ai_provider_save_failed_message(error);
-        window.push_notification(
+        crate::ui::shell::push_app_notification(
+            window,
             error_notification(
                 i18n::string("settings.sync.save_feedback.failed_title"),
                 message.clone(),
