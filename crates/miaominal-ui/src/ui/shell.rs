@@ -52,6 +52,7 @@ mod forms;
 mod layout;
 mod metrics;
 mod navigation;
+pub(crate) mod notification_center;
 mod pages;
 mod panes;
 mod render;
@@ -75,8 +76,8 @@ pub(crate) use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
     EDITOR_FOOTER_ACTION_HEIGHT, HintedInput, IconTileTone, SearchInputStyle, TextInputSurface,
     badge, basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
-    editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button, field_label,
-    icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
+    compact_badge, editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button,
+    field_label, icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
     page_muted_icon_tile, page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
     pill_label, search_filter_input, setting_field_with_reset_action,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
@@ -88,8 +89,7 @@ pub(crate) use crate::ui::utils::{
 pub(in crate::ui::shell) use actions::{
     ValidationFailure, ValidationNotificationKind, ai_provider_kind_label_key,
     ai_provider_select_options, error_notification, success_notification, validation_notification,
-    warning_action_notification, warning_notification, web_search_endpoint_placeholder,
-    web_search_provider_kind_label_key,
+    warning_notification, web_search_endpoint_placeholder, web_search_provider_kind_label_key,
 };
 pub(in crate::ui::shell) use bridge_security_notification::{
     BridgeSecurityNotificationAction, BridgeSecurityNotificationKey,
@@ -143,6 +143,13 @@ use forms::{TerminalSearchAnimation, WorkspaceForms};
 pub(in crate::ui::shell) use layout::{ChromeAppViewExt, WorkspacePanesAppViewExt};
 pub(in crate::ui::shell) use metrics::*;
 pub(in crate::ui::shell) use navigation::SidebarSection;
+pub(crate) use notification_center::publish_app_notification;
+pub(crate) use notification_center::{
+    AppNotification, AppNotificationAction, AppNotificationPriority, AppNotificationTone,
+    initialize_notification_center, push_app_notification, render_notification_center_popover,
+    show_pending_app_notifications,
+};
+pub(in crate::ui::shell) use pages::SettingsDestination;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
 pub(in crate::ui::shell) use panes::{
     PaneId, TerminalHoveredLink, TerminalLinkQuery, TerminalMouseGesture, TerminalScrollbarDrag,

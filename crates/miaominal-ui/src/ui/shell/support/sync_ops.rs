@@ -50,16 +50,19 @@ pub(in crate::ui::shell) fn sync_status_summary(status: &SyncStatus) -> String {
                 &[("time", &timestamp)],
             )
         }
-        SyncStatus::PullRequired { remote_at } => {
-            let timestamp = format_local_timestamp(Some(
-                std::time::UNIX_EPOCH + std::time::Duration::from_secs(*remote_at),
-            ))
-            .to_string();
-            i18n::string_args(
-                "settings.sync.status.state.pull_required_at",
-                &[("time", &timestamp)],
-            )
-        }
+        SyncStatus::PullRequired { remote_at, .. } => remote_at.map_or_else(
+            || i18n::string("settings.sync.status.state.pull_required"),
+            |remote_at| {
+                let timestamp = format_local_timestamp(Some(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(remote_at),
+                ))
+                .to_string();
+                i18n::string_args(
+                    "settings.sync.status.state.pull_required_at",
+                    &[("time", &timestamp)],
+                )
+            },
+        ),
         SyncStatus::UpToDate { .. } => i18n::string("settings.sync.status.state.up_to_date"),
         SyncStatus::Error(error) => i18n::string_args(
             "settings.sync.status.state.error",

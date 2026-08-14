@@ -1,4 +1,5 @@
-use gpui::{AnyWindowHandle, App, Entity, Global, Window};
+use gpui::{AnyWindowHandle, App, Entity, Global, WeakEntity, Window};
+use gpui_component::Root;
 use miaominal_settings::WindowCloseBehavior;
 
 use super::AppView;
@@ -54,14 +55,18 @@ impl TraySnapshot {
 
 struct SystemTrayState {
     main_window: AnyWindowHandle,
+    main_view: Option<WeakEntity<AppView>>,
     platform: platform::PlatformTray,
 }
 
 impl Global for SystemTrayState {}
 
 pub fn initialize_system_tray(main_window: AnyWindowHandle, cx: &mut App) {
+    let main_view = resolve_main_window_view(main_window, cx);
     if cx.has_global::<SystemTrayState>() {
-        cx.global_mut::<SystemTrayState>().main_window = main_window;
+        let state = cx.global_mut::<SystemTrayState>();
+        state.main_window = main_window;
+        state.main_view = main_view;
         sync_system_tray(cx);
         return;
     }
@@ -71,6 +76,7 @@ pub fn initialize_system_tray(main_window: AnyWindowHandle, cx: &mut App) {
     let platform = platform::PlatformTray::new(snapshot, command_tx);
     cx.set_global(SystemTrayState {
         main_window,
+        main_view,
         platform,
     });
 
@@ -86,6 +92,28 @@ pub fn initialize_system_tray(main_window: AnyWindowHandle, cx: &mut App) {
         }
     })
     .detach();
+}
+
+fn resolve_main_window_view(
+    main_window: AnyWindowHandle,
+    cx: &mut App,
+) -> Option<WeakEntity<AppView>> {
+    match main_window.update(cx, |root, _window, cx| {
+        root.downcast::<Root>()
+            .ok()
+            .and_then(|root| root.read(cx).view().clone().downcast::<AppView>().ok())
+            .map(|view| view.downgrade())
+    }) {
+        Ok(Some(view)) => Some(view),
+        Ok(None) => {
+            log::warn!("main window root does not contain an AppView");
+            None
+        }
+        Err(error) => {
+            log::warn!("failed to resolve main window AppView: {error:?}");
+            None
+        }
+    }
 }
 
 pub fn sync_system_tray(cx: &mut App) {
@@ -182,6 +210,17 @@ pub fn restore_main_window(cx: &mut App) -> bool {
             false
         }
     }
+}
+
+pub(crate) fn main_window_view(cx: &App) -> Option<Entity<AppView>> {
+    cx.try_global::<SystemTrayState>()
+        .and_then(|state| state.main_view.as_ref())
+        .and_then(WeakEntity::upgrade)
+}
+
+pub(crate) fn is_main_window(window: &Window, cx: &App) -> bool {
+    cx.try_global::<SystemTrayState>()
+        .is_some_and(|state| state.main_window == window.window_handle())
 }
 
 fn close_action(

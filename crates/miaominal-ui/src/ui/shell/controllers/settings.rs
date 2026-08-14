@@ -2,19 +2,19 @@ use super::{AppCommand, SessionQueryPort};
 use crate::ui::i18n;
 use crate::ui::shell::actions::ai_provider_kind_chat_supported;
 use crate::ui::shell::{
-    BridgeSecurityNotificationAction, BridgeSecurityNotificationKey,
-    BridgeSecurityNotificationModel, BridgeSecurityNotificationState,
-    BridgeSecurityNotificationView, bridge_security_notification_window_options,
-};
-use crate::ui::shell::{
-    DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget,
-    SelectOption, SftpBrowserSide, SidebarSection, ai_provider_kind_label_key,
+    AppNotification, AppNotificationPriority, AppNotificationTone, DialogOverlaySnapshot,
+    LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget, SelectOption,
+    SettingsDestination, SftpBrowserSide, SidebarSection, ai_provider_kind_label_key,
     ai_provider_select_options, bridge_security_level_label, last_tab_close_behavior_label,
     local_vault_auto_lock_duration_label, localized_profile_import_source_label,
     localized_secret_placeholder, monitor_history_duration_label, new_input_state,
-    set_input_placeholder, set_input_value, theme_id_label, warning_action_notification,
-    web_search_endpoint_placeholder, web_search_provider_kind_label_key,
-    window_close_behavior_label,
+    set_input_placeholder, set_input_value, theme_id_label, web_search_endpoint_placeholder,
+    web_search_provider_kind_label_key, window_close_behavior_label,
+};
+use crate::ui::shell::{
+    BridgeSecurityNotificationAction, BridgeSecurityNotificationKey,
+    BridgeSecurityNotificationModel, BridgeSecurityNotificationState,
+    BridgeSecurityNotificationView, bridge_security_notification_window_options,
 };
 use anyhow::{Result, anyhow};
 use gpui::{
@@ -590,7 +590,7 @@ pub(in crate::ui::shell) struct SettingsController {
     )>,
     pending_ssh_bridge_policy_downgrade: Option<PendingSshBridgePolicyDowngradeState>,
     ssh_bridge_settings_instance_generation: Cell<u64>,
-    ssh_bridge_security_initial_selection_pending: Cell<bool>,
+    settings_destination_pending: Cell<Option<SettingsDestination>>,
     pub(in crate::ui::shell) forms: SettingsForms,
     sync: SyncUiState,
     onboarding: OnboardingState,
@@ -1319,8 +1319,6 @@ impl SettingsController {
         model: &BridgeSecurityNotificationModel,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::WindowExt as _;
-
         let vault_unlock = model.phase == BridgePendingPhase::AwaitingVaultUnlock;
         let mut message = i18n::string_args(
             if vault_unlock {
@@ -1342,13 +1340,17 @@ impl SettingsController {
             ));
         }
         let controller = cx.entity().clone();
-        let notification = warning_action_notification(
+        let notification = AppNotification::new(
+            AppNotificationTone::Warning,
+            AppNotificationPriority::High,
             i18n::string(if vault_unlock {
                 "settings.openssh_integration.security.in_app_vault_title"
             } else {
                 "settings.openssh_integration.security.in_app_title"
             }),
             message,
+        )
+        .toast_action(
             i18n::string(if vault_unlock {
                 "settings.openssh_integration.security.unlock_vault"
             } else {
@@ -1368,11 +1370,11 @@ impl SettingsController {
                 });
             },
         )
-        .id::<BridgeApprovalNotification>();
+        .id1::<BridgeApprovalNotification>(model.key.request_id.clone());
         let _ = self
             .ssh_bridge_notification_main_window
             .update(cx, move |_, window, cx| {
-                window.push_notification(notification, cx);
+                crate::ui::shell::push_app_notification(window, notification, cx);
             });
     }
 
@@ -1542,6 +1544,13 @@ impl SettingsController {
     }
 
     fn request_ssh_bridge_security_page(&self) {
+        self.request_settings_destination(SettingsDestination::SshBridgeSecurity);
+    }
+
+    pub(in crate::ui::shell) fn request_settings_destination(
+        &self,
+        destination: SettingsDestination,
+    ) {
         let mut generation = self
             .ssh_bridge_settings_instance_generation
             .get()
@@ -1550,14 +1559,15 @@ impl SettingsController {
             generation = 1;
         }
         self.ssh_bridge_settings_instance_generation.set(generation);
-        self.ssh_bridge_security_initial_selection_pending.set(true);
+        self.settings_destination_pending.set(Some(destination));
     }
 
-    pub(in crate::ui::shell) fn take_ssh_bridge_settings_render_request(&self) -> (u64, bool) {
+    pub(in crate::ui::shell) fn take_settings_render_request(
+        &self,
+    ) -> (u64, Option<SettingsDestination>) {
         (
             self.ssh_bridge_settings_instance_generation.get(),
-            self.ssh_bridge_security_initial_selection_pending
-                .replace(false),
+            self.settings_destination_pending.take(),
         )
     }
 
@@ -1877,7 +1887,7 @@ impl SettingsController {
             ssh_bridge_notification_window: None,
             pending_ssh_bridge_policy_downgrade: None,
             ssh_bridge_settings_instance_generation: Cell::new(0),
-            ssh_bridge_security_initial_selection_pending: Cell::new(false),
+            settings_destination_pending: Cell::new(None),
             forms,
             sync: bootstrap.sync,
             onboarding: bootstrap.onboarding,

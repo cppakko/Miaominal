@@ -1695,6 +1695,7 @@ impl ChromeAppViewExt for AppView {
                             ),
                         )
                     })
+                    .child(render_notification_center_popover(cx))
                     .child(
                         div()
                             .id("status-footer-connection-target")

@@ -4,9 +4,36 @@ use gpui::{
     px, rgb,
 };
 use gpui_component::{
-    Icon, Sizable as _,
+    Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
 };
+
+#[derive(Clone)]
+pub(crate) enum IconButtonIcon {
+    App(AppIcon),
+    Component(IconName),
+}
+
+impl From<AppIcon> for IconButtonIcon {
+    fn from(icon: AppIcon) -> Self {
+        Self::App(icon)
+    }
+}
+
+impl From<IconName> for IconButtonIcon {
+    fn from(icon: IconName) -> Self {
+        Self::Component(icon)
+    }
+}
+
+impl IconButtonIcon {
+    fn element(self) -> Icon {
+        match self {
+            Self::App(icon) => Icon::new(icon),
+            Self::Component(icon) => Icon::new(icon),
+        }
+    }
+}
 
 pub(crate) struct IconButtonStyle {
     pub size: f32,
@@ -38,7 +65,7 @@ pub(crate) fn icon_button(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn icon_button_with_tooltip(
-    icon: AppIcon,
+    icon: impl Into<IconButtonIcon>,
     tooltip: impl Into<SharedString>,
     size: f32,
     corner_radius: f32,
@@ -47,6 +74,7 @@ pub(crate) fn icon_button_with_tooltip(
     border: Option<u32>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Div {
+    let icon = icon.into();
     let tooltip = tooltip.into();
     let button_id = SharedString::from(format!("icon-button-tooltip-{tooltip}"));
     let background = background.unwrap_or_else(default_icon_button_background);
@@ -62,7 +90,7 @@ pub(crate) fn icon_button_with_tooltip(
         .bg(rgb(background))
         .cursor_pointer()
         .text_color(rgb(foreground))
-        .child(Icon::new(icon).small())
+        .child(icon.element().small())
         .on_click(move |_, window, cx| on_click(window, cx));
 
     if let Some(border) = border {

@@ -1494,6 +1494,28 @@ script_required = "必须填写脚本。"
 required_input_missing = "缺少必填输入"
 invalid_input = "输入无效"
 
+[notifications.center]
+title = "通知"
+clear_all = "清除全部"
+empty = "暂无通知"
+open = "打开"
+
+[notifications.center.priority]
+low = "低"
+normal = "普通"
+high = "高"
+critical = "严重"
+
+[notifications.auto_sync_conflict]
+title = "自动同步已暂停"
+open_sync = "前往同步设置"
+both_sides_changed = "本地和远端均有未同步修改。请前往同步设置，使用“立即同步”选择保留本地或远端数据。"
+remote_changed_before_push = "上传前远端已被另一设备更新，自动覆盖已阻止。请进行手动同步。"
+unsafe_provider_write = "当前同步服务无法提供安全的条件写入，自动推送已暂停。请手动确认同步方向。"
+local_changed_during_pull = "拉取期间本地数据发生变化，远端内容未应用。请手动同步。"
+missing_sync_baseline = "缺少历史同步基线，无法安全判断同步方向。请手动选择推送或拉取。"
+sync_configuration_changed = "同步期间 Provider 或同步配置发生变化，本次操作未提交。请检查后手动同步。"
+
 [notifications.attachment]
 title = "附加失败"
 
@@ -1746,7 +1768,7 @@ watching = "监听中"
 debouncing = "等待防抖"
 pushing = "推送中"
 pulling = "拉取中"
-pull_required = "需要手动确认"
+pull_required = "需要手动同步，请使用上方“立即同步”选择推送或拉取。"
 vault_locked = "保险库已锁定，暂停"
 retry = "等待重试"
 [settings.sync.encryption_group]
@@ -1922,6 +1944,7 @@ remote_binding_required = "{provider} 尚未绑定远端资源。请先完成绑
 pulled_at = "已于 {time} 拉取"
 pushed_at = "已于 {time} 推送"
 pull_required_at = "需要先拉取：远端已于 {time} 更新"
+pull_required = "需要手动同步"
 up_to_date = "已是最新"
 error = "错误：{message}"
 

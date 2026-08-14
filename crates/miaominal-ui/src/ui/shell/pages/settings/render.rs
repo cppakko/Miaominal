@@ -7,9 +7,8 @@ use crate::ui::components::{
 use crate::ui::i18n;
 use gpui::{Axis, KeyDownEvent};
 use gpui_component::{
-    Disableable, Icon, Size, WindowExt,
+    Disableable, Icon, Size,
     group_box::GroupBoxVariant,
-    notification::Notification,
     setting::{
         RenderOptions, SelectIndex, SettingField, SettingFieldElement, SettingGroup, SettingItem,
         SettingPage, Settings,
@@ -47,8 +46,9 @@ enum SettingsGroupId {
 }
 
 #[derive(Clone, Copy)]
-enum SettingsDestination {
+pub(in crate::ui::shell) enum SettingsDestination {
     SshBridgeSecurity,
+    Sync,
 }
 
 struct NamedSettingPage {
@@ -88,6 +88,15 @@ fn settings_destination_index(
             SettingsPageId::OpenSshIntegration,
             SettingsGroupId::SshBridgeSecurityPending,
         ),
+        SettingsDestination::Sync => {
+            let page_ix = pages
+                .iter()
+                .position(|page| page.id == SettingsPageId::Sync)?;
+            return Some(SelectIndex {
+                page_ix,
+                group_ix: None,
+            });
+        }
     };
     let page_ix = pages.iter().position(|page| page.id == page_id)?;
     let group_ix = pages[page_ix]
@@ -103,12 +112,11 @@ fn settings_destination_index(
 pub(in crate::ui::shell) fn render_settings_page(
     settings: Entity<SettingsController>,
     settings_instance_generation: u64,
-    bridge_security_requested: bool,
+    destination: Option<SettingsDestination>,
 ) -> gpui::AnyElement {
     let pages = setting_pages(settings);
-    let initial_selection = bridge_security_requested
-        .then(|| settings_destination_index(&pages, SettingsDestination::SshBridgeSecurity))
-        .flatten();
+    let initial_selection =
+        destination.and_then(|destination| settings_destination_index(&pages, destination));
     let settings_id = format!("app-settings-{settings_instance_generation}");
     let settings = Settings::new(settings_id)
         .with_size(Size::Large)
@@ -1313,6 +1321,18 @@ mod ssh_bridge_tests {
         assert_eq!(index.page_ix, 1);
         assert_eq!(index.group_ix, Some(2));
     }
+
+    #[test]
+    fn sync_destination_selects_sync_page_without_a_group() {
+        let pages = vec![
+            NamedSettingPage::new(SettingsPageId::About, SettingPage::new("About")),
+            NamedSettingPage::new(SettingsPageId::Sync, SettingPage::new("Sync")),
+        ];
+        let index = settings_destination_index(&pages, SettingsDestination::Sync)
+            .expect("named sync destination should resolve");
+        assert_eq!(index.page_ix, 1);
+        assert_eq!(index.group_ix, None);
+    }
 }
 
 #[derive(Clone)]
@@ -2179,14 +2199,16 @@ fn request_data_directory_change_confirmation(
                 Err(error) => {
                     log::warn!("failed to schedule data directory change: {error:#}");
                     let error = localized_data_directory_change_error(&error);
-                    let notification = Notification::error(i18n::string_args(
-                        "settings.about.data_directory.failed",
-                        &[("error", &error)],
-                    ))
-                    .title(i18n::string("settings.about.data_directory.failed_title"));
+                    let notification = error_notification(
+                        i18n::string("settings.about.data_directory.failed_title"),
+                        i18n::string_args(
+                            "settings.about.data_directory.failed",
+                            &[("error", &error)],
+                        ),
+                    );
                     if let Some(window_handle) = cx.active_window()
                         && let Err(update_error) = window_handle.update(cx, move |_, window, cx| {
-                            window.push_notification(notification, cx);
+                            crate::ui::shell::push_app_notification(window, notification, cx);
                         })
                     {
                         log::debug!("failed to show data directory change error: {update_error:?}");

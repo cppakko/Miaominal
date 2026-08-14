@@ -41,7 +41,7 @@ mod setting_field_with_reset_action;
 #[path = "components/text_input.rs"]
 mod text_input;
 
-pub(crate) use badge::badge;
+pub(crate) use badge::{badge, compact_badge};
 pub(crate) use card_surface::card_surface;
 pub(crate) use dialog::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, basic_dialog_action_button,

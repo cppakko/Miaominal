@@ -1,7 +1,23 @@
 use super::*;
 use crate::ui::application::application_state;
+use crate::ui::shell::SettingsDestination;
 
 impl AppView {
+    pub(in crate::ui::shell) fn navigate_to_settings_destination(
+        &mut self,
+        destination: SettingsDestination,
+        cx: &mut Context<Self>,
+    ) {
+        self.controllers
+            .settings
+            .read(cx)
+            .request_settings_destination(destination);
+        self.set_sidebar_section(SidebarSection::Settings, cx);
+        // `set_sidebar_section` intentionally returns early when Settings is already active.
+        // The destination generation still changed, so force a render in that case as well.
+        cx.notify();
+    }
+
     fn profile_for_session_tab_id(
         &self,
         session_tab_id: TabId,
@@ -366,7 +382,7 @@ impl AppView {
             );
             if let Some(window_handle) = cx.active_window() {
                 let _ = window_handle.update(cx, move |_, window, cx| {
-                    window.push_notification(notification, cx);
+                    crate::ui::shell::push_app_notification(window, notification, cx);
                 });
             }
         }
@@ -575,7 +591,8 @@ impl AppView {
                     let message =
                         i18n::string("settings.about.reset_local.notifications.success.message");
                     this.shell.status_message = message.clone();
-                    window.push_notification(
+                    crate::ui::shell::push_app_notification(
+                        window,
                         crate::ui::shell::success_notification(
                             i18n::string("settings.about.reset_local.notifications.success.title"),
                             message,

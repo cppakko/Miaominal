@@ -1632,6 +1632,28 @@ script_required = "Script is required."
 required_input_missing = "Required input missing"
 invalid_input = "Invalid input"
 
+[notifications.center]
+title = "Notifications"
+clear_all = "Clear all"
+empty = "No notifications"
+open = "Open"
+
+[notifications.center.priority]
+low = "Low"
+normal = "Normal"
+high = "High"
+critical = "Critical"
+
+[notifications.auto_sync_conflict]
+title = "Automatic sync paused"
+open_sync = "Open sync settings"
+both_sides_changed = "Local and remote data both have unsynced changes. Open Sync settings and use Sync now to choose which side to keep."
+remote_changed_before_push = "The remote changed before upload, so an automatic overwrite was blocked. Please sync manually."
+unsafe_provider_write = "This provider cannot guarantee a safe conditional write. Automatic upload is paused until you confirm the direction manually."
+local_changed_during_pull = "Local data changed during the pull, so the remote content was not applied. Please sync manually."
+missing_sync_baseline = "There is no previous sync baseline, so the safe direction cannot be determined automatically. Please choose push or pull."
+sync_configuration_changed = "The sync provider or configuration changed during synchronization. Review it and sync manually."
+
 [notifications.attachment]
 title = "Attachment failed"
 
@@ -1883,7 +1905,7 @@ watching = "Watching"
 debouncing = "Debouncing"
 pushing = "Pushing"
 pulling = "Pulling"
-pull_required = "Manual confirmation required"
+pull_required = "Manual sync required. Use Sync now above to choose push or pull."
 vault_locked = "Paused, vault locked"
 retry = "Retrying"
 [settings.sync.encryption_group]
@@ -2059,6 +2081,7 @@ remote_binding_required = "{provider} is not bound to a remote resource yet. Fin
 pulled_at = "Pulled at {time}"
 pushed_at = "Pushed at {time}"
 pull_required_at = "Pull required: remote updated at {time}"
+pull_required = "Manual sync is required"
 up_to_date = "Up to date"
 error = "Error: {message}"
 
