@@ -1061,6 +1061,31 @@ impl SftpController {
         });
     }
 
+    pub(in crate::ui::shell) fn apply_hidden_columns(
+        &self,
+        local_hidden_columns: Vec<usize>,
+        remote_hidden_columns: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let forms = self.forms.borrow();
+        let local_table = forms.local_table.clone();
+        let remote_table = forms.remote_table.clone();
+        drop(forms);
+        local_table.update(cx, |table, cx| {
+            table
+                .delegate_mut()
+                .set_hidden_columns(local_hidden_columns);
+            table.refresh(cx);
+        });
+        remote_table.update(cx, |table, cx| {
+            table
+                .delegate_mut()
+                .set_hidden_columns(remote_hidden_columns);
+            table.refresh(cx);
+        });
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn new(
         args: SftpControllerArgs,
         session_query: SessionQueryPort,

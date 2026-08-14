@@ -34,11 +34,11 @@ impl AppView {
             self.controllers
                 .session
                 .read(cx)
-                .replace_profiles(snapshot.profiles);
+                .replace_profiles_from_application(snapshot.profiles);
             self.controllers
                 .session
                 .read(cx)
-                .replace_proxies(snapshot.proxies.clone());
+                .replace_proxies_from_application(snapshot.proxies.clone());
             self.controllers
                 .session
                 .read(cx)
@@ -64,8 +64,18 @@ impl AppView {
         }
 
         if snapshot.generations.settings != self.application_generations.settings {
-            let language_changed = self.controllers.settings.read(cx).settings().language
-                != snapshot.settings_store.settings().language;
+            let previous_settings = self.controllers.settings.read(cx).settings().clone();
+            let next_settings = snapshot.settings_store.settings();
+            let language_changed = previous_settings.language != next_settings.language;
+            let auto_collect_changed = previous_settings.auto_collect_session_monitoring
+                != next_settings.auto_collect_session_monitoring;
+            let sftp_columns_changed = previous_settings.local_sftp_hidden_columns
+                != next_settings.local_sftp_hidden_columns
+                || previous_settings.remote_sftp_hidden_columns
+                    != next_settings.remote_sftp_hidden_columns;
+            let next_auto_collect = next_settings.auto_collect_session_monitoring;
+            let next_local_hidden_columns = next_settings.local_sftp_hidden_columns.clone();
+            let next_remote_hidden_columns = next_settings.remote_sftp_hidden_columns.clone();
             self.controllers.settings.update(cx, |controller, cx| {
                 controller.replace_application_settings(
                     snapshot.settings_store,
@@ -79,6 +89,20 @@ impl AppView {
                     self.controllers.settings.read(cx).settings().language,
                 );
                 self.refresh_localized_placeholders(window, cx);
+            }
+            if auto_collect_changed {
+                self.controllers.session.update(cx, |controller, cx| {
+                    controller.apply_auto_collect_monitoring_preference(next_auto_collect, cx);
+                });
+            }
+            if sftp_columns_changed {
+                self.controllers.sftp.update(cx, |controller, cx| {
+                    controller.apply_hidden_columns(
+                        next_local_hidden_columns,
+                        next_remote_hidden_columns,
+                        cx,
+                    );
+                });
             }
             miaominal_settings::sync_component_theme(cx);
             crate::ui::sync_system_tray(cx);

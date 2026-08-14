@@ -153,6 +153,7 @@ pub(crate) struct ApplicationState {
     auto_sync: Option<AutoSyncService>,
     auto_sync_snapshot: AutoSyncSnapshot,
     last_auto_sync_revision: u64,
+    last_applied_auto_sync_result_id: Option<u64>,
     last_auto_sync_intervention_id: Option<String>,
     bridge_status: SshBridgeStatus,
     bridge_sync_result: Option<SshBridgeSyncResult>,
@@ -247,6 +248,7 @@ impl ApplicationState {
                 phase: miaominal_services::AutoSyncPhase::Disabled,
                 message: None,
                 last_result: None,
+                last_result_id: None,
                 dirty: false,
                 retry_at_unix: None,
                 intervention: None,
@@ -279,6 +281,7 @@ impl ApplicationState {
             auto_sync,
             auto_sync_snapshot,
             last_auto_sync_revision: 0,
+            last_applied_auto_sync_result_id: None,
             last_auto_sync_intervention_id: None,
             generations: ApplicationGenerations {
                 catalogs: 1,
@@ -358,12 +361,7 @@ impl ApplicationState {
         self.proxies = proxies;
         self.snippets = snippets;
         self.known_hosts_entries = known_hosts_entries;
-        self.services
-            .ssh_bridge_service
-            .refresh_routes(self.profiles.clone(), self.proxies.clone());
-        self.services
-            .port_forward_manager
-            .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+        self.refresh_connection_catalog_services();
         self.generations.catalogs = next_generation(self.generations.catalogs);
         cx.notify();
     }
@@ -394,12 +392,7 @@ impl ApplicationState {
         self.generations.settings = next_generation(self.generations.settings);
         if proxies_changed {
             self.generations.catalogs = next_generation(self.generations.catalogs);
-            self.services
-                .ssh_bridge_service
-                .refresh_routes(self.profiles.clone(), self.proxies.clone());
-            self.services
-                .port_forward_manager
-                .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+            self.refresh_connection_catalog_services();
         }
         if auto_lock_duration_changed {
             self.sync_vault_auto_lock_task(cx);
@@ -488,25 +481,33 @@ impl ApplicationState {
             );
         }
         self.auto_sync_snapshot = snapshot.clone();
-        if let Some(result) = &snapshot.last_result {
-            self.apply_sync_task_data(result);
+        if let Some(result) =
+            newly_observed_auto_sync_result(&snapshot, &mut self.last_applied_auto_sync_result_id)
+        {
+            self.apply_sync_task_data(result, cx);
         }
         self.generations.auto_sync = next_generation(self.generations.auto_sync);
         cx.notify();
     }
 
-    fn apply_sync_task_data(&mut self, result: &SyncTaskResult) {
+    fn apply_sync_task_data(&mut self, result: &SyncTaskResult, cx: &mut Context<Self>) {
         let sync_changed = self.sync_engine.config_store.config != result.updated_config;
         self.sync_engine.config_store.config = result.updated_config.clone();
 
         let mut catalogs_changed = false;
         let mut routes_changed = false;
         let mut settings_changed = false;
+        let mut auto_lock_duration_changed = false;
         if let Some(reload) = &result.reload {
             if let Ok(store) = &reload.settings {
                 settings_changed =
                     miaominal_settings::changed(self.settings_store.settings(), store.settings());
                 if settings_changed {
+                    auto_lock_duration_changed = self
+                        .settings_store
+                        .settings()
+                        .local_vault_auto_lock_duration
+                        != store.settings().local_vault_auto_lock_duration;
                     self.settings_store = store.clone();
                 }
             } else if let Err(error) = &reload.settings {
@@ -559,12 +560,7 @@ impl ApplicationState {
             }
         }
         if routes_changed {
-            self.services
-                .ssh_bridge_service
-                .refresh_routes(self.profiles.clone(), self.proxies.clone());
-            self.services
-                .port_forward_manager
-                .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+            self.refresh_connection_catalog_services();
         }
         if catalogs_changed {
             self.generations.catalogs = next_generation(self.generations.catalogs);
@@ -572,6 +568,22 @@ impl ApplicationState {
         if sync_changed || settings_changed {
             self.generations.settings = next_generation(self.generations.settings);
         }
+        if auto_lock_duration_changed {
+            self.sync_vault_auto_lock_task(cx);
+        }
+    }
+
+    fn refresh_connection_catalog_services(&self) {
+        if let Err(error) = self
+            .services
+            .open_ssh_integration_service
+            .refresh(self.profiles.clone(), self.proxies.clone())
+        {
+            log::warn!("failed to refresh managed OpenSSH config: {error:?}");
+        }
+        self.services
+            .port_forward_manager
+            .replace_catalogs(self.profiles.clone(), self.proxies.clone());
     }
 
     pub(crate) fn apply_manual_sync_result(
@@ -580,7 +592,7 @@ impl ApplicationState {
         cx: &mut Context<Self>,
     ) {
         let status = result.status.clone();
-        self.apply_sync_task_data(&result);
+        self.apply_sync_task_data(&result, cx);
         if let Some(auto_sync) = &self.auto_sync {
             auto_sync.reconcile_manual_sync(
                 status,
@@ -860,6 +872,19 @@ fn newly_observed_auto_sync_intervention<'a>(
     snapshot.intervention.as_ref()
 }
 
+fn newly_observed_auto_sync_result<'a>(
+    snapshot: &'a AutoSyncSnapshot,
+    last_id: &mut Option<u64>,
+) -> Option<&'a SyncTaskResult> {
+    let result = snapshot.last_result.as_ref()?;
+    let current_id = snapshot.last_result_id?;
+    if *last_id == Some(current_id) {
+        return None;
+    }
+    *last_id = Some(current_id);
+    Some(result)
+}
+
 fn vault_unlocked_at_after_transition(
     was_unlocked: bool,
     next_status: ApplicationVaultStatus,
@@ -980,6 +1005,7 @@ mod tests {
             },
             message: None,
             last_result: None,
+            last_result_id: None,
             dirty: id.is_some(),
             retry_at_unix: None,
             intervention: id.map(|id| miaominal_services::AutoSyncIntervention {
@@ -1003,6 +1029,28 @@ mod tests {
 
         let second = intervention_snapshot(Some("conflict-2"));
         assert!(newly_observed_auto_sync_intervention(&second, &mut last_id).is_some());
+    }
+
+    #[test]
+    fn auto_sync_results_apply_once_per_result_id() {
+        let result = SyncTaskResult {
+            status: miaominal_sync::SyncStatus::Pulled { at: 1 },
+            updated_config: miaominal_sync::SyncConfig::default(),
+            reload: None,
+        };
+        let mut snapshot = intervention_snapshot(None);
+        snapshot.last_result = Some(result.clone());
+        snapshot.last_result_id = Some(1);
+        let mut last_id = None;
+
+        assert!(newly_observed_auto_sync_result(&snapshot, &mut last_id).is_some());
+        snapshot.revision += 1;
+        snapshot.phase = miaominal_services::AutoSyncPhase::Pulling;
+        assert!(newly_observed_auto_sync_result(&snapshot, &mut last_id).is_none());
+
+        snapshot.last_result = Some(result);
+        snapshot.last_result_id = Some(2);
+        assert!(newly_observed_auto_sync_result(&snapshot, &mut last_id).is_some());
     }
 
     fn profile_with_enabled_forward() -> SessionProfile {

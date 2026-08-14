@@ -54,7 +54,7 @@ pub fn build_payload(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn local_data_revision(payload: &SyncPlaintextPayload) -> Result<String> {
     let mut normalized = payload.clone();
-    clear_port_forward_runtime_state(&mut normalized.sessions);
+    clear_session_local_state(&mut normalized.sessions);
     let serialized =
         serde_json::to_vec(&normalized).context("failed to serialize local sync revision")?;
     let digest = Sha256::digest(serialized);
@@ -72,7 +72,7 @@ pub(super) fn build_plaintext_payload(
 ) -> Result<SyncPlaintextPayload> {
     let secrets = collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?;
     let mut sessions = sessions.to_vec();
-    clear_port_forward_runtime_state(&mut sessions);
+    clear_session_local_state(&mut sessions);
     Ok(SyncPlaintextPayload {
         sessions,
         proxies: proxies.to_vec(),
@@ -83,18 +83,23 @@ pub(super) fn build_plaintext_payload(
     })
 }
 
-fn clear_port_forward_runtime_state(sessions: &mut [SessionProfile]) {
+fn clear_session_local_state(sessions: &mut [SessionProfile]) {
     for session in sessions {
+        session.last_connected_at = None;
         for rule in &mut session.port_forwarding_rules {
             rule.enabled = false;
         }
     }
 }
 
-fn merge_local_port_forward_runtime_state(
+fn merge_local_session_state(
     incoming: &[SessionProfile],
     local: &[SessionProfile],
 ) -> Vec<SessionProfile> {
+    let last_connected_at_by_profile = local
+        .iter()
+        .map(|profile| (profile.id.clone(), profile.last_connected_at))
+        .collect::<HashMap<_, _>>();
     let enabled_by_rule = local
         .iter()
         .flat_map(|profile| {
@@ -105,8 +110,12 @@ fn merge_local_port_forward_runtime_state(
         })
         .collect::<HashMap<_, _>>();
     let mut merged = incoming.to_vec();
-    clear_port_forward_runtime_state(&mut merged);
+    clear_session_local_state(&mut merged);
     for profile in &mut merged {
+        profile.last_connected_at = last_connected_at_by_profile
+            .get(&profile.id)
+            .copied()
+            .flatten();
         for rule in &mut profile.port_forwarding_rules {
             rule.enabled = enabled_by_rule
                 .get(&(profile.id.clone(), rule.id.clone()))
@@ -244,7 +253,7 @@ fn apply_payload_changes(
         )?;
     }
 
-    let sessions = merge_local_port_forward_runtime_state(&payload.sessions, &old_sessions);
+    let sessions = merge_local_session_state(&payload.sessions, &old_sessions);
     proxy_store.save(&payload.proxies)?;
     session_store.save(&sessions)?;
     snippet_store.save(&payload.snippets)?;
@@ -912,14 +921,30 @@ mod tests {
     }
 
     #[test]
+    fn last_connected_at_is_not_part_of_local_revision() {
+        let mut first = sample_plaintext();
+        first.sessions[0].last_connected_at = Some(100);
+        let mut second = first.clone();
+        second.sessions[0].last_connected_at = Some(200);
+
+        assert_eq!(
+            local_data_revision(&first).unwrap(),
+            local_data_revision(&second).unwrap()
+        );
+    }
+
+    #[test]
     fn sync_sessions_clear_runtime_enabled_without_mutating_input() {
         let mut input = sample_plaintext().sessions;
+        input[0].last_connected_at = Some(100);
         let rule = test_port_forward_rule("forward-1", true);
         input[0].port_forwarding_rules.push(rule);
 
         let mut normalized = input.clone();
-        clear_port_forward_runtime_state(&mut normalized);
+        clear_session_local_state(&mut normalized);
 
+        assert_eq!(input[0].last_connected_at, Some(100));
+        assert_eq!(normalized[0].last_connected_at, None);
         assert!(input[0].port_forwarding_rules[0].enabled);
         assert!(!normalized[0].port_forwarding_rules[0].enabled);
     }
@@ -927,6 +952,7 @@ mod tests {
     #[test]
     fn pull_preserves_only_matching_local_port_forward_runtime_state() {
         let mut local = sample_plaintext().sessions;
+        local[0].last_connected_at = Some(100);
         let local_rule = test_port_forward_rule("existing", true);
         local[0].port_forwarding_rules.push(local_rule);
 
@@ -934,9 +960,14 @@ mod tests {
         incoming[0].port_forwarding_rules[0].enabled = false;
         let remote_only = test_port_forward_rule("remote-only", true);
         incoming[0].port_forwarding_rules.push(remote_only);
+        let mut remote_only_profile = SessionProfile::blank("remote-only", 2);
+        remote_only_profile.last_connected_at = Some(200);
+        incoming.push(remote_only_profile);
 
-        let merged = merge_local_port_forward_runtime_state(&incoming, &local);
+        let merged = merge_local_session_state(&incoming, &local);
 
+        assert_eq!(merged[0].last_connected_at, Some(100));
+        assert_eq!(merged[1].last_connected_at, None);
         assert!(merged[0].port_forwarding_rules[0].enabled);
         assert!(!merged[0].port_forwarding_rules[1].enabled);
     }

@@ -1613,9 +1613,16 @@ impl SessionController {
     }
 
     pub(in crate::ui::shell) fn replace_profiles(&self, profiles: Vec<SessionProfile>) {
+        self.replace_profiles_from_application(profiles);
+        self.refresh_ssh_bridge_routes();
+    }
+
+    pub(in crate::ui::shell) fn replace_profiles_from_application(
+        &self,
+        profiles: Vec<SessionProfile>,
+    ) {
         *self.profiles.borrow_mut() = profiles;
         self.sync_port_profiles();
-        self.refresh_ssh_bridge_routes();
     }
 
     pub(in crate::ui::shell) fn proxies(&self) -> Ref<'_, Vec<ProxyProfile>> {
@@ -1623,9 +1630,16 @@ impl SessionController {
     }
 
     pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
+        self.replace_proxies_from_application(proxies);
+        self.refresh_ssh_bridge_routes();
+    }
+
+    pub(in crate::ui::shell) fn replace_proxies_from_application(
+        &self,
+        proxies: Vec<ProxyProfile>,
+    ) {
         *self.proxies.borrow_mut() = proxies;
         self.sync_port_proxies();
-        self.refresh_ssh_bridge_routes();
     }
 
     pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {

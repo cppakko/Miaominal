@@ -55,6 +55,7 @@ pub struct AutoSyncSnapshot {
     pub phase: AutoSyncPhase,
     pub message: Option<String>,
     pub last_result: Option<SyncTaskResult>,
+    pub last_result_id: Option<u64>,
     pub dirty: bool,
     pub retry_at_unix: Option<u64>,
     pub intervention: Option<AutoSyncIntervention>,
@@ -138,6 +139,7 @@ impl AutoSyncService {
             phase: initial_phase,
             message: None,
             last_result: None,
+            last_result_id: None,
             dirty: false,
             retry_at_unix: None,
             intervention: None,
@@ -251,6 +253,8 @@ struct AutoSyncTask<S: SyncOps> {
     phase: AutoSyncPhase,
     message: Option<String>,
     last_result: Option<SyncTaskResult>,
+    last_result_id: Option<u64>,
+    result_sequence: u64,
     dirty: bool,
     remote_missing: bool,
     pending_conflict: bool,
@@ -272,6 +276,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             phase: self.phase,
             message: self.message.clone(),
             last_result: self.last_result.clone(),
+            last_result_id: self.last_result_id,
             dirty: self.dirty,
             retry_at_unix: self.retry_at_unix,
             intervention: self.intervention.clone(),
@@ -288,6 +293,20 @@ impl<S: SyncOps> AutoSyncTask<S> {
     fn clear_intervention(&mut self) {
         self.pending_conflict = false;
         self.intervention = None;
+    }
+
+    fn clear_last_result(&mut self) {
+        self.last_result = None;
+        self.last_result_id = None;
+    }
+
+    fn set_last_result(&mut self, result: SyncTaskResult) {
+        self.result_sequence = self.result_sequence.wrapping_add(1);
+        if self.result_sequence == 0 {
+            self.result_sequence = 1;
+        }
+        self.last_result = Some(result);
+        self.last_result_id = Some(self.result_sequence);
     }
 
     fn enter_intervention(&mut self, reason: SyncInterventionReason, remote_at: Option<u64>) {
@@ -317,6 +336,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
 
     async fn apply_engine(&mut self, engine: SyncEngine) {
         self.engine = engine;
+        self.clear_last_result();
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
         self.fingerprint = Fingerprint::sample(&self.config_dir);
         self.remote_missing = false;
@@ -349,7 +369,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
         self.engine = engine;
         self.settings_store = settings_store;
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
-        self.last_result = None;
+        self.clear_last_result();
         self.reset_backoff();
 
         let previous_fingerprint = self.fingerprint.clone();
@@ -449,7 +469,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             let settings_store = self.settings_store.clone();
             match self.executor.push(engine, settings_store).await {
                 Ok(result) => {
-                    self.last_result = Some(result.clone());
+                    self.set_last_result(result.clone());
                     self.engine.config_store.config = result.updated_config;
                     match result.status {
                         SyncStatus::Pushed { .. } => {
@@ -572,7 +592,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 let settings_store = self.settings_store.clone();
                 match self.executor.pull(engine, settings_store).await {
                     Ok(result) => {
-                        self.last_result = Some(result.clone());
+                        self.set_last_result(result.clone());
                         self.engine.config_store.config = result.updated_config;
                         if let Some(reload) = &result.reload
                             && let Ok(store) = &reload.settings
@@ -658,6 +678,8 @@ async fn run_auto_sync<S: SyncOps>(
         },
         message: None,
         last_result: None,
+        last_result_id: None,
+        result_sequence: 0,
         dirty: false,
         remote_missing: false,
         pending_conflict: false,
@@ -965,6 +987,7 @@ mod tests {
             phase,
             message: None,
             last_result: None,
+            last_result_id: None,
             dirty: false,
             retry_at_unix: None,
             intervention: None,
@@ -999,6 +1022,8 @@ mod tests {
             phase: AutoSyncPhase::Watching,
             message: None,
             last_result: None,
+            last_result_id: None,
+            result_sequence: 0,
             dirty: false,
             remote_missing: false,
             pending_conflict: false,
@@ -1040,6 +1065,25 @@ mod tests {
             third, fourth,
             "credential writes are detected by payload revision, not a global counter"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn result_ids_are_stable_across_snapshots_and_advance_for_new_results() {
+        let dir = temp_config_dir("result-id");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock, &dir);
+
+        task.set_last_result(MockSyncOps::pushed_result("first".into()));
+        let first_id = task.last_result_id;
+        task.publish();
+        assert_eq!(task.last_result_id, first_id);
+
+        task.set_last_result(MockSyncOps::pulled_result("second".into()));
+        assert_ne!(task.last_result_id, first_id);
+        task.clear_last_result();
+        assert!(task.last_result.is_none());
+        assert!(task.last_result_id.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
