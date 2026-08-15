@@ -258,6 +258,142 @@ fn scale_bucket(scale_factor: f32) -> u16 {
     (scale_factor.max(1.0) * 100.0).round() as u16
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_application_bundle_path(path: &str) -> Option<std::path::PathBuf> {
+    Path::new(path)
+        .ancestors()
+        .filter(|ancestor| {
+            ancestor
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+        })
+        .last()
+        .map(Path::to_path_buf)
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
+fn executable_name_candidates(path: &Path) -> Vec<String> {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    push_unique_string(&mut names, name);
+    push_unique_ascii_lowercase(&mut names, name);
+    for suffix in ["-server", "_server", ".bin"] {
+        if let Some(stripped) = name.strip_suffix(suffix) {
+            push_unique_string(&mut names, stripped);
+            push_unique_ascii_lowercase(&mut names, stripped);
+        }
+    }
+    names
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
+fn desktop_entry_icon_for_executable(contents: &str, executable_path: &Path) -> Option<String> {
+    let candidates = executable_name_candidates(executable_path);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let mut in_desktop_entry = false;
+    let mut entry_type = None;
+    let mut hidden = false;
+    let mut exec = None;
+    let mut try_exec = None;
+    let mut icon = None;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            if in_desktop_entry {
+                break;
+            }
+            in_desktop_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_desktop_entry || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "Type" => entry_type = Some(value.trim()),
+            "Hidden" => hidden = value.trim().eq_ignore_ascii_case("true"),
+            "Exec" => exec = first_desktop_exec_token(value),
+            "TryExec" => try_exec = first_desktop_exec_token(value),
+            "Icon" => icon = Some(value.trim()),
+            _ => {}
+        }
+    }
+
+    if hidden || entry_type.is_some_and(|entry_type| entry_type != "Application") {
+        return None;
+    }
+    let command_matches = [exec.as_deref(), try_exec.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|command| Path::new(command).file_name())
+        .filter_map(|name| name.to_str())
+        .any(|name| {
+            candidates
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(name))
+        });
+    if command_matches {
+        icon.map(str::to_string)
+    } else {
+        None
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
+fn first_desktop_exec_token(value: &str) -> Option<String> {
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value.trim_start().chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if character == active_quote {
+                quote = None;
+            } else {
+                token.push(character);
+            }
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            quote = Some(character);
+        } else if character.is_whitespace() {
+            break;
+        } else {
+            token.push(character);
+        }
+    }
+    (!token.is_empty()).then_some(token)
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
+fn push_unique_ascii_lowercase(values: &mut Vec<String>, value: &str) {
+    let value = value.to_ascii_lowercase();
+    push_unique_string(values, &value);
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
+    }
+}
+
 #[cfg(windows)]
 mod platform {
     use super::*;
@@ -528,7 +664,11 @@ mod platform {
     ) -> Option<SystemFileIconBytes> {
         autoreleasepool(|_| {
             let workspace = NSWorkspace::sharedWorkspace();
-            let image = if key.is_directory {
+            let image = if let Some(path) = key.path.as_deref() {
+                let icon_path = macos_application_bundle_path(path)
+                    .unwrap_or_else(|| std::path::PathBuf::from(path));
+                workspace.iconForFile(&NSString::from_str(&icon_path.to_string_lossy()))
+            } else if key.is_directory {
                 workspace.iconForFile(&NSString::from_str("/tmp"))
             } else {
                 let file_type = key.extension.as_deref().unwrap_or("");
@@ -559,25 +699,65 @@ mod platform {
     use super::*;
     use std::env;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     pub(super) fn load_system_file_icon_bytes(
         key: &SystemFileIconKey,
     ) -> Option<SystemFileIconBytes> {
-        let icon_names = icon_names_for_key(key);
+        let data_roots = data_roots();
+        let desktop_icon = key
+            .path
+            .as_deref()
+            .and_then(|path| desktop_icon_for_executable(Path::new(path), &data_roots));
+        if let Some(icon) = &desktop_icon {
+            if icon.is_absolute()
+                && let Some(icon) = read_icon_file(icon.clone())
+            {
+                return Some(icon);
+            }
+        }
+
+        let icon_names = icon_names_for_key(key, desktop_icon.as_deref());
         let theme_names = icon_theme_names();
-        let roots = icon_roots();
+        let roots = icon_roots(&data_roots);
         let size_dirs = preferred_size_dirs(key.physical_size_px());
 
         find_icon_file(&icon_names, &theme_names, &roots, &size_dirs).and_then(read_icon_file)
     }
 
-    fn icon_names_for_key(key: &SystemFileIconKey) -> Vec<String> {
+    fn icon_names_for_key(key: &SystemFileIconKey, desktop_icon: Option<&Path>) -> Vec<String> {
         let mut names = Vec::new();
         if key.is_directory {
             push_unique(&mut names, "folder");
             push_unique(&mut names, "inode-directory");
             return names;
+        }
+
+        if let Some(path) = key.path.as_deref() {
+            let executable_path = Path::new(path);
+            if let Some(icon) = desktop_icon
+                && !icon.is_absolute()
+                && let Some(icon_name) = icon.to_str()
+            {
+                let icon_name = icon_name
+                    .strip_suffix(".png")
+                    .or_else(|| icon_name.strip_suffix(".svg"))
+                    .unwrap_or(icon_name);
+                push_unique(&mut names, icon_name);
+            }
+            for name in executable_name_candidates(executable_path) {
+                push_unique(&mut names, &name);
+            }
+            if names.iter().any(|name| {
+                name.contains("terminal")
+                    || matches!(
+                        name.as_str(),
+                        "alacritty" | "foot" | "kitty" | "konsole" | "kgx" | "tilix" | "wezterm"
+                    )
+            }) {
+                push_unique(&mut names, "utilities-terminal");
+            }
+            push_unique(&mut names, "application-x-executable");
         }
 
         if let Some(extension) = &key.extension {
@@ -595,6 +775,37 @@ mod platform {
         push_unique(&mut names, "text-x-generic");
         push_unique(&mut names, "unknown");
         names
+    }
+
+    fn desktop_icon_for_executable(
+        executable_path: &Path,
+        data_roots: &[PathBuf],
+    ) -> Option<PathBuf> {
+        for root in data_roots {
+            let applications = root.join("applications");
+            let Ok(entries) = fs::read_dir(applications) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("desktop"))
+                {
+                    continue;
+                }
+                let Ok(contents) = fs::read_to_string(path) else {
+                    continue;
+                };
+                let Some(icon) = desktop_entry_icon_for_executable(&contents, executable_path)
+                else {
+                    continue;
+                };
+                return Some(PathBuf::from(icon));
+            }
+        }
+        None
     }
 
     fn generic_mime_icon_names(mime: &str, extension: &str) -> &'static [&'static str] {
@@ -688,11 +899,16 @@ mod platform {
         names
     }
 
-    fn icon_roots() -> Vec<PathBuf> {
+    fn data_roots() -> Vec<PathBuf> {
         let mut roots = Vec::new();
 
         if let Some(home) = env::var_os("HOME") {
-            push_unique_path(&mut roots, PathBuf::from(home).join(".local/share/icons"));
+            let home = PathBuf::from(home);
+            let data_home = env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".local/share"));
+            push_unique_path(&mut roots, data_home);
+            push_unique_path(&mut roots, home.join(".local/share/flatpak/exports/share"));
         }
 
         let data_dirs = env::var_os("XDG_DATA_DIRS")
@@ -705,12 +921,20 @@ mod platform {
             });
 
         for data_dir in data_dirs {
-            push_unique_path(&mut roots, data_dir.join("icons"));
+            push_unique_path(&mut roots, data_dir);
         }
 
-        push_unique_path(&mut roots, PathBuf::from("/usr/share/icons"));
-        push_unique_path(&mut roots, PathBuf::from("/usr/local/share/icons"));
-        push_unique_path(&mut roots, PathBuf::from("/usr/share/pixmaps"));
+        push_unique_path(&mut roots, PathBuf::from("/var/lib/flatpak/exports/share"));
+        push_unique_path(&mut roots, PathBuf::from("/var/lib/snapd/desktop"));
+        roots
+    }
+
+    fn icon_roots(data_roots: &[PathBuf]) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        for data_root in data_roots {
+            push_unique_path(&mut roots, data_root.join("icons"));
+            push_unique_path(&mut roots, data_root.join("pixmaps"));
+        }
         roots
     }
 
@@ -814,5 +1038,76 @@ mod platform {
         _key: &SystemFileIconKey,
     ) -> Option<SystemFileIconBytes> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn macos_bundle_path_is_recovered_from_application_executable() {
+        assert_eq!(
+            macos_application_bundle_path(
+                "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"
+            ),
+            Some(PathBuf::from("/System/Applications/Utilities/Terminal.app"))
+        );
+        assert_eq!(
+            macos_application_bundle_path(
+                "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)"
+            ),
+            Some(PathBuf::from("/Applications/Visual Studio Code.app"))
+        );
+        assert_eq!(macos_application_bundle_path("/usr/bin/ssh"), None);
+    }
+
+    #[test]
+    fn desktop_entry_maps_executable_to_application_icon() {
+        let entry = r#"
+[Desktop Entry]
+Type=Application
+Name=Visual Studio Code
+Exec=/usr/share/code/code --unity-launch %F
+Icon=visual-studio-code
+"#;
+        assert_eq!(
+            desktop_entry_icon_for_executable(entry, Path::new("/usr/share/code/code")),
+            Some("visual-studio-code".to_string())
+        );
+    }
+
+    #[test]
+    fn desktop_entry_matches_terminal_server_process_to_launcher() {
+        let entry = r#"
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=gnome-terminal %U
+Icon=org.gnome.Terminal
+"#;
+        assert_eq!(
+            desktop_entry_icon_for_executable(
+                entry,
+                Path::new("/usr/libexec/gnome-terminal-server")
+            ),
+            Some("org.gnome.Terminal".to_string())
+        );
+    }
+
+    #[test]
+    fn hidden_desktop_entries_are_not_used_for_request_icons() {
+        let entry = r#"
+[Desktop Entry]
+Type=Application
+Hidden=true
+Exec=code %F
+Icon=code
+"#;
+        assert_eq!(
+            desktop_entry_icon_for_executable(entry, Path::new("/usr/bin/code")),
+            None
+        );
     }
 }
