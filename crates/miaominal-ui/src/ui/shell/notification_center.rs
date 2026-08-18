@@ -729,41 +729,46 @@ pub(crate) fn render_notification_center_popover(cx: &App) -> impl IntoElement {
                         ),
                 )
                 .child(
-                    v_flex()
+                    div()
+                        .w_full()
                         .max_h(px(408.0))
                         .overflow_y_scrollbar()
-                        .px_2()
-                        .pb_2()
-                        .gap_1()
-                        .when(entries.is_empty(), |this| {
-                            this.child(
-                                v_flex()
-                                    .h(px(152.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .gap_3()
-                                    .text_color(rgb(roles.on_surface_variant))
-                                    .child(
-                                        div()
-                                            .size(px(48.0))
-                                            .rounded(px(999.0))
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .px_2()
+                                .pb_2()
+                                .gap_1()
+                                .when(entries.is_empty(), |this| {
+                                    this.child(
+                                        v_flex()
+                                            .h(px(152.0))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .bg(color_with_alpha(roles.secondary, 0x20))
+                                            .gap_3()
+                                            .text_color(rgb(roles.on_surface_variant))
                                             .child(
-                                                Icon::new(IconName::Bell)
-                                                    .size(px(24.0))
-                                                    .text_color(rgb(roles.secondary)),
-                                            ),
+                                                div()
+                                                    .size(px(48.0))
+                                                    .rounded(px(999.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .bg(color_with_alpha(roles.secondary, 0x20))
+                                                    .child(
+                                                        Icon::new(IconName::Bell)
+                                                            .size(px(24.0))
+                                                            .text_color(rgb(roles.secondary)),
+                                                    ),
+                                            )
+                                            .child(i18n::string("notifications.center.empty")),
                                     )
-                                    .child(i18n::string("notifications.center.empty")),
-                            )
-                        })
-                        .children(entries.into_iter().map(move |entry| {
-                            render_notification_history_entry(entry, popover.clone())
-                        })),
+                                })
+                                .children(entries.into_iter().map(move |entry| {
+                                    render_notification_history_entry(entry, popover.clone())
+                                })),
+                        ),
                 )
                 .with_animation(
                     "notification-center-panel-enter",
@@ -798,6 +803,7 @@ fn render_notification_history_entry(
             "notification-history-{}",
             entry_id
         )))
+        .flex_none()
         .w_full()
         .items_start()
         .gap_3()
