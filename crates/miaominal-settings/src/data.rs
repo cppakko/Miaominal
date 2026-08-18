@@ -1044,9 +1044,22 @@ impl AppSettings {
         self.remote_sftp_hidden_columns = synced.remote_sftp_hidden_columns.clone();
         self.completed_onboarding_version = synced.completed_onboarding_version;
         self.local_vault_auto_lock_duration = synced.local_vault_auto_lock_duration;
-        self.ai_providers = synced.ai_providers.clone();
-        sanitize_ai_providers(&mut self.ai_providers);
+        let mut ai_providers = synced.ai_providers.clone();
+        sanitize_ai_providers(&mut ai_providers);
+        self.ai_providers = ai_providers;
         self.web_search = synced.web_search.clone();
+        self.web_search.sanitize();
+    }
+}
+
+impl SyncedSettings {
+    /// Normalize mutable fields so that the revision hash is stable across
+    /// serialize/deserialize/apply cycles. Must be called identically in both
+    /// `apply_synced_settings` (before writing to disk) and in
+    /// `build_plaintext_payload` (before hashing for the revision), otherwise
+    /// the two sides diverge and every pull looks dirty.
+    pub fn normalize(&mut self) {
+        sanitize_ai_providers(&mut self.ai_providers);
         self.web_search.sanitize();
     }
 }

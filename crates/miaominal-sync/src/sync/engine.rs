@@ -1,6 +1,6 @@
 use super::payload::{
     apply_plaintext_payload, build_payload, build_plaintext_payload, decrypt_remote_payload,
-    local_data_revision, parse_remote_payload,
+    local_data_revision, normalize_remote_payload, parse_remote_payload,
 };
 use super::providers::{PullOutcome, PushCondition, PushOutcome, RemoteBackend};
 use super::store::SyncConfigStore;
@@ -376,7 +376,11 @@ impl SyncEngine {
 
         let passphrase = self.sync_passphrase()?;
         let remote_synced_at = payload.synced_at;
-        let plaintext = decrypt_remote_payload(&payload, &passphrase)?;
+        let mut plaintext = decrypt_remote_payload(&payload, &passphrase)?;
+        // apply_plaintext_payload sanitizes settings before persisting them;
+        // normalize first so the stored sync baseline describes that exact
+        // representation, including payloads produced by older clients.
+        normalize_remote_payload(&mut plaintext);
         let _sync_guard = miaominal_secrets::lock_sync_data();
         let current_revision = self.local_revision(
             session_store,

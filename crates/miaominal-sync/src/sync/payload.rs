@@ -61,6 +61,13 @@ pub(super) fn local_data_revision(payload: &SyncPlaintextPayload) -> Result<Stri
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Normalize settings received from a remote payload before calculating the
+/// applied revision. Applying a payload sanitizes these same fields before
+/// persisting them, so the revision must be based on that canonical form.
+pub(super) fn normalize_remote_payload(payload: &mut SyncPlaintextPayload) {
+    payload.settings.normalize();
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_plaintext_payload(
     sessions: &[SessionProfile],
@@ -70,15 +77,26 @@ pub(super) fn build_plaintext_payload(
     settings: &SyncedSettings,
     secret_store: &SecretStore,
 ) -> Result<SyncPlaintextPayload> {
-    let secrets = collect_secrets(sessions, proxies, managed_keys, settings, secret_store)?;
-    let mut sessions = sessions.to_vec();
-    clear_session_local_state(&mut sessions);
+    let mut payload_sessions = sessions.to_vec();
+    clear_session_local_state(&mut payload_sessions);
+    // Normalize settings the same way apply_synced_settings does so that the
+    // revision hash is stable: pull writes normalized data to disk, and the
+    // next local_revision() call reads that same normalized form.
+    let mut settings = settings.clone();
+    settings.normalize();
+    // Collect secrets AFTER normalization so that secret IDs match the
+    // normalized provider IDs in the payload. sanitize_ai_providers may
+    // reassign duplicate provider IDs with fresh UUIDs; collecting before
+    // normalization would produce secrets keyed to the old IDs while the
+    // payload carries the new ones, silently dropping those API keys on
+    // the receiving device.
+    let secrets = collect_secrets(sessions, proxies, managed_keys, &settings, secret_store)?;
     Ok(SyncPlaintextPayload {
-        sessions,
+        sessions: payload_sessions,
         proxies: proxies.to_vec(),
         snippets: snippets.to_vec(),
         managed_keys: managed_keys.to_vec(),
-        settings: settings.clone(),
+        settings,
         secrets,
     })
 }
@@ -904,6 +922,24 @@ mod tests {
             local_data_revision(&first).unwrap(),
             local_data_revision(&changed).unwrap()
         );
+    }
+
+    #[test]
+    fn normalized_remote_revision_matches_persisted_settings() {
+        let mut remote = sample_plaintext();
+        remote.settings.web_search.endpoint = " https://search.example/api/ ".into();
+        let raw_revision = local_data_revision(&remote).unwrap();
+
+        normalize_remote_payload(&mut remote);
+        let applied_revision = local_data_revision(&remote).unwrap();
+
+        let mut persisted_settings = AppSettings::default();
+        persisted_settings.apply_synced_settings(&remote.settings);
+        let mut persisted = remote.clone();
+        persisted.settings = persisted_settings.synced_settings();
+
+        assert_ne!(raw_revision, applied_revision);
+        assert_eq!(applied_revision, local_data_revision(&persisted).unwrap());
     }
 
     #[test]
