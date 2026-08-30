@@ -861,6 +861,34 @@ impl AppView {
                     );
                 });
             }
+            AppCommand::PersistRemotePathFavorites {
+                profile_id,
+                favorites,
+            } => {
+                let result = self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .persist_remote_path_favorites(profile_id, favorites.clone());
+                let persisted = self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .profiles()
+                    .iter()
+                    .find(|profile| profile.id == *profile_id)
+                    .map(|profile| profile.remote_path_favorites.clone())
+                    .unwrap_or_default();
+                self.controllers.sftp.update(cx, |controller, cx| {
+                    controller.sync_remote_path_favorites(profile_id, &persisted, cx);
+                });
+                if let Err(error) = result {
+                    self.shell.status_message = i18n::string_args(
+                        "sftp.messages.remote_favorites_save_failed",
+                        &[("error", &error.to_string())],
+                    );
+                }
+            }
             AppCommand::VaultUnlockRequested(command) => match command {
                 Some(command) => self.defer_app_command(command.clone(), cx),
                 None => self.prompt_local_vault_unlock(cx),

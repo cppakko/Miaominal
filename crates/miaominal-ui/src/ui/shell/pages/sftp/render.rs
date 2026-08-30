@@ -29,6 +29,8 @@ const SFTP_BREADCRUMB_LABEL_MAX_CHARS: usize = 18;
 const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_CHARS: usize = 24;
 const SFTP_BREADCRUMB_LABEL_MAX_WIDTH: f32 = 128.0;
 const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH: f32 = 172.0;
+const SFTP_REMOTE_FAVORITES_PANEL_WIDTH: f32 = 220.0;
+const SFTP_REMOTE_FAVORITES_SLIDE_OFFSET: f32 = 24.0;
 
 fn remote_delete_confirmation_message_key(entries: &[(String, bool)]) -> &'static str {
     match (
@@ -814,6 +816,140 @@ where
         )
 }
 
+fn remote_path_favorites_panel(
+    controller: Entity<SftpController>,
+    tab_id: TabId,
+    favorites: Vec<String>,
+) -> impl IntoElement {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let empty = favorites.is_empty();
+
+    let mut rows = v_flex().w_full().gap_1();
+    for path in favorites {
+        let row_controller = controller.clone();
+        let remove_controller = controller.clone();
+        let row_path = path.clone();
+        let remove_path = path.clone();
+        rows = rows.child(
+            h_flex()
+                .w_full()
+                .min_w(px(0.0))
+                .items_center()
+                .gap_1()
+                .rounded_md()
+                .hover(|this| this.bg(color_with_alpha(roles.surface_container_high, 0x90)))
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "sftp-remote-favorite-{tab_id}-{path}"
+                        )))
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .px_2()
+                        .py_1()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .text_color(rgb(roles.on_surface))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .tooltip(sftp_path_tooltip(path.clone()))
+                        .child(path.clone())
+                        .on_click(move |_, _window, cx| {
+                            row_controller.update(cx, |controller, cx| {
+                                controller.navigate_to_remote_path(tab_id, row_path.clone(), cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new(SharedString::from(format!(
+                        "sftp-remove-remote-favorite-{tab_id}-{path}"
+                    )))
+                    .text()
+                    .size(px(24.0))
+                    .p_0()
+                    .tooltip(i18n::string("sftp.tooltips.remove_remote_favorite"))
+                    .child(Icon::new(AppIcon::Close).small())
+                    .on_click(move |_, _window, cx| {
+                        remove_controller.update(cx, |controller, cx| {
+                            controller.begin_remove_remote_path_favorite(
+                                tab_id,
+                                remove_path.clone(),
+                                cx,
+                            );
+                        });
+                    }),
+                ),
+        );
+    }
+
+    sftp_panel_card()
+        .id(SharedString::from(format!(
+            "sftp-remote-favorites-{tab_id}"
+        )))
+        .w(px(SFTP_REMOTE_FAVORITES_PANEL_WIDTH))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .p_3()
+        .gap_3()
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_2()
+                .child(Icon::new(AppIcon::FolderOpen).small())
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(roles.on_surface))
+                        .child(i18n::string("sftp.ui.remote_favorites")),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_y_scrollbar()
+                .when(empty, |this| {
+                    this.child(shell_compact_empty_state(
+                        AppIcon::FolderOpen,
+                        i18n::string("sftp.ui.remote_favorites_empty"),
+                        0.0,
+                    ))
+                })
+                .when(!empty, |this| this.child(rows)),
+        )
+}
+
+fn remote_path_favorites_panel_wrapper(
+    panel: gpui::AnyElement,
+    visibility: f32,
+) -> impl IntoElement {
+    let visibility = visibility.clamp(0.0, 1.0);
+    let wrapper_width = (SFTP_REMOTE_FAVORITES_PANEL_WIDTH + SFTP_SPLIT_GAP) * visibility;
+    let slide_offset = (1.0 - visibility) * SFTP_REMOTE_FAVORITES_SLIDE_OFFSET;
+    let opacity = 0.24 + visibility * 0.76;
+
+    div()
+        .relative()
+        .h_full()
+        .w(px(wrapper_width))
+        .min_w(px(0.0))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .child(
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(-slide_offset))
+                .bottom(px(0.0))
+                .w(px(SFTP_REMOTE_FAVORITES_PANEL_WIDTH))
+                .opacity(opacity)
+                .child(panel),
+        )
+}
+
 const SFTP_TRANSFER_ACTION_SIZE: f32 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1283,6 +1419,35 @@ fn build_remote_sftp_context_menu(
             )
             .item(PopupMenuItem::separator());
     }
+
+    let current_is_favorite = controller.read(cx).tab(tab_id).is_some_and(|tab| {
+        let current_path = tab.remote_path.trim_end_matches('/');
+        let current_path = if current_path.is_empty() && tab.remote_path.starts_with('/') {
+            "/"
+        } else {
+            current_path
+        };
+        tab.remote_path_favorites
+            .iter()
+            .any(|path| path == current_path)
+    });
+    let toggle_controller = controller.clone();
+    let toggle_label = if current_is_favorite {
+        i18n::string("sftp.ui.remove_current_favorite")
+    } else {
+        i18n::string("sftp.ui.add_current_favorite")
+    };
+    menu = menu
+        .item(PopupMenuItem::new(toggle_label).on_click(move |_, _, cx| {
+            toggle_controller.update(cx, |controller, cx| {
+                if current_is_favorite {
+                    controller.begin_remove_current_remote_path_favorite(tab_id, cx);
+                } else {
+                    controller.toggle_remote_path_favorite(tab_id, cx);
+                }
+            });
+        }))
+        .item(PopupMenuItem::separator());
 
     let up_controller = controller;
     let refresh_controller = up_controller.clone();
@@ -2449,6 +2614,7 @@ impl SftpController {
         let roles = material.roles;
         let extended = material.extended;
         let progress_center_visibility = self.tab_progress_render_visibility(tab_id, window);
+        let favorites_panel_visibility = self.tab_favorites_render_visibility(tab_id, window);
         let Some(sftp_tab) = self.tab(tab_id).map(|tab| tab.clone()) else {
             return Self::render_missing_sftp_page_content(fallback_section);
         };
@@ -2968,6 +3134,15 @@ impl SftpController {
             ordered_tab_ids,
             preferred_tab_id,
         );
+        let remote_favorites = favorites_panel_visibility.map(|visibility| {
+            let panel = remote_path_favorites_panel(
+                entity.clone(),
+                tab_id,
+                sftp_tab.remote_path_favorites.clone(),
+            );
+            remote_path_favorites_panel_wrapper(panel.into_any_element(), visibility)
+                .into_any_element()
+        });
 
         let browser_panels = div()
             .flex()
@@ -2984,6 +3159,7 @@ impl SftpController {
                     });
                 }
             })
+            .when_some(remote_favorites, |this, panel| this.child(panel))
             .child(
                 div()
                     .flex_grow(1.0)
@@ -3310,6 +3486,21 @@ impl SftpController {
                     true,
                 )
             }
+            SftpPromptKind::ConfirmRemoveRemoteFavorite { path } => (
+                AppIcon::Trash,
+                roles.error,
+                i18n::string("sftp.prompts.remove_remote_favorite.title"),
+                i18n::string("sftp.prompts.remove_remote_favorite.confirm"),
+                Some(
+                    i18n::string_args(
+                        "sftp.prompts.remove_remote_favorite.message",
+                        &[("path", path)],
+                    )
+                    .to_string(),
+                ),
+                false,
+                true,
+            ),
         };
 
         let body = match &prompt.kind {
@@ -3324,6 +3515,7 @@ impl SftpController {
             SftpPromptKind::ConfirmOverwrite { .. }
             | SftpPromptKind::ConfirmDelete { .. }
             | SftpPromptKind::ConfirmDeleteLocal { .. } => None,
+            SftpPromptKind::ConfirmRemoveRemoteFavorite { .. } => None,
         };
 
         let cancel_button = basic_dialog_action_button(

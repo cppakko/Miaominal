@@ -125,6 +125,8 @@ pub struct SessionProfile {
     pub port_forwarding_rules: Vec<PortForwardRule>,
     #[serde(default)]
     pub is_favorite: bool,
+    #[serde(default)]
+    pub remote_path_favorites: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected_at: Option<u64>,
 }
@@ -159,6 +161,7 @@ impl SessionProfile {
             has_stored_passphrase: false,
             port_forwarding_rules: Vec::new(),
             is_favorite: false,
+            remote_path_favorites: Vec::new(),
             last_connected_at: None,
         }
     }
@@ -474,5 +477,34 @@ mod tests {
         let profile: SessionProfile =
             serde_json::from_value(value).expect("legacy profile should deserialize");
         assert_eq!(profile.entry_proxy_id, None);
+    }
+
+    #[test]
+    fn legacy_profile_without_remote_path_favorites_defaults_to_empty() {
+        let profile = SessionProfile::blank("session-legacy", 1);
+        let mut value = serde_json::to_value(profile).expect("profile should serialize");
+        value
+            .as_object_mut()
+            .expect("profile should be an object")
+            .remove("remote_path_favorites");
+
+        let profile: SessionProfile =
+            serde_json::from_value(value).expect("legacy profile should deserialize");
+        assert!(profile.remote_path_favorites.is_empty());
+    }
+
+    #[test]
+    fn remote_path_favorites_round_trip_with_profile() {
+        let mut profile = SessionProfile::blank("session-favorites", 1);
+        profile.remote_path_favorites = vec!["/srv/app".into(), "/var/log".into()];
+
+        let json = serde_json::to_string(&profile).expect("profile should serialize");
+        let restored: SessionProfile =
+            serde_json::from_str(&json).expect("profile should deserialize");
+
+        assert_eq!(
+            restored.remote_path_favorites,
+            profile.remote_path_favorites
+        );
     }
 }

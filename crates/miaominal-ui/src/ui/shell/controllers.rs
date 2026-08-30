@@ -113,6 +113,10 @@ pub(in crate::ui::shell) enum AppCommand {
         side: SftpBrowserSide,
         hidden_columns: Vec<usize>,
     },
+    PersistRemotePathFavorites {
+        profile_id: String,
+        favorites: Vec<String>,
+    },
     LocaleRefresh,
     RebuildApplication,
 }

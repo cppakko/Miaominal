@@ -1507,6 +1507,10 @@ impl ChromeAppViewExt for AppView {
         let monitor_toggle_entity = entity.clone();
         let agent_toggle_entity = entity.clone();
         let progress_controller = self.controllers.sftp.clone();
+        let favorites_controller = self.controllers.sftp.clone();
+        let favorites_panel_toggle = active_sftp
+            .as_ref()
+            .map(|(tab_id, sftp)| (*tab_id, sftp.layout.favorites_panel_visible));
         let toggle_all_progress_centers = active_sftp.is_some();
         let progress_center_open = active_sftp
             .as_ref()
@@ -1532,6 +1536,48 @@ impl ChromeAppViewExt for AppView {
                     .h_full()
                     .items_center()
                     .gap_3()
+                    .when_some(favorites_panel_toggle, |this, (tab_id, panel_open)| {
+                        let tooltip = if panel_open {
+                            i18n::string("sftp.tooltips.hide_remote_favorites")
+                        } else {
+                            i18n::string("sftp.tooltips.show_remote_favorites")
+                        };
+                        this.child(
+                            div().id("sftp-favorites-panel-toggle").child(
+                                icon_button_with_tooltip(
+                                    AppIcon::FolderOpen,
+                                    tooltip,
+                                    24.0,
+                                    8.0,
+                                    Some(if panel_open {
+                                        roles.secondary_container
+                                    } else {
+                                        roles.surface_container
+                                    }),
+                                    Some(if panel_open {
+                                        roles.on_secondary_container
+                                    } else {
+                                        text_muted
+                                    }),
+                                    Some(if panel_open {
+                                        roles.primary
+                                    } else {
+                                        roles.outline_variant
+                                    }),
+                                    move |_window, cx| {
+                                        favorites_controller.update(cx, |controller, cx| {
+                                            controller.toggle_favorites_panel(tab_id, cx);
+                                        });
+                                    },
+                                )
+                                .id("sftp-favorites-panel-toggle-button")
+                                .hover(move |this| {
+                                    this.bg(rgb(roles.surface_container_highest))
+                                        .border_color(rgb(roles.primary))
+                                }),
+                            ),
+                        )
+                    })
                     .child(
                         h_flex()
                             .id("status-footer-connection-status")

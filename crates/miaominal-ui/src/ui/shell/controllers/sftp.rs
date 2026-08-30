@@ -611,6 +611,8 @@ pub(in crate::ui::shell) struct SftpSplitDragState {
 pub(in crate::ui::shell) struct SftpLayoutState {
     pub(in crate::ui::shell) local_panel_flex: Option<f32>,
     pub(in crate::ui::shell) browser_area_flex: Option<f32>,
+    pub(in crate::ui::shell) favorites_panel_visible: bool,
+    pub(in crate::ui::shell) favorites_panel_transition: Option<SftpProgressCenterTransition>,
     pub(in crate::ui::shell) progress_center_visible: bool,
     pub(in crate::ui::shell) progress_center_transition: Option<SftpProgressCenterTransition>,
     pub(in crate::ui::shell) browser_container_width: Pixels,
@@ -623,6 +625,8 @@ impl Default for SftpLayoutState {
         Self {
             local_panel_flex: None,
             browser_area_flex: None,
+            favorites_panel_visible: false,
+            favorites_panel_transition: None,
             progress_center_visible: false,
             progress_center_transition: None,
             browser_container_width: px(0.0),
@@ -642,6 +646,7 @@ pub(in crate::ui::shell) struct SftpTabState {
     pub(in crate::ui::shell) selected_local_paths: Vec<PathBuf>,
     pub(in crate::ui::shell) local_selection_anchor: Option<PathBuf>,
     pub(in crate::ui::shell) remote_path: String,
+    pub(in crate::ui::shell) remote_path_favorites: Vec<String>,
     pub(in crate::ui::shell) requested_remote_path: Option<String>,
     pub(in crate::ui::shell) remote_directory_request_id: Option<SftpDirectoryRequestId>,
     pub(in crate::ui::shell) remote_entries: Vec<SftpEntry>,
@@ -678,6 +683,7 @@ impl SftpTabState {
             selected_local_paths: Vec::new(),
             local_selection_anchor: None,
             remote_path: ".".into(),
+            remote_path_favorites: profile.remote_path_favorites.clone(),
             requested_remote_path: None,
             remote_directory_request_id: None,
             remote_entries: Vec::new(),
@@ -754,6 +760,9 @@ pub(in crate::ui::shell) enum SftpPromptKind {
     },
     ConfirmDeleteLocal {
         entries: Vec<PathBuf>,
+    },
+    ConfirmRemoveRemoteFavorite {
+        path: String,
     },
 }
 
@@ -860,6 +869,7 @@ fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
     state.drag_selection_generation = state.drag_selection_generation.wrapping_add(1);
     state.suppress_local_clear_click = false;
     state.suppress_remote_clear_click = false;
+    state.layout.favorites_panel_transition = None;
     state.layout.progress_center_transition = None;
     state.layout.browser_container_width = px(0.0);
     state.layout.page_container_height = px(0.0);
@@ -867,6 +877,185 @@ fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
 }
 
 impl SftpController {
+    pub(in crate::ui::shell) fn toggle_favorites_panel(
+        &self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        let visible = !tab.layout.favorites_panel_visible;
+        let SftpLayoutState {
+            favorites_panel_visible,
+            favorites_panel_transition,
+            ..
+        } = &mut tab.layout;
+        update_progress_center_state(
+            favorites_panel_visible,
+            favorites_panel_transition,
+            visible,
+            Instant::now(),
+        );
+        drop(tab);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn tab_favorites_render_visibility(
+        &self,
+        tab_id: TabId,
+        window: &mut Window,
+    ) -> Option<f32> {
+        let mut tab = self.tab_mut(tab_id)?;
+        progress_center_render_visibility(
+            tab.layout.favorites_panel_visible,
+            &mut tab.layout.favorites_panel_transition,
+            window,
+        )
+    }
+
+    pub(in crate::ui::shell) fn toggle_remote_path_favorite(
+        &mut self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((profile_id, path, is_favorite, favorites)) =
+            self.tab_mut(tab_id).map(|mut tab| {
+                let path = remote_path_without_trailing_separator(&tab.remote_path);
+                let position = tab
+                    .remote_path_favorites
+                    .iter()
+                    .position(|item| item == &path);
+                let is_favorite = position.is_none();
+                if let Some(position) = position {
+                    tab.remote_path_favorites.remove(position);
+                } else {
+                    tab.remote_path_favorites.push(path.clone());
+                }
+                (
+                    tab.profile_id.clone(),
+                    path,
+                    is_favorite,
+                    tab.remote_path_favorites.clone(),
+                )
+            })
+        else {
+            return;
+        };
+
+        let message_key = if is_favorite {
+            "sftp.messages.added_remote_path_favorite"
+        } else {
+            "sftp.messages.removed_remote_path_favorite"
+        };
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            message_key,
+            &[("path", &path)],
+        )));
+        self.persist_remote_path_favorites(profile_id, favorites, cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn remove_remote_path_favorite(
+        &mut self,
+        tab_id: TabId,
+        path: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((profile_id, favorites)) = self.tab_mut(tab_id).and_then(|mut tab| {
+            let position = tab
+                .remote_path_favorites
+                .iter()
+                .position(|item| item == &path)?;
+            tab.remote_path_favorites.remove(position);
+            Some((tab.profile_id.clone(), tab.remote_path_favorites.clone()))
+        }) else {
+            return;
+        };
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "sftp.messages.removed_remote_path_favorite",
+            &[("path", &path)],
+        )));
+        self.persist_remote_path_favorites(profile_id, favorites, cx);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn begin_remove_remote_path_favorite(
+        &mut self,
+        tab_id: TabId,
+        path: String,
+        cx: &mut Context<Self>,
+    ) {
+        let is_favorite = self.tab(tab_id).is_some_and(|tab| {
+            tab.remote_path_favorites
+                .iter()
+                .any(|favorite| favorite == &path)
+        });
+        if !is_favorite {
+            return;
+        }
+        self.set_prompt(
+            tab_id,
+            Some(SftpPromptState {
+                kind: SftpPromptKind::ConfirmRemoveRemoteFavorite { path },
+            }),
+        );
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn begin_remove_current_remote_path_favorite(
+        &mut self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self
+            .tab(tab_id)
+            .map(|tab| remote_path_without_trailing_separator(&tab.remote_path))
+        else {
+            return;
+        };
+        self.begin_remove_remote_path_favorite(tab_id, path, cx);
+    }
+
+    pub(in crate::ui::shell) fn navigate_to_remote_path(
+        &mut self,
+        tab_id: TabId,
+        path: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_remote_directory(tab_id, path, cx);
+    }
+
+    fn persist_remote_path_favorites(
+        &self,
+        profile_id: String,
+        favorites: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AppCommand::PersistRemotePathFavorites {
+            profile_id,
+            favorites,
+        });
+    }
+
+    pub(in crate::ui::shell) fn sync_remote_path_favorites(
+        &self,
+        profile_id: &str,
+        favorites: &[String],
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for tab in self.tabs.borrow_mut().tabs.values_mut() {
+            if tab.profile_id == profile_id && tab.remote_path_favorites != favorites {
+                tab.remote_path_favorites = favorites.to_vec();
+                changed = true;
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
     fn focus_path_input_in_active_window(&self, side: SftpBrowserSide, cx: &mut Context<Self>) {
         let input = match side {
             SftpBrowserSide::Local => self.local_path_input(),
@@ -4839,6 +5028,13 @@ impl SftpController {
             return;
         }
 
+        if let SftpPromptKind::ConfirmRemoveRemoteFavorite { path } = prompt.kind {
+            self.take_prompt(tab_id);
+            cx.emit(AppCommand::OverlayDismissed(exit_snapshot));
+            self.remove_remote_path_favorite(tab_id, path, cx);
+            return;
+        }
+
         if let SftpPromptKind::CreateLocalDirectory { parent } = prompt.kind {
             let value = self.prompt_input().read(cx).value().trim().to_string();
             if value.is_empty() {
@@ -4956,6 +5152,7 @@ impl SftpController {
             SftpPromptKind::ConfirmOverwrite { .. }
             | SftpPromptKind::ConfirmDelete { .. }
             | SftpPromptKind::ConfirmDeleteLocal { .. }
+            | SftpPromptKind::ConfirmRemoveRemoteFavorite { .. }
             | SftpPromptKind::CreateLocalDirectory { .. } => {
                 unreachable!()
             }
@@ -5355,6 +5552,33 @@ impl EventEmitter<AppCommand> for SftpController {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_favorites_panel_is_hidden_by_default() {
+        assert!(!SftpLayoutState::default().favorites_panel_visible);
+    }
+
+    #[test]
+    fn remote_favorites_panel_open_starts_container_transition() {
+        let mut layout = SftpLayoutState::default();
+        let started_at = Instant::now();
+
+        assert!(update_progress_center_state(
+            &mut layout.favorites_panel_visible,
+            &mut layout.favorites_panel_transition,
+            true,
+            started_at,
+        ));
+        assert!(layout.favorites_panel_visible);
+        assert!(matches!(
+            layout.favorites_panel_transition,
+            Some(SftpProgressCenterTransition {
+                phase: SftpProgressCenterTransitionPhase::Entering,
+                duration: CONTAINER_TRANSITION_DURATION,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn local_delete_removes_files_and_directories_recursively() {

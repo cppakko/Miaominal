@@ -3019,6 +3019,9 @@ impl SessionController {
                 .map(|profile| profile.port_forwarding_rules.clone())
                 .unwrap_or_default(),
             is_favorite: existing.map(|profile| profile.is_favorite).unwrap_or(false),
+            remote_path_favorites: existing
+                .map(|profile| profile.remote_path_favorites.clone())
+                .unwrap_or_default(),
             last_connected_at: existing.and_then(|profile| profile.last_connected_at),
         })
     }
@@ -3399,6 +3402,34 @@ impl SessionController {
         self.profile_service()
             .persist_sessions(&self.profiles.borrow())?;
         self.refresh_ssh_bridge_routes();
+        Ok(())
+    }
+
+    pub(in crate::ui::shell) fn persist_remote_path_favorites(
+        &self,
+        profile_id: &str,
+        favorites: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let previous = {
+            let mut profiles = self.profiles.borrow_mut();
+            let profile = profiles
+                .iter_mut()
+                .find(|profile| profile.id == profile_id)
+                .ok_or_else(|| anyhow::anyhow!("missing profile {profile_id}"))?;
+            std::mem::replace(&mut profile.remote_path_favorites, favorites)
+        };
+        if let Err(error) = self.persist_profiles() {
+            if let Some(profile) = self
+                .profiles
+                .borrow_mut()
+                .iter_mut()
+                .find(|profile| profile.id == profile_id)
+            {
+                profile.remote_path_favorites = previous;
+            }
+            self.sync_port_profiles();
+            return Err(error);
+        }
         Ok(())
     }
 
