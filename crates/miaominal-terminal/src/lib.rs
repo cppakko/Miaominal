@@ -1258,17 +1258,11 @@ impl TerminalCore {
             };
             *range.start()
         };
-        // Convert match line to a display offset that brings it on-screen.
-        let line = target_point.line.0;
-        if line >= 0 {
-            self.scroll_to_display_offset(0);
-            return;
-        }
-        let history = self.history_size() as i32;
-        let desired_offset = (-line).min(history);
-        // Position the match a couple rows from the top for context.
-        let padding = (self.screen_lines as i32 / 4).max(1);
-        let target = (desired_offset - padding).max(0).min(history) as usize;
+        let target = search_match_display_offset(
+            target_point.line.0,
+            self.screen_lines,
+            self.history_size(),
+        );
         self.scroll_to_display_offset(target);
     }
 
@@ -1415,6 +1409,21 @@ impl TerminalCore {
         }
         (search.matches.len(), search.current)
     }
+}
+
+/// Convert an absolute terminal grid line into the display offset that places it at the
+/// viewport center when scrollback bounds allow it.
+fn search_match_display_offset(match_line: i32, screen_lines: usize, history_size: usize) -> usize {
+    let viewport_center = screen_lines / 2;
+    let desired_offset = if match_line < 0 {
+        let history_distance = usize::try_from(match_line.unsigned_abs()).unwrap_or(usize::MAX);
+        viewport_center.saturating_add(history_distance)
+    } else {
+        let visible_line = usize::try_from(match_line).unwrap_or(usize::MAX);
+        viewport_center.saturating_sub(visible_line)
+    };
+
+    desired_offset.min(history_size)
 }
 
 impl TerminalState {
@@ -2487,6 +2496,62 @@ mod tests {
     }
 
     #[test]
+    fn search_match_display_offset_centers_and_clamps_grid_lines() {
+        assert_eq!(search_match_display_offset(-8, 12, 40), 14);
+        assert_eq!(search_match_display_offset(-40, 12, 40), 40);
+        assert_eq!(search_match_display_offset(1, 12, 40), 5);
+        assert_eq!(search_match_display_offset(9, 12, 40), 0);
+        assert_eq!(search_match_display_offset(-2, 1, 40), 2);
+        assert_eq!(search_match_display_offset(-8, 12, 0), 0);
+    }
+
+    #[test]
+    fn search_navigation_keeps_the_current_match_visible_and_centers_when_possible() {
+        let mut core = TerminalCore::new(20, 5);
+        core.push_bytes(
+            [
+                "match-old",
+                "filler-1",
+                "filler-2",
+                "match-middle",
+                "filler-4",
+                "filler-5",
+                "match-late",
+                "filler-7",
+                "filler-8",
+                "filler-9",
+                "tail",
+            ]
+            .join("\r\n")
+            .as_bytes(),
+        );
+
+        assert_eq!(core.set_search("match"), Ok(3));
+        assert_eq!(assert_current_search_match_position(&mut core), 0);
+
+        core.next_match();
+        assert_eq!(
+            assert_current_search_match_position(&mut core),
+            core.screen_lines() as i32 / 2
+        );
+
+        core.next_match();
+        assert_eq!(
+            assert_current_search_match_position(&mut core),
+            core.screen_lines() as i32 / 2
+        );
+
+        core.next_match();
+        assert_eq!(assert_current_search_match_position(&mut core), 0);
+
+        core.prev_match();
+        assert_eq!(
+            assert_current_search_match_position(&mut core),
+            core.screen_lines() as i32 / 2
+        );
+    }
+
+    #[test]
     fn legible_foreground_leaves_high_contrast_text_alone() {
         let fg = rgba_to_hsla(rgb(0xe8eaed));
         let bg = rgba_to_hsla(rgb(0x101418));
@@ -3224,6 +3289,33 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    fn assert_current_search_match_position(core: &mut TerminalCore) -> i32 {
+        let target = {
+            let search = core
+                .search
+                .lock()
+                .expect("search state should be available");
+            let current = search.current.expect("search should have a current match");
+            *search.matches[current].start()
+        };
+        let expected_offset =
+            search_match_display_offset(target.line.0, core.screen_lines(), core.history_size());
+        assert_eq!(core.display_offset(), expected_offset);
+
+        let viewport_line = target.line.0 + core.display_offset() as i32;
+        assert!((0..core.screen_lines() as i32).contains(&viewport_line));
+
+        let snapshot = core.snapshot(false);
+        assert!(
+            snapshot
+                .cells
+                .iter()
+                .flatten()
+                .any(|cell| { cell.search_match == SearchMatchKind::Current })
+        );
+        viewport_line
     }
 
     fn text_chunk(start: usize, length: usize) -> String {
