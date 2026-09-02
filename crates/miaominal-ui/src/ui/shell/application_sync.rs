@@ -172,9 +172,19 @@ impl AppView {
                     &snapshot.port_forwards,
                     window.is_window_active(),
                 );
-            for (tab_id, status) in updates {
+            for (tab_id, status, notification) in updates {
                 if let Some(mut tab) = self.workspace.tabs.get_mut(tab_id) {
                     tab.status = status;
+                }
+                if let Some(notification) = notification {
+                    crate::ui::shell::session::push_session_notification(
+                        notification.tone,
+                        notification.title,
+                        notification.message,
+                        notification.id,
+                        window,
+                        cx,
+                    );
                 }
             }
             self.application_generations.port_forwards = snapshot.generations.port_forwards;
@@ -225,9 +235,19 @@ impl AppView {
             .session
             .read(cx)
             .apply_port_forward_manager_snapshot(&snapshot.port_forwards, active);
-        for (tab_id, status) in updates {
+        for (tab_id, status, notification) in updates {
             if let Some(mut tab) = self.workspace.tabs.get_mut(tab_id) {
                 tab.status = status;
+            }
+            if let Some(notification) = notification {
+                crate::ui::shell::session::push_session_notification(
+                    notification.tone,
+                    notification.title,
+                    notification.message,
+                    notification.id,
+                    window,
+                    cx,
+                );
             }
         }
         self.controllers.settings.update(cx, |controller, cx| {

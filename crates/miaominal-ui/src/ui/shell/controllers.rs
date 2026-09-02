@@ -46,8 +46,8 @@ pub(in crate::ui::shell) use session::{
     PendingPortForwardRuleDeleteState, PendingProfileDeleteState, PendingProfileImportResultState,
     PendingSnippetDeleteState, PortForwardSessionStart, SessionConnectionState, SessionController,
     SessionControllerArgs, SessionEventOutcome, SessionEventTabRemoval, SessionFailureStatus,
-    SessionNotificationTone, SessionPortSession, SessionPortSnapshot, SessionPurpose,
-    SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
+    SessionNotificationRequest, SessionNotificationTone, SessionPortSession, SessionPortSnapshot,
+    SessionPurpose, SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
     SessionTerminalTarget, TerminalLease, TerminalLeaseError, TerminalLeaseGrant,
     TransferredSessionTab, TransferredSessionWorkspaceUi, TrustedHostFilter,
 };

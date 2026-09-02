@@ -1667,6 +1667,10 @@ no_filter_matches = "当前筛选下没有匹配的转发规则。"
 no_host_profiles = "还没有主机配置。在添加隧道规则前先到 Hosts 保存一个。"
 no_rules = "还没有转发规则。可从侧边栏添加一条。"
 
+[forwarding.notifications]
+connection_failed_title = "端口转发失败"
+connection_failed_message = "转发规则 {rule}：{error}"
+
 [forwarding.messages]
 rule_not_found = "找不到转发规则"
 already_removed = "{profile} 上的转发规则 {rule} 已被删除。"

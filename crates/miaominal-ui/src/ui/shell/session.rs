@@ -26,7 +26,7 @@ fn reopened_sftp_owner(
     reopened.get(&closed_tab.owner).copied()
 }
 
-fn push_session_notification(
+pub(in crate::ui::shell) fn push_session_notification(
     tone: SessionNotificationTone,
     title: String,
     message: String,
@@ -40,6 +40,22 @@ fn push_session_notification(
     }
     .id1::<AppView>(SharedString::from(id));
     crate::ui::shell::push_app_notification(window, notification, cx);
+}
+
+pub(in crate::ui::shell) fn publish_session_notification(
+    notification: crate::ui::shell::controllers::SessionNotificationRequest,
+    cx: &mut App,
+) {
+    let notification = match notification.tone {
+        SessionNotificationTone::Success => {
+            success_notification(notification.title, notification.message)
+        }
+        SessionNotificationTone::Error => {
+            error_notification(notification.title, notification.message)
+        }
+    }
+    .id1::<AppView>(SharedString::from(notification.id));
+    crate::ui::shell::publish_app_notification(notification, cx);
 }
 
 impl AppView {

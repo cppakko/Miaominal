@@ -1804,6 +1804,10 @@ no_filter_matches = "No forwarding rules match the current filter."
 no_host_profiles = "No host profiles yet. Save one in Hosts before adding tunnel rules."
 no_rules = "No forwarding rules yet. Add one from the side panel."
 
+[forwarding.notifications]
+connection_failed_title = "Port forwarding failed"
+connection_failed_message = "{rule}: {error}"
+
 [forwarding.messages]
 rule_not_found = "Forwarding rule not found"
 already_removed = "Forwarding rule {rule} on {profile} was already removed."

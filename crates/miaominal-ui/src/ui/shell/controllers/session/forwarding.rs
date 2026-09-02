@@ -7,6 +7,30 @@ pub(in crate::ui::shell) struct PortForwardSessionStart {
     pub(in crate::ui::shell) feedback: String,
 }
 
+fn port_forward_failure_notification(
+    tab_id: TabId,
+    rule: &str,
+    error: &str,
+) -> SessionNotificationRequest {
+    SessionNotificationRequest {
+        tone: SessionNotificationTone::Error,
+        title: i18n::string("forwarding.notifications.connection_failed_title"),
+        message: i18n::string_args(
+            "forwarding.notifications.connection_failed_message",
+            &[("rule", rule), ("error", error)],
+        ),
+        id: format!("port-forward-failure-{tab_id}"),
+    }
+}
+
+fn should_notify_port_forward_failure(
+    previous_state: &SessionConnectionState,
+    runtime_state: &PortForwardRuntimeState,
+) -> bool {
+    matches!(runtime_state, PortForwardRuntimeState::Failed(_))
+        && !matches!(previous_state, SessionConnectionState::Failed { .. })
+}
+
 impl SessionController {
     pub(in crate::ui::shell) fn profile_requires_local_vault_unlock(
         &self,
@@ -300,9 +324,18 @@ impl SessionController {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 log::warn!("failed to start global port-forward session: {error:?}");
+                let error = error.to_string();
+                crate::ui::shell::session::publish_session_notification(
+                    port_forward_failure_notification(
+                        tab_id,
+                        &Self::rule_summary_label(&rule),
+                        &error,
+                    ),
+                    cx,
+                );
                 cx.emit(AppCommand::Feedback(i18n::string_args(
                     "session.messages.port_forwarding_failed_for",
-                    &[("title", &profile.name), ("error", &error.to_string())],
+                    &[("title", &profile.name), ("error", &error)],
                 )));
                 cx.notify();
                 return None;
@@ -319,8 +352,18 @@ impl SessionController {
         let (mut tab, session) = Self::build_port_forwarding_tab(tab_id, &profile, &rule, commands);
         tab.status = runtime_snapshot.status_message.clone();
         self.insert_tab(tab_id, session);
-        let _ =
+        // The forwarding worker can fail before the shell registers this background tab. Consume
+        // that first snapshot here so its notification is not lost after the state becomes Failed.
+        let startup_updates =
             self.apply_port_forward_manager_snapshot(&self.port_forward_manager().snapshot(), true);
+        for (updated_tab_id, status, notification) in startup_updates {
+            if updated_tab_id == tab_id {
+                tab.status = status;
+            }
+            if let Some(notification) = notification {
+                crate::ui::shell::session::publish_session_notification(notification, cx);
+            }
+        }
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(&profile.id);
         let rule_label = Self::rule_summary_label(&rule);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
@@ -376,7 +419,7 @@ impl SessionController {
         &self,
         snapshot: &PortForwardManagerSnapshot,
         allow_prompt: bool,
-    ) -> Vec<(TabId, String)> {
+    ) -> Vec<(TabId, String, Option<SessionNotificationRequest>)> {
         let manager = self.port_forward_manager();
         let mut updates = Vec::new();
         for (tab_id, session) in self.tabs.borrow_mut().iter_mut() {
@@ -391,7 +434,7 @@ impl SessionController {
                 session.pending_host_key = None;
                 session.pending_keyboard_interactive = None;
                 session.set_connection_state(SessionConnectionState::Disconnected);
-                updates.push((*tab_id, i18n::string("session.status.disconnected")));
+                updates.push((*tab_id, i18n::string("session.status.disconnected"), None));
                 continue;
             };
             if runtime.log.len() < session.port_forward_log_len {
@@ -406,6 +449,21 @@ impl SessionController {
             session.port_forward_log_len = runtime.log.len();
             session.port_forward_revision = runtime.revision;
             session.commands = manager.command_sender(&session.profile_id, rule_id);
+            let failure_notification = match &runtime.state {
+                PortForwardRuntimeState::Failed(error)
+                    if should_notify_port_forward_failure(
+                        &session.connection_state,
+                        &runtime.state,
+                    ) =>
+                {
+                    Some(port_forward_failure_notification(
+                        *tab_id,
+                        &Self::rule_summary_label(&runtime.rule),
+                        error,
+                    ))
+                }
+                _ => None,
+            };
             session.set_connection_state(match &runtime.state {
                 PortForwardRuntimeState::Starting | PortForwardRuntimeState::Stopping => {
                     SessionConnectionState::Connecting
@@ -437,7 +495,11 @@ impl SessionController {
                     session.pending_keyboard_interactive = None;
                 }
             }
-            updates.push((*tab_id, runtime.status_message.clone()));
+            updates.push((
+                *tab_id,
+                runtime.status_message.clone(),
+                failure_notification,
+            ));
         }
         updates
     }
@@ -460,5 +522,31 @@ impl SessionController {
             Self::build_port_forwarding_tab(tab_id, &profile, &runtime.rule, commands);
         tab.status = runtime.status_message.clone();
         Some((tab, session))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_forward_failure_notification_is_emitted_only_on_transition_to_failed() {
+        let failed = PortForwardRuntimeState::Failed("connection refused".into());
+
+        assert!(should_notify_port_forward_failure(
+            &SessionConnectionState::Connecting,
+            &failed,
+        ));
+        assert!(!should_notify_port_forward_failure(
+            &SessionConnectionState::Failed {
+                error: "connection refused".into(),
+                status: Some(SessionFailureStatus::Closed),
+            },
+            &failed,
+        ));
+        assert!(!should_notify_port_forward_failure(
+            &SessionConnectionState::Connecting,
+            &PortForwardRuntimeState::Running,
+        ));
     }
 }
