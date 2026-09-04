@@ -23,12 +23,14 @@ const SFTP_REMOTE_PANEL_MIN_WIDTH: f32 = 260.0;
 const SFTP_PROGRESS_CENTER_MIN_HEIGHT: f32 = 220.0;
 const SFTP_BROWSER_MIN_HEIGHT: f32 = 240.0;
 const SFTP_PROGRESS_CENTER_SLIDE_OFFSET: f32 = 14.0;
-const SFTP_BREADCRUMB_MAX_VISIBLE_ITEMS: usize = 5;
-const SFTP_BREADCRUMB_TRAILING_ITEMS: usize = 3;
 const SFTP_BREADCRUMB_LABEL_MAX_CHARS: usize = 18;
 const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_CHARS: usize = 24;
 const SFTP_BREADCRUMB_LABEL_MAX_WIDTH: f32 = 128.0;
 const SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH: f32 = 172.0;
+const SFTP_BREADCRUMB_ESTIMATED_ASCII_CHAR_WIDTH: f32 = 8.0;
+const SFTP_BREADCRUMB_ESTIMATED_WIDE_CHAR_WIDTH: f32 = 15.0;
+const SFTP_BREADCRUMB_SEPARATOR_WITH_GAPS_WIDTH: f32 = 26.0;
+const SFTP_BREADCRUMB_WIDTH_SAFETY_MARGIN: f32 = 8.0;
 const SFTP_REMOTE_FAVORITES_PANEL_WIDTH: f32 = 220.0;
 const SFTP_REMOTE_FAVORITES_SLIDE_OFFSET: f32 = 24.0;
 
@@ -61,18 +63,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn visible_sftp_breadcrumb_indexes_keeps_short_paths() {
+    fn visible_sftp_breadcrumb_indexes_uses_available_width() {
+        let labels = ["/", "root", "go", "pkg", "mod", "golang.org", "x"].map(SharedString::from);
+
         assert_eq!(
-            visible_sftp_breadcrumb_indexes(5),
-            vec![Some(0), Some(1), Some(2), Some(3), Some(4)]
+            visible_sftp_breadcrumb_indexes(&labels, px(400.0)),
+            vec![
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6)
+            ]
         );
     }
 
     #[test]
-    fn visible_sftp_breadcrumb_indexes_collapses_middle_segments() {
+    fn visible_sftp_breadcrumb_indexes_collapses_only_as_much_as_needed() {
+        let labels = ["/", "root", "go", "pkg", "mod", "golang.org", "x"].map(SharedString::from);
+
         assert_eq!(
-            visible_sftp_breadcrumb_indexes(7),
+            visible_sftp_breadcrumb_indexes(&labels, px(260.0)),
             vec![Some(0), None, Some(4), Some(5), Some(6)]
+        );
+    }
+
+    #[test]
+    fn visible_sftp_breadcrumb_indexes_has_a_stable_initial_fallback() {
+        let labels = ["/", "one", "two", "three", "four", "five", "six"].map(SharedString::from);
+
+        assert_eq!(
+            visible_sftp_breadcrumb_indexes(&labels, px(0.0)),
+            vec![Some(0), None, Some(4), Some(5), Some(6)]
+        );
+    }
+
+    #[test]
+    fn visible_sftp_breadcrumb_indexes_reserves_enough_width_for_cjk_labels() {
+        let labels = ["/", "用户", "项目", "文档资料", "当前目录"].map(SharedString::from);
+
+        assert_eq!(
+            visible_sftp_breadcrumb_indexes(&labels, px(250.0)),
+            vec![Some(0), None, Some(3), Some(4)]
         );
     }
 
@@ -374,6 +408,7 @@ fn sftp_path_breadcrumb_shell(
     id: impl Into<ElementId>,
     content: impl IntoElement,
     full_path: impl Into<SharedString>,
+    on_resize: impl Fn(Pixels, &mut App) + 'static,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let full_path = full_path.into();
@@ -395,22 +430,105 @@ fn sftp_path_breadcrumb_shell(
                 .flex_1()
                 .min_w(px(0.0))
                 .overflow_hidden()
+                .on_prepaint(move |bounds, _, cx| on_resize(bounds.size.width, cx))
                 .child(content),
         )
 }
 
-fn visible_sftp_breadcrumb_indexes(items_len: usize) -> Vec<Option<usize>> {
-    if items_len <= SFTP_BREADCRUMB_MAX_VISIBLE_ITEMS {
-        return (0..items_len).map(Some).collect();
+fn sftp_breadcrumb_width_resizer(
+    controller: Entity<SftpController>,
+    tab_id: TabId,
+    side: SftpBrowserSide,
+) -> impl Fn(Pixels, &mut App) + 'static {
+    move |width, cx| {
+        controller.update(cx, |controller, cx| {
+            controller.cache_sftp_breadcrumb_width(tab_id, side, width, cx);
+        });
+    }
+}
+
+fn estimated_sftp_breadcrumb_label_width(label: &str) -> f32 {
+    label
+        .chars()
+        .map(|character| {
+            if character.is_ascii() {
+                SFTP_BREADCRUMB_ESTIMATED_ASCII_CHAR_WIDTH
+            } else {
+                // Treat every non-ASCII scalar as wide. This intentionally
+                // overestimates narrow accented and combining characters so
+                // the current directory is never sacrificed to optimism.
+                SFTP_BREADCRUMB_ESTIMATED_WIDE_CHAR_WIDTH
+            }
+        })
+        .sum()
+}
+
+fn estimated_sftp_breadcrumb_width(labels: &[SharedString], indexes: &[Option<usize>]) -> f32 {
+    let labels_width = indexes
+        .iter()
+        .map(|index| match index {
+            Some(index) => {
+                let is_current = *index + 1 == labels.len();
+                let max_width = if is_current {
+                    SFTP_BREADCRUMB_CURRENT_LABEL_MAX_WIDTH
+                } else {
+                    SFTP_BREADCRUMB_LABEL_MAX_WIDTH
+                };
+                let display_label =
+                    sftp_breadcrumb_display_label(labels[*index].as_ref(), is_current);
+                estimated_sftp_breadcrumb_label_width(display_label.as_ref()).min(max_width)
+            }
+            None => 3.0 * SFTP_BREADCRUMB_ESTIMATED_ASCII_CHAR_WIDTH,
+        })
+        .sum::<f32>();
+    let separator_count = indexes.len().saturating_sub(1) as f32;
+
+    labels_width
+        + separator_count * SFTP_BREADCRUMB_SEPARATOR_WITH_GAPS_WIDTH
+        + SFTP_BREADCRUMB_WIDTH_SAFETY_MARGIN
+}
+
+fn visible_sftp_breadcrumb_indexes(
+    labels: &[SharedString],
+    available_width: Pixels,
+) -> Vec<Option<usize>> {
+    let items_len = labels.len();
+    let all_indexes: Vec<_> = (0..items_len).map(Some).collect();
+    if items_len <= 2 {
+        return all_indexes;
     }
 
-    let trailing_count = SFTP_BREADCRUMB_TRAILING_ITEMS.min(items_len.saturating_sub(1));
-    let trailing_start = items_len - trailing_count;
-    let mut indexes = Vec::with_capacity(2 + trailing_count);
-    indexes.push(Some(0));
-    indexes.push(None);
-    indexes.extend((trailing_start..items_len).map(Some));
-    indexes
+    let available_width = available_width.as_f32();
+    if available_width > 0.0
+        && estimated_sftp_breadcrumb_width(labels, &all_indexes) <= available_width
+    {
+        return all_indexes;
+    }
+
+    // Width is populated after the first prepaint. Until then, retain the previous
+    // root + ellipsis + three trailing items presentation to avoid a first-frame jump
+    // that could hide the current directory.
+    let maximum_trailing_count = if available_width > 0.0 {
+        items_len.saturating_sub(2)
+    } else {
+        3.min(items_len.saturating_sub(2))
+    };
+
+    for trailing_count in (1..=maximum_trailing_count).rev() {
+        let trailing_start = items_len - trailing_count;
+        let mut indexes = Vec::with_capacity(2 + trailing_count);
+        indexes.push(Some(0));
+        indexes.push(None);
+        indexes.extend((trailing_start..items_len).map(Some));
+
+        if available_width <= 0.0
+            || estimated_sftp_breadcrumb_width(labels, &indexes) <= available_width
+        {
+            return indexes;
+        }
+    }
+
+    vec![Some(0), None, Some(items_len - 1)]
 }
 
 fn sftp_breadcrumb_display_label(label: &str, is_current: bool) -> SharedString {
@@ -447,6 +565,7 @@ fn build_local_sftp_breadcrumb(
     path: &Path,
     controller: Entity<SftpController>,
     tab_id: TabId,
+    available_width: Pixels,
 ) -> Breadcrumb {
     let mut breadcrumb = Breadcrumb::new().w_full().min_w(px(0.0)).overflow_hidden();
     let mut ancestors: Vec<PathBuf> = path
@@ -454,7 +573,11 @@ fn build_local_sftp_breadcrumb(
         .map(|ancestor| ancestor.to_path_buf())
         .collect();
     ancestors.reverse();
-    let visible_indexes = visible_sftp_breadcrumb_indexes(ancestors.len());
+    let labels: Vec<_> = ancestors
+        .iter()
+        .map(|ancestor| local_sftp_breadcrumb_label(ancestor))
+        .collect();
+    let visible_indexes = visible_sftp_breadcrumb_indexes(&labels, available_width);
 
     for visible_index in visible_indexes {
         let Some(index) = visible_index else {
@@ -471,7 +594,7 @@ fn build_local_sftp_breadcrumb(
             continue;
         };
 
-        let raw_label = local_sftp_breadcrumb_label(ancestor);
+        let raw_label = &labels[index];
         let is_current = ancestor.as_path() == path;
         let label = sftp_breadcrumb_display_label(raw_label.as_ref(), is_current);
         let item = sftp_breadcrumb_item(label, is_current);
@@ -497,6 +620,7 @@ fn build_remote_sftp_breadcrumb(
     path: &str,
     controller: Entity<SftpController>,
     tab_id: TabId,
+    available_width: Pixels,
 ) -> Breadcrumb {
     let trimmed = path.trim();
     let current_path = if trimmed.is_empty() { "." } else { trimmed };
@@ -530,7 +654,8 @@ fn build_remote_sftp_breadcrumb(
     }
 
     let mut breadcrumb = Breadcrumb::new().w_full().min_w(px(0.0)).overflow_hidden();
-    let visible_indexes = visible_sftp_breadcrumb_indexes(segments.len());
+    let labels: Vec<_> = segments.iter().map(|(_, label)| label.clone()).collect();
+    let visible_indexes = visible_sftp_breadcrumb_indexes(&labels, available_width);
 
     for visible_index in visible_indexes {
         let Some(index) = visible_index else {
@@ -2105,6 +2230,28 @@ impl SftpController {
         }
     }
 
+    fn cache_sftp_breadcrumb_width(
+        &mut self,
+        tab_id: TabId,
+        side: SftpBrowserSide,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        let cached_width = match side {
+            SftpBrowserSide::Local => &mut tab.layout.local_breadcrumb_width,
+            SftpBrowserSide::Remote => &mut tab.layout.remote_breadcrumb_width,
+        };
+
+        if ((*cached_width - width) / px(1.0)).abs() >= 0.5 {
+            *cached_width = width;
+            drop(tab);
+            cx.notify();
+        }
+    }
+
     fn start_sftp_split_drag(
         &mut self,
         tab_id: TabId,
@@ -2271,8 +2418,14 @@ impl SftpController {
                         &sftp_tab.remote_path,
                         breadcrumb_controller,
                         tab_id,
+                        sftp_tab.layout.remote_breadcrumb_width,
                     ),
                     sftp_tab.remote_path.clone(),
+                    sftp_breadcrumb_width_resizer(
+                        controller.clone(),
+                        tab_id,
+                        SftpBrowserSide::Remote,
+                    ),
                 ),
                 true,
                 move |_window, cx| {
@@ -2649,8 +2802,10 @@ impl SftpController {
                         &sftp_tab.local_path,
                         breadcrumb_controller,
                         tab_id,
+                        sftp_tab.layout.local_breadcrumb_width,
                     ),
                     SftpController::display_local_path(&sftp_tab.local_path),
+                    sftp_breadcrumb_width_resizer(entity.clone(), tab_id, SftpBrowserSide::Local),
                 ),
                 true,
                 move |_window, cx| {
@@ -2690,8 +2845,10 @@ impl SftpController {
                         &sftp_tab.remote_path,
                         breadcrumb_controller,
                         tab_id,
+                        sftp_tab.layout.remote_breadcrumb_width,
                     ),
                     sftp_tab.remote_path.clone(),
+                    sftp_breadcrumb_width_resizer(entity.clone(), tab_id, SftpBrowserSide::Remote),
                 ),
                 true,
                 move |_window, cx| {

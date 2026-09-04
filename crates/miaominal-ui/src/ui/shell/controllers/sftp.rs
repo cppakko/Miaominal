@@ -670,6 +670,8 @@ pub(in crate::ui::shell) struct SftpLayoutState {
     pub(in crate::ui::shell) progress_center_transition: Option<SftpProgressCenterTransition>,
     pub(in crate::ui::shell) browser_container_width: Pixels,
     pub(in crate::ui::shell) page_container_height: Pixels,
+    pub(in crate::ui::shell) local_breadcrumb_width: Pixels,
+    pub(in crate::ui::shell) remote_breadcrumb_width: Pixels,
     pub(in crate::ui::shell) drag: Option<SftpSplitDragState>,
 }
 
@@ -684,6 +686,8 @@ impl Default for SftpLayoutState {
             progress_center_transition: None,
             browser_container_width: px(0.0),
             page_container_height: px(0.0),
+            local_breadcrumb_width: px(0.0),
+            remote_breadcrumb_width: px(0.0),
             drag: None,
         }
     }
@@ -925,6 +929,8 @@ fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
     state.layout.progress_center_transition = None;
     state.layout.browser_container_width = px(0.0);
     state.layout.page_container_height = px(0.0);
+    state.layout.local_breadcrumb_width = px(0.0);
+    state.layout.remote_breadcrumb_width = px(0.0);
     state.layout.drag = None;
 }
 
