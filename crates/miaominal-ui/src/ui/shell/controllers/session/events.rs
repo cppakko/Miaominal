@@ -472,6 +472,7 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::shell::controllers::SessionSftpProgressLayoutState;
     use crate::ui::shell::{SessionMonitoringState, SessionTabState, TerminalState};
     use tokio::sync::mpsc;
 
@@ -499,6 +500,7 @@ mod tests {
                 purpose: SessionPurpose::ConnectionTest,
                 port_forward_revision: 0,
                 port_forward_log_len: 0,
+                sftp_progress_layout: SessionSftpProgressLayoutState::default(),
                 owner_route: None,
             },
         );

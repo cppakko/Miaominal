@@ -37,7 +37,10 @@ use miaominal_storage::known_hosts_store::KnownHostsStore;
 use miaominal_terminal::TerminalState;
 use tokio::runtime::Handle as TokioHandle;
 
-use super::{AppCommand, DeferredAppCommand, SessionDeferredCommand, TabOpenRequest};
+use super::{
+    AppCommand, DeferredAppCommand, SessionDeferredCommand, SessionSftpProgressLayoutState,
+    TabOpenRequest,
+};
 use crate::ui::shell::bootstrap_loaders::initial_profile_selection;
 use crate::ui::shell::support::set_input_masked;
 use crate::ui::{
@@ -199,6 +202,7 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) purpose: SessionPurpose,
     pub(in crate::ui::shell) port_forward_revision: u64,
     pub(in crate::ui::shell) port_forward_log_len: usize,
+    pub(in crate::ui::shell) sftp_progress_layout: SessionSftpProgressLayoutState,
     pub(in crate::ui::shell) owner_route: Option<Entity<SessionTabOwnerRoute>>,
 }
 
@@ -4700,6 +4704,7 @@ impl SessionController {
             purpose: SessionPurpose::Terminal,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
             owner_route: None,
         };
         (
@@ -4761,6 +4766,7 @@ impl SessionController {
             purpose: SessionPurpose::PortForwarding,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
             owner_route: None,
         };
         (
@@ -4804,6 +4810,7 @@ impl SessionController {
             purpose: SessionPurpose::ConnectionTest,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
             owner_route: None,
         };
         (
@@ -6322,6 +6329,7 @@ mod tests {
             purpose: SessionPurpose::Terminal,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
             owner_route: None,
         }
     }

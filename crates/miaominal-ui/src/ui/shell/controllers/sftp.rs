@@ -241,22 +241,75 @@ pub(in crate::ui::shell) struct SessionSftpProgressCenterDragState {
 }
 
 struct SftpProgressLayoutState {
-    session_visible: bool,
-    session_transition: Option<SftpProgressCenterTransition>,
     scroll_handle: ScrollHandle,
-    session_flex: f32,
-    session_drag: Option<SessionSftpProgressCenterDragState>,
 }
 
 impl Default for SftpProgressLayoutState {
     fn default() -> Self {
         Self {
-            session_visible: false,
-            session_transition: None,
             scroll_handle: ScrollHandle::new(),
-            session_flex: SESSION_SFTP_PROGRESS_DEFAULT_FLEX,
-            session_drag: None,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct SessionSftpProgressLayoutState {
+    visible: bool,
+    transition: Option<SftpProgressCenterTransition>,
+    flex: f32,
+    drag: Option<SessionSftpProgressCenterDragState>,
+}
+
+impl Default for SessionSftpProgressLayoutState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            transition: None,
+            flex: SESSION_SFTP_PROGRESS_DEFAULT_FLEX,
+            drag: None,
+        }
+    }
+}
+
+impl SessionSftpProgressLayoutState {
+    pub(in crate::ui::shell) fn visible(&self) -> bool {
+        self.visible
+    }
+
+    pub(in crate::ui::shell) fn set_visible(&mut self, visible: bool) -> bool {
+        update_progress_center_state(
+            &mut self.visible,
+            &mut self.transition,
+            visible,
+            Instant::now(),
+        )
+    }
+
+    pub(in crate::ui::shell) fn render_visibility(&mut self, window: &mut Window) -> Option<f32> {
+        progress_center_render_visibility(self.visible, &mut self.transition, window)
+    }
+
+    pub(in crate::ui::shell) fn flex(&self) -> f32 {
+        self.flex
+    }
+
+    pub(in crate::ui::shell) fn set_flex(&mut self, flex: f32) {
+        self.flex = flex;
+    }
+
+    pub(in crate::ui::shell) fn drag(&self) -> Option<SessionSftpProgressCenterDragState> {
+        self.drag.clone()
+    }
+
+    pub(in crate::ui::shell) fn set_drag(
+        &mut self,
+        drag: Option<SessionSftpProgressCenterDragState>,
+    ) {
+        self.drag = drag;
+    }
+
+    pub(in crate::ui::shell) fn take_drag(&mut self) -> Option<SessionSftpProgressCenterDragState> {
+        self.drag.take()
     }
 }
 
@@ -857,7 +910,6 @@ pub(in crate::ui::shell) struct TransferredSftpWindowUi {
     remote_path_submit_pending: bool,
     prompt_value: String,
     inline_rename_value: String,
-    session_progress_layout: Option<(bool, f32)>,
 }
 
 fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
@@ -1644,7 +1696,6 @@ impl SftpController {
     pub(in crate::ui::shell) fn take_window_ui_for_transfer(
         &mut self,
         tab_id: TabId,
-        include_session_progress_layout: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<TransferredSftpWindowUi> {
@@ -1685,16 +1736,6 @@ impl SftpController {
         set_input_value(&prompt_input, "", window, cx);
         set_input_value(&inline_rename_input, "", window, cx);
 
-        let session_progress_layout = include_session_progress_layout.then(|| {
-            let mut layout = self.progress_layout.borrow_mut();
-            let state = (layout.session_visible, layout.session_flex);
-            layout.session_visible = false;
-            layout.session_transition = None;
-            layout.session_flex = SESSION_SFTP_PROGRESS_DEFAULT_FLEX;
-            layout.session_drag = None;
-            state
-        });
-
         Some(TransferredSftpWindowUi {
             tab_id,
             local_path_value,
@@ -1704,7 +1745,6 @@ impl SftpController {
             remote_path_submit_pending,
             prompt_value,
             inline_rename_value,
-            session_progress_layout,
         })
     }
 
@@ -1723,7 +1763,6 @@ impl SftpController {
             remote_path_submit_pending,
             prompt_value,
             inline_rename_value,
-            session_progress_layout,
         } = transferred;
         if self.tab(tab_id).is_none() {
             return;
@@ -1745,14 +1784,6 @@ impl SftpController {
         set_input_value(&remote_path_input, remote_path_value, window, cx);
         set_input_value(&prompt_input, prompt_value, window, cx);
         set_input_value(&inline_rename_input, inline_rename_value, window, cx);
-
-        if let Some((visible, flex)) = session_progress_layout {
-            let mut layout = self.progress_layout.borrow_mut();
-            layout.session_visible = visible;
-            layout.session_transition = None;
-            layout.session_flex = flex;
-            layout.session_drag = None;
-        }
 
         match self.inline_rename(tab_id) {
             Some(InlineRenameState::Local { from, .. }) => {
@@ -3673,68 +3704,36 @@ impl SftpController {
         Some((start_row, end_row))
     }
 
-    pub(in crate::ui::shell) fn session_progress_visible(&self) -> bool {
-        self.progress_layout.borrow().session_visible
-    }
-
-    pub(in crate::ui::shell) fn set_session_progress_visible(&self, visible: bool) -> bool {
-        let started_at = Instant::now();
-        let mut layout = self.progress_layout.borrow_mut();
-        let SftpProgressLayoutState {
-            session_visible,
-            session_transition,
-            ..
-        } = &mut *layout;
-        update_progress_center_state(session_visible, session_transition, visible, started_at)
-    }
-
-    pub(in crate::ui::shell) fn apply_progress_visibility(&self, visible: bool) -> bool {
-        let started_at = Instant::now();
-        let mut changed = {
-            let mut layout = self.progress_layout.borrow_mut();
-            let SftpProgressLayoutState {
-                session_visible,
-                session_transition,
-                ..
-            } = &mut *layout;
-            update_progress_center_state(session_visible, session_transition, visible, started_at)
-        };
-
-        for tab in self.tabs_mut().values_mut() {
-            if !update_progress_center_state(
-                &mut tab.layout.progress_center_visible,
-                &mut tab.layout.progress_center_transition,
-                visible,
-                started_at,
-            ) {
-                continue;
-            }
-
-            if !visible
-                && matches!(
-                    tab.layout.drag.as_ref(),
-                    Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
-                )
-            {
-                tab.layout.drag = None;
-            }
-            changed = true;
-        }
-
-        changed
-    }
-
-    pub(in crate::ui::shell) fn session_progress_render_visibility(
+    pub(in crate::ui::shell) fn set_tab_progress_visible(
         &self,
-        window: &mut Window,
-    ) -> Option<f32> {
-        let mut layout = self.progress_layout.borrow_mut();
-        let SftpProgressLayoutState {
-            session_visible,
-            session_transition,
+        tab_id: TabId,
+        visible: bool,
+    ) -> bool {
+        let started_at = Instant::now();
+        let Some(mut tab) = self.tab_mut(tab_id) else {
+            return false;
+        };
+        let SftpLayoutState {
+            progress_center_visible,
+            progress_center_transition,
             ..
-        } = &mut *layout;
-        progress_center_render_visibility(*session_visible, session_transition, window)
+        } = &mut tab.layout;
+        let changed = update_progress_center_state(
+            progress_center_visible,
+            progress_center_transition,
+            visible,
+            started_at,
+        );
+        if changed
+            && !visible
+            && matches!(
+                tab.layout.drag.as_ref(),
+                Some(drag) if drag.divider == SftpSplitDivider::ProgressCenter
+            )
+        {
+            tab.layout.drag = None;
+        }
+        changed
     }
 
     pub(in crate::ui::shell) fn tab_progress_render_visibility(
@@ -3754,33 +3753,6 @@ impl SftpController {
         self.progress_layout.borrow().scroll_handle.clone()
     }
 
-    pub(in crate::ui::shell) fn session_progress_flex(&self) -> f32 {
-        self.progress_layout.borrow().session_flex
-    }
-
-    pub(in crate::ui::shell) fn set_session_progress_flex(&self, flex: f32) {
-        self.progress_layout.borrow_mut().session_flex = flex;
-    }
-
-    pub(in crate::ui::shell) fn session_progress_drag(
-        &self,
-    ) -> Option<SessionSftpProgressCenterDragState> {
-        self.progress_layout.borrow().session_drag.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_session_progress_drag(
-        &self,
-        drag: Option<SessionSftpProgressCenterDragState>,
-    ) {
-        self.progress_layout.borrow_mut().session_drag = drag;
-    }
-
-    pub(in crate::ui::shell) fn take_session_progress_drag(
-        &self,
-    ) -> Option<SessionSftpProgressCenterDragState> {
-        self.progress_layout.borrow_mut().session_drag.take()
-    }
-
     pub(in crate::ui::shell) fn tab(&self, tab_id: TabId) -> Option<Ref<'_, SftpTabState>> {
         let tabs = self.tabs.borrow();
         Ref::filter_map(tabs, |store| store.tabs.get(&tab_id)).ok()
@@ -3793,10 +3765,6 @@ impl SftpController {
 
     pub(in crate::ui::shell) fn tabs(&self) -> Ref<'_, HashMap<TabId, SftpTabState>> {
         Ref::map(self.tabs.borrow(), |store| &store.tabs)
-    }
-
-    pub(in crate::ui::shell) fn tabs_mut(&self) -> RefMut<'_, HashMap<TabId, SftpTabState>> {
-        RefMut::map(self.tabs.borrow_mut(), |store| &mut store.tabs)
     }
 
     pub(in crate::ui::shell) fn session_profiles(&self) -> Vec<SessionProfile> {
@@ -3952,7 +3920,7 @@ impl SftpController {
         let mut validation_notification = None;
         let mut download_done_filename = None;
         let mut transfer_failed_notification = None;
-        let mut open_global_progress_center = false;
+        let mut open_tab_progress_center = false;
         let mut remote_table_loading_finished = false;
         let mut clear_remote_table_loading = false;
         let mut failed_remote_expand_path = None;
@@ -4019,7 +3987,7 @@ impl SftpController {
                         child_count: 0,
                     },
                 );
-                open_global_progress_center = true;
+                open_tab_progress_center = true;
                 let transfer_id = transfer_id.0.to_string();
                 tab.last_status =
                     i18n::string_args("sftp.messages.transfer_queued", &[("id", &transfer_id)]);
@@ -4296,8 +4264,8 @@ impl SftpController {
             }
         }
 
-        if open_global_progress_center {
-            self.apply_progress_visibility(true);
+        if open_tab_progress_center {
+            self.set_tab_progress_visible(tab_id, true);
         }
         if refresh_local_directory.is_some() || refresh_remote_directory.is_some() {
             self.schedule_directory_refresh(
@@ -5847,7 +5815,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_center_state_can_open_without_an_sftp_tab() {
+    fn progress_center_visibility_starts_enter_transition() {
         let mut visible = false;
         let mut transition = None;
 
@@ -5865,6 +5833,20 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn session_progress_layout_state_is_independent_per_tab() {
+        let mut first = SessionSftpProgressLayoutState::default();
+        let second = SessionSftpProgressLayoutState::default();
+
+        assert!(first.set_visible(true));
+        first.set_flex(0.42);
+
+        assert!(first.visible());
+        assert_eq!(first.flex(), 0.42);
+        assert!(!second.visible());
+        assert_eq!(second.flex(), SESSION_SFTP_PROGRESS_DEFAULT_FLEX);
     }
 
     #[test]

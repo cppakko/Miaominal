@@ -66,10 +66,10 @@ pub(in crate::ui::shell) use settings::{
     SettingsForms, SyncProviderConfigSaveDraft, SyncPullConfirmReason, WebSearchSaveDraft,
 };
 pub(in crate::ui::shell) use sftp::{
-    LocalSftpEntry, SessionSftpProgressCenterDragState, SftpController, SftpControllerArgs,
-    SftpDragSelectionState, SftpPromptKind, SftpPromptState, SftpSplitDivider, SftpSplitDragState,
-    SftpTabState, SftpTransferChildStatus, SftpTransferRow, SftpTransferStatus, TransferredSftpTab,
-    TransferredSftpWindowUi,
+    LocalSftpEntry, SessionSftpProgressCenterDragState, SessionSftpProgressLayoutState,
+    SftpController, SftpControllerArgs, SftpDragSelectionState, SftpPromptKind, SftpPromptState,
+    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow,
+    SftpTransferStatus, TransferredSftpTab, TransferredSftpWindowUi,
 };
 
 #[derive(Clone, Debug)]

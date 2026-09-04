@@ -1425,6 +1425,7 @@ impl ChromeAppViewExt for AppView {
         let active_session_tab = self
             .active_terminal_session_index(cx)
             .and_then(|index| self.workspace.tabs.at(index));
+        let active_session_tab_id = active_session_tab.map(|tab| tab.id);
         let active_session = active_session_tab.and_then(|tab| self.session_tab(tab.id, cx));
         let panel_session = active_session.is_some();
         let active_sftp = self
@@ -1507,16 +1508,19 @@ impl ChromeAppViewExt for AppView {
         let monitor_toggle_entity = entity.clone();
         let agent_toggle_entity = entity.clone();
         let progress_controller = self.controllers.sftp.clone();
+        let progress_session_controller = self.controllers.session.clone();
         let favorites_controller = self.controllers.sftp.clone();
         let favorites_panel_toggle = active_sftp
             .as_ref()
             .map(|(tab_id, sftp)| (*tab_id, sftp.layout.favorites_panel_visible));
-        let toggle_all_progress_centers = active_sftp.is_some();
+        let active_sftp_tab_id = active_sftp.as_ref().map(|(tab_id, _)| *tab_id);
         let progress_center_open = active_sftp
             .as_ref()
             .map(|(_, sftp)| sftp.layout.progress_center_visible)
             .unwrap_or_else(|| {
-                panel_session && self.controllers.sftp.read(cx).session_progress_visible()
+                active_session
+                    .as_ref()
+                    .is_some_and(|session| session.sftp_progress_layout.visible())
             });
         let progress_center_tooltip = if progress_center_open {
             i18n::string("sftp.tooltips.hide_progress_center")
@@ -1715,22 +1719,33 @@ impl ChromeAppViewExt for AppView {
                                         roles.outline_variant
                                     }),
                                     move |_window, cx| {
-                                        progress_controller.update(cx, |controller, cx| {
-                                            let changed = if toggle_all_progress_centers {
-                                                controller.apply_progress_visibility(
+                                        if let Some(tab_id) = active_sftp_tab_id {
+                                            progress_controller.update(cx, |controller, cx| {
+                                                let changed = controller.set_tab_progress_visible(
+                                                    tab_id,
                                                     !progress_center_open,
-                                                )
-                                            } else if panel_session {
-                                                controller.set_session_progress_visible(
-                                                    !progress_center_open,
-                                                )
-                                            } else {
-                                                false
-                                            };
-                                            if changed {
-                                                cx.notify();
-                                            }
-                                        });
+                                                );
+                                                if changed {
+                                                    cx.notify();
+                                                }
+                                            });
+                                        } else if let Some(tab_id) = active_session_tab_id {
+                                            progress_session_controller.update(
+                                                cx,
+                                                |controller, cx| {
+                                                    let changed = controller
+                                                        .tab_mut(tab_id)
+                                                        .is_some_and(|mut session| {
+                                                            session
+                                                                .sftp_progress_layout
+                                                                .set_visible(!progress_center_open)
+                                                        });
+                                                    if changed {
+                                                        cx.notify();
+                                                    }
+                                                },
+                                            );
+                                        }
                                     },
                                 )
                                 .id("sftp-progress-center-toggle-button")

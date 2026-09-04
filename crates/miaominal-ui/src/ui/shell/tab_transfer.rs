@@ -212,7 +212,7 @@ impl AppView {
             .flatten();
         let sftp_ui = visible_sftp_tab_id.and_then(|tab_id| {
             self.controllers.sftp.update(cx, |controller, cx| {
-                controller.take_window_ui_for_transfer(tab_id, root_is_session, window, cx)
+                controller.take_window_ui_for_transfer(tab_id, window, cx)
             })
         });
         let session_ui = (active_root && root_is_session).then(|| {

@@ -156,6 +156,7 @@ impl Default for ShellState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::shell::controllers::SessionSftpProgressLayoutState;
 
     #[test]
     fn shell_state_starts_on_ssh_profiles() {
@@ -185,6 +186,7 @@ mod tests {
             purpose,
             port_forward_revision: 0,
             port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
             owner_route: None,
         }
     }
