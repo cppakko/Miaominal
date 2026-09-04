@@ -12,6 +12,12 @@ use std::any::type_name;
 use std::rc::Rc;
 
 const NOTIFICATION_HISTORY_LIMIT: usize = 100;
+const NOTIFICATION_PANEL_WIDTH: f32 = 408.0;
+const NOTIFICATION_PANEL_HEIGHT: f32 = 480.0;
+const NOTIFICATION_EMPTY_PANEL_HEIGHT: f32 = 204.0;
+const NOTIFICATION_PANEL_CONTENT_PADDING: f32 = 8.0;
+const NOTIFICATION_ENTRY_WIDTH: f32 =
+    NOTIFICATION_PANEL_WIDTH - NOTIFICATION_PANEL_CONTENT_PADDING * 2.0;
 const NOTIFICATION_CORNER_RADIUS: f32 = 20.0;
 const NOTIFICATION_ICON_SIZE: f32 = 28.0;
 const NOTIFICATION_ICON_CONTAINER_SIZE: f32 = 44.0;
@@ -693,17 +699,23 @@ pub(crate) fn render_notification_center_popover(cx: &App) -> impl IntoElement {
         })
         .content(|_, _, cx| {
             let entries = notification_center_entries(cx);
+            let panel_height = if entries.is_empty() {
+                NOTIFICATION_EMPTY_PANEL_HEIGHT
+            } else {
+                NOTIFICATION_PANEL_HEIGHT
+            };
             let roles = miaominal_settings::current_theme().material.roles;
             let popover = cx.entity().clone();
             v_flex()
-                .w(px(408.0))
-                .max_h(px(480.0))
+                .w(px(NOTIFICATION_PANEL_WIDTH))
+                .h(px(panel_height))
                 .rounded(px(24.0))
                 .bg(rgb(roles.surface_container_highest))
                 .shadow_lg()
                 .overflow_hidden()
                 .child(
                     h_flex()
+                        .flex_none()
                         .w_full()
                         .min_h(px(52.0))
                         .px_4()
@@ -730,44 +742,60 @@ pub(crate) fn render_notification_center_popover(cx: &App) -> impl IntoElement {
                 )
                 .child(
                     div()
+                        .flex_1()
                         .w_full()
-                        .max_h(px(408.0))
-                        .overflow_y_scrollbar()
+                        .min_h_0()
+                        .px(px(NOTIFICATION_PANEL_CONTENT_PADDING))
+                        .pb(px(NOTIFICATION_PANEL_CONTENT_PADDING))
+                        .overflow_hidden()
                         .child(
-                            v_flex()
-                                .w_full()
-                                .px_2()
-                                .pb_2()
-                                .gap_1()
-                                .when(entries.is_empty(), |this| {
-                                    this.child(
-                                        v_flex()
-                                            .h(px(152.0))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .gap_3()
-                                            .text_color(rgb(roles.on_surface_variant))
-                                            .child(
-                                                div()
-                                                    .size(px(48.0))
-                                                    .rounded(px(999.0))
+                            div().size_full().rounded(px(16.0)).overflow_hidden().child(
+                                div().size_full().overflow_y_scrollbar().child(
+                                    v_flex()
+                                        .w(px(NOTIFICATION_ENTRY_WIDTH))
+                                        .pb_2()
+                                        .gap_1()
+                                        .when(entries.is_empty(), |this| {
+                                            this.child(
+                                                v_flex()
+                                                    .h_full()
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
-                                                    .bg(color_with_alpha(roles.secondary, 0x20))
+                                                    .gap_3()
+                                                    .text_color(rgb(roles.on_surface_variant))
                                                     .child(
-                                                        Icon::new(IconName::Bell)
-                                                            .size(px(24.0))
-                                                            .text_color(rgb(roles.secondary)),
-                                                    ),
+                                                        div()
+                                                            .size(px(48.0))
+                                                            .rounded(px(999.0))
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .bg(color_with_alpha(
+                                                                roles.secondary,
+                                                                0x20,
+                                                            ))
+                                                            .child(
+                                                                Icon::new(IconName::Bell)
+                                                                    .size(px(24.0))
+                                                                    .text_color(rgb(
+                                                                        roles.secondary
+                                                                    )),
+                                                            ),
+                                                    )
+                                                    .child(i18n::string(
+                                                        "notifications.center.empty",
+                                                    )),
                                             )
-                                            .child(i18n::string("notifications.center.empty")),
-                                    )
-                                })
-                                .children(entries.into_iter().map(move |entry| {
-                                    render_notification_history_entry(entry, popover.clone())
-                                })),
+                                        })
+                                        .children(entries.into_iter().map(move |entry| {
+                                            render_notification_history_entry(
+                                                entry,
+                                                popover.clone(),
+                                            )
+                                        })),
+                                ),
+                            ),
                         ),
                 )
                 .with_animation(
@@ -804,7 +832,7 @@ fn render_notification_history_entry(
             entry_id
         )))
         .flex_none()
-        .w_full()
+        .w(px(NOTIFICATION_ENTRY_WIDTH))
         .items_start()
         .gap_3()
         .px_4()
@@ -864,7 +892,7 @@ fn render_notification_history_entry(
             None,
             move |_, cx| remove_notification(&remove_entry_id, cx),
         )));
-    if is_dismissing {
+    let animated_entry = if is_dismissing {
         element
             .with_animation(
                 SharedString::from(format!("notification-history-exit-{entry_id}")),
@@ -888,7 +916,13 @@ fn render_notification_history_entry(
                 },
             )
             .into_any_element()
-    }
+    };
+
+    div()
+        .flex_none()
+        .w(px(NOTIFICATION_ENTRY_WIDTH))
+        .child(animated_entry)
+        .into_any_element()
 }
 
 #[cfg(test)]
