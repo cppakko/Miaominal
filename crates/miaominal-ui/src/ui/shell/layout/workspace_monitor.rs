@@ -1,7 +1,6 @@
 use crate::ui::components::{editor_button, md3_select, md3_spinner};
 use crate::ui::i18n;
-use gpui::{StatefulInteractiveElement, linear_color_stop, linear_gradient};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Size,
     plot::{
         Grid, IntoPlot, Plot, StrokeStyle,
@@ -9,6 +8,7 @@ use gpui_component::{
         shape::Area,
     },
 };
+use gpui_kit::{StatefulInteractiveElement, linear_color_stop, linear_gradient};
 use miaominal_core::forwarding::SessionMonitorPlatform;
 
 use super::super::*;
@@ -19,9 +19,9 @@ const SESSION_MONITOR_NETWORK_MIN_Y_MAX: f64 = 8.0;
 
 fn monitor_tooltip(
     text: impl Into<SharedString>,
-) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
     let text = text.into();
-    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 fn short_monitor_timestamp(value: &str) -> String {
@@ -378,7 +378,7 @@ impl SessionController {
         history_select: Entity<
             SelectState<Vec<SelectOption<miaominal_settings::MonitorHistoryDuration>>>,
         >,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -811,7 +811,7 @@ impl SessionController {
         &self,
         label: String,
         health: MonitorHealth,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let accent = monitor_health_accent(health);
         let background_alpha = if health == MonitorHealth::Critical {
             0x20
@@ -841,7 +841,7 @@ impl SessionController {
         detail: String,
         health: MonitorHealth,
         progress_percent: Option<f64>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -912,7 +912,7 @@ impl SessionController {
                         .child(
                             div()
                                 .h_full()
-                                .w(gpui::relative(progress))
+                                .w(gpui_kit::relative(progress))
                                 .rounded(px(999.0))
                                 .bg(rgb(accent)),
                         ),
@@ -950,7 +950,7 @@ impl SessionController {
         entity: Entity<SessionController>,
         profile_id: String,
         error: &str,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let warning = material.extended.warning;
         let error_preview = truncate_with_ellipsis(error, 140);
@@ -1003,7 +1003,7 @@ impl SessionController {
         profile_id: String,
         error: &str,
         text_muted: u32,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let error_preview = truncate_with_ellipsis(error, 180);
         v_flex()
@@ -1046,7 +1046,10 @@ impl SessionController {
             .into_any_element()
     }
 
-    fn render_monitor_trend_card(&self, config: MonitorTrendCardConfig<'_>) -> gpui::AnyElement {
+    fn render_monitor_trend_card(
+        &self,
+        config: MonitorTrendCardConfig<'_>,
+    ) -> gpui_kit::AnyElement {
         let MonitorTrendCardConfig {
             title,
             primary_label,
@@ -1193,7 +1196,7 @@ impl SessionController {
         color: u32,
         label: String,
         value: String,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         h_flex()
             .min_w(px(0.0))

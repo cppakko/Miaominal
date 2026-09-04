@@ -18,7 +18,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
     content: String,
     colors: ToolTerminalColors,
     error: bool,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     if content.trim().is_empty() {
         let empty_content = div()
             .font_family(miaominal_settings::font_family())
@@ -57,7 +57,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block(
     let highlighted_content = div()
         .w_full()
         .child(
-            gpui_component::text::TextView::markdown(
+            gpui_kit::component::text::TextView::markdown(
                 tool_terminal_markdown_id(tool_call_id, &label, language.unwrap_or_default()),
                 markdown_code,
             )
@@ -79,9 +79,9 @@ pub(in crate::ui::shell::layout) fn tool_terminal_markdown_id(
 
 pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
     label: String,
-    content: gpui::AnyElement,
+    content: gpui_kit::AnyElement,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let terminal_bg = if material.dark {
         colors.surface_container_lowest
@@ -120,7 +120,7 @@ pub(in crate::ui::shell::layout) fn render_tool_terminal_block_content(
 pub(in crate::ui::shell::layout) fn render_tool_field_grid(
     fields: Vec<(String, String)>,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     v_flex()
         .w_full()
         .gap_1()
@@ -161,10 +161,9 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
     label: String,
     command: &str,
     colors: ToolTerminalColors,
-    _syntax_theme: &::theme::SyntaxTheme,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     if command.trim().is_empty() {
-        let base_color = gpui::Hsla::from(rgb(colors.on_surface));
+        let base_color = gpui_kit::Hsla::from(rgb(colors.on_surface));
         let content = div()
             .font_family(miaominal_settings::font_family())
             .text_size(miaominal_settings::FontSize::Body.scaled())
@@ -182,7 +181,7 @@ pub(in crate::ui::shell::layout) fn render_bash_highlighted_command_block(
     let content = div()
         .w_full()
         .child(
-            gpui_component::text::TextView::markdown(
+            gpui_kit::component::text::TextView::markdown(
                 tool_terminal_markdown_id(tool_call_id, &label, "bash"),
                 markdown_code,
             )

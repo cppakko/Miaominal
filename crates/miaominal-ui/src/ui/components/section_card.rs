@@ -1,6 +1,6 @@
 use crate::ui::assets::AppIcon;
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::*;
 
 #[derive(IntoElement)]
 pub struct SectionCard {

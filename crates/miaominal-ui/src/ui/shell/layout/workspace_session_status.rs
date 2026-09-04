@@ -1,7 +1,7 @@
 use crate::ui::components::{fab_icon_button, md3_spinner};
 use crate::ui::i18n;
 use crate::ui::shell::SessionFailureStatus;
-use gpui_component::Disableable;
+use gpui_kit::component::Disableable;
 
 use super::super::*;
 
@@ -81,7 +81,7 @@ impl SessionController {
         tab: &TabState,
         rounded: bool,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
+    ) -> Option<gpui_kit::AnyElement> {
         let (summary, profile_id, purpose, connection_state) = {
             let session = self.tab(tab.id)?;
             if !session.uses_blocking_placeholder() {
@@ -141,7 +141,7 @@ impl SessionController {
         &self,
         tab: &TabState,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
+    ) -> Option<gpui_kit::AnyElement> {
         let (summary, popup_hidden, profile_id, purpose, connection_state) = {
             let session = self.tab(tab.id)?;
             if !session.preserves_terminal_history() {
@@ -192,7 +192,7 @@ impl SessionController {
         tab_id: TabId,
         rounded: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -295,7 +295,7 @@ impl SessionController {
         status: String,
         summary: String,
         rounded: bool,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -361,7 +361,7 @@ impl SessionController {
         tab_id: TabId,
         rounded: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         const MAX_RECONNECT_ATTEMPTS: u32 = 10;
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -452,7 +452,7 @@ impl SessionController {
         failure: SessionFailureView,
         rounded: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let SessionFailureView {
             title,
             summary,
@@ -615,7 +615,7 @@ impl SessionController {
         purpose: SessionPurpose,
         tab_id: TabId,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let weak = cx.entity().downgrade();
@@ -702,7 +702,7 @@ impl SessionController {
         &self,
         failure: SessionFailureView,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let SessionFailureView {
             title,
             summary,
@@ -832,7 +832,7 @@ impl SessionController {
         write_marker: bool,
         tab_id: TabId,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let weak = cx.entity().downgrade();
 
         div()

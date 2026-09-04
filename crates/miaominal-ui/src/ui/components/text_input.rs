@@ -1,10 +1,14 @@
-use super::{HintedInput, icon_button};
+use super::{HintedEditor, HintedInput, icon_button};
 use crate::ui::assets::AppIcon;
-use gpui::{
+use gpui_kit::component::{
+    Icon, Sizable as _, Size, h_flex,
+    input::{EditorState, InputState},
+    v_flex,
+};
+use gpui_kit::{
     AnyElement, App, Div, Entity, IntoElement, ParentElement, SharedString, Styled, Window, div,
     prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::{Icon, Sizable as _, Size, h_flex, input::InputState, v_flex};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextInputSurface {
@@ -175,7 +179,7 @@ pub(crate) fn surface_secret_text_input_stack(
 }
 
 pub(crate) fn surface_text_editor(
-    input: &Entity<InputState>,
+    input: &Entity<EditorState>,
     height: f32,
     surface: TextInputSurface,
 ) -> Div {
@@ -186,10 +190,9 @@ pub(crate) fn surface_text_editor(
         .bg(rgb(surface.background()))
         .overflow_hidden()
         .child(
-            HintedInput::new(input)
+            HintedEditor::new(input)
                 .size_full()
                 .appearance(false)
-                .focus_bordered(false)
                 .p_3()
                 .hint_top(px(12.0))
                 .hint_bottom(px(12.0))
@@ -199,7 +202,7 @@ pub(crate) fn surface_text_editor(
 
 pub(crate) fn surface_text_editor_stack(
     label: impl Into<SharedString>,
-    input: Entity<InputState>,
+    input: Entity<EditorState>,
     height: f32,
     surface: TextInputSurface,
     required: bool,

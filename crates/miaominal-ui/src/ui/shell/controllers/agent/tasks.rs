@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use gpui::Context;
+use gpui_kit::Context;
 use miaominal_agent::{
     AgentChatEvent, AgentChatProvider, AgentChatRequest, AgentChatToolEvent, AgentExecChannel,
     AgentToolCallRequest, AgentToolCancellation, AgentToolResultContinuationRequest,

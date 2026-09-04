@@ -1,4 +1,4 @@
-use gpui::{Div, ParentElement, SharedString, Styled, div, px, rgb};
+use gpui_kit::{Div, ParentElement, SharedString, Styled, div, px, rgb};
 
 pub(crate) fn badge(label: impl Into<SharedString>, background: u32, foreground: u32) -> Div {
     badge_base(label, background, foreground)

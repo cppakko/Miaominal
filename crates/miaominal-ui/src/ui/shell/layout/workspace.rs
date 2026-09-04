@@ -3,7 +3,7 @@ use super::super::*;
 use super::workspace_side_panel::{
     WorkspaceSidePanelDock, render_workspace_side_panel, workspace_side_panel_render_state,
 };
-use gpui_component::ElementExt as _;
+use gpui_kit::component::ElementExt as _;
 use std::{cell::RefCell, rc::Rc};
 
 const SESSION_SFTP_BOTTOM_PROGRESS_GAP: f32 = 8.0;
@@ -52,7 +52,7 @@ fn render_session_sftp_progress_resize_handle(
     is_dragging: bool,
     container_height: Rc<RefCell<Pixels>>,
     cx: &mut Context<AppView>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
 
     div()
@@ -137,7 +137,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
     app: &mut AppView,
     window: &mut Window,
     cx: &mut Context<AppView>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     app.advance_pane_split_animation(window, cx);
     let workspace_height = Rc::new(RefCell::new(px(0.0)));
 
@@ -269,7 +269,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         .w_full()
         .flex_grow(1.0)
         .flex_shrink(1.0)
-        .flex_basis(gpui::relative(workspace_row_flex))
+        .flex_basis(gpui_kit::relative(workspace_row_flex))
         .min_w(px(0.0))
         .min_h(px(0.0))
         .on_mouse_move(
@@ -417,7 +417,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
                 div()
                     .flex_grow(visibility)
                     .flex_shrink(1.0)
-                    .flex_basis(gpui::relative(sftp_progress_flex * visibility))
+                    .flex_basis(gpui_kit::relative(sftp_progress_flex * visibility))
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .overflow_hidden()
@@ -433,7 +433,7 @@ fn render_session_workspace_sftp_progress_panel(
     app: &mut AppView,
     window: &mut Window,
     cx: &App,
-) -> Option<(gpui::AnyElement, f32)> {
+) -> Option<(gpui_kit::AnyElement, f32)> {
     let session_tab_id = app
         .active_terminal_session_index(cx)
         .and_then(|index| app.workspace.tabs.id_at(index))?;
@@ -465,8 +465,8 @@ fn render_session_workspace_sftp_progress_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
-    use gpui_component::{WindowExt as _, text::TextView, text::TextViewState};
+    use gpui_kit::component::{text::TextView, text::TextViewState};
+    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext, point};
     use std::cell::Cell;
 
     struct AgentResizeReleaseTestView {
@@ -508,7 +508,7 @@ mod tests {
                         .h(px(100.0))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, move |_, _window, cx| {
-                            gpui_component::GlobalState::suppress_text_selection(cx);
+                            gpui_kit::component::GlobalState::suppress_text_selection(cx);
                             resizing_on_down.set(true);
                             cx.stop_propagation();
                         }),
@@ -574,7 +574,7 @@ mod tests {
     fn setup_agent_resize_release_test(
         cx: &mut TestAppContext,
     ) -> (Rc<Cell<bool>>, &mut VisualTestContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::init);
         let resizing = Rc::new(Cell::new(false));
         let resizing_for_view = resizing.clone();
         let (_root, cx) = cx.add_window_view(move |window, cx| {
@@ -599,7 +599,7 @@ mod tests {
     fn setup_session_sftp_drag_release_test(
         cx: &mut TestAppContext,
     ) -> (Rc<Cell<bool>>, Rc<Cell<usize>>, &mut VisualTestContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::init);
         let dragging = Rc::new(Cell::new(false));
         let outside_updates = Rc::new(Cell::new(0));
         let dragging_for_view = dragging.clone();
@@ -618,7 +618,7 @@ mod tests {
         (dragging, outside_updates, cx)
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn occluded_agent_resize_release_does_not_leak_into_text_selection(cx: &mut TestAppContext) {
         let (resizing, cx) = setup_agent_resize_release_test(cx);
         let modifiers = Modifiers::default();
@@ -640,11 +640,11 @@ mod tests {
         cx.update(|window, cx| {
             let _ = window.draw(cx);
         });
-        let selected_text = cx.update(|window, cx| window.selected_text(cx));
+        let selected_text = cx.update(gpui_kit::base::TextSelection::selected_text);
         assert_eq!(selected_text, "");
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn session_sftp_drag_finishes_after_leaving_the_panel(cx: &mut TestAppContext) {
         let (dragging, outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
         let modifiers = Modifiers::default();
@@ -662,7 +662,7 @@ mod tests {
         assert!(!dragging.get());
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn session_sftp_drag_recovers_when_mouse_up_is_lost(cx: &mut TestAppContext) {
         let (dragging, _outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
         let modifiers = Modifiers::default();
@@ -676,7 +676,7 @@ mod tests {
         assert!(!dragging.get());
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn session_sftp_drag_finishes_on_mouse_up_out(cx: &mut TestAppContext) {
         let (dragging, _outside_updates, cx) = setup_session_sftp_drag_release_test(cx);
         let modifiers = Modifiers::default();

@@ -128,14 +128,14 @@ impl SessionController {
             cx,
         );
         self.sync_snippet_package_controls(&snippet.package, window, cx);
-        set_input_value(&forms.script_input, snippet.script.clone(), window, cx);
+        set_editor_value(&forms.script_input, snippet.script.clone(), window, cx);
     }
 
     fn clear_snippet_inputs(&self, window: &mut Window, cx: &mut Context<Self>) {
         let forms = self.snippets_forms();
         set_input_value(&forms.description_input, "", window, cx);
         self.sync_snippet_package_controls("", window, cx);
-        set_input_value(&forms.script_input, "", window, cx);
+        set_editor_value(&forms.script_input, "", window, cx);
     }
 
     fn read_snippet_from_inputs(&self, snippet_id: String, cx: &App) -> Result<SnippetRecord> {

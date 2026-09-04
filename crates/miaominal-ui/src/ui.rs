@@ -10,7 +10,6 @@ pub(crate) mod utils;
 mod windowing;
 
 pub use application::{initialize_application_state, reload_application_state};
-use settings::Settings as _;
 pub use shell::{AppView, AppWindowRole, open_settings_from_menu};
 pub use system_tray::{
     configure_detached_window_close, configure_main_window_close, initialize_system_tray,
@@ -18,19 +17,9 @@ pub use system_tray::{
 };
 pub use windowing::{DetachedWindowTarget, register_detached_window_opener};
 
-pub fn init_markdown(_cx: &mut gpui::App) {
-    if !_cx.has_global::<settings::SettingsStore>() {
-        settings::init(_cx);
-    }
-
-    theme_settings::ThemeSettings::register(_cx);
-
-    if !_cx.has_global::<::theme::GlobalTheme>() {
-        theme_settings::init(::theme::LoadThemes::JustBase, _cx);
-    }
-
+pub fn init_markdown(_cx: &mut gpui_kit::App) {
     // Initialize language registry for tree-sitter based code block syntax highlighting
     // Languages are enabled via Cargo features: tree-sitter-rust, tree-sitter-python, etc.
-    use gpui_component::highlighter::LanguageRegistry;
+    use gpui_kit::component::highlighter::LanguageRegistry;
     let _ = LanguageRegistry::singleton();
 }

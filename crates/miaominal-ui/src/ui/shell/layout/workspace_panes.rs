@@ -1,5 +1,5 @@
 use crate::ui::i18n;
-use gpui::StatefulInteractiveElement;
+use gpui_kit::StatefulInteractiveElement;
 use miaominal_settings::TerminalRightClickBehavior;
 
 use super::super::metrics::TERMINAL_PANEL_BORDER;
@@ -8,9 +8,9 @@ use super::chrome::{status_indicator, tab_status_indicator_color};
 use super::workspace_terminal_menu::{build_terminal_context_menu, terminal_pane_surface_id};
 
 fn pane_drop_zone_style(
-    style: gpui::StyleRefinement,
+    style: gpui_kit::StyleRefinement,
     zone: super::super::panes::PaneTabDropZone,
-) -> gpui::StyleRefinement {
+) -> gpui_kit::StyleRefinement {
     let roles = miaominal_settings::current_theme().material.roles;
     let mut refined = style;
     refined.background = Some(color_with_alpha(roles.primary, 0x33).into());
@@ -46,55 +46,55 @@ pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
         valid_source_ids: &[TabId],
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_split_animated_pane(
         &self,
         path: &[usize],
-        content: gpui::AnyElement,
-    ) -> gpui::AnyElement;
+        content: gpui_kit::AnyElement,
+    ) -> gpui_kit::AnyElement;
 
     fn render_pane_drop_surface(
         &self,
         pane_id: super::super::panes::PaneId,
-        content: gpui::AnyElement,
+        content: gpui_kit::AnyElement,
         valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_pane_drop_targets(
         &self,
         pane_id: super::super::panes::PaneId,
         valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_pane_header(
         &self,
         pane_id: super::super::panes::PaneId,
         cx: &App,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_split_bar(
         &self,
         axis: super::super::workspace::SplitAxis,
         path: Vec<usize>,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_parked_pane_surface(
         &mut self,
         pane_id: super::super::panes::PaneId,
         embedded_in_split: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 
     fn render_active_pane_surface(
         &mut self,
         embedded_in_split: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement;
+    ) -> gpui_kit::AnyElement;
 }
 
 impl WorkspacePanesAppViewExt for AppView {
@@ -105,7 +105,7 @@ impl WorkspacePanesAppViewExt for AppView {
         valid_source_ids: &[TabId],
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         match layout {
             PaneLayout::Leaf(pane_id) => {
                 let embedded_in_split = !path.is_empty();
@@ -140,7 +140,7 @@ impl WorkspacePanesAppViewExt for AppView {
                             div()
                                 .flex_grow(1.0)
                                 .flex_shrink(1.0)
-                                .flex_basis(gpui::relative(1.0))
+                                .flex_basis(gpui_kit::relative(1.0))
                                 .min_w(px(0.0))
                                 .min_h(px(0.0))
                                 .child(body),
@@ -170,7 +170,7 @@ impl WorkspacePanesAppViewExt for AppView {
                     let wrapped = div()
                         .flex_grow(1.0)
                         .flex_shrink(1.0)
-                        .flex_basis(gpui::relative(flex))
+                        .flex_basis(gpui_kit::relative(flex))
                         .h_full()
                         .min_w(px(0.0))
                         .min_h(px(0.0))
@@ -190,8 +190,8 @@ impl WorkspacePanesAppViewExt for AppView {
     fn render_split_animated_pane(
         &self,
         path: &[usize],
-        content: gpui::AnyElement,
-    ) -> gpui::AnyElement {
+        content: gpui_kit::AnyElement,
+    ) -> gpui_kit::AnyElement {
         let Some(animation) = self.workspace.workspace.pane_split_animation.as_ref() else {
             return content;
         };
@@ -245,10 +245,10 @@ impl WorkspacePanesAppViewExt for AppView {
     fn render_pane_drop_surface(
         &self,
         pane_id: super::super::panes::PaneId,
-        content: gpui::AnyElement,
+        content: gpui_kit::AnyElement,
         valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         if valid_source_ids.is_empty() {
             return content;
         }
@@ -268,7 +268,7 @@ impl WorkspacePanesAppViewExt for AppView {
         pane_id: super::super::panes::PaneId,
         valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         use super::super::panes::PaneTabDropZone;
 
         let entity = cx.entity();
@@ -276,9 +276,9 @@ impl WorkspacePanesAppViewExt for AppView {
             .pane_tab_index(pane_id)
             .and_then(|index| self.workspace.tabs.at(index))
             .is_some_and(|tab| tab.is_session());
-        let edge_inset = gpui::relative(0.24);
+        let edge_inset = gpui_kit::relative(0.24);
 
-        let render_zone = |base: gpui::Div,
+        let render_zone = |base: gpui_kit::Div,
                            zone: PaneTabDropZone,
                            accepts: bool,
                            ids: Vec<TabId>,
@@ -368,7 +368,7 @@ impl WorkspacePanesAppViewExt for AppView {
         &self,
         pane_id: super::super::panes::PaneId,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -426,7 +426,9 @@ impl WorkspacePanesAppViewExt for AppView {
                     } else {
                         text_muted
                     }))
-                    .when(is_active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
+                    .when(is_active, |this| {
+                        this.font_weight(gpui_kit::FontWeight::MEDIUM)
+                    })
                     .child(SharedString::from(label)),
             )
             .into_any_element()
@@ -437,7 +439,7 @@ impl WorkspacePanesAppViewExt for AppView {
         axis: super::super::workspace::SplitAxis,
         path: Vec<usize>,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         use super::super::panes::{PaneSplitDragMarker, PaneSplitDragState};
         use super::super::workspace::SplitAxis;
         let Some((&child_index, parent_path)) = path.split_last() else {
@@ -534,7 +536,7 @@ impl WorkspacePanesAppViewExt for AppView {
         })
         .on_drag(marker, |m, _offset, _window, cx| cx.new(|_| m.clone()))
         .on_drag_move::<PaneSplitDragMarker>(cx.listener(
-            move |this, event: &gpui::DragMoveEvent<PaneSplitDragMarker>, _window, cx| {
+            move |this, event: &gpui_kit::DragMoveEvent<PaneSplitDragMarker>, _window, cx| {
                 let _ = &parent_path_for_move; // capture for closure type
                 let Some(drag) = this.workspace.workspace.pane_split_drag.clone() else {
                     return;
@@ -571,7 +573,7 @@ impl WorkspacePanesAppViewExt for AppView {
         pane_id: super::super::panes::PaneId,
         embedded_in_split: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -754,7 +756,7 @@ impl WorkspacePanesAppViewExt for AppView {
         embedded_in_split: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(

@@ -1,6 +1,6 @@
 use super::super::super::super::*;
 use crate::ui::i18n;
-use gpui::InteractiveElement;
+use gpui_kit::InteractiveElement;
 
 pub(in crate::ui::shell::pages::forward) fn draggable_profile_tile(
     profile: &SessionProfile,

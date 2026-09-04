@@ -1,12 +1,14 @@
 use super::*;
 use crate::ui::assets::AppIcon;
 use crate::ui::i18n;
-use gpui::{Anchor, Animation, AnimationExt as _, Global, RenderOnce, ease_in_out, ease_out_quint};
-use gpui_component::{
+use gpui_kit::component::{
     Selectable, WindowExt as _,
     button::Button,
     notification::Notification,
     popover::{Popover, PopoverState},
+};
+use gpui_kit::{
+    Anchor, Animation, AnimationExt as _, Global, RenderOnce, ease_in_out, ease_out_quint,
 };
 use std::any::type_name;
 use std::rc::Rc;

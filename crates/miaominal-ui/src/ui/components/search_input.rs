@@ -1,6 +1,6 @@
 use super::HintedInput;
-use gpui::{AnyElement, Div, Entity, ParentElement, Styled, div, px, rgb};
-use gpui_component::{Icon, IconName, Sizable as _, input::InputState};
+use gpui_kit::component::{Icon, IconName, Sizable as _, input::InputState};
+use gpui_kit::{AnyElement, Div, Entity, ParentElement, Styled, div, px, rgb};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchInputStyle {

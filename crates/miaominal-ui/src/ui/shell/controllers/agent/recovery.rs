@@ -1,7 +1,7 @@
 use super::conversation::append_stream_error;
 use super::{AgentController, SessionAgentMessage};
 use crate::ui::{i18n, shell::AppCommand};
-use gpui::Context;
+use gpui_kit::Context;
 
 pub(in crate::ui::shell) struct AgentRecoveryPreparation {
     pub(in crate::ui::shell) session_id: String,

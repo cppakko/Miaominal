@@ -6,7 +6,7 @@ use crate::ui::i18n;
 pub(in crate::ui::shell::layout) fn render_structured_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     if arguments_are_streaming(tool_call) && tool_call.name != "apply_patch" {
         return render_preparing_tool_body(tool_call, colors);
     }
@@ -33,8 +33,7 @@ pub(in crate::ui::shell::layout) fn render_structured_tool_body(
 pub(in crate::ui::shell::layout) fn render_run_shell_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-    syntax_theme: &::theme::SyntaxTheme,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let command = parse_run_shell_command(&tool_call.arguments)
         .or_else(|| partial_json_string_field(&tool_call.arguments, "command"))
         .unwrap_or_else(|| {
@@ -76,7 +75,6 @@ pub(in crate::ui::shell::layout) fn render_run_shell_tool_body(
             tool_field_label("command"),
             &command,
             colors,
-            syntax_theme,
         ))
         .when_some(result_block, |this, (label, content, error)| {
             this.child(render_tool_terminal_block(
@@ -94,7 +92,7 @@ pub(in crate::ui::shell::layout) fn render_run_shell_tool_body(
 pub(in crate::ui::shell::layout) fn render_apply_patch_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let patch = string_field(args.as_ref(), "patch")
@@ -159,7 +157,7 @@ pub(in crate::ui::shell::layout) fn render_apply_patch_tool_body(
 pub(in crate::ui::shell::layout) fn render_read_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let path =
@@ -203,7 +201,7 @@ pub(in crate::ui::shell::layout) fn render_read_tool_body(
 pub(in crate::ui::shell::layout) fn render_list_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let path = output
@@ -255,7 +253,7 @@ pub(in crate::ui::shell::layout) fn render_list_tool_body(
 pub(in crate::ui::shell::layout) fn render_glob_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let root = string_field(args.as_ref(), "root").unwrap_or_else(|| ".".to_string());
@@ -290,7 +288,7 @@ pub(in crate::ui::shell::layout) fn render_glob_tool_body(
 pub(in crate::ui::shell::layout) fn render_grep_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let root = string_field(args.as_ref(), "root").unwrap_or_else(|| ".".to_string());
@@ -327,7 +325,7 @@ pub(in crate::ui::shell::layout) fn render_grep_tool_body(
 pub(in crate::ui::shell::layout) fn render_start_job_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let command =
@@ -361,7 +359,7 @@ pub(in crate::ui::shell::layout) fn render_start_job_tool_body(
 pub(in crate::ui::shell::layout) fn render_job_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let job_id = args
@@ -398,7 +396,7 @@ pub(in crate::ui::shell::layout) fn render_job_tool_body(
 pub(in crate::ui::shell::layout) fn render_list_jobs_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let output = tool_output_value(tool_call);
     let content = output
         .as_ref()
@@ -426,7 +424,7 @@ pub(in crate::ui::shell::layout) fn render_list_jobs_tool_body(
 pub(in crate::ui::shell::layout) fn render_poll_job_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let result = output.as_ref().and_then(|value| value.get("result"));
@@ -510,7 +508,7 @@ pub(in crate::ui::shell::layout) fn render_poll_job_tool_body(
 pub(in crate::ui::shell::layout) fn render_web_search_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let query = string_field(args.as_ref(), "query").unwrap_or_else(|| tool_placeholder("query"));
@@ -543,7 +541,7 @@ pub(in crate::ui::shell::layout) fn render_web_search_tool_body(
 pub(in crate::ui::shell::layout) fn render_web_fetch_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let url = output
@@ -579,7 +577,7 @@ pub(in crate::ui::shell::layout) fn render_web_fetch_tool_body(
 pub(in crate::ui::shell::layout) fn render_workspace_info_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let output = tool_output_value(tool_call);
     let fields = output
         .as_ref()
@@ -616,7 +614,7 @@ pub(in crate::ui::shell::layout) fn render_workspace_info_tool_body(
 pub(in crate::ui::shell::layout) fn render_approval_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
     let message = output
@@ -643,7 +641,7 @@ pub(in crate::ui::shell::layout) fn render_approval_tool_body(
 pub(in crate::ui::shell::layout) fn render_ask_user_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let prompt = parse_ask_user_prompt(tool_call);
     let output = tool_output_value(tool_call);
     let answer = output
@@ -678,7 +676,7 @@ pub(in crate::ui::shell::layout) fn render_ask_user_tool_body(
 pub(in crate::ui::shell::layout) fn render_generic_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     if arguments_are_streaming(tool_call) {
         return render_preparing_tool_body(tool_call, colors);
     }
@@ -720,7 +718,7 @@ pub(in crate::ui::shell::layout) fn render_generic_tool_body(
 pub(in crate::ui::shell::layout) fn render_preparing_tool_body(
     tool_call: &crate::ui::shell::SessionAgentToolCall,
     colors: ToolTerminalColors,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     v_flex()
         .w_full()
         .gap_2()

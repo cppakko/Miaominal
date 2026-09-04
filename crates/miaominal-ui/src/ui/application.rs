@@ -1,4 +1,4 @@
-use gpui::{App, AppContext as _, Context, Entity, Global};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
@@ -144,11 +144,11 @@ pub(crate) struct ApplicationState {
     session_passphrase: Option<ProtectedPassphrase>,
     last_vault_lock_was_automatic: bool,
     vault_unlocked_at: Option<Instant>,
-    vault_auto_lock_task: Option<gpui::Task<()>>,
+    vault_auto_lock_task: Option<gpui_kit::Task<()>>,
     port_forward_snapshot: PortForwardManagerSnapshot,
-    runtime_observer_task: Option<gpui::Task<()>>,
-    bridge_observer_task: Option<gpui::Task<()>>,
-    auto_sync_observer_task: Option<gpui::Task<()>>,
+    runtime_observer_task: Option<gpui_kit::Task<()>>,
+    bridge_observer_task: Option<gpui_kit::Task<()>>,
+    auto_sync_observer_task: Option<gpui_kit::Task<()>>,
     sync_executor: Option<SyncExecutor>,
     auto_sync: Option<AutoSyncService>,
     auto_sync_snapshot: AutoSyncSnapshot,

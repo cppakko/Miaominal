@@ -6,8 +6,8 @@ use crate::ui::shell::ChatPanelView;
 use crate::ui::shell::forms::TerminalSearchAnimation;
 use crate::ui::shell::session_agent_view::SessionAgentConversationView;
 use crate::ui::shell::{OVERLAY_ENTER_DURATION, set_input_value};
-use gpui::{Context, Entity, Window, px};
-use gpui_component::input::InputState;
+use gpui_kit::component::input::InputState;
+use gpui_kit::{Context, Entity, Window, px};
 use std::time::{Duration, Instant};
 
 const CONVERSATION_SEARCH_STREAM_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -413,7 +413,7 @@ impl AgentController {
         cx.notify();
     }
 
-    fn clear_conversation_search_runtime(&mut self, cx: &gpui::App) {
+    fn clear_conversation_search_runtime(&mut self, cx: &gpui_kit::App) {
         let conversation = {
             let state = &mut self.runtime.get_mut().foreground;
             invalidate_search_refresh(state);

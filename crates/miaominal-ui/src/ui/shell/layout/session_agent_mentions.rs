@@ -1,12 +1,12 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui::AnimationExt as _;
+use gpui_kit::AnimationExt as _;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_popup(
     controller: Entity<AgentController>,
     candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     div()
         .id("agent-at-mention-popup")
         .w_full()
@@ -29,7 +29,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_at_mention_menu(
     controller: Entity<AgentController>,
     candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let query = query.trim().to_ascii_lowercase();
     let filtered = candidates

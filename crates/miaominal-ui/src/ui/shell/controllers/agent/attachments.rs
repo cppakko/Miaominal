@@ -1,7 +1,7 @@
 use super::{AgentController, AppCommand};
 use crate::ui::{i18n, shell::error_notification};
 use base64::Engine as _;
-use gpui::{Context, ImageFormat, Window};
+use gpui_kit::{Context, ImageFormat, Window};
 use miaominal_core::chat_attachment::{
     ChatAttachment, ChatAttachmentContent, ChatImage, ChatTextFile, MAX_ATTACHMENTS_PER_MESSAGE,
     MAX_IMAGE_DIMENSION, MAX_IMAGE_SIZE_BYTES, MAX_TEXT_FILE_SIZE_BYTES,
@@ -166,7 +166,7 @@ impl AgentController {
 
     fn ingest_clipboard_image(
         &mut self,
-        format: gpui::ImageFormat,
+        format: gpui_kit::ImageFormat,
         bytes: Vec<u8>,
         cx: &mut Context<Self>,
     ) -> AttachmentIngestOutcome {
@@ -360,13 +360,13 @@ fn build_text_attachment(filename: &str, extension: &str, bytes: &[u8]) -> Inges
     })
 }
 
-fn gpui_image_format_to_extension(format: gpui::ImageFormat) -> &'static str {
+fn gpui_image_format_to_extension(format: gpui_kit::ImageFormat) -> &'static str {
     match format {
-        gpui::ImageFormat::Png => "png",
-        gpui::ImageFormat::Jpeg => "jpeg",
-        gpui::ImageFormat::Webp => "webp",
-        gpui::ImageFormat::Gif => "gif",
-        gpui::ImageFormat::Bmp => "bmp",
+        gpui_kit::ImageFormat::Png => "png",
+        gpui_kit::ImageFormat::Jpeg => "jpeg",
+        gpui_kit::ImageFormat::Webp => "webp",
+        gpui_kit::ImageFormat::Gif => "gif",
+        gpui_kit::ImageFormat::Bmp => "bmp",
         _ => "png",
     }
 }

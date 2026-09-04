@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::super::*;
-use gpui::{Animation, AnimationExt as _, ease_in_out, linear};
+use gpui_kit::{Animation, AnimationExt as _, ease_in_out, linear};
 
 pub(in crate::ui::shell) const SHORT_FEEDBACK_DURATION: Duration = Duration::from_millis(120);
 pub(in crate::ui::shell) const CONTAINER_TRANSITION_DURATION: Duration = Duration::from_millis(180);

@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{Image, ImageFormat, img};
+use gpui_kit::{Image, ImageFormat, img};
 use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};

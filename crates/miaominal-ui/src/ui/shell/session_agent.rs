@@ -168,7 +168,7 @@ pub(in crate::ui::shell) async fn receive_session_agent_event_batch(
     receiver: &mut tokio::sync::mpsc::Receiver<AgentResult<AgentChatEvent>>,
     stop: &mut watch::Receiver<bool>,
     wait_for_producer_close: bool,
-    background_executor: &gpui::BackgroundExecutor,
+    background_executor: &gpui_kit::BackgroundExecutor,
 ) -> SessionAgentReceivedBatch {
     receive_session_agent_event_batch_with_deadlines(
         receiver,

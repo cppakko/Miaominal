@@ -10,7 +10,7 @@ use alacritty_terminal::term::{
     color::Colors,
 };
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
-use gpui::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
+use gpui_kit::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
 pub use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

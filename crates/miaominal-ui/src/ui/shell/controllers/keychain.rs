@@ -1,7 +1,7 @@
 use super::{AppCommand, KeychainDeferredCommand};
 use crate::ui::i18n;
 use crate::ui::shell::*;
-use gpui::EventEmitter;
+use gpui_kit::EventEmitter;
 use miaominal_core::keychain::{ManagedKeyRecord, ManagedKeySource};
 use miaominal_secrets::SecretStore;
 use miaominal_ssh::AgentIdentitySummary;
@@ -38,14 +38,14 @@ pub(in crate::ui::shell) struct KeychainForms {
     pub(in crate::ui::shell) name_input: Entity<InputState>,
     pub(in crate::ui::shell) rename_name_input: Entity<InputState>,
     pub(in crate::ui::shell) import_path_input: Entity<InputState>,
-    pub(in crate::ui::shell) import_private_key_input: Entity<InputState>,
-    pub(in crate::ui::shell) import_public_key_input: Entity<InputState>,
+    pub(in crate::ui::shell) import_private_key_input: Entity<EditorState>,
+    pub(in crate::ui::shell) import_public_key_input: Entity<EditorState>,
     pub(in crate::ui::shell) import_passphrase_input: Entity<InputState>,
     pub(in crate::ui::shell) deploy_profile_select:
         Entity<SelectState<SearchableVec<ForwardProfileSelectItem>>>,
     pub(in crate::ui::shell) deploy_location_input: Entity<InputState>,
     pub(in crate::ui::shell) deploy_filename_input: Entity<InputState>,
-    pub(in crate::ui::shell) deploy_command_input: Entity<InputState>,
+    pub(in crate::ui::shell) deploy_command_input: Entity<EditorState>,
 }
 
 pub(in crate::ui::shell) struct KeychainControllerArgs {
@@ -77,9 +77,9 @@ pub(in crate::ui::shell) struct KeychainController {
     pub(in crate::ui::shell) pending_managed_key_delete: Option<PendingManagedKeyDeleteState>,
     pub(in crate::ui::shell) pending_managed_key_rename: Option<PendingManagedKeyRenameState>,
     pub(in crate::ui::shell) status_message: String,
-    pub(in crate::ui::shell) generation_task: Option<gpui::Task<()>>,
-    pub(in crate::ui::shell) import_task: Option<gpui::Task<()>>,
-    pub(in crate::ui::shell) deploy_task: Option<gpui::Task<()>>,
+    pub(in crate::ui::shell) generation_task: Option<gpui_kit::Task<()>>,
+    pub(in crate::ui::shell) import_task: Option<gpui_kit::Task<()>>,
+    pub(in crate::ui::shell) deploy_task: Option<gpui_kit::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -118,12 +118,11 @@ impl KeychainController {
             cx,
         );
         let import_private_key_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("bash")
+            EditorState::new(window, cx)
+                .language("bash")
                 .indent_guides(false)
                 .folding(false)
                 .searchable(false)
-                .rows(6)
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()
@@ -138,12 +137,11 @@ impl KeychainController {
             cx,
         );
         let import_public_key_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("bash")
+            EditorState::new(window, cx)
+                .language("bash")
                 .indent_guides(false)
                 .folding(false)
                 .searchable(false)
-                .rows(4)
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()
@@ -188,12 +186,11 @@ impl KeychainController {
             cx,
         );
         let deploy_command_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("bash")
+            EditorState::new(window, cx)
+                .language("bash")
                 .indent_guides(false)
                 .folding(false)
                 .searchable(false)
-                .rows(8)
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()

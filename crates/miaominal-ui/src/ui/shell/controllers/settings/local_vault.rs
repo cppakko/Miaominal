@@ -560,7 +560,7 @@ impl SettingsController {
         &self,
         mode: LocalVaultPassphrasePopupMode,
         window: &mut Window,
-        cx: &mut gpui::App,
+        cx: &mut gpui_kit::App,
     ) {
         let input = if mode == LocalVaultPassphrasePopupMode::ChangePassphrase {
             &self.forms.local_vault_current_passphrase_input

@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::ui::i18n;
-use gpui::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
+use gpui_kit::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_GAP: f32 = 8.0;
@@ -33,10 +33,10 @@ fn show_macos_traffic_light_space(window: &Window) -> bool {
 
 fn footer_tooltip(
     text: impl Into<SharedString>,
-) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
     let text = text.into();
 
-    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 #[derive(Clone)]
@@ -990,7 +990,7 @@ impl ChromeAppViewExt for AppView {
                                                         status_color,
                                                     };
 
-                                                    let title_child: gpui::AnyElement = if is_renaming {
+                                                    let title_child: gpui_kit::AnyElement = if is_renaming {
                                                         div()
                                                             .flex_1()
                                                             .min_w(px(0.0))

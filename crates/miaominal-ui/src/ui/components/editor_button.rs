@@ -1,9 +1,9 @@
-use gpui::{App, IntoElement, SharedString, Styled, Window, px, rgb};
-use gpui_component::Disableable;
-use gpui_component::{
+use gpui_kit::component::Disableable;
+use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
 };
+use gpui_kit::{App, IntoElement, SharedString, Styled, Window, px, rgb};
 
 use super::editor_footer_actions::EDITOR_FOOTER_ACTION_HEIGHT;
 

@@ -3,7 +3,7 @@ use super::*;
 use crate::ui::shell::{
     DialogOverlaySnapshot, ValidationNotificationKind, error_notification, validation_notification,
 };
-use gpui::App;
+use gpui_kit::App;
 
 const LOCAL_DATA_RESET_CONFIRMATION_TOKEN: &str = "RESET";
 

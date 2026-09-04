@@ -46,28 +46,7 @@ futures = "0.3"
 httparse = "1"
 flate2 = "1"
 fs2 = "0.4.3"
-gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = [
-    "font-kit",
-    "wayland",
-    "x11",
-] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", features = [
-    "tree-sitter-bash",
-    "tree-sitter-c",
-    "tree-sitter-cpp",
-    "tree-sitter-css",
-    "tree-sitter-diff",
-    "tree-sitter-go",
-    "tree-sitter-html",
-    "tree-sitter-java",
-    "tree-sitter-javascript",
-    "tree-sitter-markdown",
-    "tree-sitter-python",
-    "tree-sitter-rust",
-    "tree-sitter-typescript",
-] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+gpui-kit = { version = "0.6.0", default-features = false }
 image = { version = "0.25", default-features = false }
 keyring = { version = "4.1.2", features = [
     "apple-native-keyring-store",
@@ -88,9 +67,6 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 ] }
 rig-core = "0.39.0"
 schemars = "1"
-settings = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
-theme = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
-theme_settings = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
 resvg = "0.47.0"
 rfd = "0.17.2"
 roxmltree = "0.21.1"
@@ -132,12 +108,8 @@ argon2.workspace = true
 base64.workspace = true
 directories.workspace = true
 env_logger.workspace = true
-fontdb.workspace = true
 futures.workspace = true
-gpui.workspace = true
-gpui_platform.workspace = true
-gpui-component.workspace = true
-gpui-component-assets.workspace = true
+gpui-kit = { workspace = true, features = ["component", "assets"] }
 keyring.workspace = true
 log.workspace = true
 material-colors.workspace = true

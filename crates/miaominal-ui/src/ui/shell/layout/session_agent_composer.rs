@@ -4,8 +4,8 @@ use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use crate::ui::shell::actions::ai_provider_kind_chat_supported;
 use crate::ui::shell::session_agent::agent_provider_kind;
-use gpui::{Animation, AnimationExt as _, ClipboardEntry};
-use gpui_component::{Disableable as _, menu::DropdownMenu as _};
+use gpui_kit::component::{Disableable as _, menu::DropdownMenu as _};
+use gpui_kit::{Animation, AnimationExt as _, ClipboardEntry};
 use miaominal_agent::{AgentMode, AgentReasoningSupport, agent_reasoning_support};
 use miaominal_settings::{AiProviderConfig, AiReasoningEffort};
 use std::time::Duration;
@@ -69,7 +69,7 @@ fn agent_mode_label_key(mode: AgentMode) -> &'static str {
 fn render_session_agent_mode_menu(
     agent: Entity<AgentController>,
     selected_mode: AgentMode,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let mode_label = i18n::string(agent_mode_label_key(selected_mode));
     let menu_agent = agent.clone();
@@ -114,7 +114,7 @@ fn render_session_agent_mode_menu(
 fn render_session_agent_provider_menu(
     settings: Entity<SettingsController>,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let providers = {
         let controller = settings.read(cx);
@@ -261,7 +261,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
     agent: Entity<AgentController>,
     settings: Entity<SettingsController>,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -367,10 +367,9 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                 })
                                 .child(
                                     div().flex_1().child(
-                                        HintedInput::new(&prompt_input)
+                                        HintedTextarea::new(&prompt_input)
                                             .w_full()
                                             .appearance(false)
-                                            .focus_bordered(false)
                                             .p_1()
                                             .hint_left(px(4.0))
                                             .hint_top(px(4.0))
@@ -391,23 +390,23 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                     menu.action_context(focus)
                                         .menu_with_disabled(
                                             i18n::string("workspace.menu.cut"),
-                                            Box::new(gpui_component::input::Cut),
+                                            Box::new(gpui_kit::component::input::Cut),
                                             !has_selection,
                                         )
                                         .menu_with_disabled(
                                             i18n::string("workspace.menu.copy"),
-                                            Box::new(gpui_component::input::Copy),
+                                            Box::new(gpui_kit::component::input::Copy),
                                             !has_selection,
                                         )
                                         .menu_with_disabled(
                                             i18n::string("workspace.menu.paste"),
-                                            Box::new(gpui_component::input::Paste),
+                                            Box::new(gpui_kit::component::input::Paste),
                                             cx.read_from_clipboard().is_none(),
                                         )
                                         .item(PopupMenuItem::separator())
                                         .menu_with_disabled(
                                             i18n::string("workspace.menu.select_all"),
-                                            Box::new(gpui_component::input::SelectAll),
+                                            Box::new(gpui_kit::component::input::SelectAll),
                                             !has_text,
                                         )
                                 }),
@@ -530,7 +529,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
                                             if waiting {
                                                 Animation::new(SESSION_AGENT_SEND_PULSE_DURATION)
                                                     .repeat()
-                                                    .with_easing(gpui::bounce(gpui::ease_in_out))
+                                                    .with_easing(gpui_kit::bounce(gpui_kit::ease_in_out))
                                             } else {
                                                 short_feedback_animation()
                                             },
@@ -551,7 +550,11 @@ pub(in crate::ui::shell::layout) fn render_session_agent_composer(
 
 /// Handles Ctrl+V / Cmd+V in the composer: if the clipboard holds an image,
 /// ingest it as an attachment; otherwise let the default text paste proceed.
-fn handle_paste_key(event: &KeyDownEvent, controller: Entity<AgentController>, cx: &mut gpui::App) {
+fn handle_paste_key(
+    event: &KeyDownEvent,
+    controller: Entity<AgentController>,
+    cx: &mut gpui_kit::App,
+) {
     let keystroke = &event.keystroke;
     let is_paste = (keystroke.key == "v" || keystroke.key == "V")
         && (keystroke.modifiers.control || keystroke.modifiers.platform);
@@ -585,7 +588,7 @@ fn render_composer_badge_row(
     candidates: Vec<SessionAgentTargetCandidate>,
     selected_at_targets: Vec<String>,
     pending_attachments: Vec<miaominal_core::chat_attachment::ChatAttachment>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     h_flex()
         .w_full()
         .gap_1()
@@ -638,7 +641,7 @@ fn render_composer_badge_row(
                                     .justify_center()
                                     .cursor_pointer()
                                     .on_mouse_down(
-                                        gpui::MouseButton::Left,
+                                        gpui_kit::MouseButton::Left,
                                         move |_, _window, cx| {
                                             let controller = remove_controller.clone();
                                             let name = remove_name.clone();
@@ -710,7 +713,7 @@ fn render_composer_badge_row(
                                     .justify_center()
                                     .cursor_pointer()
                                     .on_mouse_down(
-                                        gpui::MouseButton::Left,
+                                        gpui_kit::MouseButton::Left,
                                         move |_, _window, cx| {
                                             let controller = remove_controller.clone();
                                             let id = remove_id.clone();

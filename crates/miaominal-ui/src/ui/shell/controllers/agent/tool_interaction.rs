@@ -6,7 +6,7 @@ use crate::ui::{
     i18n,
     shell::{AppCommand, set_input_value},
 };
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 use miaominal_agent::AgentMode;
 use miaominal_agent::{AgentChatToolEvent, AgentToolCallResponse, BackendRoute, ToolOutput};
 use serde_json::Value;

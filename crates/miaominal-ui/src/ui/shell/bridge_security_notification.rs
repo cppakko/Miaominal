@@ -337,7 +337,7 @@ impl Render for BridgeSecurityNotificationView {
                                         .text_ellipsis()
                                         .text_color(rgb(roles.on_surface_variant))
                                         .tooltip(move |window, cx| {
-                                            gpui_component::tooltip::Tooltip::new(
+                                            gpui_kit::component::tooltip::Tooltip::new(
                                                 source_tooltip.clone(),
                                             )
                                             .build(window, cx)
@@ -429,23 +429,23 @@ impl Render for BridgeSecurityNotificationView {
 }
 
 pub(in crate::ui::shell) fn bridge_security_notification_window_options(
-    display: Option<&dyn gpui::PlatformDisplay>,
-) -> gpui::WindowOptions {
-    let display_bounds = display.map(gpui::PlatformDisplay::visible_bounds);
+    display: Option<&dyn gpui_kit::PlatformDisplay>,
+) -> gpui_kit::WindowOptions {
+    let display_bounds = display.map(gpui_kit::PlatformDisplay::visible_bounds);
     let available_width = display_bounds
         .map(|bounds| (bounds.size.width - px(NOTIFICATION_EDGE_MARGIN * 2.0)).max(px(240.0)))
         .unwrap_or(px(NOTIFICATION_WIDTH));
     let width = px(NOTIFICATION_WIDTH).min(available_width);
-    let size = gpui::size(width, px(NOTIFICATION_HEIGHT));
-    let origin = display_bounds.map_or(gpui::point(px(0.0), px(0.0)), |bounds| {
-        gpui::point(
+    let size = gpui_kit::size(width, px(NOTIFICATION_HEIGHT));
+    let origin = display_bounds.map_or(gpui_kit::point(px(0.0), px(0.0)), |bounds| {
+        gpui_kit::point(
             bounds.origin.x + bounds.size.width - size.width - px(NOTIFICATION_EDGE_MARGIN),
             bounds.origin.y + bounds.size.height - size.height - px(NOTIFICATION_EDGE_MARGIN),
         )
     });
 
-    gpui::WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(origin, size))),
+    gpui_kit::WindowOptions {
+        window_bounds: Some(gpui_kit::WindowBounds::Windowed(Bounds::new(origin, size))),
         titlebar: None,
         focus: false,
         show: true,
@@ -453,23 +453,23 @@ pub(in crate::ui::shell) fn bridge_security_notification_window_options(
         is_movable: false,
         is_resizable: false,
         is_minimizable: false,
-        display_id: display.map(gpui::PlatformDisplay::id),
-        window_background: gpui::WindowBackgroundAppearance::Transparent,
+        display_id: display.map(gpui_kit::PlatformDisplay::id),
+        window_background: gpui_kit::WindowBackgroundAppearance::Transparent,
         window_min_size: Some(size),
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        window_decorations: Some(gpui::WindowDecorations::Client),
+        window_decorations: Some(gpui_kit::WindowDecorations::Client),
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         app_id: Some("miaominal-ssh-bridge-notification".to_string()),
         ..Default::default()
     }
 }
 
-fn bridge_security_notification_window_kind() -> gpui::WindowKind {
+fn bridge_security_notification_window_kind() -> gpui_kit::WindowKind {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty()) {
-        use gpui::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
+        use gpui_kit::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
 
-        return gpui::WindowKind::LayerShell(LayerShellOptions {
+        return gpui_kit::WindowKind::LayerShell(LayerShellOptions {
             namespace: "miaominal-ssh-bridge-notification".to_string(),
             layer: Layer::Overlay,
             anchor: Anchor::RIGHT | Anchor::BOTTOM,
@@ -484,7 +484,7 @@ fn bridge_security_notification_window_kind() -> gpui::WindowKind {
         });
     }
 
-    gpui::WindowKind::PopUp
+    gpui_kit::WindowKind::PopUp
 }
 
 #[cfg(test)]

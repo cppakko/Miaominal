@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use gpui::{Context, FocusHandle, Window};
+use gpui_kit::{Context, FocusHandle, Window};
 
 use super::SessionController;
 use crate::ui::{

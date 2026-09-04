@@ -1,6 +1,6 @@
 use super::*;
 use crate::ui::i18n;
-use gpui_component::table::ColumnSort;
+use gpui_kit::component::table::ColumnSort;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
@@ -27,7 +27,7 @@ pub(in crate::ui::shell) struct SftpBrowserSelectionModifiers {
 }
 
 impl SftpBrowserSelectionModifiers {
-    fn from_gpui(modifiers: gpui::Modifiers) -> Self {
+    fn from_gpui(modifiers: gpui_kit::Modifiers) -> Self {
         Self {
             shift: modifiers.shift,
             toggle: modifiers.control || modifiers.platform,

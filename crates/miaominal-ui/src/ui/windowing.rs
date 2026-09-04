@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use gpui::{AnyWindowHandle, App, Entity, Global, WeakEntity};
+use gpui_kit::{AnyWindowHandle, App, Entity, Global, WeakEntity};
 
 use super::AppView;
 

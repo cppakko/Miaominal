@@ -1,26 +1,26 @@
 use crate::ui::assets::AppIcon;
 use anyhow::{Result, anyhow};
-use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, Div, ElementId,
-    Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
-    KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful,
-    Styled, Subscription, WeakEntity, Window, WindowControlArea, canvas, div, prelude::*, px, rgb,
-};
-use gpui_component::{Icon, IconName, Root};
-use gpui_component::{
+use gpui_kit::component::{Icon, IconName, Root};
+use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
     color_picker::{ColorPicker, ColorPickerState},
     h_flex,
     input::TabSize,
-    input::{InputEvent, InputState},
+    input::{EditorState, InputEvent, InputState, TextareaState},
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
     select::{SearchableVec, SelectItem, SelectState},
     stepper::{Stepper, StepperItem},
     table::{Column, TableDelegate, TableEvent, TableState},
     v_flex,
+};
+use gpui_kit::{
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, Div, ElementId,
+    Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, InteractiveElement, KeyDownEvent,
+    KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful,
+    Styled, Subscription, WeakEntity, Window, WindowControlArea, canvas, div, prelude::*, px, rgb,
 };
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::{
@@ -74,12 +74,12 @@ pub use app_view::{AppView, AppWindowRole};
 
 pub(crate) use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon,
-    EDITOR_FOOTER_ACTION_HEIGHT, HintedInput, IconTileTone, SearchInputStyle, TextInputSurface,
-    badge, basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel, card_surface,
-    compact_badge, editor_button_with_id, editor_footer_actions, fab_button, fab_icon_button,
-    field_label, icon_button, icon_button_with_tooltip, icon_tile, list_item_card, md3_select,
-    page_muted_icon_tile, page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
-    pill_label, search_filter_input, setting_field_with_reset_action,
+    EDITOR_FOOTER_ACTION_HEIGHT, HintedInput, HintedTextarea, IconTileTone, SearchInputStyle,
+    TextInputSurface, badge, basic_dialog_action_button, basic_dialog_panel, bottom_popup_panel,
+    card_surface, compact_badge, editor_button_with_id, editor_footer_actions, fab_button,
+    fab_icon_button, field_label, icon_button, icon_button_with_tooltip, icon_tile, list_item_card,
+    md3_select, page_muted_icon_tile, page_primary_icon_tile, page_section_title,
+    page_view_mode_toolbar_item, pill_label, search_filter_input, setting_field_with_reset_action,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
     surface_text_input, surface_text_input_stack,
 };
@@ -180,13 +180,13 @@ use support::{
     list_enter_animation, localized_secret_placeholder, new_input_state, overlay_enter_animation,
     render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
     render_rounded_prompt_overlay, render_terminal_canvas_for_pane,
-    set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
-    short_feedback_animation, terminal_cell_width, terminal_line_height,
-    terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
+    set_code_editor_input_placeholder, set_editor_value, set_input_placeholder, set_input_value,
+    set_textarea_placeholder, set_textarea_value, short_feedback_animation, terminal_cell_width,
+    terminal_line_height, terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
 };
 
-pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {
-    gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
+pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui_kit::Rgba {
+    gpui_kit::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
 }
 
 /// Switches the active window's sidebar to the Settings section.

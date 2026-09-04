@@ -7,14 +7,14 @@ mod app;
 
 use futures::StreamExt;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use gpui::WindowDecorations;
+use gpui_kit::WindowDecorations;
+use gpui_kit::component::Root;
 #[cfg(target_os = "macos")]
-use gpui::point;
-use gpui::{
+use gpui_kit::point;
+use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px,
     size,
 };
-use gpui_component::Root;
 use miaominal_ui::AppAssets;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::Cursor;
@@ -306,7 +306,7 @@ fn main() {
         }
     };
 
-    let application = gpui_platform::application().with_assets(AppAssets);
+    let application = gpui_kit::application().with_assets(AppAssets);
     application.on_reopen({
         let runtime = runtime.clone();
         move |cx: &mut App| {
@@ -316,7 +316,7 @@ fn main() {
 
     let application_runtime = runtime.clone();
     application.run(move |cx: &mut App| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         miaominal_ui::initialize_application_state(application_runtime.clone(), cx);
         miaominal_ui::init_markdown(cx);
         app::install_app_menus(cx);

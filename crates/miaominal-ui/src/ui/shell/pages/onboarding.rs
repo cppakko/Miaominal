@@ -4,8 +4,8 @@ use crate::ui::components::{
     md3_select, md3_switch,
 };
 use crate::ui::i18n;
-use gpui::UniformListScrollHandle;
-use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
+use gpui_kit::UniformListScrollHandle;
+use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use miaominal_settings::{AppLanguage, TerminalRightClickBehavior, ThemeId};
 
 const ONBOARDING_TITLE_BAR_HEIGHT: f32 = 56.0;
@@ -620,7 +620,7 @@ fn render_onboarding_welcome_step(
                 i18n::string("settings.appearance.language.label"),
                 i18n::string("settings.appearance.language.description"),
                 md3_select(&language_select)
-                    .with_size(gpui_component::Size::Medium)
+                    .with_size(gpui_kit::component::Size::Medium)
                     .w_full()
                     .into_any_element(),
             )),
@@ -651,7 +651,7 @@ fn render_onboarding_import_step(
                         ))
                         .child(
                             md3_select(&settings_forms.profile_import_source_select)
-                                .with_size(gpui_component::Size::Medium)
+                                .with_size(gpui_kit::component::Size::Medium)
                                 .w_full(),
                         )
                         .child(editor_button_with_id(
@@ -1273,7 +1273,7 @@ fn onboarding_font_family_control(
             ),
             selected,
             options,
-            gpui_component::Size::Medium,
+            gpui_kit::component::Size::Medium,
             move |font, _, cx| {
                 entity_for_select.update(cx, |this, cx| {
                     this.update_font_family(font, cx);
@@ -1309,7 +1309,7 @@ fn onboarding_terminal_font_family_control(
             ),
             selected,
             options,
-            gpui_component::Size::Medium,
+            gpui_kit::component::Size::Medium,
             move |font, _, cx| {
                 entity_for_select.update(cx, |this, cx| {
                     this.update_terminal_font_family(font, cx);
@@ -1355,7 +1355,7 @@ fn onboarding_font_fallbacks_control(
     setting_field_with_reset_action(
         div().flex_1().min_w(px(0.0)).child(
             surface_text_input(&input, TextInputSurface::Highest)
-                .with_size(gpui_component::Size::Medium)
+                .with_size(gpui_kit::component::Size::Medium)
                 .text_color(rgb(roles.on_surface))
                 .into_any_element(),
         ),
@@ -1373,7 +1373,7 @@ fn onboarding_right_click_behavior_control(
     select_state: Entity<SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>>,
 ) -> AnyElement {
     md3_select(&select_state)
-        .with_size(gpui_component::Size::Medium)
+        .with_size(gpui_kit::component::Size::Medium)
         .w_full()
         .into_any_element()
 }
@@ -1413,7 +1413,7 @@ fn onboarding_seed_color_control(
         .child(setting_field_with_reset_action(
             div().text_color(rgb(material.roles.on_surface)).child(
                 ColorPicker::new(&picker)
-                    .with_size(gpui_component::Size::Medium)
+                    .with_size(gpui_kit::component::Size::Medium)
                     .label(current_seed_color)
                     .featured_colors(featured_colors),
             ),

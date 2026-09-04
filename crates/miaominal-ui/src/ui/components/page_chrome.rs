@@ -3,8 +3,8 @@ use super::{
     icon_tile::{IconTileTone, icon_tile},
 };
 use crate::ui::assets::AppIcon;
-use gpui::{App, Div, IntoElement, ParentElement, SharedString, Styled, Window, div, rgb};
-use gpui_component::{Icon, Sizable as _};
+use gpui_kit::component::{Icon, Sizable as _};
+use gpui_kit::{App, Div, IntoElement, ParentElement, SharedString, Styled, Window, div, rgb};
 
 pub(crate) fn page_section_title(title: impl Into<SharedString>) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;

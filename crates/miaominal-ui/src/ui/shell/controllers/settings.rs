@@ -17,15 +17,15 @@ use crate::ui::shell::{
     BridgeSecurityNotificationView, bridge_security_notification_window_options,
 };
 use anyhow::{Result, anyhow};
-use gpui::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
-    ScrollStrategy, Subscription, UniformListScrollHandle, Window, WindowHandle, rgb,
-};
-use gpui_component::{
+use gpui_kit::component::{
     Colorize, IndexPath,
     color_picker::{ColorPickerEvent, ColorPickerState},
     input::{InputEvent, InputState},
     select::{SelectEvent, SelectState},
+};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    ScrollStrategy, Subscription, UniformListScrollHandle, Window, WindowHandle, rgb,
 };
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
@@ -402,7 +402,7 @@ pub(in crate::ui::shell) enum SyncProviderConfigSaveOperation {
 pub(in crate::ui::shell) struct SyncUiState {
     pub(in crate::ui::shell) sync_engine: SyncEngine,
     pub(in crate::ui::shell) sync_status: SyncStatus,
-    pub(in crate::ui::shell) active_sync_task: Option<gpui::Task<()>>,
+    pub(in crate::ui::shell) active_sync_task: Option<gpui_kit::Task<()>>,
     pub(in crate::ui::shell) sync_provider_config_save_operation:
         Option<SyncProviderConfigSaveOperation>,
     pub(in crate::ui::shell) sync_passphrase_operation: Option<SyncPassphraseOperation>,
@@ -596,7 +596,7 @@ pub(in crate::ui::shell) struct SettingsController {
     onboarding: OnboardingState,
     local_vault_status: LocalVaultStatus,
     local_vault_operation_results: std::collections::VecDeque<LocalVaultOperationResult>,
-    local_vault_operation_task: Option<gpui::Task<()>>,
+    local_vault_operation_task: Option<gpui_kit::Task<()>>,
     local_vault_unlock_in_progress: bool,
     local_vault_disable_in_progress: bool,
     local_vault_session_passphrase: Option<ProtectedPassphrase>,
@@ -616,17 +616,17 @@ pub(in crate::ui::shell) struct SettingsController {
     sync_provider_config_popup: Option<PendingSyncProviderConfigPopupState>,
     proxy_config_popup: Option<PendingProxyConfigPopupState>,
     local_vault_passphrase_popup: Option<LocalVaultPassphrasePopupMode>,
-    sync_provider_config_save_task: Option<gpui::Task<()>>,
-    sync_passphrase_task: Option<gpui::Task<()>>,
+    sync_provider_config_save_task: Option<gpui_kit::Task<()>>,
+    sync_passphrase_task: Option<gpui_kit::Task<()>>,
     ai_provider_save_in_progress: bool,
-    ai_provider_save_task: Option<gpui::Task<()>>,
+    ai_provider_save_task: Option<gpui_kit::Task<()>>,
     web_search_save_in_progress: bool,
-    web_search_save_task: Option<gpui::Task<()>>,
+    web_search_save_task: Option<gpui_kit::Task<()>>,
     ai_provider_api_key_load_in_progress: Option<String>,
-    ai_provider_api_key_load_tasks: std::collections::HashMap<u64, gpui::Task<()>>,
+    ai_provider_api_key_load_tasks: std::collections::HashMap<u64, gpui_kit::Task<()>>,
     next_ai_provider_api_key_load_task_id: u64,
     local_data_reset_in_progress: bool,
-    local_data_reset_task: Option<gpui::Task<()>>,
+    local_data_reset_task: Option<gpui_kit::Task<()>>,
     secret_visibility: SecretVisibilityState,
     _subscriptions: Vec<Subscription>,
 }

@@ -5,7 +5,7 @@ use crate::ui::{
     components::{SectionCard, md3_spinner},
     i18n,
 };
-use gpui_component::menu::DropdownMenu as _;
+use gpui_kit::component::menu::DropdownMenu as _;
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
 use rfd::AsyncFileDialog;
 
@@ -279,7 +279,7 @@ impl KeychainController {
         &self,
         entity: Entity<Self>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let raw_filter_text = self.forms.filter_input.read(cx).value().trim().to_string();
         let filter_text = raw_filter_text.to_ascii_lowercase();
         let keychain_page_view = self.page_view;

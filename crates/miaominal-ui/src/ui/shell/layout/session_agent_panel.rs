@@ -4,7 +4,7 @@ use super::session_agent_conversation;
 use super::session_agent_history;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
-use gpui::AnimationExt as _;
+use gpui_kit::AnimationExt as _;
 use std::time::Duration;
 
 const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
@@ -40,7 +40,7 @@ fn session_agent_message_column_width(panel_width: f32) -> f32 {
 fn render_session_agent_resize_handle(
     controller: Entity<AgentController>,
     is_dragging: bool,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     div()
         .id("session-agent-sidebar-resize-handle")
         .absolute()
@@ -62,7 +62,7 @@ fn render_session_agent_resize_handle(
         .on_mouse_down(
             MouseButton::Left,
             move |event: &MouseDownEvent, _window, cx| {
-                gpui_component::GlobalState::suppress_text_selection(cx);
+                gpui_kit::component::GlobalState::suppress_text_selection(cx);
                 controller.update(cx, |controller, cx| {
                     let initial_width = controller.panel_width();
                     controller.set_panel_drag(Some(SessionAgentPanelDragState {
@@ -88,9 +88,9 @@ fn render_session_agent_resize_handle(
         .into_any_element()
 }
 
-fn render_session_agent_auto_scroll_cursor_layer() -> gpui::AnyElement {
+fn render_session_agent_auto_scroll_cursor_layer() -> gpui_kit::AnyElement {
     canvas(
-        |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+        |bounds, window, _cx| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal),
         |_bounds, _hitbox, window, _cx| {
             window.set_window_cursor_style(CursorStyle::ResizeUpDown);
         },
@@ -246,7 +246,7 @@ impl AgentController {
         &self,
         entity: Entity<Self>,
         _window: &mut Window,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -444,7 +444,7 @@ impl AgentController {
         terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let panel_width = clamp_session_agent_panel_width(self.panel_width());
         let is_dragging = self.panel_drag().is_some();
@@ -500,7 +500,7 @@ impl AgentController {
         terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         if self.session_agent().panel_view == ChatPanelView::SessionList {
             return self.render_session_agent_history_panel(entity, settings, window, cx);
         }
@@ -740,7 +740,7 @@ impl AgentController {
         entity: Entity<Self>,
         settings: Entity<SettingsController>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         session_agent_composer::render_session_agent_composer(self, entity, settings, cx)
     }
 
@@ -750,7 +750,7 @@ impl AgentController {
         settings: Entity<SettingsController>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let search_visibility = self.advance_session_filter_bar(window);
         session_agent_history::render_session_agent_history_panel(
             self,
@@ -769,7 +769,7 @@ impl AgentController {
         terminal_originated_selection_drag_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         session_agent_conversation::render_session_agent_messages(
             self,
             message_column_width,

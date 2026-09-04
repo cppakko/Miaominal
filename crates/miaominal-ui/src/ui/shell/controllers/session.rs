@@ -5,13 +5,13 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{
+use gpui_kit::component::{
+    input::{EditorState, InputEvent, InputState, TabSize},
+    select::{SearchableVec, SelectEvent, SelectItem, SelectState},
+};
+use gpui_kit::{
     App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, ScrollHandle,
     Subscription, WeakEntity, Window,
-};
-use gpui_component::{
-    input::{InputEvent, InputState, TabSize},
-    select::{SearchableVec, SelectEvent, SelectItem, SelectState},
 };
 use miaominal_agent::{TerminalOutputReceiver, TerminalOutputTap};
 use miaominal_core::keychain::ManagedKeyRecord;
@@ -50,8 +50,8 @@ use crate::ui::{
         ManagedKeySelectItem, ProfileViewMode, ProxyJumpCandidateSelectItem, SelectOption,
         SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation, ValidationFailure,
         WorkspaceSidePanelTransition, error_notification, localized_secret_placeholder,
-        new_input_state, set_code_editor_input_placeholder, set_input_placeholder, set_input_value,
-        validation_notification,
+        new_input_state, set_code_editor_input_placeholder, set_editor_value,
+        set_input_placeholder, set_input_value, validation_notification,
     },
 };
 
@@ -195,7 +195,7 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) bytes_out: u64,
     pub(in crate::ui::shell) pending_host_key: Option<HostKeyPrompt>,
     pub(in crate::ui::shell) pending_keyboard_interactive: Option<KbiChallenge>,
-    pub(in crate::ui::shell) reconnect_task: Option<gpui::Task<()>>,
+    pub(in crate::ui::shell) reconnect_task: Option<gpui_kit::Task<()>>,
     pub(in crate::ui::shell) reconnect_attempt: u32,
     pub(in crate::ui::shell) has_activity: bool,
     pub(in crate::ui::shell) monitoring: SessionMonitoringState,
@@ -393,7 +393,7 @@ pub(in crate::ui::shell) struct HostEditorForms {
     pub(in crate::ui::shell) agent_identity_input: Entity<InputState>,
     pub(in crate::ui::shell) certificate_input: Entity<InputState>,
     pub(in crate::ui::shell) passphrase_input: Entity<InputState>,
-    pub(in crate::ui::shell) startup_command_input: Entity<InputState>,
+    pub(in crate::ui::shell) startup_command_input: Entity<EditorState>,
     pub(in crate::ui::shell) proxy_jump_profile_ids: Vec<String>,
     pub(in crate::ui::shell) selected_proxy_jump_hop: Option<usize>,
     pub(in crate::ui::shell) environment_variable_rows: Vec<HostEditorEnvironmentVariableRow>,
@@ -458,7 +458,7 @@ pub(in crate::ui::shell) struct SnippetsForms {
     pub(in crate::ui::shell) package_input: Entity<InputState>,
     pub(in crate::ui::shell) package_select: Entity<SelectState<SearchableVec<String>>>,
     pub(in crate::ui::shell) creating_new_package: bool,
-    pub(in crate::ui::shell) script_input: Entity<InputState>,
+    pub(in crate::ui::shell) script_input: Entity<EditorState>,
 }
 
 #[derive(Clone)]
@@ -848,12 +848,11 @@ impl SessionController {
             .map(|profile| profile.startup_command.clone())
             .unwrap_or_default();
         let startup_command_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("bash")
+            EditorState::new(window, cx)
+                .language("bash")
                 .indent_guides(false)
                 .folding(false)
                 .searchable(false)
-                .rows(4)
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()
@@ -944,7 +943,7 @@ impl SessionController {
         let selected_entry_proxy = entry_proxy_options
             .iter()
             .position(|option| option.value() == &selected_entry_proxy_id)
-            .map(|index| gpui_component::IndexPath::default().row(index));
+            .map(|index| gpui_kit::component::IndexPath::default().row(index));
         let entry_proxy_select = cx.new(|cx| {
             SelectState::new(
                 SearchableVec::new(entry_proxy_options),
@@ -955,8 +954,8 @@ impl SessionController {
             .searchable(true)
         });
         let snippet_script_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("bash")
+            EditorState::new(window, cx)
+                .language("bash")
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()
@@ -2407,7 +2406,7 @@ impl SessionController {
             window,
             cx,
         );
-        set_input_value(
+        set_editor_value(
             &forms.startup_command_input,
             profile.startup_command.clone(),
             window,
@@ -2469,7 +2468,7 @@ impl SessionController {
             window,
             cx,
         );
-        set_input_value(&forms.startup_command_input, "", window, cx);
+        set_editor_value(&forms.startup_command_input, "", window, cx);
         forms.charset_select.update(cx, |select, cx| {
             select.set_selected_value(&DEFAULT_SESSION_CHARSET.to_string(), window, cx);
         });

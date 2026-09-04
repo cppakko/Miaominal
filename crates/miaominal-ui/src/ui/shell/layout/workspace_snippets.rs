@@ -97,7 +97,7 @@ pub(in crate::ui::shell::layout) fn render_session_snippets_panel(
     session_controller: Entity<SessionController>,
     terminal_tab_id: Option<TabId>,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(

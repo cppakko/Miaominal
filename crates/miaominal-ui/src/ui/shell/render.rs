@@ -1,7 +1,7 @@
 use super::*;
 use crate::ui::components::md3_switch;
 use crate::ui::i18n;
-use gpui_component::Disableable;
+use gpui_kit::component::Disableable;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProtocol};
 
 #[derive(Clone, Copy)]
@@ -1433,7 +1433,7 @@ impl AppView {
         _entity: Entity<Self>,
         prompt: &PendingManagedKeyDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let key_name = if prompt.key_name.trim().is_empty() {
             i18n::string("dialogs.managed_key_delete.untitled_key")
         } else {
@@ -1489,7 +1489,7 @@ impl AppView {
         &self,
         prompt: &PendingSshBridgePolicyDowngradeState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let supporting_text = i18n::string_args(
             "settings.openssh_integration.security.downgrade_confirm",
             &[("level", &bridge_security_level_label(prompt.level))],
@@ -1539,7 +1539,7 @@ impl AppView {
         prompt: &PendingManagedKeyRenameState,
         exit_progress: Option<f32>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let rename_input = self
             .controllers
             .keychain
@@ -1605,7 +1605,7 @@ impl AppView {
         entity: Entity<Self>,
         prompt: &PendingProfileDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let profile_name = if prompt.profile_name.trim().is_empty() {
             i18n::string("dialogs.profile_delete.untitled_profile")
         } else {
@@ -1661,7 +1661,7 @@ impl AppView {
         &self,
         prompt: &PendingProfileImportResultState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let source = localized_profile_import_source_label(prompt.source);
         let imported_count = prompt.imported_count.to_string();
@@ -1777,7 +1777,7 @@ impl AppView {
         _entity: Entity<Self>,
         prompt: &PendingSnippetDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let description = if prompt.snippet_description.trim().is_empty() {
             i18n::string("dialogs.snippet_delete.untitled_snippet")
         } else {
@@ -1833,7 +1833,7 @@ impl AppView {
         &self,
         prompt: &PendingPortForwardRuleDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let subtitle = i18n::string_args(
             "dialogs.forwarding_rule_delete.message",
             &[
@@ -1887,7 +1887,7 @@ impl AppView {
         &self,
         prompt: &PendingChatSessionDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let title = if prompt.title.trim().is_empty() {
             i18n::string("workspace.panel.agent.history.untitled_chat")
         } else {
@@ -1941,7 +1941,7 @@ impl AppView {
         prompt: &PendingChatSessionRenameState,
         exit_progress: Option<f32>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let title_input = self.controllers.agent.read(cx).rename_title_input();
         let current_title = if prompt.current_title.trim().is_empty() {
             i18n::string("workspace.panel.agent.history.untitled_chat")
@@ -2012,7 +2012,7 @@ impl AppView {
         _entity: Entity<Self>,
         _prompt: &PendingSyncDirectionState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let controller_cancel = self.controllers.settings.clone();
         let controller_pull = self.controllers.settings.clone();
         let controller_push = self.controllers.settings.clone();
@@ -2072,7 +2072,7 @@ impl AppView {
         _entity: Entity<Self>,
         prompt: &PendingSyncPullConfirmState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let controller_cancel = self.controllers.settings.clone();
         let controller_force_push = self.controllers.settings.clone();
         let controller_confirm = self.controllers.settings.clone();
@@ -2144,7 +2144,7 @@ impl AppView {
         _entity: Entity<Self>,
         _prompt: &PendingLocalVaultDisableConfirmState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let controller_cancel = self.controllers.settings.clone();
         let controller_confirm = self.controllers.settings.clone();
 
@@ -2193,7 +2193,7 @@ impl AppView {
         _entity: Entity<Self>,
         _prompt: &PendingLocalDataResetConfirmState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let controller_cancel = self.controllers.settings.clone();
         let controller_confirm = self.controllers.settings.clone();
 
@@ -2241,7 +2241,7 @@ impl AppView {
         challenge: &KbiChallenge,
         exit_progress: Option<f32>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let title: SharedString = if challenge.name.is_empty() {
             i18n::string("prompts.authentication_challenge").into()
@@ -2343,7 +2343,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -2385,7 +2385,7 @@ impl AppView {
                         current_input.clone(),
                         crate::ui::components::SecretTextInputStackOptions {
                             surface: TextInputSurface::Low,
-                            size: gpui_component::Size::Large,
+                            size: gpui_kit::component::Size::Large,
                             required: true,
                             disabled: operation_in_progress,
                             trailing: None,
@@ -2417,7 +2417,7 @@ impl AppView {
                 input.clone(),
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
-                    size: gpui_component::Size::Large,
+                    size: gpui_kit::component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
@@ -2448,7 +2448,7 @@ impl AppView {
                     confirmation_input.clone(),
                     crate::ui::components::SecretTextInputStackOptions {
                         surface: TextInputSurface::Low,
-                        size: gpui_component::Size::Large,
+                        size: gpui_kit::component::Size::Large,
                         required: true,
                         disabled: operation_in_progress,
                         trailing: None,
@@ -2571,7 +2571,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -2603,7 +2603,7 @@ impl AppView {
                 input.clone(),
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
-                    size: gpui_component::Size::Large,
+                    size: gpui_kit::component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
@@ -2629,7 +2629,7 @@ impl AppView {
                 confirmation_input.clone(),
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
-                    size: gpui_component::Size::Large,
+                    size: gpui_kit::component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
                     trailing: None,
@@ -2724,7 +2724,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -2795,7 +2795,7 @@ impl AppView {
                 api_key_input,
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
-                    size: gpui_component::Size::Large,
+                    size: gpui_kit::component::Size::Large,
                     required: true,
                     disabled: operation_in_progress,
                     trailing: api_key_load_in_progress.then(|| {
@@ -2940,7 +2940,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -2984,7 +2984,7 @@ impl AppView {
                 api_key_input,
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
-                    size: gpui_component::Size::Large,
+                    size: gpui_kit::component::Size::Large,
                     required: api_key_required,
                     disabled: save_in_progress,
                     trailing: None,
@@ -3085,7 +3085,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -3114,7 +3114,7 @@ impl AppView {
                             token_input,
                             crate::ui::components::SecretTextInputStackOptions {
                                 surface: TextInputSurface::Low,
-                                size: gpui_component::Size::Large,
+                                size: gpui_kit::component::Size::Large,
                                 required: true,
                                 disabled: save_in_progress,
                                 trailing: None,
@@ -3170,7 +3170,7 @@ impl AppView {
                             password_input,
                             crate::ui::components::SecretTextInputStackOptions {
                                 surface: TextInputSurface::Low,
-                                size: gpui_component::Size::Large,
+                                size: gpui_kit::component::Size::Large,
                                 required: true,
                                 disabled: save_in_progress,
                                 trailing: None,
@@ -3269,7 +3269,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let settings_forms = settings_controller.read(cx).forms();
@@ -3492,7 +3492,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let operation_in_progress = settings_controller
@@ -3588,7 +3588,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = self.controllers.settings.clone();
         let input = settings_controller
@@ -3694,7 +3694,7 @@ impl AppView {
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let controller = self.controllers.session.clone();
         let action_controller = controller.clone();
         controller.read(cx).render_trusted_host_key_prompt(
@@ -3716,7 +3716,7 @@ impl AppView {
         exit_progress: f32,
         bottom_popup_viewport_height: f32,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         match snapshot {
             DialogOverlaySnapshot::HostKey { tab_id, prompt } => self
                 .render_session_host_key_prompt(

@@ -1,17 +1,17 @@
 use super::{TextInputSurface, surface_text_input};
 use crate::ui::assets::AppIcon;
-use gpui::{
-    AnyElement, App, Entity, Focusable as _, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
-    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, rgb, uniform_list,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ElementExt as _, Icon, Sizable as _, Size, StyleSized as _,
     button::{Button, ButtonVariants as _},
     input::InputState,
     popover::Popover,
     scroll::ScrollableElement as _,
     v_flex,
+};
+use gpui_kit::{
+    AnyElement, App, Entity, Focusable as _, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, rgb, uniform_list,
 };
 use std::{cell::Cell, rc::Rc};
 

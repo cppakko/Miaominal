@@ -3,9 +3,9 @@ use super::session_agent_composer;
 use super::session_agent_utils::format_relative_chat_time;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
-use gpui::AnimationExt as _;
-use gpui::{Size, size};
-use gpui_component::v_virtual_list;
+use gpui_kit::AnimationExt as _;
+use gpui_kit::component::v_virtual_list;
+use gpui_kit::{Size, size};
 use std::rc::Rc;
 
 pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
@@ -15,7 +15,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_history_panel(
     _window: &mut Window,
     cx: &mut App,
     search_visibility: Option<f32>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let text_muted = crate::ui::theme::palette_tone_rgb(
         material.palettes.neutral_variant,

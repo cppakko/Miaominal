@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::StreamExt as _;
-use gpui::Context;
+use gpui_kit::Context;
 use miaominal_ssh::{SessionEvent, SessionEventReceiver};
 
 use super::{

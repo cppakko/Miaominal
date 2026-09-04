@@ -2,8 +2,8 @@ use super::{
     AgentController, ChatPanelView, SessionAgentExecutionContext, SessionAgentMessage,
     trailing_at_mention_query,
 };
-use crate::ui::shell::set_input_value;
-use gpui::{App, Context, Window};
+use crate::ui::shell::set_textarea_value;
+use gpui_kit::{App, Context, Window};
 use miaominal_core::chat_attachment::ChatAttachment;
 
 const SESSION_AGENT_PROMPT_HISTORY_LIMIT: usize = 100;
@@ -138,7 +138,7 @@ impl AgentController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        set_input_value(&self.forms.prompt_input, String::new(), window, cx);
+        set_textarea_value(&self.forms.prompt_input, String::new(), window, cx);
         let state = &mut self.runtime.get_mut().foreground;
         state.at_mention_query = None;
         state.at_mention_anchor = 0;
@@ -205,7 +205,7 @@ impl AgentController {
             state.prompt_history_cursor = next_cursor;
             next_value
         };
-        set_input_value(&self.forms.prompt_input, next_value, window, cx);
+        set_textarea_value(&self.forms.prompt_input, next_value, window, cx);
         let value = self.forms.prompt_input.read(cx).value().to_string();
         self.update_at_mention_state_from_value(&value);
         cx.notify();
@@ -227,7 +227,7 @@ impl AgentController {
             .min(value.len());
         let mut next = String::new();
         next.push_str(&value[..anchor]);
-        set_input_value(&self.forms.prompt_input, next, window, cx);
+        set_textarea_value(&self.forms.prompt_input, next, window, cx);
 
         let state = &mut self.runtime.get_mut().foreground;
         if !state
@@ -254,7 +254,7 @@ impl AgentController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        set_input_value(&self.forms.prompt_input, String::new(), window, cx);
+        set_textarea_value(&self.forms.prompt_input, String::new(), window, cx);
         let state = &mut self.runtime.get_mut().foreground;
         state.at_mention_query = None;
         state.at_mention_anchor = 0;

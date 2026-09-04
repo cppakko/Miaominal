@@ -4,7 +4,7 @@ use crate::ui::shell::{
     DeferredAppCommand, DialogOverlaySnapshot, SettingsDeferredCommand, ValidationFailure,
     ai_provider_select_options, error_notification, success_notification, validation_notification,
 };
-use gpui::App;
+use gpui_kit::App;
 use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 

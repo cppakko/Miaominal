@@ -1,4 +1,4 @@
-use gpui::Subscription;
+use gpui_kit::Subscription;
 use std::ops::{Deref, DerefMut};
 
 const ROOT_SHELL_SUBSCRIPTION_COUNT: usize = 2;

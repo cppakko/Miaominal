@@ -1,8 +1,8 @@
 use crate::ui::assets::AppIcon;
-use gpui::{
+use gpui_kit::component::{Icon, Sizable as _};
+use gpui_kit::{
     App, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled, Window, div, px, rgb,
 };
-use gpui_component::{Icon, Sizable as _};
 
 const FAB_SIZE: f32 = 52.0;
 

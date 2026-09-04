@@ -5,7 +5,7 @@ use super::{
 };
 use crate::ui::i18n;
 use crate::ui::shell::{AppCommand, DialogOverlaySnapshot};
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 use miaominal_storage::chat_store::{ChatMessageRecord, ChatMessageRole};
 use std::time::{SystemTime, UNIX_EPOCH};
 

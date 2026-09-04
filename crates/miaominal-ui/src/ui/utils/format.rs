@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_kit::SharedString;
 use std::time::SystemTime;
 
 pub(crate) fn format_byte_size(size: Option<u64>) -> SharedString {

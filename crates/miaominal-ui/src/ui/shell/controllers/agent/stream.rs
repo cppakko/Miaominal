@@ -1,7 +1,7 @@
 use super::{AgentController, SessionAgentMessageRole, SessionAgentState, SessionAgentToolStatus};
 use crate::ui::i18n;
 use crate::ui::shell::AppCommand;
-use gpui::Context;
+use gpui_kit::Context;
 use miaominal_agent::{AgentChatEvent, AgentMode, AgentToolCancellation};
 use tokio::sync::watch;
 
@@ -51,7 +51,7 @@ impl AgentController {
     pub(in crate::ui::shell) fn install_pending_task_for_session(
         &mut self,
         session_id: &str,
-        task: gpui::Task<()>,
+        task: gpui_kit::Task<()>,
         stop: watch::Sender<bool>,
         agent_cancellation: Option<AgentToolCancellation>,
         cx: &mut Context<Self>,

@@ -27,7 +27,7 @@ pub fn is_app_foreground() -> bool {
 }
 
 #[cfg(windows)]
-pub fn configure_notification_window(window: &gpui::Window) -> anyhow::Result<()> {
+pub fn configure_notification_window(window: &gpui_kit::Window) -> anyhow::Result<()> {
     use raw_window_handle::RawWindowHandle;
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Dwm::{
@@ -127,7 +127,7 @@ pub fn configure_notification_window(window: &gpui::Window) -> anyhow::Result<()
 }
 
 #[cfg(not(windows))]
-pub fn configure_notification_window(_window: &gpui::Window) -> anyhow::Result<()> {
+pub fn configure_notification_window(_window: &gpui_kit::Window) -> anyhow::Result<()> {
     Ok(())
 }
 

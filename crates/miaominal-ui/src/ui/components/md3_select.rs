@@ -1,7 +1,7 @@
-use gpui::{Styled, px, rgb};
-use gpui_component::select::{Select, SelectDelegate, SelectState};
+use gpui_kit::component::select::{Select, SelectDelegate, SelectState};
+use gpui_kit::{Styled, px, rgb};
 
-pub(crate) fn md3_select<D>(state: &gpui::Entity<SelectState<D>>) -> Select<D>
+pub(crate) fn md3_select<D>(state: &gpui_kit::Entity<SelectState<D>>) -> Select<D>
 where
     D: SelectDelegate + 'static,
 {

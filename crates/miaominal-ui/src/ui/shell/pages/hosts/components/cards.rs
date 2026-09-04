@@ -23,8 +23,10 @@ pub(in crate::ui::shell::pages::hosts) struct HostCardMetadata {
     pub tags: HostCardTags,
 }
 
-fn host_card_badge_tooltip(text: SharedString) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
-    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+fn host_card_badge_tooltip(
+    text: SharedString,
+) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 fn host_card_badge(
@@ -33,7 +35,7 @@ fn host_card_badge(
     tooltip: Option<SharedString>,
     background: u32,
     foreground: u32,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     div()
         .id(id)
         .flex_shrink_0()

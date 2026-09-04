@@ -1,11 +1,11 @@
 use crate::ui::assets::AppIcon;
-use gpui::{
-    App, Div, InteractiveElement, MouseButton, ParentElement, SharedString, Styled, Window, div,
-    px, rgb,
-};
-use gpui_component::{
+use gpui_kit::component::{
     Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
+};
+use gpui_kit::{
+    App, Div, InteractiveElement, MouseButton, ParentElement, SharedString, Styled, Window, div,
+    px, rgb,
 };
 
 #[derive(Clone)]

@@ -20,7 +20,7 @@ fn terminal_scrollbar_is_visible(
         })
 }
 
-fn should_defer_terminal_text_input_to_ime(keystroke: &gpui::Keystroke) -> bool {
+fn should_defer_terminal_text_input_to_ime(keystroke: &gpui_kit::Keystroke) -> bool {
     let modifiers = &keystroke.modifiers;
     !modifiers.control
         && !modifiers.alt
@@ -32,29 +32,29 @@ fn should_defer_terminal_text_input_to_ime(keystroke: &gpui::Keystroke) -> bool 
             .is_some_and(|key_char| !key_char.is_empty() && !key_char.chars().all(char::is_control))
 }
 
-fn should_keep_terminal_focus_on_tab(keystroke: &gpui::Keystroke) -> bool {
+fn should_keep_terminal_focus_on_tab(keystroke: &gpui_kit::Keystroke) -> bool {
     let modifiers = &keystroke.modifiers;
     keystroke.key == "tab" && !modifiers.control && !modifiers.alt && !modifiers.platform
 }
 
 fn clamp_terminal_pointer_position(
-    position: gpui::Point<gpui::Pixels>,
-    bounds: gpui::Bounds<gpui::Pixels>,
-) -> gpui::Point<gpui::Pixels> {
+    position: gpui_kit::Point<gpui_kit::Pixels>,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+) -> gpui_kit::Point<gpui_kit::Pixels> {
     let min_x = f32::from(bounds.origin.x);
     let max_x = min_x + f32::from(bounds.size.width);
     let min_y = f32::from(bounds.origin.y);
     let max_y = min_y + f32::from(bounds.size.height);
 
-    gpui::Point::new(
-        gpui::Pixels::from(f32::from(position.x).clamp(min_x, max_x)),
-        gpui::Pixels::from(f32::from(position.y).clamp(min_y, max_y)),
+    gpui_kit::Point::new(
+        gpui_kit::Pixels::from(f32::from(position.x).clamp(min_x, max_x)),
+        gpui_kit::Pixels::from(f32::from(position.y).clamp(min_y, max_y)),
     )
 }
 
 fn terminal_drag_scroll_delta(
-    position: gpui::Point<gpui::Pixels>,
-    bounds: gpui::Bounds<gpui::Pixels>,
+    position: gpui_kit::Point<gpui_kit::Pixels>,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
     line_height: f32,
 ) -> Option<i32> {
     let top = f32::from(bounds.origin.y);
@@ -189,7 +189,7 @@ enum TerminalLeftMouseRoute {
 fn terminal_left_mouse_route(
     free_type_enabled: bool,
     mouse_reporting_enabled: bool,
-    modifiers: &gpui::Modifiers,
+    modifiers: &gpui_kit::Modifiers,
 ) -> TerminalLeftMouseRoute {
     if modifiers.shift {
         TerminalLeftMouseRoute::TraditionalSelection
@@ -205,26 +205,26 @@ fn terminal_left_mouse_route(
 fn terminal_invalid_free_type_target_is_consumed(
     route: TerminalLeftMouseRoute,
     mouse_reporting_enabled: bool,
-    modifiers: &gpui::Modifiers,
+    modifiers: &gpui_kit::Modifiers,
 ) -> bool {
     route == TerminalLeftMouseRoute::FreeType && mouse_reporting_enabled && modifiers.alt
 }
 
 fn terminal_traditional_selection_is_block(
     free_type_enabled: bool,
-    modifiers: &gpui::Modifiers,
+    modifiers: &gpui_kit::Modifiers,
 ) -> bool {
     modifiers.alt && (!free_type_enabled || modifiers.shift)
 }
 
 fn terminal_mouse_motion_reporting_allowed(
-    modifiers: &gpui::Modifiers,
+    modifiers: &gpui_kit::Modifiers,
     free_type_gesture_active: bool,
 ) -> bool {
     !modifiers.shift && !free_type_gesture_active
 }
 
-fn terminal_link_open_requested(modifiers: &gpui::Modifiers) -> bool {
+fn terminal_link_open_requested(modifiers: &gpui_kit::Modifiers) -> bool {
     modifiers.control || modifiers.platform
 }
 
@@ -406,7 +406,7 @@ fn terminal_copy_selection_kind(click_count: usize, block: bool) -> TerminalSele
     }
 }
 
-fn suppress_terminal_key_release(this: &mut AppView, keystroke: &gpui::Keystroke) {
+fn suppress_terminal_key_release(this: &mut AppView, keystroke: &gpui_kit::Keystroke) {
     this.workspace
         .workspace
         .active_pane
@@ -867,7 +867,7 @@ impl WorkspaceTerminalInputExt for AppView {
     fn handle_terminal_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         self.clear_terminal_originated_selection_drag(cx);
         if event.button == MouseButton::Left {
-            gpui_component::GlobalState::suppress_text_selection(cx);
+            gpui_kit::component::GlobalState::suppress_text_selection(cx);
         }
 
         if event.button == MouseButton::Left
@@ -2046,15 +2046,15 @@ mod tests {
 
     #[test]
     fn free_type_drag_starts_only_after_threshold() {
-        let origin = gpui::point(px(10.0), px(10.0));
+        let origin = gpui_kit::point(px(10.0), px(10.0));
 
         assert!(!terminal_pointer_drag_threshold_exceeded(
             origin,
-            gpui::point(px(13.0), px(10.0)),
+            gpui_kit::point(px(13.0), px(10.0)),
         ));
         assert!(terminal_pointer_drag_threshold_exceeded(
             origin,
-            gpui::point(px(14.0), px(10.0)),
+            gpui_kit::point(px(14.0), px(10.0)),
         ));
     }
 
@@ -2093,16 +2093,16 @@ mod tests {
 
     #[test]
     fn left_mouse_route_uses_alt_to_override_application_mouse_reporting() {
-        let plain = gpui::Modifiers::default();
-        let alt = gpui::Modifiers {
+        let plain = gpui_kit::Modifiers::default();
+        let alt = gpui_kit::Modifiers {
             alt: true,
             ..Default::default()
         };
-        let shift = gpui::Modifiers {
+        let shift = gpui_kit::Modifiers {
             shift: true,
             ..Default::default()
         };
-        let shift_alt = gpui::Modifiers {
+        let shift_alt = gpui_kit::Modifiers {
             shift: true,
             alt: true,
             ..Default::default()
@@ -2144,7 +2144,7 @@ mod tests {
 
     #[test]
     fn alt_target_miss_is_consumed_only_for_mouse_reporting_override() {
-        let alt = gpui::Modifiers {
+        let alt = gpui_kit::Modifiers {
             alt: true,
             ..Default::default()
         };
@@ -2168,11 +2168,11 @@ mod tests {
 
     #[test]
     fn shift_alt_keeps_block_selection_while_free_type_is_enabled() {
-        let alt = gpui::Modifiers {
+        let alt = gpui_kit::Modifiers {
             alt: true,
             ..Default::default()
         };
-        let shift_alt = gpui::Modifiers {
+        let shift_alt = gpui_kit::Modifiers {
             shift: true,
             alt: true,
             ..Default::default()
@@ -2185,8 +2185,8 @@ mod tests {
 
     #[test]
     fn active_free_type_gesture_suppresses_application_mouse_motion() {
-        let plain = gpui::Modifiers::default();
-        let shift = gpui::Modifiers {
+        let plain = gpui_kit::Modifiers::default();
+        let shift = gpui_kit::Modifiers {
             shift: true,
             ..Default::default()
         };
@@ -2198,11 +2198,11 @@ mod tests {
 
     #[test]
     fn control_or_platform_modifier_requests_link_opening() {
-        let control = gpui::Modifiers {
+        let control = gpui_kit::Modifiers {
             control: true,
             ..Default::default()
         };
-        let platform = gpui::Modifiers {
+        let platform = gpui_kit::Modifiers {
             platform: true,
             ..Default::default()
         };
@@ -2256,9 +2256,9 @@ mod tests {
         alt: bool,
         control: bool,
         platform: bool,
-    ) -> gpui::Keystroke {
-        gpui::Keystroke {
-            modifiers: gpui::Modifiers {
+    ) -> gpui_kit::Keystroke {
+        gpui_kit::Keystroke {
+            modifiers: gpui_kit::Modifiers {
                 shift,
                 control,
                 alt,
@@ -2301,14 +2301,14 @@ mod tests {
 
     #[test]
     fn small_pixel_scroll_still_generates_one_terminal_line() {
-        let delta = ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(3.0)));
+        let delta = ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.0), gpui_kit::px(3.0)));
 
         assert_eq!(terminal_wheel_scroll_lines(delta, 3.0, 18.0), 1);
     }
 
     #[test]
     fn negative_line_scroll_preserves_direction() {
-        let delta = ScrollDelta::Lines(gpui::point(0.0, -3.0));
+        let delta = ScrollDelta::Lines(gpui_kit::point(0.0, -3.0));
 
         assert_eq!(terminal_wheel_scroll_lines(delta, -54.0, 18.0), -3);
     }

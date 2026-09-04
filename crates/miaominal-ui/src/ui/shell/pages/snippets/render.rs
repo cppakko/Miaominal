@@ -250,7 +250,7 @@ impl SessionController {
         controller: Entity<Self>,
         on_open_existing: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let snippets_forms = self.snippets_forms();
         let catalog_view = self.catalog_view();
         let snippets = self.snippets().clone();

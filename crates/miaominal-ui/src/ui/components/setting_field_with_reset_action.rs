@@ -1,7 +1,7 @@
 use super::icon_button;
 use crate::ui::assets::AppIcon;
-use gpui::{App, Div, IntoElement, ParentElement, Styled, Window};
-use gpui_component::h_flex;
+use gpui_kit::component::h_flex;
+use gpui_kit::{App, Div, IntoElement, ParentElement, Styled, Window};
 
 pub(crate) fn setting_field_with_reset_action(
     field: impl IntoElement,

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 
 use super::*;
 use crate::ui::i18n;

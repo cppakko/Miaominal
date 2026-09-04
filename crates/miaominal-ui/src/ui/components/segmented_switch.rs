@@ -1,9 +1,9 @@
-use gpui::{
+use gpui_kit::component::h_flex;
+use gpui_kit::{
     Animation, AnimationExt as _, App, ElementId, FontWeight, InteractiveElement, IntoElement,
     MouseButton, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div, ease_in_out, prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::h_flex;
 use std::{rc::Rc, time::Duration};
 
 const DEFAULT_WIDTH: f32 = 204.0;
@@ -226,7 +226,7 @@ impl RenderOnce for SegmentedSwitch {
 
             if let Some(tooltip) = tooltip {
                 item = item.tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
                 });
             }
 

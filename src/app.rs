@@ -2,7 +2,7 @@ pub(crate) mod instance;
 pub(crate) mod runtime;
 
 #[cfg(target_os = "macos")]
-use gpui::{App, KeyBinding, Menu, MenuItem, NoAction, SystemMenuType, actions};
+use gpui_kit::{App, KeyBinding, Menu, MenuItem, NoAction, SystemMenuType, actions};
 
 #[cfg(target_os = "macos")]
 actions!(
@@ -90,4 +90,4 @@ pub(crate) fn install_app_menus(cx: &mut App) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn install_app_menus(_: &mut gpui::App) {}
+pub(crate) fn install_app_menus(_: &mut gpui_kit::App) {}

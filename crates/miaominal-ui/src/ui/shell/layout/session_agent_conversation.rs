@@ -7,11 +7,9 @@ use super::session_agent_utils::*;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::i18n;
 use crate::ui::shell::session_agent_view::SessionAgentMessageView;
-use gpui::AnimationExt as _;
-use gpui_component::ElementExt as _;
-use gpui_component::WindowExt as _;
-use gpui_component::text::{TextView, TextViewState};
-use theme::ActiveTheme as _;
+use gpui_kit::AnimationExt as _;
+use gpui_kit::component::ElementExt as _;
+use gpui_kit::component::text::{TextView, TextViewState};
 
 const SESSION_AGENT_MESSAGE_ENTER_OFFSET: f32 = 8.0;
 const SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT: f32 = 720.0;
@@ -23,7 +21,7 @@ fn session_agent_text_selectable(terminal_originated_selection_drag_active: bool
 fn render_session_agent_message_with_enter_motion<E>(
     element: E,
     enter_key: Option<u64>,
-) -> gpui::AnyElement
+) -> gpui_kit::AnyElement
 where
     E: IntoElement + Styled + 'static,
 {
@@ -51,7 +49,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
     entity: Entity<AgentController>,
     _window: &mut Window,
     cx: &mut Context<AgentController>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let text_muted = crate::ui::theme::palette_tone_rgb(
         material.palettes.neutral_variant,
@@ -91,7 +89,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
         .search_current_match
         .and_then(|c| agent.session_agent().search_match_indices.get(c).copied());
 
-    gpui::list(
+    gpui_kit::list(
         list_state,
         cx.processor(move |agent, index: usize, window, cx| {
             let (message_view, generating, message_count) = {
@@ -178,7 +176,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_messages(
                 .into_any_element()
         }),
     )
-    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+    .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
     .size_full()
     .w(px(message_column_width))
     .max_w(px(message_column_width))
@@ -201,7 +199,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
     _entity: Entity<AgentController>,
     _window: &mut Window,
     _cx: &mut Context<AgentController>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     if markdown_state.is_none() && message.content.trim().is_empty() {
         return div().into_any_element();
     }
@@ -231,7 +229,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
                     let code = code_block.code();
                     let language = code_block.lang().unwrap_or_else(|| "text".into());
 
-                    gpui_component::h_flex()
+                    gpui_kit::component::h_flex()
                         .gap_1()
                         .items_center()
                         .child(
@@ -244,7 +242,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_markdown(
                                 .child(language.to_string()),
                         )
                         .child(
-                            gpui_component::clipboard::Clipboard::new("copy").value(code.clone()),
+                            gpui_kit::component::clipboard::Clipboard::new("copy")
+                                .value(code.clone()),
                         )
                 })
                 .selectable(selectable),
@@ -262,7 +261,7 @@ fn render_session_agent_markdown_block(
     entity: Entity<AgentController>,
     window: &mut Window,
     cx: &mut Context<AgentController>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     render_session_agent_markdown(
         terminal_originated_selection_drag_active,
         id,
@@ -297,7 +296,7 @@ fn render_session_agent_search_block(
     cx: &mut Context<AgentController>,
     search_match_set: &std::collections::HashSet<(usize, usize)>,
     current_match_block: Option<(usize, usize)>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let is_match = search_match_set.contains(&(index, block_idx));
     let is_current = current_match_block == Some((index, block_idx));
@@ -407,7 +406,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
     cx: &mut Context<AgentController>,
     search_match_set: &std::collections::HashSet<(usize, usize)>,
     current_match_block: Option<(usize, usize)>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let is_user = message.role == SessionAgentMessageRole::User;
@@ -515,7 +514,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
                 .context_menu(move |menu, window, cx| {
                     let entity = assistant_entity.clone();
                     let message_view = assistant_message_view.clone();
-                    let selected_text = window.selected_text(cx);
+                    let selected_text = gpui_kit::base::TextSelection::selected_text(window, cx);
                     let selected_text = (!selected_text.trim().is_empty()).then_some(selected_text);
                     menu.item(
                         PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
@@ -638,7 +637,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_message(
             .context_menu(move |menu, window, cx| {
                 let entity = context_menu_entity.clone();
                 let message_view = context_menu_message_view.clone();
-                let selected_text = window.selected_text(cx);
+                let selected_text = gpui_kit::base::TextSelection::selected_text(window, cx);
                 let selected_text = (!selected_text.trim().is_empty()).then_some(selected_text);
                 menu.item(
                     PopupMenuItem::new(i18n::string("workspace.menu.copy")).on_click(
@@ -676,7 +675,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_thinking(
     entity: Entity<AgentController>,
     window: &mut Window,
     cx: &mut Context<AgentController>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let text_muted = crate::ui::theme::palette_tone_rgb(
         material.palettes.neutral_variant,
@@ -774,7 +773,7 @@ fn render_session_agent_tool_status_indicator(
     tool_id: &str,
     status: SessionAgentToolStatus,
     color: u32,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let dot = div()
         .size(px(6.0))
         .rounded(px(999.0))
@@ -804,7 +803,7 @@ fn render_session_agent_tool_header_leading(
     status: SessionAgentToolStatus,
     status_color: u32,
     text_muted: u32,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     h_flex()
         .w(px(30.0))
         .flex_shrink_0()
@@ -861,7 +860,7 @@ fn render_session_agent_text_action_button(
     full_width: bool,
     roles: miaominal_settings::theme::Md3Roles,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     div()
         .cursor_pointer()
         .rounded(px(6.0))
@@ -918,7 +917,7 @@ fn render_session_agent_approval_actions(
     entity: Entity<AgentController>,
     agent: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let allow_tool_id = tool_id.to_string();
     let deny_tool_id = tool_id.to_string();
     let allow_entity = entity.clone();
@@ -963,7 +962,7 @@ fn render_session_agent_ask_user_actions(
     tool_call: &SessionAgentToolCall,
     entity: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let prompt = parse_ask_user_prompt(tool_call);
     let input = agent.ask_user_input();
     let submit_entity = entity.clone();
@@ -1062,8 +1061,8 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
     message: &SessionAgentMessage,
     message_view: Entity<SessionAgentMessageView>,
     entity: Entity<AgentController>,
-    cx: &mut Context<AgentController>,
-) -> gpui::AnyElement {
+    _cx: &mut Context<AgentController>,
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -1100,8 +1099,6 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
         text_muted,
         selectable: session_agent_text_selectable(terminal_originated_selection_drag_active),
     };
-    let syntax_theme = cx.theme().syntax().clone();
-
     let status_color = match tool_call.status {
         SessionAgentToolStatus::Pending | SessionAgentToolStatus::InProgress => roles.primary,
         SessionAgentToolStatus::WaitingForConfirmation => roles.tertiary,
@@ -1186,7 +1183,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
             )
             .when(expanded, |this| {
                 let body = if is_run_shell {
-                    render_run_shell_tool_body(tool_call, tool_colors, &syntax_theme)
+                    render_run_shell_tool_body(tool_call, tool_colors)
                 } else {
                     render_structured_tool_body(tool_call, tool_colors)
                 };
@@ -1224,7 +1221,7 @@ pub(in crate::ui::shell::layout) fn render_session_agent_tool_call(
 fn render_session_agent_message_attachments(
     attachments: &[miaominal_core::chat_attachment::ChatAttachment],
     roles: miaominal_settings::theme::Md3Roles,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     v_flex()
         .w_full()
         .items_start()

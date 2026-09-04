@@ -2,21 +2,21 @@
 //!
 //! This module intentionally keeps the data-to-view projection small. The existing
 //! conversation renderer reads visible message entities by index to keep its complete
-//! message/tool UI while gaining `gpui::list` virtualization. The `Render`
+//! message/tool UI while gaining `gpui_kit::list` virtualization. The `Render`
 //! implementations below are useful defaults and keep Markdown state persistent, but
 //! they are not intended to duplicate every AppView-owned action.
 
 use super::{SessionAgentMessage, SessionAgentMessageRole};
 use crate::ui::shell::support::LIST_ENTER_DURATION;
 use crate::ui::{components::md3_spinner, i18n};
-use gpui::prelude::FluentBuilder as _;
-use gpui::{
+use gpui_kit::component::{h_flex, text::TextView, text::TextViewState, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, FollowMode, FontWeight, InteractiveElement as _, IntoElement, ListAlignment,
     ListOffset, ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString,
     Styled as _, Subscription, Task, Window, div, list, px, rgb,
 };
-use gpui_component::{h_flex, text::TextView, text::TextViewState, v_flex};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,

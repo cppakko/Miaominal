@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alacritty_terminal::index::Side;
-use gpui::{ClipboardItem, Context};
+use gpui_kit::{ClipboardItem, Context};
 use miaominal_ssh::SessionEventReceiver;
 use miaominal_terminal::{
     MouseEncoding, MouseProtocol, TerminalEditStep, TerminalFreeTypeDropPlan,

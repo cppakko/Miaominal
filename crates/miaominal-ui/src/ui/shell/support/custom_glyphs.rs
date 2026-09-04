@@ -1,4 +1,4 @@
-use gpui::{Background, Bounds, Hsla, Pixels, Point, Window, fill, px, size};
+use gpui_kit::{Background, Bounds, Hsla, Pixels, Point, Window, fill, px, size};
 use miaominal_terminal::TerminalSnapshot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

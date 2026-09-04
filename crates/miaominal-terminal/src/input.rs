@@ -104,8 +104,8 @@ pub fn encode_terminal_named_key(
     key: TerminalNamedKey,
     input_modes: TerminalInputModes,
 ) -> Option<Vec<u8>> {
-    let keystroke = gpui::Keystroke {
-        modifiers: gpui::Modifiers::default(),
+    let keystroke = gpui_kit::Keystroke {
+        modifiers: gpui_kit::Modifiers::default(),
         key: key.as_str().into(),
         key_char: None,
     };
@@ -124,12 +124,12 @@ pub fn encode_terminal_named_key(
 
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalKeyEvent<'a> {
-    pub keystroke: &'a gpui::Keystroke,
+    pub keystroke: &'a gpui_kit::Keystroke,
     pub phase: TerminalKeyPhase,
 }
 
 impl<'a> TerminalKeyEvent<'a> {
-    pub fn new(keystroke: &'a gpui::Keystroke, phase: TerminalKeyPhase) -> Self {
+    pub fn new(keystroke: &'a gpui_kit::Keystroke, phase: TerminalKeyPhase) -> Self {
         Self { keystroke, phase }
     }
 }
@@ -183,7 +183,7 @@ fn control_sequence(key: &str) -> Option<u8> {
     })
 }
 
-fn encode_text_input(keystroke: &gpui::Keystroke) -> Option<Vec<u8>> {
+fn encode_text_input(keystroke: &gpui_kit::Keystroke) -> Option<Vec<u8>> {
     let mut bytes = match keystroke.key.as_str() {
         "space" => {
             if keystroke.modifiers.control {
@@ -224,7 +224,7 @@ fn encode_text_input(keystroke: &gpui::Keystroke) -> Option<Vec<u8>> {
 }
 
 fn encode_named_key_normal(
-    keystroke: &gpui::Keystroke,
+    keystroke: &gpui_kit::Keystroke,
     input_modes: TerminalInputModes,
 ) -> Option<Vec<u8>> {
     if keystroke.modifiers.platform {
@@ -806,7 +806,7 @@ fn associated_text<'a>(
     }
 }
 
-fn base_text_key_char(keystroke: &gpui::Keystroke) -> Option<char> {
+fn base_text_key_char(keystroke: &gpui_kit::Keystroke) -> Option<char> {
     let actual_char = keystroke.key_char.as_deref()?.chars().next()?;
     if keystroke.key.chars().count() == 1 {
         let key_char = keystroke.key.chars().next()?;
@@ -822,7 +822,7 @@ fn base_text_key_char(keystroke: &gpui::Keystroke) -> Option<char> {
     }
 }
 
-fn is_named_key_without_text(keystroke: &gpui::Keystroke) -> bool {
+fn is_named_key_without_text(keystroke: &gpui_kit::Keystroke) -> bool {
     keystroke.key_char.is_none()
         && matches!(
             keystroke.key.as_str(),
@@ -983,7 +983,7 @@ impl SequenceModifiers {
     }
 }
 
-fn sequence_modifiers(modifiers: gpui::Modifiers) -> SequenceModifiers {
+fn sequence_modifiers(modifiers: gpui_kit::Modifiers) -> SequenceModifiers {
     let mut sequence_modifiers = SequenceModifiers::default();
     sequence_modifiers.set(SequenceModifier::Shift, modifiers.shift);
     sequence_modifiers.set(SequenceModifier::Alt, modifiers.alt);
@@ -1172,9 +1172,9 @@ mod tests {
         alt: bool,
         control: bool,
         platform: bool,
-    ) -> gpui::Keystroke {
-        gpui::Keystroke {
-            modifiers: gpui::Modifiers {
+    ) -> gpui_kit::Keystroke {
+        gpui_kit::Keystroke {
+            modifiers: gpui_kit::Modifiers {
                 shift,
                 control,
                 alt,

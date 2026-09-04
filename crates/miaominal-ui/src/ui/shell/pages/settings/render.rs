@@ -5,8 +5,7 @@ use crate::ui::components::{
     md3_spinner,
 };
 use crate::ui::i18n;
-use gpui::{Axis, KeyDownEvent};
-use gpui_component::{
+use gpui_kit::component::{
     Disableable, Icon, Size,
     group_box::GroupBoxVariant,
     setting::{
@@ -14,6 +13,7 @@ use gpui_component::{
         SettingPage, Settings,
     },
 };
+use gpui_kit::{Axis, KeyDownEvent};
 use miaominal_core::ssh_bridge_security::{
     BridgePeerIdentity, BridgePendingPhase, BridgeProcessCaptureStatus, BridgeSecurityLevel,
 };
@@ -113,7 +113,7 @@ pub(in crate::ui::shell) fn render_settings_page(
     settings: Entity<SettingsController>,
     settings_instance_generation: u64,
     destination: Option<SettingsDestination>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let pages = setting_pages(settings);
     let initial_selection =
         destination.and_then(|destination| settings_destination_index(&pages, destination));
@@ -214,10 +214,12 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                         SettingField::render({
                             let entity = entity.clone();
                             move |options, _, cx| {
-                                let size = options.size;
+                                let size = options.size();
                                 let id_prefix = SharedString::from(format!(
                                     "settings-font-size-{}-{}-{}",
-                                    options.page_ix, options.group_ix, options.item_ix
+                                    options.page_ix(),
+                                    options.group_ix(),
+                                    options.item_ix()
                                 ));
                                 render_font_size_stepper(entity.clone(), id_prefix, size, cx)
                             }
@@ -232,10 +234,12 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                         SettingField::render({
                             let entity = entity.clone();
                             move |options, _, cx| {
-                                let size = options.size;
+                                let size = options.size();
                                 let id_prefix = SharedString::from(format!(
                                     "settings-line-height-{}-{}-{}",
-                                    options.page_ix, options.group_ix, options.item_ix
+                                    options.page_ix(),
+                                    options.group_ix(),
+                                    options.item_ix()
                                 ));
                                 render_line_height_stepper(entity.clone(), id_prefix, size, cx)
                             }
@@ -296,10 +300,10 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
                     SettingField::render({
                         let entity = settings.clone();
                         move |options, _, cx| {
-                            let size = options.size;
+                            let size = options.size();
                             let id_prefix = SharedString::from(format!(
                                 "settings-recent-count-{}-{}-{}",
-                                options.page_ix, options.group_ix, options.item_ix
+                                options.page_ix(), options.group_ix(), options.item_ix()
                             ));
                             render_recent_connections_stepper(
                                 entity.clone(),
@@ -1397,7 +1401,7 @@ impl SettingFieldElement for ProxyManagementField {
                         .no_matches(i18n::string("settings.proxies.picker.no_matches")),
                         selected_label,
                         picker_labels,
-                        options.size,
+                        options.size(),
                         move |selected_label, window, cx| {
                             let Some((proxy_id, _)) = picker_options_for_select
                                 .iter()
@@ -1615,7 +1619,7 @@ impl SettingFieldElement for AppLanguageField {
         let select_state = self.controller.read(cx).forms.language_select.clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -1649,7 +1653,7 @@ impl SettingFieldElement for MonitorHistoryDurationField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -1683,7 +1687,7 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -1722,7 +1726,7 @@ impl SettingFieldElement for WindowCloseBehaviorField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w(px(184.0))
             .into_any_element()
     }
@@ -1751,7 +1755,7 @@ impl SettingFieldElement for LastTabCloseBehaviorField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -1785,7 +1789,7 @@ impl SettingFieldElement for ProfileImportSourceField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -1860,7 +1864,7 @@ impl SettingFieldElement for FontFamilyField {
                 ),
                 selected,
                 font_options,
-                options.size,
+                options.size(),
                 move |font, _, cx| {
                     entity_for_select.update(cx, |this, cx| {
                         this.update_font_family(font, cx);
@@ -1911,7 +1915,7 @@ impl SettingFieldElement for TerminalFontFamilyField {
                 ),
                 selected,
                 font_options,
-                options.size,
+                options.size(),
                 move |font, _, cx| {
                     entity_for_select.update(cx, |this, cx| {
                         this.update_terminal_font_family(font, cx);
@@ -1952,7 +1956,7 @@ impl SettingFieldElement for FontFallbacksField {
         setting_field_with_reset_action(
             div().flex_1().min_w(px(0.0)).child(
                 surface_text_input(&input, TextInputSurface::Highest)
-                    .with_size(options.size)
+                    .with_size(options.size())
                     .text_color(rgb(roles.on_surface))
                     .into_any_element(),
             ),
@@ -2014,7 +2018,7 @@ impl SettingFieldElement for SeedColorField {
             .child(setting_field_with_reset_action(
                 div().text_color(rgb(material.roles.on_surface)).child(
                     ColorPicker::new(&picker)
-                        .with_size(options.size)
+                        .with_size(options.size())
                         .label(current.seed_color.clone())
                         .featured_colors(featured_colors),
                 ),
@@ -2515,7 +2519,7 @@ fn ai_providers_page(settings: Entity<SettingsController>) -> SettingPage {
                         SettingField::render({
                             let settings = settings.clone();
                             move |options, _, cx| {
-                                render_ai_provider_selector(settings.clone(), options.size, cx)
+                                render_ai_provider_selector(settings.clone(), options.size(), cx)
                             }
                         }),
                     )
@@ -2829,7 +2833,7 @@ impl SettingFieldElement for TerminalRightClickBehaviorField {
             .clone();
 
         md3_select(&select_state)
-            .with_size(options.size)
+            .with_size(options.size())
             .w_full()
             .into_any_element()
     }
@@ -2872,7 +2876,7 @@ impl SettingFieldElement for SyncProviderField {
                 div()
                     .flex_1()
                     .min_w(px(240.0))
-                    .child(md3_select(&select_state).with_size(options.size).w_full()),
+                    .child(md3_select(&select_state).with_size(options.size()).w_full()),
             )
             .child(if selected_provider == SyncProvider::None {
                 div()
@@ -2986,7 +2990,9 @@ impl SettingFieldElement for KeyBindingCaptureField {
                             div()
                                 .id(SharedString::from(format!(
                                     "key-capture-{}-{}-{}",
-                                    options.page_ix, options.group_ix, options.item_ix
+                                    options.page_ix(),
+                                    options.group_ix(),
+                                    options.item_ix()
                                 )))
                                 .track_focus(&capture_focus)
                                 .w_full()
@@ -2996,7 +3002,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                                 .bg(rgb(capture_bg))
                                 .text_color(rgb(capture_fg))
                                 .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .font_weight(gpui_kit::FontWeight::MEDIUM)
                                 .child(preview_text)
                                 .on_key_down(move |event: &KeyDownEvent, _window, cx| {
                                     let ks = &event.keystroke;
@@ -3071,7 +3077,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
                     .py_1()
                     .rounded(px(10.0))
                     .text_size(miaominal_settings::FontSize::Input.scaled())
-                    .font_weight(gpui::FontWeight::MEDIUM),
+                    .font_weight(gpui_kit::FontWeight::MEDIUM),
                 )
             })
             .when(!is_recording, |this| {
@@ -3108,7 +3114,7 @@ impl SettingFieldElement for KeyBindingCaptureField {
     }
 }
 
-fn format_keystroke_preview(ks: &gpui::Keystroke) -> String {
+fn format_keystroke_preview(ks: &gpui_kit::Keystroke) -> String {
     let mut parts = String::new();
     if ks.modifiers.control {
         parts.push_str(&i18n::string("settings.key_bindings.capture.modifier.ctrl"));

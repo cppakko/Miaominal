@@ -10,7 +10,7 @@ use super::{
 #[cfg(test)]
 use super::{SessionController, SessionTabState};
 use crate::ui::i18n;
-use gpui::{FocusHandle, ScrollHandle};
+use gpui_kit::{FocusHandle, ScrollHandle};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -367,7 +367,7 @@ impl WorkspaceModel {
         Self {
             tabs: TabRegistry::from_tabs([initial_tab]),
             active_topbar_tab,
-            topbar_tab_scroll_handle: gpui::ScrollHandle::new(),
+            topbar_tab_scroll_handle: gpui_kit::ScrollHandle::new(),
             topbar_previous_visible_tabs: Vec::new(),
             topbar_entering_tabs: Vec::new(),
             topbar_exiting_tabs: Vec::new(),
@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn advancing_next_tab_id_skips_every_transferred_identity() {
-        let cx = gpui::TestAppContext::single();
+        let cx = gpui_kit::TestAppContext::single();
         let focus = cx.read(|app| app.focus_handle());
         let mut model = WorkspaceModel::new(
             TabState::new_hosts(TabId::new(0)),
@@ -1030,7 +1030,7 @@ mod tests {
 
     #[test]
     fn parked_workspace_round_trip_preserves_stable_tab_ids() {
-        let cx = gpui::TestAppContext::single();
+        let cx = gpui_kit::TestAppContext::single();
         let focus = cx.read(|app| app.focus_handle());
         let owner = TabId::new(1);
         let child = TabId::new(2);
@@ -1053,7 +1053,7 @@ mod tests {
 
     #[test]
     fn workspace_placement_sync_tracks_active_and_parked_panes() {
-        let cx = gpui::TestAppContext::single();
+        let cx = gpui_kit::TestAppContext::single();
         let focus = cx.read(|app| app.focus_handle());
         let owner = TabId::new(1);
         let active_child = TabId::new(2);
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn center_swap_promotes_pane_tab_and_moves_top_level_tab_into_pane() {
-        let cx = gpui::TestAppContext::single();
+        let cx = gpui_kit::TestAppContext::single();
         let focus = cx.read(|app| app.focus_handle());
         let owner = TabId::new(1);
         let source = TabId::new(2);

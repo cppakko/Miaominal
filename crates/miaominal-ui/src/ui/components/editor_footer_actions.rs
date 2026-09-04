@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Div, ParentElement, Styled, div};
+use gpui_kit::{AnyElement, Div, ParentElement, Styled, div};
 
 pub(crate) const EDITOR_FOOTER_ACTION_HEIGHT: f32 = 32.0;
 

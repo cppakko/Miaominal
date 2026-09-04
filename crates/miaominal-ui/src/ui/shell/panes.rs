@@ -4,7 +4,7 @@ use super::workspace::{
     TabWorkspaceState,
 };
 use crate::ui::i18n;
-use gpui::{Bounds, Context, FocusHandle, Pixels, Point};
+use gpui_kit::{Bounds, Context, FocusHandle, Pixels, Point};
 use miaominal_terminal::{
     TerminalFreeTypeTarget, terminal_cell_width_default, terminal_line_height_default,
 };
@@ -31,15 +31,15 @@ pub(in crate::ui::shell) struct PaneSplitDragMarker {
     pub axis: SplitAxis,
 }
 
-impl gpui::Render for PaneSplitDragMarker {
+impl gpui_kit::Render for PaneSplitDragMarker {
     fn render(
         &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> impl gpui::IntoElement {
-        use gpui::Styled;
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::Styled;
         // Invisible 1x1 ghost so the cursor styling drives the visual feedback.
-        gpui::div().size(gpui::px(1.0))
+        gpui_kit::div().size(gpui_kit::px(1.0))
     }
 }
 
@@ -670,8 +670,8 @@ impl AppView {
         source_tab_id: TabId,
         target_pane_id: PaneId,
         zone: PaneTabDropZone,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
     ) {
         match zone {
             PaneTabDropZone::Center => {
@@ -714,8 +714,8 @@ impl AppView {
         source_tab_id: TabId,
         target_pane_id: PaneId,
         direction: SplitDirection,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
     ) {
         let Some(source_index) = self.pane_drop_source_index(source_tab_id) else {
             return;
@@ -797,8 +797,8 @@ impl AppView {
         &mut self,
         source_tab_id: TabId,
         target_pane_id: PaneId,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
     ) {
         let Some(source_index) = self.pane_drop_source_index(source_tab_id) else {
             return;

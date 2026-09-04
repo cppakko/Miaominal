@@ -49,7 +49,7 @@ pub(in crate::ui::shell::layout) fn render_terminal_search_overlay(
     app: &AppView,
     visibility: f32,
     cx: &mut Context<AppView>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(

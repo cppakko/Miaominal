@@ -6,12 +6,11 @@ publish = false
 
 [features]
 default = []
-desktop-ui = ["dep:fontdb", "dep:gpui", "dep:gpui-component"]
+desktop-ui = ["dep:fontdb", "dep:gpui-kit"]
 
 [dependencies]
 fontdb = { workspace = true, optional = true }
-gpui = { workspace = true, optional = true }
-gpui-component = { workspace = true, optional = true }
+gpui-kit = { workspace = true, optional = true, features = ["component"] }
 material-colors.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 serde.workspace = true

@@ -313,7 +313,7 @@ fn render_host_profile_item(
     profile: &SessionProfile,
     is_list: bool,
     id_prefix: &'static str,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let display_title = truncate_with_ellipsis(&profile.name, if is_list { 40 } else { 18 });
     let is_favorite = profile.is_favorite;
     let item_id = SharedString::from(format!(
@@ -385,7 +385,7 @@ impl SessionController {
         on_edit: impl Fn(usize, &mut Window, &mut App) + 'static,
         on_open_sftp: impl Fn(usize, &mut Window, &mut App) + 'static,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let actions = HostPageActions::new(on_connect, on_edit, on_open_sftp);
         let hosts_filter_input = self.panel_forms().hosts.filter_input;
         let catalog_view = self.catalog_view();

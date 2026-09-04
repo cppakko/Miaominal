@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_component::{
+use gpui_kit::component::{
     ElementExt,
     breadcrumb::{Breadcrumb, BreadcrumbItem},
     progress::Progress,
@@ -398,10 +398,10 @@ fn sftp_path_button(
 
 fn sftp_path_tooltip(
     text: impl Into<SharedString>,
-) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
     let text = text.into();
 
-    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 fn sftp_path_breadcrumb_shell(
@@ -779,7 +779,7 @@ fn sftp_split_bar(
     tab_id: TabId,
     divider: SftpSplitDivider,
     is_dragging: bool,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let bar_id = SharedString::from(format!(
         "sftp-split-bar-{tab_id}-{}",
         match divider {
@@ -1048,7 +1048,7 @@ fn remote_path_favorites_panel(
 }
 
 fn remote_path_favorites_panel_wrapper(
-    panel: gpui::AnyElement,
+    panel: gpui_kit::AnyElement,
     visibility: f32,
 ) -> impl IntoElement {
     let visibility = visibility.clamp(0.0, 1.0);
@@ -1618,7 +1618,7 @@ impl SftpController {
         section_id: impl Into<ElementId>,
         ordered_tab_ids: &[TabId],
         preferred_tab_id: Option<TabId>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let section_id = section_id.into();
         let sftp_tabs = self.tabs();
         let mut transfers: Vec<(TabId, (&SftpTabState, &SftpTransferRow))> = self
@@ -1704,7 +1704,7 @@ impl SftpController {
         transfer_count: usize,
         active_count: usize,
         failed_count: usize,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
@@ -1773,7 +1773,7 @@ impl SftpController {
         sftp_tab: &SftpTabState,
         transfer: &SftpTransferRow,
         profiles: &[SessionProfile],
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let transfer_id = transfer.transfer_id;
@@ -2045,7 +2045,7 @@ impl SftpController {
                 })
                 .child(
                     Progress::new(format!("sftp-transfer-progress-{tab_id}-{}", transfer_id.0))
-                        .with_size(gpui_component::Size::Small)
+                        .with_size(gpui_kit::component::Size::Small)
                         .value(progress_metrics.value)
                         .loading(progress_metrics.loading)
                         .color(rgb(accent)),
@@ -2066,7 +2066,7 @@ impl SftpController {
         &self,
         tab_id: TabId,
         transfer: &SftpTransferRow,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let transfer_id = transfer.transfer_id;
         let mut rows = v_flex().w_full().gap_1().pl(px(38.0));
@@ -2178,7 +2178,7 @@ impl SftpController {
                                     "sftp-transfer-child-progress-{tab_id}-{}-{}",
                                     transfer_id.0, child.child_id.0
                                 ))
-                                .with_size(gpui_component::Size::Small)
+                                .with_size(gpui_kit::component::Size::Small)
                                 .value(metrics.value)
                                 .loading(metrics.loading)
                                 .color(rgb(accent)),
@@ -2372,7 +2372,7 @@ impl SftpController {
         fallback_section: SidebarSection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         self.render_sftp_page_content(
             entity,
             tab_id,
@@ -2389,7 +2389,7 @@ impl SftpController {
         controller: Entity<Self>,
         tab_id: TabId,
         sftp_tab: &SftpTabState,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
@@ -2488,7 +2488,7 @@ impl SftpController {
             ))
             .into_any_element();
 
-        let table_row_height = gpui_component::Size::Small.table_row_height();
+        let table_row_height = gpui_kit::component::Size::Small.table_row_height();
         let remote_table_bounds = Rc::new(RefCell::new(None));
         let remote_sftp_table = self.remote_table();
         let remote_table_for_menu = self.remote_table();
@@ -2612,7 +2612,7 @@ impl SftpController {
             })
             .child(
                 DataTable::new(&self.remote_table())
-                    .with_size(gpui_component::Size::Small)
+                    .with_size(gpui_kit::component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
             )
@@ -2703,7 +2703,7 @@ impl SftpController {
         .into_any_element()
     }
 
-    fn render_missing_sftp_page_content(section: SidebarSection) -> gpui::AnyElement {
+    fn render_missing_sftp_page_content(section: SidebarSection) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -2762,7 +2762,7 @@ impl SftpController {
         fallback_section: SidebarSection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
@@ -2865,7 +2865,7 @@ impl SftpController {
             .into_any_element()
         };
 
-        let table_row_height = gpui_component::Size::Small.table_row_height();
+        let table_row_height = gpui_kit::component::Size::Small.table_row_height();
         let local_table_bounds = Rc::new(RefCell::new(None));
         let remote_table_bounds = Rc::new(RefCell::new(None));
         let local_sftp_table = self.local_table();
@@ -3067,7 +3067,7 @@ impl SftpController {
             })
             .child(
                 DataTable::new(&self.local_table())
-                    .with_size(gpui_component::Size::Small)
+                    .with_size(gpui_kit::component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
             )
@@ -3221,7 +3221,7 @@ impl SftpController {
             })
             .child(
                 DataTable::new(&self.remote_table())
-                    .with_size(gpui_component::Size::Small)
+                    .with_size(gpui_kit::component::Size::Small)
                     .bordered(false)
                     .scrollbar_visible(true, true),
             )
@@ -3321,7 +3321,7 @@ impl SftpController {
                 div()
                     .flex_grow(1.0)
                     .flex_shrink(1.0)
-                    .flex_basis(gpui::relative(local_panel_flex))
+                    .flex_basis(gpui_kit::relative(local_panel_flex))
                     .h_full()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
@@ -3364,7 +3364,7 @@ impl SftpController {
                 div()
                     .flex_grow(1.0)
                     .flex_shrink(1.0)
-                    .flex_basis(gpui::relative(1.0 - local_panel_flex))
+                    .flex_basis(gpui_kit::relative(1.0 - local_panel_flex))
                     .h_full()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
@@ -3485,7 +3485,7 @@ impl SftpController {
                                 div()
                                     .flex_grow(1.0)
                                     .flex_shrink(1.0)
-                                    .flex_basis(gpui::relative(browser_panel_flex))
+                                    .flex_basis(gpui_kit::relative(browser_panel_flex))
                                     .min_w(px(0.0))
                                     .min_h(px(0.0))
                                     .child(browser_panels),
@@ -3511,7 +3511,7 @@ impl SftpController {
                                     div()
                                         .flex_grow(progress_center_visibility)
                                         .flex_shrink(1.0)
-                                        .flex_basis(gpui::relative(progress_center_footer_flex))
+                                        .flex_basis(gpui_kit::relative(progress_center_footer_flex))
                                         .min_w(px(0.0))
                                         .min_h(px(0.0))
                                         .overflow_hidden()
@@ -3539,7 +3539,7 @@ impl SftpController {
         tab_id: TabId,
         prompt: &SftpPromptState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;

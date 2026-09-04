@@ -1,11 +1,11 @@
 use crate::global::{current_settings, current_theme, font_fallbacks, font_family};
 use crate::model::{DEFAULT_FONT_SIZE, KeyBinding};
 use crate::theme as material_theme;
-use gpui::{App, Font, FontFallbacks, Hsla, Pixels, font, px, rgb};
-use gpui_component::{
+use gpui_kit::component::{
     highlighter::{HighlightTheme, HighlightThemeStyle},
     theme::{Theme as ComponentTheme, ThemeMode},
 };
+use gpui_kit::{App, Font, FontFallbacks, Hsla, Pixels, font, px, rgb};
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
@@ -152,6 +152,7 @@ pub fn sync_component_theme(cx: &mut App) {
 
     component_theme.tokens = (&component_theme.colors).into();
     component_theme.highlight_theme = Arc::new(md3_highlight_theme(&material));
+    ComponentTheme::sync_base(cx);
 }
 
 fn md3_highlight_theme(material: &material_theme::MaterialTheme) -> HighlightTheme {
@@ -394,7 +395,7 @@ pub fn scaled_line_height(base_height: f32) -> Pixels {
 }
 
 impl KeyBinding {
-    pub fn matches_keystroke(&self, keystroke: &gpui::Keystroke) -> bool {
+    pub fn matches_keystroke(&self, keystroke: &gpui_kit::Keystroke) -> bool {
         self.ctrl == keystroke.modifiers.control
             && self.shift == keystroke.modifiers.shift
             && self.alt == keystroke.modifiers.alt
@@ -413,9 +414,9 @@ mod tests {
         shift: bool,
         alt: bool,
         platform: bool,
-    ) -> gpui::Keystroke {
-        gpui::Keystroke {
-            modifiers: gpui::Modifiers {
+    ) -> gpui_kit::Keystroke {
+        gpui_kit::Keystroke {
+            modifiers: gpui_kit::Modifiers {
                 control,
                 shift,
                 alt,

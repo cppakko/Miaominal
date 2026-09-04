@@ -1,4 +1,4 @@
-use gpui::Context;
+use gpui_kit::Context;
 
 use super::{
     AppCommand, SessionConnectionState, SessionController, SessionPurpose, SessionTabOwnerRoute,
@@ -219,7 +219,7 @@ impl SessionTabOwnerRoute {
         error: String,
         delay: std::time::Duration,
         cx: &mut Context<Self>,
-    ) -> gpui::Task<()> {
+    ) -> gpui_kit::Task<()> {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let owner = match this.update(cx, |route, _| route.owner.clone()) {

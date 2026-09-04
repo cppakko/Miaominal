@@ -1,5 +1,5 @@
-use gpui::{AnyWindowHandle, App, Entity, Global, WeakEntity, Window};
-use gpui_component::Root;
+use gpui_kit::component::Root;
+use gpui_kit::{AnyWindowHandle, App, Entity, Global, WeakEntity, Window};
 use miaominal_settings::WindowCloseBehavior;
 
 use super::AppView;
@@ -254,7 +254,7 @@ const fn current_platform() -> DesktopPlatform {
 #[cfg(windows)]
 mod platform {
     use super::{QUIT_MENU_ID, SHOW_MENU_ID, TrayCommand, TraySnapshot};
-    use gpui::Window;
+    use gpui_kit::Window;
     use raw_window_handle::RawWindowHandle;
     use tokio::sync::mpsc::UnboundedSender;
     use tray_icon::{
@@ -413,7 +413,7 @@ mod platform {
 #[cfg(target_os = "linux")]
 mod platform {
     use super::{QUIT_MENU_ID, SHOW_MENU_ID, TrayCommand, TraySnapshot};
-    use gpui::Window;
+    use gpui_kit::Window;
     use gtk::glib::ControlFlow;
     use std::{
         panic::{AssertUnwindSafe, catch_unwind},
@@ -588,7 +588,7 @@ mod platform {
 #[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use super::{TrayCommand, TraySnapshot};
-    use gpui::Window;
+    use gpui_kit::Window;
     use tokio::sync::mpsc::UnboundedSender;
 
     pub(super) struct PlatformTray;

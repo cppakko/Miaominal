@@ -315,8 +315,8 @@ impl KeychainController {
         self.deploy_key_id = None;
         set_input_value(&self.forms.name_input, "", window, cx);
         set_input_value(&self.forms.import_path_input, "", window, cx);
-        set_input_value(&self.forms.import_private_key_input, "", window, cx);
-        set_input_value(&self.forms.import_public_key_input, "", window, cx);
+        set_editor_value(&self.forms.import_private_key_input, "", window, cx);
+        set_editor_value(&self.forms.import_public_key_input, "", window, cx);
         set_input_value(&self.forms.import_passphrase_input, "", window, cx);
         set_input_value(
             &self.forms.deploy_location_input,
@@ -330,7 +330,7 @@ impl KeychainController {
             window,
             cx,
         );
-        set_input_value(
+        set_editor_value(
             &self.forms.deploy_command_input,
             KEYCHAIN_DEPLOY_DEFAULT_COMMAND,
             window,
@@ -352,7 +352,7 @@ impl KeychainController {
             window,
             cx,
         );
-        set_input_value(&self.forms.import_private_key_input, "", window, cx);
+        set_editor_value(&self.forms.import_private_key_input, "", window, cx);
         let path = path.display().to_string();
         self.status_message =
             i18n::string_args("keychain.messages.selected_import_file", &[("path", &path)]);
@@ -671,13 +671,13 @@ impl KeychainController {
                             Ok(Some((private_key_material, public_key_material))) => {
                                 this.editor_draft_source = Some(ManagedKeySource::Generated);
                                 set_input_value(&this.forms.import_path_input, "", window, cx);
-                                set_input_value(
+                                set_editor_value(
                                     &this.forms.import_private_key_input,
                                     &private_key_material,
                                     window,
                                     cx,
                                 );
-                                set_input_value(
+                                set_editor_value(
                                     &this.forms.import_public_key_input,
                                     &public_key_material,
                                     window,

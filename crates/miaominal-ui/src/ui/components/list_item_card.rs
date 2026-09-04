@@ -1,9 +1,9 @@
 use super::card_surface;
-use gpui::prelude::FluentBuilder as _;
-use gpui::{
+use gpui_kit::component::h_flex;
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
     AnyElement, App, Div, InteractiveElement, MouseButton, ParentElement, Styled, Window, px,
 };
-use gpui_component::h_flex;
 
 pub(crate) fn list_item_card(
     leading: AnyElement,

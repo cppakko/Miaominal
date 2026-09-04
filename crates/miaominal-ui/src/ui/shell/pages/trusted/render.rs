@@ -186,7 +186,7 @@ fn trusted_stat_tile(label: String, value: String, tone: u32) -> impl IntoElemen
         )
 }
 
-fn risk_badge(view: &TrustedKnownHostView) -> Option<gpui::AnyElement> {
+fn risk_badge(view: &TrustedKnownHostView) -> Option<gpui_kit::AnyElement> {
     let roles = miaominal_settings::current_theme().material.roles;
 
     if view.duplicate_count > 1 {
@@ -206,13 +206,13 @@ fn risk_badge(view: &TrustedKnownHostView) -> Option<gpui::AnyElement> {
     }
 }
 
-fn linked_profile_badges(view: &TrustedKnownHostView) -> Vec<gpui::AnyElement> {
+fn linked_profile_badges(view: &TrustedKnownHostView) -> Vec<gpui_kit::AnyElement> {
     let roles = miaominal_settings::current_theme().material.roles;
     if view.linked_profiles.is_empty() {
         return Vec::new();
     }
 
-    let mut badges: Vec<gpui::AnyElement> = view
+    let mut badges: Vec<gpui_kit::AnyElement> = view
         .linked_profiles
         .iter()
         .take(2)
@@ -584,7 +584,7 @@ impl SessionController {
         controller: Entity<Self>,
         prompt: &PendingKnownHostDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let subtitle = i18n::string_args(
             "dialogs.known_host_delete.message",
             &[
@@ -638,7 +638,7 @@ impl SessionController {
         &self,
         controller: Entity<Self>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let trusted_filter_input = self.panel_forms().trusted.filter_input;
         let entries = self.known_hosts_entries().clone();
         let profiles = self.profiles();
@@ -831,7 +831,7 @@ impl SessionController {
         prompt: &HostKeyPrompt,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let mismatch = prompt.previous_fingerprint.is_some();
@@ -982,7 +982,7 @@ impl SessionController {
     }
 }
 
-fn detail_row(label: String, value: &str) -> gpui::AnyElement {
+fn detail_row(label: String, value: &str) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(

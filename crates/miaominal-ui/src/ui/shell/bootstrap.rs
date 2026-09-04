@@ -2,7 +2,7 @@ use super::*;
 use crate::ui::application::{ApplicationBootstrapSnapshot, ApplicationVaultStatus};
 use crate::ui::i18n;
 use crate::ui::shell::bootstrap_subscriptions::{AppViewSubscriptionsArgs, build_subscriptions};
-use gpui_component::WindowExt as _;
+use gpui_kit::component::WindowExt as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SubmitOverlayTarget {
@@ -122,7 +122,7 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
             let prompt_input = agent.read(cx).prompt_input();
             if window
                 .focused_input(cx)
-                .is_none_or(|input| input.entity_id() != prompt_input.entity_id())
+                .is_none_or(|input| input.as_textarea() != Some(&prompt_input))
             {
                 return;
             }

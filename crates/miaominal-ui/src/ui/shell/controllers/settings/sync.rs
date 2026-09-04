@@ -4,7 +4,7 @@ use crate::ui::shell::{
     DeferredAppCommand, DialogOverlaySnapshot, SettingsDeferredCommand, ValidationFailure,
     error_notification, success_notification, validation_notification,
 };
-use gpui::App;
+use gpui_kit::App;
 use miaominal_services::SyncTaskResult;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

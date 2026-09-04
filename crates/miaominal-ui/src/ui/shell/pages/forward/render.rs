@@ -47,7 +47,7 @@ fn render_forward_rule_connection_control(
     rule_id: String,
     switch_id: String,
     state: ForwardRuleConnectionUiState,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     div()
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             cx.stop_propagation();
@@ -267,7 +267,7 @@ impl SessionController {
         &self,
         controller: Entity<Self>,
         selected_profile: Option<&SessionProfile>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let forms = self.panel_forms().forwarding;
         let editor_state = self.editor_state();
         let material = miaominal_settings::current_theme().material;
@@ -655,7 +655,7 @@ impl SessionController {
         controller: Entity<Self>,
         actions: ForwardRuleActions,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let filter_input = self.panel_forms().forwarding.filter_input;
         let filter_text = filter_input.read(cx).value().trim().to_ascii_lowercase();
         let profiles = self.profiles();
@@ -730,7 +730,7 @@ impl SessionController {
         &self,
         controller: Entity<Self>,
         cx: &App,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let actions = ForwardRuleActions::new(controller.clone());
         let filter_input = self.panel_forms().forwarding.filter_input;
         let profiles = self.profiles();

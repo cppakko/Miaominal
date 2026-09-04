@@ -1,11 +1,11 @@
 use crate::ui::assets::AppIcon;
-use gpui::{
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::{Icon, v_flex};
+use gpui_kit::{
     AnyElement, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled, div,
     prelude::FluentBuilder as _, px, rgb,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::{Icon, v_flex};
 
 const BASIC_DIALOG_MAX_WIDTH: f32 = 560.0;
 const BASIC_DIALOG_RADIUS: f32 = 28.0;
@@ -220,6 +220,6 @@ pub(crate) fn basic_dialog_action_button(
         .label(label.into())
 }
 
-fn dialog_color_with_alpha(color: u32, alpha: u8) -> gpui::Rgba {
-    gpui::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
+fn dialog_color_with_alpha(color: u32, alpha: u8) -> gpui_kit::Rgba {
+    gpui_kit::rgba(((color & 0x00ff_ffff) << 8) | alpha as u32)
 }

@@ -1,5 +1,5 @@
-use gpui::{px, rgb};
-use gpui_component::{IconName, Sizable, spinner::Spinner};
+use gpui_kit::component::{IconName, Sizable, spinner::Spinner};
+use gpui_kit::{px, rgb};
 
 pub(crate) fn md3_spinner(size: f32) -> Spinner {
     let material = miaominal_settings::current_theme().material;

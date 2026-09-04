@@ -1,5 +1,5 @@
-use gpui::{App, AssetSource, IntoElement, RenderOnce, Result, SharedString, Window};
-use gpui_component::{Icon, IconNamed};
+use gpui_kit::component::{Icon, IconNamed};
+use gpui_kit::{App, AssetSource, IntoElement, RenderOnce, Result, SharedString, Window};
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 
@@ -128,7 +128,7 @@ impl AssetSource for AppAssets {
             return Ok(Some(file.data));
         }
 
-        let bundled = gpui_component_assets::Assets;
+        let bundled = gpui_kit::assets::Assets;
         match bundled.load(path) {
             Ok(data) => Ok(data),
             Err(_) => Ok(None),
@@ -140,7 +140,7 @@ impl AssetSource for AppAssets {
             .filter_map(|entry| entry.starts_with(path).then(|| entry.into()))
             .collect();
 
-        let bundled = gpui_component_assets::Assets;
+        let bundled = gpui_kit::assets::Assets;
         if let Ok(mut extra) = bundled.list(path) {
             items.append(&mut extra);
         }

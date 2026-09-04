@@ -170,7 +170,7 @@ impl AppView {
         let (tab, session) =
             SessionController::build_connection_test_tab(tab_id, &profile, connection.commands);
         self.insert_session_tab(tab, session, cx);
-        window.blur();
+        window.blur(cx);
         self.controllers.session.update(cx, |controller, cx| {
             controller.spawn_session_event_loop(tab_id, connection.events, cx);
         });
@@ -710,7 +710,7 @@ impl AppView {
 
     pub(in crate::ui::shell) fn handle_global_shortcut(
         &mut self,
-        keystroke: &gpui::Keystroke,
+        keystroke: &gpui_kit::Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1196,7 +1196,7 @@ impl AppView {
             rename_input.update(cx, |input, cx| {
                 input.focus(window, cx);
             });
-            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+            window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
         });
     }
 
@@ -1255,8 +1255,8 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
-    use gpui_component::WindowExt as _;
+    use gpui_kit::TestAppContext;
+    use gpui_kit::component::WindowExt as _;
 
     struct EmptyTestView;
 
@@ -1301,9 +1301,9 @@ mod tests {
         assert_eq!(closed.profile.id, "profile");
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn session_notification_is_pushed_to_supplied_window(cx: &mut TestAppContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::init);
         let (_root, cx) = cx.add_window_view(|window, cx| {
             let view = cx.new(|_| EmptyTestView);
             Root::new(view, window, cx)

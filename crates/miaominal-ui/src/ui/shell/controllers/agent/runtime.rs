@@ -1,7 +1,7 @@
 use crate::ui::i18n;
 use crate::ui::shell::TabId;
 use crate::ui::shell::session_agent_view::SessionAgentConversationView;
-use gpui::{App, AppContext as _, Entity, ListOffset, Subscription, px};
+use gpui_kit::{App, AppContext as _, Entity, ListOffset, Subscription, px};
 use miaominal_agent::{AgentMode, AgentToolCancellation};
 use std::collections::HashMap;
 use std::{sync::Arc, time::Instant};
@@ -257,7 +257,7 @@ pub(in crate::ui::shell) struct SessionAgentState {
     /// released for a hidden session.
     pub(in crate::ui::shell) conversation_viewport: Option<SessionAgentConversationViewport>,
     pub(in crate::ui::shell) next_message_motion_key: u64,
-    pub(super) pending_task: Option<gpui::Task<()>>,
+    pub(super) pending_task: Option<gpui_kit::Task<()>>,
     pub(super) pending_stream_stop: Option<tokio::sync::watch::Sender<bool>>,
     pub(super) pending_agent_cancellation: Option<AgentToolCancellation>,
     pub(in crate::ui::shell) active_request_id: u64,
@@ -911,7 +911,7 @@ pub(in crate::ui::shell) fn trailing_at_mention_query(value: &str) -> Option<(us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui_kit::TestAppContext;
 
     #[test]
     fn conversation_viewport_preserves_search_offset_on_reopen_and_drops_it_after_clear() {

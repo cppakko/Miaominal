@@ -9,9 +9,23 @@ alacritty_terminal.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 futures.workspace = true
-gpui.workspace = true
-gpui-component.workspace = true
-gpui-component-assets.workspace = true
+gpui-kit = { workspace = true, features = [
+    "assets",
+    "component",
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+] }
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 log.workspace = true
 miaominal-agent = { path = "../miaominal-agent" }
@@ -30,9 +44,6 @@ open.workspace = true
 rfd.workspace = true
 rust-embed.workspace = true
 serde_json.workspace = true
-settings.workspace = true
-theme.workspace = true
-theme_settings.workspace = true
 time.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -81,5 +92,5 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

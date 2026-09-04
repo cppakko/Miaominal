@@ -1,7 +1,7 @@
 use crate::ui::i18n;
 use crate::ui::shell::*;
 use anyhow::Result;
-use gpui::{App, Context, Window};
+use gpui_kit::{App, Context, Window};
 use miaominal_secrets::ProtectedPassphrase;
 use miaominal_services::{LocalVaultPassphraseChangeOutcome, LocalVaultTransition};
 

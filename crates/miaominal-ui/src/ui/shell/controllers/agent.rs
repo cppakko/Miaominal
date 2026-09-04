@@ -4,15 +4,16 @@ use crate::ui::shell::session_agent_view::SessionAgentConversationView;
 use crate::ui::shell::{
     LocalVaultStatus, SESSION_MONITOR_PANEL_WIDTH, SessionQueryPort, SessionTerminalPort,
     TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state, set_input_placeholder,
+    set_textarea_placeholder,
 };
 use anyhow::Result;
-use gpui::{
+use gpui_kit::component::{
+    VirtualListScrollHandle,
+    input::{InputEvent, InputState, TextareaState},
+};
+use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, IntoElement,
     Pixels, Point, Render, Subscription, WeakEntity, Window, div, px,
-};
-use gpui_component::{
-    VirtualListScrollHandle,
-    input::{InputEvent, InputState},
 };
 use miaominal_agent::AgentMode;
 use miaominal_secrets::SecretStore;
@@ -62,7 +63,7 @@ pub(in crate::ui::shell) use tool_interaction::{
 };
 
 pub(in crate::ui::shell) struct WorkspaceAgentForms {
-    pub(in crate::ui::shell) prompt_input: Entity<InputState>,
+    pub(in crate::ui::shell) prompt_input: Entity<TextareaState>,
     pub(in crate::ui::shell) ask_user_input: Entity<InputState>,
     pub(in crate::ui::shell) title_input: Entity<InputState>,
     pub(in crate::ui::shell) rename_title_input: Entity<InputState>,
@@ -222,14 +223,13 @@ pub(in crate::ui::shell) struct AgentController {
 impl AgentController {
     fn build_forms(window: &mut Window, cx: &mut Context<Self>) -> WorkspaceAgentForms {
         let prompt_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
+            TextareaState::new(window, cx)
                 .auto_grow(3, 8)
                 .submit_on_enter(true)
                 .context_menu(false)
                 .placeholder("")
         });
-        set_input_placeholder(
+        set_textarea_placeholder(
             &prompt_input,
             i18n::string("workspace.panel.agent.placeholder"),
             window,
@@ -299,11 +299,13 @@ impl AgentController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        set_textarea_placeholder(
+            &self.forms.prompt_input,
+            i18n::string("workspace.panel.agent.placeholder"),
+            window,
+            cx,
+        );
         for (input, key) in [
-            (
-                &self.forms.prompt_input,
-                "workspace.panel.agent.placeholder",
-            ),
             (
                 &self.forms.ask_user_input,
                 "workspace.panel.agent.tool_placeholders.custom_answer",
@@ -645,7 +647,7 @@ impl AgentController {
         self.focus.clone()
     }
 
-    pub(in crate::ui::shell) fn prompt_input(&self) -> Entity<InputState> {
+    pub(in crate::ui::shell) fn prompt_input(&self) -> Entity<TextareaState> {
         self.forms.prompt_input.clone()
     }
 
@@ -886,7 +888,7 @@ impl AgentController {
                 Some(observer.update(cx, |observer, cx| observer.observe(&view, controller, cx)));
         }
         if let Some((message_index, _)) = state.search_scroll_target {
-            view.read(cx).scroll_to(message_index, gpui::px(0.0));
+            view.read(cx).scroll_to(message_index, gpui_kit::px(0.0));
         }
         let generating_label = i18n::string("workspace.panel.agent.thinking");
         view.update(cx, |view, cx| {
@@ -994,7 +996,11 @@ impl AgentController {
 impl EventEmitter<AppCommand> for AgentController {}
 
 impl Render for AgentController {
-    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
     }
 }

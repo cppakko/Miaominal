@@ -9,14 +9,14 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use futures::StreamExt;
-use gpui::{
-    AppContext as _, Bounds, Context, Entity, EventEmitter, Pixels, Point, ScrollHandle,
-    SharedString, Subscription, WeakEntity, Window, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     input::{InputEvent, InputState},
     scroll::ScrollbarHandle as _,
     table::{TableEvent, TableState},
+};
+use gpui_kit::{
+    AppContext as _, Bounds, Context, Entity, EventEmitter, Pixels, Point, ScrollHandle,
+    SharedString, Subscription, WeakEntity, Window, px,
 };
 use miaominal_core::profile::SessionProfile;
 use miaominal_services::{PlannedSftpDownload, SftpService};
@@ -837,8 +837,8 @@ enum InlineRenameState {
 struct SftpEditSession {
     pub(in crate::ui::shell) temp_path: PathBuf,
     pub(in crate::ui::shell) _watcher: notify::RecommendedWatcher,
-    pub(in crate::ui::shell) debounce_task: Option<gpui::Task<()>>,
-    pub(in crate::ui::shell) _watch_task: gpui::Task<()>,
+    pub(in crate::ui::shell) debounce_task: Option<gpui_kit::Task<()>>,
+    pub(in crate::ui::shell) _watch_task: gpui_kit::Task<()>,
 }
 
 pub(in crate::ui::shell) struct SftpBrowserForms {
@@ -881,8 +881,8 @@ struct SftpInteractionState {
     inline_rename: Option<InlineRenameState>,
     edit_pending_downloads: HashMap<TransferId, String>,
     edit_sessions: HashMap<String, SftpEditSession>,
-    event_task: Option<gpui::Task<()>>,
-    progress_task: Option<gpui::Task<()>>,
+    event_task: Option<gpui_kit::Task<()>>,
+    progress_task: Option<gpui_kit::Task<()>>,
     owner_route: Option<Entity<SftpTabOwnerRoute>>,
 }
 
@@ -1440,7 +1440,7 @@ impl SftpController {
         self.forms.borrow().remote_table.clone()
     }
 
-    fn browser_tab_id(&self, cx: &gpui::App) -> Option<TabId> {
+    fn browser_tab_id(&self, cx: &gpui_kit::App) -> Option<TabId> {
         self.remote_table()
             .read(cx)
             .delegate()
@@ -2986,7 +2986,7 @@ impl SftpController {
         &self,
         anchor: &std::path::Path,
         row_ix: usize,
-        cx: &gpui::App,
+        cx: &gpui_kit::App,
     ) -> Vec<PathBuf> {
         let table = self.local_table().read(cx);
         let delegate = table.delegate();
@@ -3004,7 +3004,7 @@ impl SftpController {
         &self,
         anchor: &str,
         row_ix: usize,
-        cx: &gpui::App,
+        cx: &gpui_kit::App,
     ) -> Vec<String> {
         let table = self.remote_table().read(cx);
         let delegate = table.delegate();
@@ -3267,7 +3267,7 @@ impl SftpController {
         had_context
     }
 
-    fn drag_selection_scroll_offset(&self, side: SftpBrowserSide, cx: &gpui::App) -> f32 {
+    fn drag_selection_scroll_offset(&self, side: SftpBrowserSide, cx: &gpui_kit::App) -> f32 {
         let offset = match side {
             SftpBrowserSide::Local => {
                 self.local_table()
@@ -3648,7 +3648,7 @@ impl SftpController {
         side: SftpBrowserSide,
         drag: SftpDragSelectionState,
         row_height: Pixels,
-        cx: &gpui::App,
+        cx: &gpui_kit::App,
     ) -> (Option<(usize, usize)>, Vec<String>) {
         match side {
             SftpBrowserSide::Local => {
@@ -4319,7 +4319,7 @@ impl SftpController {
         &self,
         tab_id: TabId,
         path: &str,
-        cx: &gpui::App,
+        cx: &gpui_kit::App,
     ) -> Option<SftpEntry> {
         if let Some(entry) = self.tab(tab_id).and_then(|tab| {
             tab.remote_entries

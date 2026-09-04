@@ -1,6 +1,6 @@
 use crate::ui::assets::AppIcon;
-use gpui::{Div, IntoElement, ParentElement, Styled, div, px, rgb};
-use gpui_component::{Icon, Sizable as _};
+use gpui_kit::component::{Icon, Sizable as _};
+use gpui_kit::{Div, IntoElement, ParentElement, Styled, div, px, rgb};
 
 #[derive(Clone, Copy)]
 pub(crate) enum IconTileTone {
@@ -17,7 +17,7 @@ pub(crate) fn icon_tile(
     let roles = miaominal_settings::current_theme().material.roles;
     let (background, foreground) = match tone {
         IconTileTone::Primary => (
-            gpui::rgba(((roles.primary & 0x00ff_ffff) << 8) | 0x28),
+            gpui_kit::rgba(((roles.primary & 0x00ff_ffff) << 8) | 0x28),
             rgb(roles.primary),
         ),
         IconTileTone::Muted => (

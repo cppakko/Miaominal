@@ -5,7 +5,7 @@ use crate::ui::{
 };
 
 use super::super::super::super::*;
-use gpui_component::Size;
+use gpui_kit::component::Size;
 
 #[path = "editor/fields.rs"]
 mod fields;

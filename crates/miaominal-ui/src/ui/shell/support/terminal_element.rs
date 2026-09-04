@@ -3,7 +3,7 @@ use crate::ui::shell::{
     AppView, PaneId, SessionController, TabId, TerminalHoveredLink, WorkspaceTerminalInputExt,
 };
 use alacritty_terminal::index::Side;
-use gpui::{
+use gpui_kit::{
     Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
     InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
     StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
@@ -48,8 +48,8 @@ impl InputHandler for TerminalImeHandler {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
             range: 0..0,
@@ -59,8 +59,8 @@ impl InputHandler for TerminalImeHandler {
 
     fn marked_text_range(
         &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) -> Option<Range<usize>> {
         None
     }
@@ -69,8 +69,8 @@ impl InputHandler for TerminalImeHandler {
         &mut self,
         _range: Range<usize>,
         _adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) -> Option<String> {
         None
     }
@@ -79,8 +79,8 @@ impl InputHandler for TerminalImeHandler {
         &mut self,
         _replacement_range: Option<Range<usize>>,
         text: &str,
-        _window: &mut gpui::Window,
-        cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
     ) {
         if text.is_empty() {
             return;
@@ -99,19 +99,19 @@ impl InputHandler for TerminalImeHandler {
         _range: Option<Range<usize>>,
         _new_text: &str,
         _new_selected_range: Option<Range<usize>>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) {
         // Preedit during IME composition; terminal relies on the OS IME popup for display.
     }
 
-    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::App) {}
+    fn unmark_text(&mut self, _window: &mut gpui_kit::Window, _cx: &mut gpui_kit::App) {}
 
     fn bounds_for_range(
         &mut self,
         _range: Range<usize>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }
@@ -119,8 +119,8 @@ impl InputHandler for TerminalImeHandler {
     fn character_index_for_point(
         &mut self,
         _point: Point<Pixels>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
+        _window: &mut gpui_kit::Window,
+        _cx: &mut gpui_kit::App,
     ) -> Option<usize> {
         None
     }
@@ -323,8 +323,8 @@ fn prepare_terminal_canvas_prepaint(
     bounds: Bounds<Pixels>,
     cell_width: f32,
     line_height: f32,
-    window: &mut gpui::Window,
-    cx: &mut gpui::Context<AppView>,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::Context<AppView>,
 ) -> Option<TerminalCanvasPrepaint> {
     let (active_tab_id, focus, local_drop_target, metrics_changed) = if pane_id
         == this.workspace.workspace.active_pane_id
@@ -508,8 +508,8 @@ fn paint_snapshot(
     drop_target: Option<TerminalFreeTypeTarget>,
     cell_width: f32,
     line_height: f32,
-    window: &mut gpui::Window,
-    cx: &mut gpui::App,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
 ) {
     let cell_width_px = px(cell_width);
     let line_height_px = px(line_height);
@@ -590,7 +590,7 @@ fn paint_free_type_drop_line_highlight(
     origin: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-    window: &mut gpui::Window,
+    window: &mut gpui_kit::Window,
 ) {
     let Some(row) = terminal_free_type_drop_line_row(target, snapshot.cells.len()) else {
         return;
@@ -627,7 +627,7 @@ fn paint_free_type_drop_caret(
     origin: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-    window: &mut gpui::Window,
+    window: &mut gpui_kit::Window,
 ) {
     let Ok(row) = usize::try_from(target.line) else {
         return;
@@ -661,7 +661,7 @@ fn paint_backgrounds(
     origin: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-    window: &mut gpui::Window,
+    window: &mut gpui_kit::Window,
 ) {
     let scale_factor = window.scale_factor();
     for (row, cells) in snapshot.cells.iter().enumerate() {
@@ -776,7 +776,7 @@ fn paint_unfocused_cursor(
     origin: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-    window: &mut gpui::Window,
+    window: &mut gpui_kit::Window,
 ) {
     let scale_factor = window.scale_factor();
     for (row, cells) in snapshot.cells.iter().enumerate() {
@@ -794,7 +794,11 @@ fn paint_unfocused_cursor(
                 row,
                 scale_factor,
             );
-            window.paint_quad(gpui::outline(bounds, cell.bg, gpui::BorderStyle::Solid));
+            window.paint_quad(gpui_kit::outline(
+                bounds,
+                cell.bg,
+                gpui_kit::BorderStyle::Solid,
+            ));
         }
     }
 }
@@ -804,7 +808,7 @@ fn paint_search_highlights(
     origin: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-    window: &mut gpui::Window,
+    window: &mut gpui_kit::Window,
 ) {
     let match_color = Hsla {
         h: 50.0 / 360.0,
@@ -890,7 +894,7 @@ fn build_line_shape_key_and_runs(
     cells: &[miaominal_terminal::TerminalCell],
     row_index: usize,
     hovered_link: Option<&TerminalHoveredLink>,
-    base_font: &gpui::Font,
+    base_font: &gpui_kit::Font,
 ) -> (TerminalLineShapeKey, Vec<TextRun>) {
     let mut hasher = DefaultHasher::new();
     let mut text_len = 0usize;
@@ -1000,7 +1004,11 @@ fn runs_compatible(a: &TextRun, b: &TextRun) -> bool {
         && a.strikethrough == b.strikethrough
 }
 
-fn paint_scrollbar(bounds: Bounds<Pixels>, snapshot: &TerminalSnapshot, window: &mut gpui::Window) {
+fn paint_scrollbar(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSnapshot,
+    window: &mut gpui_kit::Window,
+) {
     let Some(metrics) = terminal_scrollbar_metrics(
         bounds,
         snapshot.screen_lines,
@@ -1015,14 +1023,14 @@ fn paint_scrollbar(bounds: Bounds<Pixels>, snapshot: &TerminalSnapshot, window: 
     let corners = Corners::all(corner_radius);
 
     // Keep the track transparent so only the thumb is visible.
-    let track_color = gpui::transparent_black();
+    let track_color = gpui_kit::transparent_black();
     window.paint_quad(quad(
         metrics.track_bounds,
         corners,
         Background::from(track_color),
-        gpui::Edges::all(px(0.0)),
-        gpui::transparent_black(),
-        gpui::BorderStyle::default(),
+        gpui_kit::Edges::all(px(0.0)),
+        gpui_kit::transparent_black(),
+        gpui_kit::BorderStyle::default(),
     ));
 
     // MD3: thumb uses on_surface_variant at medium opacity
@@ -1031,9 +1039,9 @@ fn paint_scrollbar(bounds: Bounds<Pixels>, snapshot: &TerminalSnapshot, window: 
         metrics.thumb_bounds,
         corners,
         Background::from(thumb_color),
-        gpui::Edges::all(px(0.0)),
-        gpui::transparent_black(),
-        gpui::BorderStyle::default(),
+        gpui_kit::Edges::all(px(0.0)),
+        gpui_kit::transparent_black(),
+        gpui_kit::BorderStyle::default(),
     ));
 }
 
@@ -1242,7 +1250,7 @@ mod tests {
 
         let text = materialize_line_text(&cells);
         let (shape_key, _) =
-            build_line_shape_key_and_runs(&cells, 0, None, &gpui::font("Consolas"));
+            build_line_shape_key_and_runs(&cells, 0, None, &gpui_kit::font("Consolas"));
 
         assert_eq!(shape_key.text_len, text.len());
     }

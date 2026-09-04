@@ -101,11 +101,11 @@ pub(in crate::ui::shell::layout) fn workspace_side_panel_render_state(
 }
 
 pub(in crate::ui::shell::layout) fn render_workspace_side_panel(
-    panel: gpui::AnyElement,
+    panel: gpui_kit::AnyElement,
     panel_width: f32,
     visibility: f32,
     dock: WorkspaceSidePanelDock,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let wrapper_width = (panel_width + WORKSPACE_SIDE_PANEL_GAP) * visibility;
     let slide_offset = (1.0 - visibility) * WORKSPACE_SIDE_PANEL_SLIDE_OFFSET;
     let opacity = 0.24 + visibility * 0.76;
@@ -146,7 +146,7 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
     session_tab_id: TabId,
     session: &SessionTabState,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let side_panel_view = app.controllers.session.read(cx).side_panel_view();
     let selected_index = match side_panel_view {
@@ -235,7 +235,7 @@ fn render_session_sftp_panel(
     session_controller: Entity<SessionController>,
     session_tab_id: TabId,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
     let text_muted = crate::ui::theme::palette_tone_rgb(
