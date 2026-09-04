@@ -391,7 +391,6 @@ pub(in crate::ui::shell) fn render_workspace_surface(
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .px_3()
                     .pb_3()
                     .opacity(visibility)
                     .child(panel),
