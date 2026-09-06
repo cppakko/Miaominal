@@ -13,7 +13,9 @@ use miaominal_storage::{ProxyStore, SettingsStore};
 use std::{error::Error as StdError, fmt};
 
 /// Result of a lightweight remote check. The payload is fetched (or answered
-/// with 304 when the persisted ETag matches) but never applied locally.
+/// with 304 when the persisted ETag matches) but never applied locally. An
+/// `Updated` result describes a changed remote representation, not necessarily
+/// changed synchronized content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteSyncState {
     Disabled,
@@ -25,7 +27,42 @@ pub enum RemoteSyncState {
         synced_at: u64,
         etag: Option<String>,
         payload_id: Option<String>,
+        content_revision: Option<String>,
     },
+}
+
+/// Three-way relationship between the current local content, the fetched
+/// remote content, and the content recorded by the last successful sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncContentRelation {
+    Identical,
+    LocalChanged,
+    RemoteChanged,
+    Diverged,
+    MissingBaseline,
+}
+
+pub fn classify_content_revisions(
+    local_revision: &str,
+    remote_revision: &str,
+    baseline_revision: Option<&str>,
+) -> SyncContentRelation {
+    if local_revision == remote_revision {
+        return SyncContentRelation::Identical;
+    }
+
+    let Some(baseline_revision) = baseline_revision else {
+        return SyncContentRelation::MissingBaseline;
+    };
+    match (
+        local_revision == baseline_revision,
+        remote_revision == baseline_revision,
+    ) {
+        (false, true) => SyncContentRelation::LocalChanged,
+        (true, false) => SyncContentRelation::RemoteChanged,
+        (false, false) => SyncContentRelation::Diverged,
+        (true, true) => unreachable!("different revisions cannot both equal the baseline"),
+    }
 }
 
 enum RemotePayloadState {
@@ -174,6 +211,15 @@ impl SyncEngine {
         self.config_store.sync_from_disk();
         let remote = self.remote_payload_state(true).await?;
         let start_config_revision = self.config_store.config.config_revision;
+        let passphrase = self.sync_passphrase()?;
+        let local = self.local_snapshot(
+            session_store,
+            proxy_store,
+            snippet_store,
+            key_store,
+            secret_store,
+            settings_store,
+        )?;
         let (condition, parent_payload_id, observed_remote_at) = match remote {
             RemotePayloadState::BindingRequired(provider) => {
                 if provider == SyncProvider::GithubGist
@@ -189,26 +235,130 @@ impl SyncEngine {
                 None,
                 None,
             ),
-            RemotePayloadState::NotModified => (
-                self.config_store
-                    .config
-                    .remote_etag
-                    .clone()
-                    .map_or(PushCondition::Unconditional, PushCondition::IfMatch),
-                self.config_store.config.remote_payload_id.clone(),
-                Some(self.config_store.config.last_sync_at),
-            ),
-            RemotePayloadState::Current(payload, etag) => (
-                etag.map_or(PushCondition::Unconditional, PushCondition::IfMatch),
-                non_empty_payload_id(&payload),
-                Some(payload.synced_at),
-            ),
+            RemotePayloadState::NotModified => {
+                if !force
+                    && self
+                        .config_store
+                        .config
+                        .last_synced_local_revision
+                        .as_deref()
+                        == Some(local.revision.as_str())
+                {
+                    return Ok(SyncStatus::UpToDate {
+                        at: self.config_store.config.last_sync_at,
+                    });
+                }
+                (
+                    self.config_store
+                        .config
+                        .remote_etag
+                        .clone()
+                        .map_or(PushCondition::Unconditional, PushCondition::IfMatch),
+                    self.config_store.config.remote_payload_id.clone(),
+                    Some(self.config_store.config.last_sync_at),
+                )
+            }
+            RemotePayloadState::Current(payload, etag) => {
+                if !force {
+                    match self
+                        .config_store
+                        .config
+                        .last_synced_local_revision
+                        .as_deref()
+                    {
+                        Some(baseline_revision) if baseline_revision == local.revision => {
+                            return Ok(SyncStatus::UpToDate {
+                                at: payload.synced_at,
+                            });
+                        }
+                        None => {
+                            let remote_revision =
+                                match decrypt_normalized_remote_payload(&payload, &passphrase) {
+                                    Ok((_, revision)) => revision,
+                                    Err(_) => {
+                                        return Ok(SyncStatus::PullRequired {
+                                            remote_at: Some(payload.synced_at),
+                                            reason: SyncInterventionReason::MissingSyncBaseline,
+                                        });
+                                    }
+                                };
+                            if local.revision == remote_revision {
+                                return self.acknowledge_remote_payload(
+                                    start_config_revision,
+                                    &payload,
+                                    etag,
+                                    local.revision,
+                                );
+                            }
+                            return Ok(SyncStatus::PullRequired {
+                                remote_at: Some(payload.synced_at),
+                                reason: SyncInterventionReason::MissingSyncBaseline,
+                            });
+                        }
+                        Some(_) => {}
+                    }
+                }
+                (
+                    etag.map_or(PushCondition::Unconditional, PushCondition::IfMatch),
+                    non_empty_payload_id(&payload),
+                    Some(payload.synced_at),
+                )
+            }
             RemotePayloadState::Changed(payload, etag) => {
                 if !force {
-                    return Ok(SyncStatus::PullRequired {
-                        remote_at: Some(payload.synced_at),
-                        reason: SyncInterventionReason::RemoteChangedBeforePush,
-                    });
+                    let remote_revision =
+                        match decrypt_normalized_remote_payload(&payload, &passphrase) {
+                            Ok((_, revision)) => revision,
+                            Err(_)
+                                if self
+                                    .config_store
+                                    .config
+                                    .last_synced_local_revision
+                                    .is_none() =>
+                            {
+                                return Ok(SyncStatus::PullRequired {
+                                    remote_at: Some(payload.synced_at),
+                                    reason: SyncInterventionReason::MissingSyncBaseline,
+                                });
+                            }
+                            Err(error) => return Err(error),
+                        };
+                    match classify_content_revisions(
+                        &local.revision,
+                        &remote_revision,
+                        self.config_store
+                            .config
+                            .last_synced_local_revision
+                            .as_deref(),
+                    ) {
+                        SyncContentRelation::Identical => {
+                            return self.acknowledge_remote_payload(
+                                start_config_revision,
+                                &payload,
+                                etag,
+                                local.revision,
+                            );
+                        }
+                        SyncContentRelation::LocalChanged => {}
+                        SyncContentRelation::RemoteChanged => {
+                            return Ok(SyncStatus::PullRequired {
+                                remote_at: Some(payload.synced_at),
+                                reason: SyncInterventionReason::RemoteChangedBeforePush,
+                            });
+                        }
+                        SyncContentRelation::Diverged => {
+                            return Ok(SyncStatus::PullRequired {
+                                remote_at: Some(payload.synced_at),
+                                reason: SyncInterventionReason::BothSidesChanged,
+                            });
+                        }
+                        SyncContentRelation::MissingBaseline => {
+                            return Ok(SyncStatus::PullRequired {
+                                remote_at: Some(payload.synced_at),
+                                reason: SyncInterventionReason::MissingSyncBaseline,
+                            });
+                        }
+                    }
                 }
                 (
                     etag.map_or(PushCondition::Unconditional, PushCondition::IfMatch),
@@ -228,17 +378,6 @@ impl SyncEngine {
                 reason: SyncInterventionReason::UnsafeProviderWrite,
             });
         }
-        let passphrase = self.sync_passphrase()?;
-
-        let local = self.local_snapshot(
-            session_store,
-            proxy_store,
-            snippet_store,
-            key_store,
-            secret_store,
-            settings_store,
-        )?;
-
         let payload = build_payload(
             &self.config_store.config.device_id,
             parent_payload_id.clone(),
@@ -289,8 +428,8 @@ impl SyncEngine {
         Ok(SyncStatus::Pushed { at: synced_at })
     }
 
-    /// Check whether the configured remote has a newer payload without applying
-    /// it locally. This is the polling entry point used by auto-sync.
+    /// Check whether the configured remote representation changed without
+    /// applying it locally. This is the polling entry point used by auto-sync.
     pub async fn remote_state(&mut self) -> Result<RemoteSyncState> {
         if !self.sync_enabled_for_provider() {
             return Ok(RemoteSyncState::Disabled);
@@ -302,18 +441,54 @@ impl SyncEngine {
             }
             RemotePayloadState::Missing { .. } => RemoteSyncState::Missing,
             RemotePayloadState::NotModified => RemoteSyncState::NotModified,
+            RemotePayloadState::Current(payload, etag)
+                if self
+                    .config_store
+                    .config
+                    .last_synced_local_revision
+                    .is_none() =>
+            {
+                let passphrase = self.sync_passphrase()?;
+                let content_revision = decrypt_normalized_remote_payload(&payload, &passphrase)
+                    .ok()
+                    .map(|(_, revision)| revision);
+                RemoteSyncState::Updated {
+                    synced_at: payload.synced_at,
+                    etag,
+                    payload_id: non_empty_payload_id(&payload),
+                    content_revision,
+                }
+            }
             RemotePayloadState::Current(_, _) => RemoteSyncState::UpToDate,
-            RemotePayloadState::Changed(payload, etag) => RemoteSyncState::Updated {
-                synced_at: payload.synced_at,
-                etag,
-                payload_id: non_empty_payload_id(&payload),
-            },
+            RemotePayloadState::Changed(payload, etag) => {
+                let passphrase = self.sync_passphrase()?;
+                let content_revision =
+                    match decrypt_normalized_remote_payload(&payload, &passphrase) {
+                        Ok((_, revision)) => Some(revision),
+                        Err(_)
+                            if self
+                                .config_store
+                                .config
+                                .last_synced_local_revision
+                                .is_none() =>
+                        {
+                            None
+                        }
+                        Err(error) => return Err(error),
+                    };
+                RemoteSyncState::Updated {
+                    synced_at: payload.synced_at,
+                    etag,
+                    payload_id: non_empty_payload_id(&payload),
+                    content_revision,
+                }
+            }
         })
     }
 
-    /// Pull a payload from the configured backend and apply it locally using
-    /// last-write-wins: only overwrites local data when the remote `synced_at`
-    /// is strictly newer than the last local sync timestamp.
+    /// Pull a payload from the configured backend. Identical content only
+    /// refreshes the synchronization baseline; different content is applied
+    /// after the caller's normal confirmation flow.
     pub async fn pull(
         &mut self,
         session_store: &SessionStore,
@@ -429,36 +604,23 @@ impl SyncEngine {
         // the request is in flight. Capture its resulting revision (including a
         // refreshed ETag) so the final apply guard only rejects later changes.
         let start_config_revision = self.config_store.config.config_revision;
-        let missing_baseline = self
-            .config_store
-            .config
-            .last_synced_local_revision
-            .is_none();
-        let (payload, etag, restoring_missing_baseline) = match remote {
+        let (payload, etag) = match remote {
             RemotePayloadState::BindingRequired(provider) => {
                 return Ok(SyncStatus::RemoteBindingRequired { provider });
             }
-            // A manual pull can recover legacy or incomplete configurations
-            // that have remote identity but no local baseline, but only after
-            // comparing the decrypted representation with the local data.
-            RemotePayloadState::Current(payload, etag) if missing_baseline => (payload, etag, true),
-            RemotePayloadState::Missing { .. }
-            | RemotePayloadState::NotModified
-            | RemotePayloadState::Current(_, _) => {
+            RemotePayloadState::Missing { .. } | RemotePayloadState::NotModified => {
                 return Ok(SyncStatus::UpToDate {
                     at: self.config_store.config.last_sync_at,
                 });
             }
-            RemotePayloadState::Changed(payload, etag) => (payload, etag, false),
+            RemotePayloadState::Current(payload, etag)
+            | RemotePayloadState::Changed(payload, etag) => (payload, etag),
         };
 
         let passphrase = self.sync_passphrase()?;
         let remote_synced_at = payload.synced_at;
-        let mut plaintext = decrypt_remote_payload(&payload, &passphrase)?;
-        // apply_plaintext_payload sanitizes settings before persisting them;
-        // normalize first so the stored sync baseline describes that exact
-        // representation, including payloads produced by older clients.
-        normalize_remote_payload(&mut plaintext);
+        let (plaintext, remote_revision) =
+            decrypt_normalized_remote_payload(&payload, &passphrase)?;
         let _sync_guard = miaominal_secrets::lock_sync_data();
         let current_revision = self.local_revision(
             session_store,
@@ -474,38 +636,63 @@ impl SyncEngine {
                 reason: SyncInterventionReason::LocalChangedDuringPull,
             });
         }
-        let applied_revision = local_data_revision(&plaintext)?;
-        let remote_payload_id = non_empty_payload_id(&payload);
-
-        if restoring_missing_baseline && current_revision == applied_revision {
-            let persisted = self
-                .config_store
-                .update_if_revision(start_config_revision, |c| {
-                    c.last_sync_at = remote_synced_at;
-                    c.remote_etag = etag.clone();
-                    c.remote_payload_id = remote_payload_id.clone();
-                    c.last_synced_local_revision = Some(applied_revision.clone());
-                })?;
-            if !persisted {
-                self.config_store.sync_from_disk();
-                return Ok(SyncStatus::PullRequired {
-                    remote_at: Some(remote_synced_at),
-                    reason: SyncInterventionReason::SyncConfigurationChanged,
-                });
-            }
-            return Ok(SyncStatus::UpToDate {
-                at: remote_synced_at,
-            });
+        if current_revision == remote_revision {
+            return self.acknowledge_remote_payload(
+                start_config_revision,
+                &payload,
+                etag,
+                current_revision,
+            );
         }
 
-        if restoring_missing_baseline && !force {
+        if self
+            .config_store
+            .config
+            .last_synced_local_revision
+            .is_none()
+            && !force
+        {
             return Ok(SyncStatus::PullRequired {
                 remote_at: Some(remote_synced_at),
                 reason: SyncInterventionReason::MissingSyncBaseline,
             });
         }
 
+        if expected_local_revision.is_some() {
+            match classify_content_revisions(
+                &current_revision,
+                &remote_revision,
+                self.config_store
+                    .config
+                    .last_synced_local_revision
+                    .as_deref(),
+            ) {
+                SyncContentRelation::RemoteChanged => {}
+                SyncContentRelation::LocalChanged => {
+                    return Ok(SyncStatus::PullRequired {
+                        remote_at: Some(remote_synced_at),
+                        reason: SyncInterventionReason::LocalChangedDuringPull,
+                    });
+                }
+                SyncContentRelation::Diverged => {
+                    return Ok(SyncStatus::PullRequired {
+                        remote_at: Some(remote_synced_at),
+                        reason: SyncInterventionReason::BothSidesChanged,
+                    });
+                }
+                SyncContentRelation::MissingBaseline => {
+                    return Ok(SyncStatus::PullRequired {
+                        remote_at: Some(remote_synced_at),
+                        reason: SyncInterventionReason::MissingSyncBaseline,
+                    });
+                }
+                SyncContentRelation::Identical => unreachable!("equality handled above"),
+            }
+        }
+
         settings_store.reload_from_disk()?;
+        let applied_revision = remote_revision;
+        let remote_payload_id = non_empty_payload_id(&payload);
 
         let apply_result = apply_plaintext_payload(
             &plaintext,
@@ -556,9 +743,18 @@ impl SyncEngine {
             Some(backend) => backend,
             None => return Ok(RemotePayloadState::Missing { etag: None }),
         };
-        let etag = conditional
-            .then(|| self.config_store.config.remote_etag.clone())
-            .flatten();
+        // A conditional 304 only proves that the remote representation still
+        // matches its stored ETag. Without a local content baseline we still
+        // need the encrypted payload body to determine whether both sides are
+        // actually identical.
+        let etag = (conditional
+            && self
+                .config_store
+                .config
+                .last_synced_local_revision
+                .is_some())
+        .then(|| self.config_store.config.remote_etag.clone())
+        .flatten();
         let outcome = backend.pull(etag.as_deref()).await?;
         self.config_store.sync_from_disk();
         anyhow::ensure!(
@@ -655,7 +851,7 @@ impl SyncEngine {
 
     fn remote_payload_is_current(&self, payload: &SyncPayload) -> bool {
         if payload.payload_id.is_empty() {
-            payload.synced_at <= self.config_store.config.last_sync_at
+            false
         } else {
             self.config_store.config.remote_payload_id.as_deref()
                 == Some(payload.payload_id.as_str())
@@ -670,6 +866,45 @@ impl SyncEngine {
             .ok_or_else(|| anyhow::anyhow!("sync passphrase not configured"))?;
         Ok(passphrase)
     }
+
+    fn acknowledge_remote_payload(
+        &mut self,
+        expected_config_revision: u64,
+        payload: &SyncPayload,
+        etag: Option<String>,
+        content_revision: String,
+    ) -> Result<SyncStatus> {
+        let synced_at = payload.synced_at;
+        let remote_payload_id = non_empty_payload_id(payload);
+        let persisted =
+            self.config_store
+                .update_if_revision(expected_config_revision, |config| {
+                    config.last_sync_at = synced_at;
+                    config.remote_etag = etag;
+                    config.remote_payload_id = remote_payload_id;
+                    config.last_synced_local_revision = Some(content_revision);
+                })?;
+        if !persisted {
+            self.config_store.sync_from_disk();
+            return Ok(SyncStatus::PullRequired {
+                remote_at: Some(synced_at),
+                reason: SyncInterventionReason::SyncConfigurationChanged,
+            });
+        }
+        Ok(SyncStatus::UpToDate { at: synced_at })
+    }
+}
+
+fn decrypt_normalized_remote_payload(
+    payload: &SyncPayload,
+    passphrase: &str,
+) -> Result<(SyncPlaintextPayload, String)> {
+    let mut plaintext = decrypt_remote_payload(payload, passphrase)?;
+    // Applying a payload sanitizes these same fields before persisting them;
+    // compare and store the canonical representation used by local snapshots.
+    normalize_remote_payload(&mut plaintext);
+    let revision = local_data_revision(&plaintext)?;
+    Ok((plaintext, revision))
 }
 
 fn non_empty_payload_id(payload: &SyncPayload) -> Option<String> {
@@ -685,6 +920,7 @@ mod tests {
     use miaominal_core::snippet::SnippetRecord;
     use miaominal_secrets::APP_CREDENTIAL_SERVICE;
     use miaominal_secrets::credential_backend::{CredentialBackend, CredentialStore};
+    use miaominal_settings::AppSettings;
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::{Read, Write};
@@ -732,8 +968,16 @@ mod tests {
     }
 
     fn payload_server(payload: String) -> (String, std::thread::JoinHandle<()>) {
+        payload_server_with_etag(payload, Some("\"baseline-etag\""))
+    }
+
+    fn payload_server_with_etag(
+        payload: String,
+        etag: Option<&str>,
+    ) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
         let address = listener.local_addr().expect("test address should resolve");
+        let etag_header = etag.map_or_else(String::new, |etag| format!("ETag: {etag}\r\n"));
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("request should connect");
             let mut request = Vec::new();
@@ -750,9 +994,81 @@ mod tests {
             }
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nETag: \"baseline-etag\"\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
                 payload.len(),
+                etag_header,
                 payload
+            )
+            .expect("response should write");
+        });
+        (format!("http://{address}/sync.json"), handle)
+    }
+
+    fn conditional_payload_server(
+        payload: String,
+        etag: &'static str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).expect("request should read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            if request.contains("if-none-match:") {
+                write!(
+                    stream,
+                    "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n"
+                )
+                .expect("304 response should write");
+            } else {
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nETag: {etag}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                )
+                .expect("payload response should write");
+            }
+        });
+        (format!("http://{address}/sync.json"), handle)
+    }
+
+    fn not_modified_server() -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).expect("request should read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(
+                String::from_utf8_lossy(&request)
+                    .to_ascii_lowercase()
+                    .contains("if-none-match: \"current-etag\"")
+            );
+            write!(
+                stream,
+                "HTTP/1.1 304 Not Modified\r\nETag: \"current-etag\"\r\nConnection: close\r\n\r\n"
             )
             .expect("response should write");
         });
@@ -903,6 +1219,350 @@ mod tests {
             Some(42),
             true,
         ));
+    }
+
+    #[test]
+    fn content_relation_compares_current_sides_before_the_baseline() {
+        assert_eq!(
+            classify_content_revisions("same", "same", None),
+            SyncContentRelation::Identical
+        );
+        assert_eq!(
+            classify_content_revisions("local", "baseline", Some("baseline")),
+            SyncContentRelation::LocalChanged
+        );
+        assert_eq!(
+            classify_content_revisions("baseline", "remote", Some("baseline")),
+            SyncContentRelation::RemoteChanged
+        );
+        assert_eq!(
+            classify_content_revisions("local", "remote", Some("baseline")),
+            SyncContentRelation::Diverged
+        );
+        assert_eq!(
+            classify_content_revisions("local", "remote", None),
+            SyncContentRelation::MissingBaseline
+        );
+    }
+
+    #[test]
+    fn legacy_payload_timestamp_is_not_content_identity() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let mut payload = build_payload(
+            "remote-device",
+            None,
+            &SyncPlaintextPayload {
+                sessions: Vec::new(),
+                proxies: Vec::new(),
+                snippets: Vec::new(),
+                managed_keys: Vec::new(),
+                settings: AppSettings::default().synced_settings(),
+                secrets: Default::default(),
+            },
+            "passphrase",
+        )
+        .expect("payload should build");
+        payload.payload_id.clear();
+        let engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    last_sync_at: payload.synced_at.saturating_add(60),
+                    ..crate::SyncConfig::default()
+                },
+                memory_credentials(),
+            ),
+        };
+
+        assert!(!engine.remote_payload_is_current(&payload));
+    }
+
+    #[tokio::test]
+    async fn push_acknowledges_same_content_with_a_different_payload_id() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, payload_revision) =
+            engine_for_current_payload(temp.path(), &plaintext, "same-content-passphrase");
+        engine.config_store.config.remote_payload_id = Some("previous-payload".into());
+        engine.config_store.config.last_synced_local_revision = Some(payload_revision.clone());
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let status = engine
+            .push(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("same content should be acknowledged");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        assert_ne!(
+            engine.config_store.config.remote_payload_id.as_deref(),
+            Some("previous-payload")
+        );
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        assert_eq!(
+            engine.config_store.config.remote_etag.as_deref(),
+            Some("\"baseline-etag\"")
+        );
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn push_acknowledges_current_payload_when_local_baseline_is_missing() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, payload_revision) =
+            engine_for_current_payload(temp.path(), &plaintext, "missing-baseline-passphrase");
+        let expected_payload_id = engine.config_store.config.remote_payload_id.clone();
+        assert!(
+            engine
+                .config_store
+                .config
+                .last_synced_local_revision
+                .is_none()
+        );
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let status = engine
+            .push(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("matching remote content should restore the local baseline");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        assert_eq!(
+            engine.config_store.config.remote_payload_id,
+            expected_payload_id
+        );
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        assert_eq!(
+            engine.config_store.config.remote_etag.as_deref(),
+            Some("\"baseline-etag\"")
+        );
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn push_fetches_content_when_etag_exists_but_local_baseline_is_missing() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let passphrase = "missing-baseline-with-etag-passphrase";
+        let payload = build_payload("remote-device", None, &plaintext, passphrase)
+            .expect("payload should build");
+        let payload_id = payload.payload_id.clone();
+        let payload_revision = local_data_revision(&plaintext).expect("revision should build");
+        let (url, server) = conditional_payload_server(
+            serde_json::to_string(&payload).expect("payload should serialize"),
+            "\"current-etag\"",
+        );
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    last_sync_at: payload.synced_at,
+                    remote_etag: Some("\"current-etag\"".into()),
+                    remote_payload_id: Some(payload_id.clone()),
+                    last_synced_local_revision: None,
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine
+            .config_store
+            .set_webdav_password("password")
+            .expect("password should persist");
+        engine
+            .config_store
+            .set_passphrase(passphrase)
+            .expect("passphrase should persist");
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let status = engine
+            .push(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("matching content should be fetched and acknowledged");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        assert_eq!(
+            engine.config_store.config.remote_payload_id,
+            Some(payload_id)
+        );
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn push_skips_unsafe_write_when_remote_without_etag_is_identical() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let passphrase = "no-etag-passphrase";
+        let payload = build_payload("remote-device", None, &plaintext, passphrase)
+            .expect("payload should build");
+        let payload_id = payload.payload_id.clone();
+        let payload_revision = local_data_revision(&plaintext).expect("revision should build");
+        let (url, server) = payload_server_with_etag(
+            serde_json::to_string(&payload).expect("payload should serialize"),
+            None,
+        );
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    last_sync_at: payload.synced_at,
+                    remote_payload_id: Some(payload_id),
+                    last_synced_local_revision: Some(payload_revision),
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine
+            .config_store
+            .set_webdav_password("password")
+            .expect("password should persist");
+        engine
+            .config_store
+            .set_passphrase(passphrase)
+            .expect("passphrase should persist");
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let status = engine
+            .push(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("identical content should not require an unsafe write");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn repeated_push_skips_upload_when_etag_and_local_content_are_unchanged() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let (url, server) = not_modified_server();
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    last_sync_at: 42,
+                    remote_etag: Some("\"current-etag\"".into()),
+                    remote_payload_id: Some("current-payload".into()),
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine
+            .config_store
+            .set_webdav_password("password")
+            .expect("password should persist");
+        engine
+            .config_store
+            .set_passphrase("unchanged-passphrase")
+            .expect("passphrase should persist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let secret_store = SecretStore::with_credentials(credentials);
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let local_revision = engine
+            .local_revision(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .expect("local revision should build");
+        engine.config_store.config.last_synced_local_revision = Some(local_revision);
+
+        let status = engine
+            .push(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("unchanged push should be skipped");
+
+        assert_eq!(status, SyncStatus::UpToDate { at: 42 });
+        server.join().expect("payload server should finish");
     }
 
     #[tokio::test]
@@ -1121,6 +1781,53 @@ mod tests {
                 .is_empty()
         );
         assert!(key_store.load().expect("keys should load").is_empty());
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn manual_pull_applies_known_remote_when_local_content_changed() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let passphrase = "known-remote-passphrase";
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, payload_revision) =
+            engine_for_current_payload(temp.path(), &plaintext, passphrase);
+        engine.config_store.config.last_synced_local_revision = Some(payload_revision.clone());
+        let secret_store = SecretStore::with_credentials(credentials);
+        save_local_fixture(&session_store, &proxy_store, &snippet_store, &key_store);
+
+        let status = engine
+            .pull(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &mut settings_store,
+            )
+            .await
+            .expect("manual pull should apply the selected remote content");
+
+        assert!(matches!(status, SyncStatus::Pulled { .. }));
+        assert!(
+            session_store
+                .read_sessions_content()
+                .expect("sessions should read")
+                .map(|content| session_store
+                    .parse_sessions(&content)
+                    .expect("sessions should parse"))
+                .unwrap_or_default()
+                .is_empty()
+        );
         assert_eq!(
             engine.config_store.config.last_synced_local_revision,
             Some(payload_revision)

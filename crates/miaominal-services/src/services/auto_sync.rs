@@ -4,7 +4,8 @@ use anyhow::Result;
 use miaominal_paths as paths;
 use miaominal_storage::SettingsStore;
 use miaominal_sync::{
-    RemoteSyncState, SyncEngine, SyncInterventionReason, SyncProvider, SyncStatus,
+    RemoteSyncState, SyncContentRelation, SyncEngine, SyncInterventionReason, SyncProvider,
+    SyncStatus, classify_content_revisions,
 };
 use notify::{RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
@@ -568,21 +569,19 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     AutoSyncPhase::Watching
                 });
             }
-            Ok(RemoteSyncState::Updated { synced_at, .. }) => {
-                if self
-                    .engine
-                    .config_store
-                    .config
-                    .last_synced_local_revision
-                    .is_none()
-                {
+            Ok(RemoteSyncState::Updated {
+                synced_at,
+                content_revision,
+                ..
+            }) => {
+                let Some(content_revision) = content_revision else {
                     self.dirty = true;
                     self.enter_intervention(
                         SyncInterventionReason::MissingSyncBaseline,
                         Some(synced_at),
                     );
                     return;
-                }
+                };
                 let expected_local_revision = match self.refresh_dirty_from_revision().await {
                     Ok(revision) => revision,
                     Err(error) => {
@@ -591,13 +590,36 @@ impl<S: SyncOps> AutoSyncTask<S> {
                         return;
                     }
                 };
-                if self.dirty {
-                    self.dirty = true;
-                    self.enter_intervention(
-                        SyncInterventionReason::BothSidesChanged,
-                        Some(synced_at),
-                    );
-                    return;
+                match classify_content_revisions(
+                    &expected_local_revision,
+                    &content_revision,
+                    self.engine
+                        .config_store
+                        .config
+                        .last_synced_local_revision
+                        .as_deref(),
+                ) {
+                    SyncContentRelation::LocalChanged => {
+                        self.push_if_dirty().await;
+                        return;
+                    }
+                    SyncContentRelation::Diverged => {
+                        self.dirty = true;
+                        self.enter_intervention(
+                            SyncInterventionReason::BothSidesChanged,
+                            Some(synced_at),
+                        );
+                        return;
+                    }
+                    SyncContentRelation::MissingBaseline => {
+                        self.dirty = true;
+                        self.enter_intervention(
+                            SyncInterventionReason::MissingSyncBaseline,
+                            Some(synced_at),
+                        );
+                        return;
+                    }
+                    SyncContentRelation::Identical | SyncContentRelation::RemoteChanged => {}
                 }
                 self.set_phase(AutoSyncPhase::Pulling);
                 let engine = self.engine.clone();
@@ -616,7 +638,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                             self.settings_store = store.clone();
                         }
                         match result.status {
-                            SyncStatus::Pulled { .. } => {
+                            SyncStatus::Pulled { .. } | SyncStatus::UpToDate { .. } => {
                                 self.remote_missing = false;
                                 self.fingerprint = Fingerprint::sample(&self.config_dir);
                                 self.clear_intervention();
@@ -1189,6 +1211,7 @@ mod tests {
             synced_at: 2,
             etag: Some("\"pull-etag\"".into()),
             payload_id: Some("payload-2".into()),
+            content_revision: Some("remote-revision".into()),
         };
         let mut task = test_task(mock.clone(), &dir);
         task.poll_remote().await;
@@ -1201,6 +1224,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poll_remote_acknowledges_matching_content_instead_of_reporting_conflict() {
+        let dir = temp_config_dir("matching-content");
+        let mock = Arc::new(MockSyncOps::new());
+        mock.set_local_revision("converged-revision");
+        *mock.remote_state_result.lock().unwrap() = RemoteSyncState::Updated {
+            synced_at: 2,
+            etag: Some("\"matching-etag\"".into()),
+            payload_id: Some("different-payload-id".into()),
+            content_revision: Some("converged-revision".into()),
+        };
+        let mut task = test_task(mock.clone(), &dir);
+
+        task.poll_remote().await;
+
+        assert_eq!(*mock.pull_calls.lock().unwrap(), 1);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        assert_eq!(task.phase, AutoSyncPhase::Watching);
+        assert!(!task.pending_conflict);
+        assert!(!task.dirty);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn poll_remote_pushes_when_only_local_content_changed() {
+        let dir = temp_config_dir("local-only-change");
+        let mock = Arc::new(MockSyncOps::new());
+        mock.set_local_revision("local-change");
+        *mock.remote_state_result.lock().unwrap() = RemoteSyncState::Updated {
+            synced_at: 2,
+            etag: Some("\"rewrapped-etag\"".into()),
+            payload_id: Some("rewrapped-payload".into()),
+            content_revision: Some("local-revision".into()),
+        };
+        let mut task = test_task(mock.clone(), &dir);
+
+        task.poll_remote().await;
+
+        assert_eq!(*mock.push_calls.lock().unwrap(), 1);
+        assert_eq!(*mock.pull_calls.lock().unwrap(), 0);
+        assert_eq!(task.phase, AutoSyncPhase::Watching);
+        assert!(!task.pending_conflict);
+        assert!(!task.dirty);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn poll_remote_refuses_pull_when_local_changes_after_clean_check() {
         let dir = temp_config_dir("pull-race");
         let mock = Arc::new(MockSyncOps::new());
@@ -1208,6 +1277,7 @@ mod tests {
             synced_at: 2,
             etag: Some("\"pull-etag\"".into()),
             payload_id: Some("payload-2".into()),
+            content_revision: Some("remote-revision".into()),
         };
         mock.change_revision_after_next_read("saved-during-pull");
         let mut task = test_task(mock.clone(), &dir);
@@ -1232,6 +1302,7 @@ mod tests {
             synced_at: 2,
             etag: None,
             payload_id: Some("payload-2".into()),
+            content_revision: Some("remote-revision".into()),
         };
         let mut task = test_task(mock.clone(), &dir);
         mock.set_local_revision("changed");
@@ -1267,6 +1338,7 @@ mod tests {
             synced_at: 2,
             etag: Some("\"etag-2\"".into()),
             payload_id: Some("payload-2".into()),
+            content_revision: Some("remote-revision".into()),
         };
         let mut task = test_task(mock.clone(), &dir);
         mock.set_local_revision("changed");
@@ -1539,6 +1611,7 @@ mod tests {
             synced_at: 2,
             etag: Some("\"loop-etag\"".into()),
             payload_id: Some("payload-2".into()),
+            content_revision: Some("remote-revision".into()),
         };
         let settings_store = SettingsStore::load_with_path(dir.join("settings.toml"))
             .expect("test settings store should load");

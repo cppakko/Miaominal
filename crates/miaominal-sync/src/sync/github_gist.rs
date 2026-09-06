@@ -2,10 +2,13 @@ use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::providers::PushCondition;
 
 const GIST_FILENAME: &str = "miaominal_sync.json";
+const GITHUB_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const GITHUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize)]
 struct GistFile {
@@ -51,12 +54,30 @@ pub struct GithubGistBackend {
 }
 
 impl GithubGistBackend {
-    pub fn new(token: String, gist_id: Option<String>) -> Self {
-        Self {
-            client: Client::new(),
+    pub fn new(token: String, gist_id: Option<String>) -> Result<Self> {
+        Self::new_with_timeouts(
             token,
             gist_id,
-        }
+            GITHUB_CONNECT_TIMEOUT,
+            GITHUB_REQUEST_TIMEOUT,
+        )
+    }
+
+    fn new_with_timeouts(
+        token: String,
+        gist_id: Option<String>,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self> {
+        Ok(Self {
+            client: Client::builder()
+                .connect_timeout(connect_timeout)
+                .timeout(request_timeout)
+                .build()
+                .context("failed to build GitHub HTTP client")?,
+            token,
+            gist_id,
+        })
     }
 
     /// Push `payload_json` to the Gist. Creates the Gist if no `gist_id` is set.
@@ -222,10 +243,22 @@ fn response_etag(response: &reqwest::Response) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+
+    fn stalled_server(delay: Duration) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("request should connect");
+            std::thread::sleep(delay);
+        });
+        (format!("http://{address}/stalled"), handle)
+    }
 
     #[tokio::test]
     async fn bound_gist_refuses_non_atomic_must_not_exist_patch() {
-        let mut backend = GithubGistBackend::new("unused".into(), Some("bound-gist".into()));
+        let mut backend = GithubGistBackend::new("unused".into(), Some("bound-gist".into()))
+            .expect("GitHub backend should build");
 
         let outcome = backend
             .push("{}", &PushCondition::MustNotExist)
@@ -233,5 +266,32 @@ mod tests {
             .expect("MustNotExist should be rejected before a network request");
 
         assert!(matches!(outcome, GithubGistPushOutcome::Conflict));
+    }
+
+    #[tokio::test]
+    async fn request_timeout_releases_a_stalled_github_operation() {
+        let (url, server) = stalled_server(Duration::from_millis(250));
+        let backend = GithubGistBackend::new_with_timeouts(
+            "unused".into(),
+            Some("bound-gist".into()),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        )
+        .expect("GitHub backend should build");
+        let started = std::time::Instant::now();
+
+        let error = backend
+            .client
+            .get(url)
+            .send()
+            .await
+            .expect_err("stalled request should time out");
+
+        assert!(error.is_timeout(), "unexpected request error: {error}");
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "request timeout should release the caller before the server closes"
+        );
+        server.join().expect("test server should finish");
     }
 }

@@ -46,7 +46,9 @@ use miaominal_settings::{
 };
 use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::{ProxyStore, SettingsStore};
-use miaominal_sync::{SyncConfig, SyncProvider, SyncStatus, engine::SyncEngine};
+use miaominal_sync::{
+    SyncConfig, SyncInterventionReason, SyncProvider, SyncStatus, engine::SyncEngine,
+};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle as TokioHandle;
@@ -334,7 +336,10 @@ pub(in crate::ui::shell) struct PendingSyncDirectionState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::shell) enum SyncPullConfirmReason {
     Manual,
-    RemoteNewer,
+    RemoteChanged,
+    BothSidesChanged,
+    UnsafeProviderWrite,
+    MissingSyncBaseline,
 }
 
 #[derive(Debug, Clone, Copy)]

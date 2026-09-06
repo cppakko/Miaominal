@@ -57,7 +57,7 @@ impl RemoteBackend {
                 Ok(Some(Self::Gist(GithubGistBackend::new(
                     token,
                     config_store.config.gist_id.clone(),
-                ))))
+                )?)))
             }
             SyncProvider::WebDav => {
                 let password = config_store

@@ -2,7 +2,7 @@ use super::*;
 use crate::ui::shell::support::set_input_masked;
 use crate::ui::shell::{
     DeferredAppCommand, DialogOverlaySnapshot, SettingsDeferredCommand, ValidationFailure,
-    error_notification, success_notification, validation_notification,
+    error_notification, success_notification, validation_notification, warning_notification,
 };
 use gpui_kit::App;
 use miaominal_services::SyncTaskResult;
@@ -141,10 +141,27 @@ impl SettingsController {
         action: ManualSyncAction,
         status: &SyncStatus,
     ) -> Option<SyncPullConfirmReason> {
-        if action == ManualSyncAction::Push && matches!(status, SyncStatus::PullRequired { .. }) {
-            Some(SyncPullConfirmReason::RemoteNewer)
-        } else {
-            None
+        if action != ManualSyncAction::Push {
+            return None;
+        }
+        match status {
+            SyncStatus::PullRequired { reason, .. } => match reason {
+                SyncInterventionReason::RemoteChangedBeforePush => {
+                    Some(SyncPullConfirmReason::RemoteChanged)
+                }
+                SyncInterventionReason::BothSidesChanged => {
+                    Some(SyncPullConfirmReason::BothSidesChanged)
+                }
+                SyncInterventionReason::UnsafeProviderWrite => {
+                    Some(SyncPullConfirmReason::UnsafeProviderWrite)
+                }
+                SyncInterventionReason::MissingSyncBaseline => {
+                    Some(SyncPullConfirmReason::MissingSyncBaseline)
+                }
+                SyncInterventionReason::LocalChangedDuringPull
+                | SyncInterventionReason::SyncConfigurationChanged => None,
+            },
+            _ => None,
         }
     }
 
@@ -177,7 +194,7 @@ impl SettingsController {
                 message.clone(),
             ),
             SyncStatus::PullRequired { .. } | SyncStatus::RemoteBindingRequired { .. } => {
-                error_notification(
+                warning_notification(
                     i18n::string("settings.sync.status.notifications.action_required_title"),
                     message.clone(),
                 )
@@ -1578,7 +1595,9 @@ impl SettingsController {
 
 #[cfg(test)]
 mod tests {
-    use super::{SettingsController, normalize_github_gist_id};
+    use super::{ManualSyncAction, SettingsController, normalize_github_gist_id};
+    use crate::ui::shell::SyncPullConfirmReason;
+    use miaominal_sync::{SyncInterventionReason, SyncStatus};
 
     #[test]
     fn normalize_github_gist_id_extracts_id_from_url() {
@@ -1598,5 +1617,52 @@ mod tests {
         assert!(SettingsController::validate_sync_passphrase("secret", "").is_err());
         assert!(SettingsController::validate_sync_passphrase("secret", "other").is_err());
         assert!(SettingsController::validate_sync_passphrase("secret", "secret").is_ok());
+    }
+
+    #[test]
+    fn manual_push_preserves_the_intervention_reason_for_the_dialog() {
+        let cases = [
+            (
+                SyncInterventionReason::RemoteChangedBeforePush,
+                SyncPullConfirmReason::RemoteChanged,
+            ),
+            (
+                SyncInterventionReason::BothSidesChanged,
+                SyncPullConfirmReason::BothSidesChanged,
+            ),
+            (
+                SyncInterventionReason::UnsafeProviderWrite,
+                SyncPullConfirmReason::UnsafeProviderWrite,
+            ),
+            (
+                SyncInterventionReason::MissingSyncBaseline,
+                SyncPullConfirmReason::MissingSyncBaseline,
+            ),
+        ];
+        for (reason, expected) in cases {
+            let status = SyncStatus::PullRequired {
+                remote_at: Some(42),
+                reason,
+            };
+            assert_eq!(
+                SettingsController::manual_push_pull_confirm_reason(
+                    ManualSyncAction::Push,
+                    &status,
+                ),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn configuration_change_does_not_offer_destructive_sync_choices() {
+        let status = SyncStatus::PullRequired {
+            remote_at: Some(42),
+            reason: SyncInterventionReason::SyncConfigurationChanged,
+        };
+        assert_eq!(
+            SettingsController::manual_push_pull_confirm_reason(ManualSyncAction::Push, &status),
+            None
+        );
     }
 }

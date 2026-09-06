@@ -2077,11 +2077,27 @@ impl AppView {
         let controller_force_push = self.controllers.settings.clone();
         let controller_confirm = self.controllers.settings.clone();
 
-        let message_key = match prompt.reason {
-            SyncPullConfirmReason::Manual => "settings.sync.dialogs.pull_confirm.message",
-            SyncPullConfirmReason::RemoteNewer => {
-                "settings.sync.dialogs.pull_confirm.remote_newer_message"
-            }
+        let (title_key, message_key) = match prompt.reason {
+            SyncPullConfirmReason::Manual => (
+                "settings.sync.dialogs.pull_confirm.title",
+                "settings.sync.dialogs.pull_confirm.message",
+            ),
+            SyncPullConfirmReason::RemoteChanged => (
+                "settings.sync.dialogs.pull_confirm.remote_changed_title",
+                "settings.sync.dialogs.pull_confirm.remote_changed_message",
+            ),
+            SyncPullConfirmReason::BothSidesChanged => (
+                "settings.sync.dialogs.pull_confirm.both_sides_changed_title",
+                "settings.sync.dialogs.pull_confirm.both_sides_changed_message",
+            ),
+            SyncPullConfirmReason::UnsafeProviderWrite => (
+                "settings.sync.dialogs.pull_confirm.unsafe_write_title",
+                "settings.sync.dialogs.pull_confirm.unsafe_write_message",
+            ),
+            SyncPullConfirmReason::MissingSyncBaseline => (
+                "settings.sync.dialogs.pull_confirm.missing_baseline_title",
+                "settings.sync.dialogs.pull_confirm.missing_baseline_message",
+            ),
         };
 
         let actions = h_flex()
@@ -2099,23 +2115,20 @@ impl AppView {
                     });
                 }),
             )
-            .when(
-                prompt.reason == SyncPullConfirmReason::RemoteNewer,
-                |this| {
-                    this.child(
-                        basic_dialog_action_button(
-                            "sync-pull-confirm-force-push",
-                            i18n::string("settings.sync.dialogs.pull_confirm.force_push"),
-                            BasicDialogActionTone::Default,
-                        )
-                        .on_click(move |_, window, cx| {
-                            controller_force_push.update(cx, |controller, cx| {
-                                controller.confirm_sync_force_push(window, cx);
-                            });
-                        }),
+            .when(prompt.reason != SyncPullConfirmReason::Manual, |this| {
+                this.child(
+                    basic_dialog_action_button(
+                        "sync-pull-confirm-force-push",
+                        i18n::string("settings.sync.dialogs.pull_confirm.force_push"),
+                        BasicDialogActionTone::Default,
                     )
-                },
-            )
+                    .on_click(move |_, window, cx| {
+                        controller_force_push.update(cx, |controller, cx| {
+                            controller.confirm_sync_force_push(window, cx);
+                        });
+                    }),
+                )
+            })
             .child(
                 basic_dialog_action_button(
                     "sync-pull-confirm-accept",
@@ -2131,7 +2144,7 @@ impl AppView {
 
         render_basic_dialog(
             "sync-pull-confirm",
-            i18n::string("settings.sync.dialogs.pull_confirm.title"),
+            i18n::string(title_key),
             Some(i18n::string(message_key)),
             None,
             actions.into_any_element(),
