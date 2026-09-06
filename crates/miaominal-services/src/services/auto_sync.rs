@@ -185,6 +185,7 @@ impl AutoSyncService {
                 engine,
                 config_dir,
                 vault_locked,
+                AUTO_SYNC_POLL_INTERVAL,
             )
             .await;
         });
@@ -432,6 +433,14 @@ impl<S: SyncOps> AutoSyncTask<S> {
         self.publish();
     }
 
+    fn schedule_debounced_push(&mut self, debounce_deadline: &mut Option<Instant>) {
+        if !self.enabled || self.vault_locked || self.retry_deadline.is_some() {
+            return;
+        }
+        *debounce_deadline = Some(Instant::now() + AUTO_SYNC_DEBOUNCE);
+        self.set_phase(AutoSyncPhase::Debouncing);
+    }
+
     async fn refresh_dirty_from_revision(&mut self) -> anyhow::Result<String> {
         let revision = self
             .executor
@@ -574,11 +583,14 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     );
                     return;
                 }
-                if let Err(error) = self.refresh_dirty_from_revision().await {
-                    self.dirty = true;
-                    self.schedule_retry(RetryAction::Poll, error);
-                    return;
-                }
+                let expected_local_revision = match self.refresh_dirty_from_revision().await {
+                    Ok(revision) => revision,
+                    Err(error) => {
+                        self.dirty = true;
+                        self.schedule_retry(RetryAction::Poll, error);
+                        return;
+                    }
+                };
                 if self.dirty {
                     self.dirty = true;
                     self.enter_intervention(
@@ -590,7 +602,11 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 self.set_phase(AutoSyncPhase::Pulling);
                 let engine = self.engine.clone();
                 let settings_store = self.settings_store.clone();
-                match self.executor.pull(engine, settings_store).await {
+                match self
+                    .executor
+                    .pull_if_unchanged(engine, settings_store, expected_local_revision)
+                    .await
+                {
                     Ok(result) => {
                         self.set_last_result(result.clone());
                         self.engine.config_store.config = result.updated_config;
@@ -614,6 +630,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                             }
                             SyncStatus::PullRequired { remote_at, reason } => {
                                 self.dirty = true;
+                                let remote_at = remote_at.or(Some(synced_at));
                                 self.enter_intervention(reason, remote_at);
                             }
                             _ => {
@@ -634,7 +651,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     async fn on_tick(&mut self) {
-        if !self.enabled || self.vault_locked {
+        if !self.enabled || self.vault_locked || self.retry_deadline.is_some() {
             return;
         }
         self.push_if_dirty().await;
@@ -658,6 +675,7 @@ async fn run_auto_sync<S: SyncOps>(
     engine: SyncEngine,
     config_dir: PathBuf,
     vault_locked: bool,
+    poll_interval: Duration,
 ) {
     let enabled = engine.config_store.config.auto_sync_enabled;
     let fingerprint = Fingerprint::sample(&config_dir);
@@ -707,16 +725,17 @@ async fn run_auto_sync<S: SyncOps>(
     }
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<()>();
-    let _watcher = match start_file_watcher(&config_dir, event_tx) {
+    let watcher = match start_file_watcher(&config_dir, event_tx) {
         Ok(watcher) => watcher,
         Err(error) => {
             log::warn!("auto-sync file watcher unavailable: {error:?}");
             None
         }
     };
+    let mut watcher_active = watcher.is_some();
 
     let mut debounce_deadline: Option<Instant> = None;
-    let mut tick = Box::pin(tokio::time::sleep(AUTO_SYNC_POLL_INTERVAL));
+    let mut tick = Box::pin(tokio::time::sleep(poll_interval));
 
     loop {
         let debounce_pending = debounce_deadline.is_some();
@@ -769,16 +788,6 @@ async fn run_auto_sync<S: SyncOps>(
                     AutoSyncCommand::Shutdown => break,
                 }
             }
-            _ = event_rx.recv(), if task.enabled => {
-                if !task.vault_locked {
-                    debounce_deadline = Some(Instant::now() + AUTO_SYNC_DEBOUNCE);
-                    task.set_phase(AutoSyncPhase::Debouncing);
-                }
-            }
-            _ = &mut debounce, if debounce_pending && task.enabled && !task.vault_locked => {
-                debounce_deadline = None;
-                task.push_if_dirty().await;
-            }
             _ = &mut retry, if retry_pending && task.enabled && !task.vault_locked => {
                 task.retry_deadline = None;
                 task.retry_at_unix = None;
@@ -788,9 +797,24 @@ async fn run_auto_sync<S: SyncOps>(
                     RetryAction::Push => task.push_if_dirty().await,
                 }
             }
+            _ = &mut debounce, if debounce_pending && task.enabled && !task.vault_locked => {
+                debounce_deadline = None;
+                if task.retry_deadline.is_none() {
+                    task.push_if_dirty().await;
+                }
+            }
             _ = &mut tick, if task.enabled && !task.vault_locked => {
-                tick = Box::pin(tokio::time::sleep(AUTO_SYNC_POLL_INTERVAL));
+                tick = Box::pin(tokio::time::sleep(poll_interval));
                 task.on_tick().await;
+            }
+            event = event_rx.recv(), if watcher_active => {
+                match event {
+                    Some(()) => task.schedule_debounced_push(&mut debounce_deadline),
+                    None => {
+                        watcher_active = false;
+                        log::warn!("auto-sync file watcher stopped; continuing with periodic polling");
+                    }
+                }
             }
         }
     }
@@ -886,6 +910,7 @@ mod tests {
         remote_calls: Mutex<usize>,
         remote_state_result: Mutex<RemoteSyncState>,
         local_revision_result: Mutex<String>,
+        revision_after_next_read: Mutex<Option<String>>,
     }
     impl MockSyncOps {
         fn new() -> Self {
@@ -895,6 +920,7 @@ mod tests {
                 remote_calls: Mutex::new(0),
                 remote_state_result: Mutex::new(RemoteSyncState::UpToDate),
                 local_revision_result: Mutex::new("local-revision".into()),
+                revision_after_next_read: Mutex::new(None),
             }
         }
 
@@ -925,6 +951,10 @@ mod tests {
         fn set_local_revision(&self, revision: &str) {
             *self.local_revision_result.lock().unwrap() = revision.into();
         }
+
+        fn change_revision_after_next_read(&self, revision: &str) {
+            *self.revision_after_next_read.lock().unwrap() = Some(revision.into());
+        }
     }
 
     impl SyncOps for Arc<MockSyncOps> {
@@ -939,15 +969,28 @@ mod tests {
             ))
         }
 
-        async fn pull(
+        async fn pull_if_unchanged(
             &self,
             _engine: SyncEngine,
             _settings_store: SettingsStore,
+            expected_local_revision: String,
         ) -> anyhow::Result<SyncTaskResult> {
             *self.pull_calls.lock().expect("pull counter should lock") += 1;
-            Ok(MockSyncOps::pulled_result(
-                self.local_revision_result.lock().unwrap().clone(),
-            ))
+            let current_revision = self.local_revision_result.lock().unwrap().clone();
+            if current_revision != expected_local_revision {
+                return Ok(SyncTaskResult {
+                    status: SyncStatus::PullRequired {
+                        remote_at: Some(2),
+                        reason: SyncInterventionReason::LocalChangedDuringPull,
+                    },
+                    updated_config: SyncConfig {
+                        last_synced_local_revision: Some(expected_local_revision),
+                        ..SyncConfig::default()
+                    },
+                    reload: None,
+                });
+            }
+            Ok(MockSyncOps::pulled_result(current_revision))
         }
 
         async fn remote_state(&self, _engine: SyncEngine) -> anyhow::Result<RemoteSyncState> {
@@ -967,7 +1010,11 @@ mod tests {
             _engine: SyncEngine,
             _settings_store: SettingsStore,
         ) -> anyhow::Result<String> {
-            Ok(self.local_revision_result.lock().unwrap().clone())
+            let revision = self.local_revision_result.lock().unwrap().clone();
+            if let Some(next) = self.revision_after_next_read.lock().unwrap().take() {
+                *self.local_revision_result.lock().unwrap() = next;
+            }
+            Ok(revision)
         }
     }
 
@@ -1154,6 +1201,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poll_remote_refuses_pull_when_local_changes_after_clean_check() {
+        let dir = temp_config_dir("pull-race");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.remote_state_result.lock().unwrap() = RemoteSyncState::Updated {
+            synced_at: 2,
+            etag: Some("\"pull-etag\"".into()),
+            payload_id: Some("payload-2".into()),
+        };
+        mock.change_revision_after_next_read("saved-during-pull");
+        let mut task = test_task(mock.clone(), &dir);
+
+        task.poll_remote().await;
+
+        assert_eq!(*mock.pull_calls.lock().unwrap(), 1);
+        assert_eq!(task.phase, AutoSyncPhase::PullRequired);
+        assert!(task.dirty);
+        assert_eq!(
+            task.intervention.as_ref().map(|item| &item.reason),
+            Some(&SyncInterventionReason::LocalChangedDuringPull)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn poll_remote_pauses_when_remote_updated_and_local_dirty() {
         let dir = temp_config_dir("pull-dirty");
         let mock = Arc::new(MockSyncOps::new());
@@ -1293,6 +1364,27 @@ mod tests {
             task.intervention.as_ref().map(|item| item.id.as_str()),
             Some(intervention_id.as_str())
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn poll_tick_and_file_events_respect_retry_backoff() {
+        let dir = temp_config_dir("backoff-events");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock.clone(), &dir);
+        mock.set_local_revision("changed");
+        task.schedule_retry(RetryAction::Push, anyhow::anyhow!("temporary failure"));
+        let retry_deadline = task.retry_deadline;
+        let mut debounce_deadline = None;
+
+        task.schedule_debounced_push(&mut debounce_deadline);
+        task.on_tick().await;
+
+        assert!(debounce_deadline.is_none());
+        assert_eq!(task.retry_deadline, retry_deadline);
+        assert_eq!(task.phase, AutoSyncPhase::RetryBackoff);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1471,6 +1563,7 @@ mod tests {
             engine,
             dir.clone(),
             false,
+            AUTO_SYNC_POLL_INTERVAL,
         ));
 
         for _ in 0..100 {
@@ -1499,5 +1592,57 @@ mod tests {
             .expect("shutdown command should send");
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn watcher_start_failure_does_not_starve_poll_timer() {
+        let dir = temp_config_dir("watcher-failure");
+        let settings_store = SettingsStore::load_with_path(dir.join("settings.toml"))
+            .expect("test settings store should load");
+        let engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                dir.join("sync_config.toml"),
+                SyncConfig {
+                    provider: SyncProvider::GithubGist,
+                    auto_sync_enabled: true,
+                    last_synced_local_revision: Some("local-revision".into()),
+                    ..SyncConfig::default()
+                },
+                memory_credentials(),
+            ),
+        };
+        std::fs::remove_dir_all(&dir).expect("watch directory should be removed");
+        let mock = Arc::new(MockSyncOps::new());
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (state_tx, _state_rx) = watch::channel(snapshot(true, AutoSyncPhase::Watching));
+        let handle = tokio::spawn(run_auto_sync(
+            command_rx,
+            state_tx,
+            mock.clone(),
+            settings_store,
+            engine,
+            dir,
+            false,
+            Duration::from_millis(20),
+        ));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if *mock.remote_calls.lock().unwrap() >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("periodic polling should continue without a watcher");
+
+        command_tx
+            .send(AutoSyncCommand::Shutdown)
+            .expect("shutdown command should send");
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("auto-sync task should stop")
+            .expect("auto-sync task should not panic");
     }
 }

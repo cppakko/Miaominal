@@ -15,10 +15,11 @@ pub trait SyncOps: Send + Sync + 'static {
         settings_store: SettingsStore,
     ) -> impl std::future::Future<Output = anyhow::Result<SyncTaskResult>> + Send;
 
-    fn pull(
+    fn pull_if_unchanged(
         &self,
         engine: SyncEngine,
         settings_store: SettingsStore,
+        expected_local_revision: String,
     ) -> impl std::future::Future<Output = anyhow::Result<SyncTaskResult>> + Send;
     fn remote_state(
         &self,
@@ -71,6 +72,14 @@ impl SyncExecutor {
         self.service.pull(engine, settings_store).await
     }
 
+    pub async fn pull_force(
+        &self,
+        engine: SyncEngine,
+        settings_store: SettingsStore,
+    ) -> anyhow::Result<SyncTaskResult> {
+        self.service.pull_force(engine, settings_store).await
+    }
+
     pub async fn remote_state(&self, engine: SyncEngine) -> anyhow::Result<RemoteSyncState> {
         self.service.remote_state(engine).await
     }
@@ -93,12 +102,15 @@ impl SyncOps for SyncExecutor {
         SyncExecutor::push(self, engine, settings_store).await
     }
 
-    async fn pull(
+    async fn pull_if_unchanged(
         &self,
         engine: SyncEngine,
         settings_store: SettingsStore,
+        expected_local_revision: String,
     ) -> anyhow::Result<SyncTaskResult> {
-        SyncExecutor::pull(self, engine, settings_store).await
+        self.service
+            .pull_if_unchanged(engine, settings_store, expected_local_revision)
+            .await
     }
 
     async fn remote_state(&self, engine: SyncEngine) -> anyhow::Result<RemoteSyncState> {

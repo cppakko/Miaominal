@@ -179,18 +179,82 @@ impl SyncService {
         mut engine: SyncEngine,
         mut settings_store: SettingsStore,
     ) -> Result<SyncTaskResult> {
+        self.pull_internal(&mut engine, &mut settings_store, None, false)
+            .await
+    }
+
+    pub async fn pull_force(
+        &self,
+        mut engine: SyncEngine,
+        mut settings_store: SettingsStore,
+    ) -> Result<SyncTaskResult> {
+        self.pull_internal(&mut engine, &mut settings_store, None, true)
+            .await
+    }
+
+    pub async fn pull_if_unchanged(
+        &self,
+        mut engine: SyncEngine,
+        mut settings_store: SettingsStore,
+        expected_local_revision: String,
+    ) -> Result<SyncTaskResult> {
+        self.pull_internal(
+            &mut engine,
+            &mut settings_store,
+            Some(&expected_local_revision),
+            false,
+        )
+        .await
+    }
+
+    async fn pull_internal(
+        &self,
+        engine: &mut SyncEngine,
+        settings_store: &mut SettingsStore,
+        expected_local_revision: Option<&str>,
+        force: bool,
+    ) -> Result<SyncTaskResult> {
         let _guard = self.operation_lock.lock().await;
         let secrets = self.secrets();
-        let status = engine
-            .pull(
-                &self.session_store,
-                &self.proxy_store,
-                &self.snippet_store,
-                &self.keychain_store,
-                &secrets,
-                &mut settings_store,
-            )
-            .await?;
+        let status = match expected_local_revision {
+            Some(expected) => {
+                engine
+                    .pull_if_unchanged(
+                        &self.session_store,
+                        &self.proxy_store,
+                        &self.snippet_store,
+                        &self.keychain_store,
+                        &secrets,
+                        settings_store,
+                        expected,
+                    )
+                    .await?
+            }
+            None if force => {
+                engine
+                    .pull_force(
+                        &self.session_store,
+                        &self.proxy_store,
+                        &self.snippet_store,
+                        &self.keychain_store,
+                        &secrets,
+                        settings_store,
+                    )
+                    .await?
+            }
+            None => {
+                engine
+                    .pull(
+                        &self.session_store,
+                        &self.proxy_store,
+                        &self.snippet_store,
+                        &self.keychain_store,
+                        &secrets,
+                        settings_store,
+                    )
+                    .await?
+            }
+        };
         let reload = matches!(status, SyncStatus::Pulled { .. }).then(|| self.reload_all());
         Ok(SyncTaskResult {
             status,

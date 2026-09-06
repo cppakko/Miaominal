@@ -1,13 +1,18 @@
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Url};
+use std::time::Duration;
 
 use super::providers::PushCondition;
+
+const WEBDAV_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const WEBDAV_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) enum WebDavPushOutcome {
     Pushed { etag: Option<String> },
     Conflict,
 }
 
+#[derive(Debug)]
 pub(super) enum WebDavPullOutcome {
     Missing,
     NotModified,
@@ -26,9 +31,29 @@ pub struct WebDavBackend {
 
 impl WebDavBackend {
     pub fn new(url: String, username: String, password: String) -> Result<Self> {
+        Self::new_with_timeouts(
+            url,
+            username,
+            password,
+            WEBDAV_CONNECT_TIMEOUT,
+            WEBDAV_REQUEST_TIMEOUT,
+        )
+    }
+
+    fn new_with_timeouts(
+        url: String,
+        username: String,
+        password: String,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self> {
         validate_webdav_url(&url)?;
         Ok(Self {
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(connect_timeout)
+                .timeout(request_timeout)
+                .build()
+                .context("failed to build WebDAV HTTP client")?,
             url,
             username,
             password,
@@ -170,6 +195,18 @@ mod tests {
         (format!("http://{address}/sync.json"), handle)
     }
 
+    fn stalled_server(delay: Duration) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            let mut buffer = [0u8; 4096];
+            let _ = stream.read(&mut buffer);
+            std::thread::sleep(delay);
+        });
+        (format!("http://{address}/sync.json"), handle)
+    }
+
     #[test]
     fn rejects_non_local_http_urls() {
         assert!(
@@ -232,5 +269,28 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains("if-none-match: *")
         );
+    }
+
+    #[tokio::test]
+    async fn request_timeout_releases_a_stalled_webdav_operation() {
+        let (url, server) = stalled_server(Duration::from_millis(250));
+        let backend = WebDavBackend::new_with_timeouts(
+            url,
+            "user".into(),
+            "password".into(),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        )
+        .expect("test backend should build");
+        let started = std::time::Instant::now();
+
+        let error = backend
+            .pull(None)
+            .await
+            .expect_err("a stalled response must time out");
+
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert!(error.to_string().contains("failed to GET"));
+        server.join().expect("stalled server should finish");
     }
 }

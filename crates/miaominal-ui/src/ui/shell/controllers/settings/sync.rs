@@ -11,7 +11,7 @@ use miaominal_services::SyncTaskResult;
 enum ManualSyncAction {
     Push,
     ForcePush,
-    Pull,
+    ForcePull,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,7 +259,7 @@ impl SettingsController {
             let result = match action {
                 ManualSyncAction::Push => executor.push(engine, settings_store).await,
                 ManualSyncAction::ForcePush => executor.push_force(engine, settings_store).await,
-                ManualSyncAction::Pull => executor.pull(engine, settings_store).await,
+                ManualSyncAction::ForcePull => executor.pull_force(engine, settings_store).await,
             };
             tx.send(result).ok();
         });
@@ -438,7 +438,7 @@ impl SettingsController {
         cx.emit(AppCommand::OverlayDismissed(
             DialogOverlaySnapshot::SyncPullConfirm(prompt),
         ));
-        self.execute_manual_sync(ManualSyncAction::Pull, window, cx);
+        self.execute_manual_sync(ManualSyncAction::ForcePull, window, cx);
     }
 
     pub(in crate::ui::shell) fn confirm_sync_force_push(

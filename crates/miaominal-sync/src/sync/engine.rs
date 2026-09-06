@@ -330,6 +330,60 @@ impl SyncEngine {
             key_store,
             secret_store,
             settings_store,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Pull and apply the remote payload even when a missing synchronization
+    /// baseline prevents proving that the current local data is unchanged.
+    /// Callers must obtain explicit user confirmation before using this path.
+    pub async fn pull_force(
+        &mut self,
+        session_store: &SessionStore,
+        proxy_store: &ProxyStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+        secret_store: &SecretStore,
+        settings_store: &mut SettingsStore,
+    ) -> Result<SyncStatus> {
+        self.pull_internal(
+            session_store,
+            proxy_store,
+            snippet_store,
+            key_store,
+            secret_store,
+            settings_store,
+            None,
+            true,
+        )
+        .await
+    }
+
+    /// Pull only if the synchronized local data still matches the revision
+    /// observed by the caller. Auto-sync uses this to close the gap between
+    /// deciding that the working copy is clean and applying the remote payload.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn pull_if_unchanged(
+        &mut self,
+        session_store: &SessionStore,
+        proxy_store: &ProxyStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+        secret_store: &SecretStore,
+        settings_store: &mut SettingsStore,
+        expected_local_revision: &str,
+    ) -> Result<SyncStatus> {
+        self.pull_internal(
+            session_store,
+            proxy_store,
+            snippet_store,
+            key_store,
+            secret_store,
+            settings_store,
+            Some(expected_local_revision),
+            false,
         )
         .await
     }
@@ -342,14 +396,15 @@ impl SyncEngine {
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
         settings_store: &mut SettingsStore,
+        expected_local_revision: Option<&str>,
+        force: bool,
     ) -> Result<SyncStatus> {
         if !self.sync_enabled_for_provider() {
             return Ok(SyncStatus::Idle);
         }
 
         self.config_store.sync_from_disk();
-        let start_config_revision = self.config_store.config.config_revision;
-        let start_revision = self.local_revision(
+        let observed_revision = self.local_revision(
             session_store,
             proxy_store,
             snippet_store,
@@ -357,13 +412,36 @@ impl SyncEngine {
             secret_store,
             settings_store,
         )?;
+        if expected_local_revision.is_some_and(|expected| expected != observed_revision) {
+            return Ok(SyncStatus::PullRequired {
+                remote_at: None,
+                reason: SyncInterventionReason::LocalChangedDuringPull,
+            });
+        }
+        let start_revision = expected_local_revision
+            .map(str::to_owned)
+            .unwrap_or(observed_revision);
         // A real pull must fetch the representation even when a preceding
         // poll, or a legacy config without the new revision baseline, already
         // has a matching ETag.
-        let (payload, etag) = match self.remote_payload_state(false).await? {
+        let remote = self.remote_payload_state(false).await?;
+        // remote_payload_state already rejects configuration changes made while
+        // the request is in flight. Capture its resulting revision (including a
+        // refreshed ETag) so the final apply guard only rejects later changes.
+        let start_config_revision = self.config_store.config.config_revision;
+        let missing_baseline = self
+            .config_store
+            .config
+            .last_synced_local_revision
+            .is_none();
+        let (payload, etag, restoring_missing_baseline) = match remote {
             RemotePayloadState::BindingRequired(provider) => {
                 return Ok(SyncStatus::RemoteBindingRequired { provider });
             }
+            // A manual pull can recover legacy or incomplete configurations
+            // that have remote identity but no local baseline, but only after
+            // comparing the decrypted representation with the local data.
+            RemotePayloadState::Current(payload, etag) if missing_baseline => (payload, etag, true),
             RemotePayloadState::Missing { .. }
             | RemotePayloadState::NotModified
             | RemotePayloadState::Current(_, _) => {
@@ -371,7 +449,7 @@ impl SyncEngine {
                     at: self.config_store.config.last_sync_at,
                 });
             }
-            RemotePayloadState::Changed(payload, etag) => (payload, etag),
+            RemotePayloadState::Changed(payload, etag) => (payload, etag, false),
         };
 
         let passphrase = self.sync_passphrase()?;
@@ -396,9 +474,38 @@ impl SyncEngine {
                 reason: SyncInterventionReason::LocalChangedDuringPull,
             });
         }
-        settings_store.reload_from_disk()?;
         let applied_revision = local_data_revision(&plaintext)?;
         let remote_payload_id = non_empty_payload_id(&payload);
+
+        if restoring_missing_baseline && current_revision == applied_revision {
+            let persisted = self
+                .config_store
+                .update_if_revision(start_config_revision, |c| {
+                    c.last_sync_at = remote_synced_at;
+                    c.remote_etag = etag.clone();
+                    c.remote_payload_id = remote_payload_id.clone();
+                    c.last_synced_local_revision = Some(applied_revision.clone());
+                })?;
+            if !persisted {
+                self.config_store.sync_from_disk();
+                return Ok(SyncStatus::PullRequired {
+                    remote_at: Some(remote_synced_at),
+                    reason: SyncInterventionReason::SyncConfigurationChanged,
+                });
+            }
+            return Ok(SyncStatus::UpToDate {
+                at: remote_synced_at,
+            });
+        }
+
+        if restoring_missing_baseline && !force {
+            return Ok(SyncStatus::PullRequired {
+                remote_at: Some(remote_synced_at),
+                reason: SyncInterventionReason::MissingSyncBaseline,
+            });
+        }
+
+        settings_store.reload_from_disk()?;
 
         let apply_result = apply_plaintext_payload(
             &plaintext,
@@ -572,6 +679,182 @@ fn non_empty_payload_id(payload: &SyncPayload) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miaominal_core::keychain::{ManagedKeyRecord, ManagedKeySource};
+    use miaominal_core::profile::SessionProfile;
+    use miaominal_core::proxy::ProxyProfile;
+    use miaominal_core::snippet::SnippetRecord;
+    use miaominal_secrets::APP_CREDENTIAL_SERVICE;
+    use miaominal_secrets::credential_backend::{CredentialBackend, CredentialStore};
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::path::Path;
+    use std::sync::Mutex;
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct MemoryCredentialBackend(Mutex<BTreeMap<String, String>>);
+
+    impl CredentialBackend for MemoryCredentialBackend {
+        fn name(&self) -> &'static str {
+            "sync-engine-test-memory"
+        }
+
+        fn get(&self, service: &str, account: &str) -> Result<Option<String>> {
+            Ok(self
+                .0
+                .lock()
+                .expect("memory backend should lock")
+                .get(&format!("{service}/{account}"))
+                .cloned())
+        }
+
+        fn set(&self, service: &str, account: &str, value: &str) -> Result<()> {
+            self.0
+                .lock()
+                .expect("memory backend should lock")
+                .insert(format!("{service}/{account}"), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, service: &str, account: &str) -> Result<()> {
+            self.0
+                .lock()
+                .expect("memory backend should lock")
+                .remove(&format!("{service}/{account}"));
+            Ok(())
+        }
+    }
+
+    fn memory_credentials() -> CredentialStore {
+        CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, MemoryCredentialBackend::default())
+    }
+
+    fn payload_server(payload: String) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).expect("request should read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nETag: \"baseline-etag\"\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            )
+            .expect("response should write");
+        });
+        (format!("http://{address}/sync.json"), handle)
+    }
+
+    fn empty_plaintext(settings_store: &SettingsStore) -> SyncPlaintextPayload {
+        SyncPlaintextPayload {
+            sessions: Vec::new(),
+            proxies: Vec::new(),
+            snippets: Vec::new(),
+            managed_keys: Vec::new(),
+            settings: settings_store
+                .read_current()
+                .expect("settings should load")
+                .synced_settings(),
+            secrets: crate::PlaintextSecrets::default(),
+        }
+    }
+
+    fn engine_for_current_payload(
+        root: &Path,
+        plaintext: &SyncPlaintextPayload,
+        passphrase: &str,
+    ) -> (
+        SyncEngine,
+        CredentialStore,
+        std::thread::JoinHandle<()>,
+        String,
+    ) {
+        let payload = build_payload("remote-device", None, plaintext, passphrase)
+            .expect("payload should encrypt");
+        let payload_revision = local_data_revision(plaintext).expect("revision should build");
+        let payload_id = payload.payload_id.clone();
+        let last_sync_at = payload.synced_at;
+        let (url, server) =
+            payload_server(serde_json::to_string(&payload).expect("payload should serialize"));
+        let credentials = memory_credentials();
+        let engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                root.join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    last_sync_at,
+                    remote_payload_id: Some(payload_id),
+                    last_synced_local_revision: None,
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine
+            .config_store
+            .set_webdav_password("password")
+            .expect("password should persist");
+        engine
+            .config_store
+            .set_passphrase(passphrase)
+            .expect("passphrase should persist");
+        (engine, credentials, server, payload_revision)
+    }
+
+    fn save_local_fixture(
+        session_store: &SessionStore,
+        proxy_store: &ProxyStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+    ) {
+        let mut session = SessionProfile::blank("local-session", 1);
+        session.host = "local.example.com".into();
+        session_store
+            .save(&[session])
+            .expect("local session should persist");
+
+        let mut proxy = ProxyProfile::blank("local-proxy", 1);
+        proxy.host = "127.0.0.1".into();
+        proxy_store
+            .save(&[proxy])
+            .expect("local proxy should persist");
+
+        snippet_store
+            .save(&[SnippetRecord {
+                id: "local-snippet".into(),
+                description: "Local-only snippet".into(),
+                package: "Tests".into(),
+                language: "bash".into(),
+                script: "echo local".into(),
+            }])
+            .expect("local snippet should persist");
+
+        key_store
+            .save(&[ManagedKeyRecord {
+                id: "local-key".into(),
+                name: "Local key".into(),
+                algorithm: "ssh-ed25519".into(),
+                public_key: "ssh-ed25519 test".into(),
+                source: ManagedKeySource::Imported,
+            }])
+            .expect("local key should persist");
+    }
 
     #[test]
     fn pull_configuration_conflict_marker_survives_rollback_context() {
@@ -620,5 +903,228 @@ mod tests {
             Some(42),
             true,
         ));
+    }
+
+    #[tokio::test]
+    async fn conditional_pull_rejects_a_local_save_after_the_clean_check() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let secret_store = SecretStore::with_credentials(credentials);
+        let mut settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let expected_local_revision = engine
+            .local_revision(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .expect("initial revision should build");
+        let mut saved_session = SessionProfile::blank("saved-session", 1);
+        saved_session.host = "saved.example.com".into();
+        session_store
+            .save(&[saved_session])
+            .expect("local save should persist");
+
+        let status = engine
+            .pull_if_unchanged(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &mut settings_store,
+                &expected_local_revision,
+            )
+            .await
+            .expect("conditional pull should return an intervention");
+
+        assert!(matches!(
+            status,
+            SyncStatus::PullRequired {
+                reason: SyncInterventionReason::LocalChangedDuringPull,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn manual_pull_restores_matching_baseline_without_rewriting_local_stores() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let passphrase = "baseline-recovery-passphrase";
+        let sessions_path = temp.path().join("sessions.toml");
+        let proxies_path = temp.path().join("proxies.toml");
+        let snippets_path = temp.path().join("snippets.toml");
+        let keys_path = temp.path().join("managed_keys.toml");
+        let session_store = SessionStore::with_path(sessions_path.clone());
+        let proxy_store = ProxyStore::with_path(proxies_path.clone());
+        let snippet_store = SnippetStore::with_path(snippets_path.clone());
+        let key_store = ManagedKeyStore::with_path(keys_path.clone());
+        let mut settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, payload_revision) =
+            engine_for_current_payload(temp.path(), &plaintext, passphrase);
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let status = engine
+            .pull(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &mut settings_store,
+            )
+            .await
+            .expect("manual pull should restore the baseline");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        assert_eq!(
+            engine.config_store.config.remote_etag.as_deref(),
+            Some("\"baseline-etag\"")
+        );
+        for path in [sessions_path, proxies_path, snippets_path, keys_path] {
+            assert!(
+                !path.exists(),
+                "baseline recovery should not create {}",
+                path.display()
+            );
+        }
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn manual_pull_preserves_changed_local_data_when_baseline_is_missing() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let passphrase = "baseline-conflict-passphrase";
+        let sessions_path = temp.path().join("sessions.toml");
+        let proxies_path = temp.path().join("proxies.toml");
+        let snippets_path = temp.path().join("snippets.toml");
+        let keys_path = temp.path().join("managed_keys.toml");
+        let session_store = SessionStore::with_path(sessions_path.clone());
+        let proxy_store = ProxyStore::with_path(proxies_path.clone());
+        let snippet_store = SnippetStore::with_path(snippets_path.clone());
+        let key_store = ManagedKeyStore::with_path(keys_path.clone());
+        let mut settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, _) =
+            engine_for_current_payload(temp.path(), &plaintext, passphrase);
+        let secret_store = SecretStore::with_credentials(credentials);
+        save_local_fixture(&session_store, &proxy_store, &snippet_store, &key_store);
+        let original_files = [
+            fs::read(&sessions_path).expect("sessions should read"),
+            fs::read(&proxies_path).expect("proxies should read"),
+            fs::read(&snippets_path).expect("snippets should read"),
+            fs::read(&keys_path).expect("keys should read"),
+        ];
+
+        let status = engine
+            .pull(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &mut settings_store,
+            )
+            .await
+            .expect("safe pull should require intervention");
+
+        assert!(matches!(
+            status,
+            SyncStatus::PullRequired {
+                reason: SyncInterventionReason::MissingSyncBaseline,
+                ..
+            }
+        ));
+        assert_eq!(engine.config_store.config.last_synced_local_revision, None);
+        for (path, original) in [sessions_path, proxies_path, snippets_path, keys_path]
+            .iter()
+            .zip(original_files)
+        {
+            assert_eq!(fs::read(path).expect("local file should read"), original);
+        }
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn force_pull_overwrites_changed_local_data_when_baseline_is_missing() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let passphrase = "baseline-force-passphrase";
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let (mut engine, credentials, server, payload_revision) =
+            engine_for_current_payload(temp.path(), &plaintext, passphrase);
+        let secret_store = SecretStore::with_credentials(credentials);
+        save_local_fixture(&session_store, &proxy_store, &snippet_store, &key_store);
+
+        let status = engine
+            .pull_force(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &mut settings_store,
+            )
+            .await
+            .expect("confirmed force pull should overwrite local data");
+
+        assert!(matches!(status, SyncStatus::Pulled { .. }));
+        assert!(
+            session_store
+                .read_sessions_content()
+                .expect("sessions should read")
+                .map(|content| session_store
+                    .parse_sessions(&content)
+                    .expect("sessions should parse"))
+                .unwrap_or_default()
+                .is_empty()
+        );
+        assert!(
+            proxy_store
+                .load(&secret_store)
+                .expect("proxies should load")
+                .is_empty()
+        );
+        assert!(
+            snippet_store
+                .load()
+                .expect("snippets should load")
+                .is_empty()
+        );
+        assert!(key_store.load().expect("keys should load").is_empty());
+        assert_eq!(
+            engine.config_store.config.last_synced_local_revision,
+            Some(payload_revision)
+        );
+        server.join().expect("payload server should finish");
     }
 }
