@@ -206,41 +206,6 @@ fn risk_badge(view: &TrustedKnownHostView) -> Option<gpui_kit::AnyElement> {
     }
 }
 
-fn linked_profile_badges(view: &TrustedKnownHostView) -> Vec<gpui_kit::AnyElement> {
-    let roles = miaominal_settings::current_theme().material.roles;
-    if view.linked_profiles.is_empty() {
-        return Vec::new();
-    }
-
-    let mut badges: Vec<gpui_kit::AnyElement> = view
-        .linked_profiles
-        .iter()
-        .take(2)
-        .map(|profile| {
-            badge(
-                profile.name.clone(),
-                roles.secondary_container,
-                roles.on_secondary_container,
-            )
-            .into_any_element()
-        })
-        .collect();
-    if view.linked_profiles.len() > 2 {
-        badges.push(
-            badge(
-                i18n::string_args(
-                    "trusted.page.more_profiles",
-                    &[("count", &(view.linked_profiles.len() - 2).to_string())],
-                ),
-                roles.surface_container_high,
-                roles.on_surface_variant,
-            )
-            .into_any_element(),
-        );
-    }
-    badges
-}
-
 fn trusted_host_card(
     controller: Entity<SessionController>,
     view: TrustedKnownHostView,
@@ -278,7 +243,7 @@ fn trusted_host_card(
     card_surface(roles.surface_container, 20.0)
         .id(item_id)
         .w(px(TRUSTED_CARD_WIDTH))
-        .min_h(px(128.0))
+        .min_h(px(96.0))
         .p_4()
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, {
@@ -311,13 +276,7 @@ fn trusted_host_card(
                                 .text_color(rgb(roles.on_surface))
                                 .child(address),
                         )
-                        .child(badges_row)
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .flex_wrap()
-                                .children(linked_profile_badges(&view)),
-                        ),
+                        .child(badges_row),
                 ),
         )
         .on_mouse_up(MouseButton::Right, move |_, _, cx| {

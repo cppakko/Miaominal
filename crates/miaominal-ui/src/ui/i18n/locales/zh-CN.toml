@@ -1246,7 +1246,6 @@ empty_detail = "你验证并信任 SSH 主机密钥后，指纹会保存在这�
 trust_center = "信任中心"
 no_matches = "当前筛选下没有匹配的可信主机。"
 unlinked = "未关联配置"
-more_profiles = "另有 {count} 个"
 port_badge = "端口 {port}"
 empty = "还没有受信任的主机。信任某台服务器后会保存在这里。"
 

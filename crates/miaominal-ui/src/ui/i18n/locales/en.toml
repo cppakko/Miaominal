@@ -1386,7 +1386,6 @@ empty_detail = "Trusted hosts are saved after you verify an SSH host key. Connec
 trust_center = "Trust Center"
 no_matches = "No trusted hosts match the current filters."
 unlinked = "No linked profile"
-more_profiles = "+{count} more"
 
 [trusted.prompt]
 mismatch_subtitle = "The key offered by {host}:{port} does NOT match the one previously trusted. This may indicate a man-in-the-middle attack."
