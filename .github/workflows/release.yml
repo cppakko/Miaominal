@@ -16,8 +16,27 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
+  prepare:
+    name: Read release version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build_macos:
     name: Build macOS ${{ matrix.arch_label }}
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -25,9 +44,9 @@ jobs:
         include:
           - runner: macos-latest
             arch_label: arm64
-            artifact_name: Miaominal-macos-arm64
-            dmg_name: Miaominal-macos-arm64.dmg
-            portable_name: Miaominal-macos-arm64-portable.zip
+            artifact_name: Miaominal-macos-arm64-${{ needs.prepare.outputs.version }}
+            dmg_name: Miaominal-macos-arm64-${{ needs.prepare.outputs.version }}.dmg
+            portable_name: Miaominal-macos-arm64-${{ needs.prepare.outputs.version }}-portable.zip
 
     steps:
       - name: Checkout
@@ -72,6 +91,7 @@ jobs:
 
   build_linux:
     name: Build Linux ${{ matrix.arch_label }} packages
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -79,21 +99,21 @@ jobs:
         include:
           - runner: ubuntu-22.04
             arch_label: x86_64
-            artifact_name: Miaominal-linux-x86_64
-            appimage_name: Miaominal-linux-x86_64.AppImage
-            deb_name: Miaominal-linux-amd64.deb
-            rpm_name: Miaominal-linux-x86_64.rpm
-            portable_name: Miaominal-linux-x86_64-portable.zip
+            artifact_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}
+            appimage_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}.AppImage
+            deb_name: Miaominal-linux-amd64-${{ needs.prepare.outputs.version }}.deb
+            rpm_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}.rpm
+            portable_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}-portable.zip
             file_arch: x86-64
             deb_arch: amd64
             rpm_arch: x86_64
           - runner: ubuntu-22.04-arm
             arch_label: arm64
-            artifact_name: Miaominal-linux-arm64
-            appimage_name: Miaominal-linux-arm64.AppImage
-            deb_name: Miaominal-linux-arm64.deb
-            rpm_name: Miaominal-linux-aarch64.rpm
-            portable_name: Miaominal-linux-arm64-portable.zip
+            artifact_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}
+            appimage_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}.AppImage
+            deb_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}.deb
+            rpm_name: Miaominal-linux-aarch64-${{ needs.prepare.outputs.version }}.rpm
+            portable_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}-portable.zip
             file_arch: ARM aarch64
             deb_arch: arm64
             rpm_arch: aarch64
@@ -220,24 +240,27 @@ jobs:
 
   build_windows:
     name: Build Windows ${{ matrix.arch_label }} standalone and installer
+    needs: prepare
     runs-on: ${{ matrix.runner }}
+    env:
+      APP_VERSION: ${{ needs.prepare.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: windows-2022
             arch_label: x64
-            artifact_name: Miaominal-windows-x64
-            standalone_name: Miaominal-windows-x64-standalone.exe
-            setup_name: Miaominal-windows-x64-setup.exe
-            portable_name: Miaominal-windows-x64-portable.zip
+            artifact_name: Miaominal-windows-x64-${{ needs.prepare.outputs.version }}
+            standalone_name: Miaominal-windows-x64-${{ needs.prepare.outputs.version }}-standalone.exe
+            setup_name: Miaominal-windows-x64-${{ needs.prepare.outputs.version }}-setup.exe
+            portable_name: Miaominal-windows-x64-${{ needs.prepare.outputs.version }}-portable.zip
             pe_machine: "8664"
           - runner: windows-11-arm
             arch_label: arm64
-            artifact_name: Miaominal-windows-arm64
-            standalone_name: Miaominal-windows-arm64-standalone.exe
-            setup_name: Miaominal-windows-arm64-setup.exe
-            portable_name: Miaominal-windows-arm64-portable.zip
+            artifact_name: Miaominal-windows-arm64-${{ needs.prepare.outputs.version }}
+            standalone_name: Miaominal-windows-arm64-${{ needs.prepare.outputs.version }}-standalone.exe
+            setup_name: Miaominal-windows-arm64-${{ needs.prepare.outputs.version }}-setup.exe
+            portable_name: Miaominal-windows-arm64-${{ needs.prepare.outputs.version }}-portable.zip
             pe_machine: "AA64"
 
     steps:
@@ -279,12 +302,6 @@ jobs:
           $env:PATH = "$nasmPath;$env:PATH"
           $nasmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           nasm -v
-
-      - name: Read app version
-        shell: pwsh
-        run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"$').Matches[0].Groups[1].Value
-          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build Windows release binary
         run: cargo build --release --locked
@@ -361,11 +378,12 @@ jobs:
 
   checksums:
     name: Generate release checksums
-    runs-on: ubuntu-24.04
     needs:
+      - prepare
       - build_macos
       - build_linux
       - build_windows
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Download packaged artifacts
@@ -377,13 +395,13 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS
+          sha256sum * > "Miaominal-${{ needs.prepare.outputs.version }}-SHA256SUMS"
 
       - name: Upload checksum artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miaominal-checksums
-          path: release-assets/SHA256SUMS
+          name: Miaominal-checksums-${{ needs.prepare.outputs.version }}
+          path: release-assets/Miaominal-${{ needs.prepare.outputs.version }}-SHA256SUMS
           if-no-files-found: error
 
   publish:
