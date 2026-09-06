@@ -2878,19 +2878,40 @@ impl SettingsController {
         changed
     }
 
-    pub(in crate::ui::shell) fn adjust_font_size(
+    pub(in crate::ui::shell) fn adjust_interface_font_size(
         &mut self,
         delta: f32,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(target) = SettingsService::adjust_font_size(&mut self.settings_store, delta)
+        let Some(target) =
+            SettingsService::adjust_interface_font_size(&mut self.settings_store, delta)
         else {
             return false;
         };
         miaominal_settings::sync_component_theme(cx);
         let value = format!("{target:.1}");
         cx.emit(AppCommand::Feedback(i18n::string_args(
-            "status.font_size",
+            "status.interface_font_size",
+            &[("value", &value)],
+        )));
+        cx.notify();
+        true
+    }
+
+    pub(in crate::ui::shell) fn adjust_terminal_font_size(
+        &mut self,
+        delta: f32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) =
+            SettingsService::adjust_terminal_font_size(&mut self.settings_store, delta)
+        else {
+            return false;
+        };
+        miaominal_settings::sync_component_theme(cx);
+        let value = format!("{target:.1}");
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "status.terminal_font_size",
             &[("value", &value)],
         )));
         cx.notify();

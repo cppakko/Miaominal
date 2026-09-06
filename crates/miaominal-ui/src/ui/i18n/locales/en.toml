@@ -64,9 +64,13 @@ no_matches = "No matching fonts"
 label = "CJK font fallbacks"
 description = "Comma-separated list of fallback fonts for CJK characters. Leave blank to use only system defaults."
 
-[settings.appearance.font_size]
-label = "Font size"
-description = "Adjust the font size shared by the interface and terminal between {min} and {max}."
+[settings.appearance.interface_font_size]
+label = "Interface font size"
+description = "Adjust the application interface size between {min} and {max}."
+
+[settings.appearance.terminal_font_size]
+label = "Terminal font size"
+description = "Adjust the PTY terminal and code block font size between {min} and {max}."
 
 [settings.appearance.line_height]
 label = "Line height"
@@ -2174,7 +2178,8 @@ interface_font_set = "Interface font set to {font}"
 interface_font_reset = "Interface font reset to {font}"
 terminal_font_set = "Terminal font set to {font}"
 terminal_font_reset = "Terminal font reset to {font}"
-font_size = "Font size {value}"
+interface_font_size = "Interface font size {value}"
+terminal_font_size = "Terminal font size {value}"
 line_height = "Line height {value}"
 theme_seed = "Theme seed: {value}"
 theme_seed_reset = "Theme seed reset to {value}"

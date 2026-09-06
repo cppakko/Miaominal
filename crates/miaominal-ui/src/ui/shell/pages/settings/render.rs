@@ -210,23 +210,53 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                         "settings.appearance.font_fallbacks.description",
                     )),
                     SettingItem::new(
-                        i18n::string("settings.appearance.font_size.label"),
+                        i18n::string("settings.appearance.interface_font_size.label"),
                         SettingField::render({
                             let entity = entity.clone();
                             move |options, _, cx| {
                                 let size = options.size();
                                 let id_prefix = SharedString::from(format!(
-                                    "settings-font-size-{}-{}-{}",
+                                    "settings-interface-font-size-{}-{}-{}",
                                     options.page_ix(),
                                     options.group_ix(),
                                     options.item_ix()
                                 ));
-                                render_font_size_stepper(entity.clone(), id_prefix, size, cx)
+                                render_interface_font_size_stepper(
+                                    entity.clone(),
+                                    id_prefix,
+                                    size,
+                                    cx,
+                                )
                             }
                         }),
                     )
                     .description(i18n::string_args(
-                        "settings.appearance.font_size.description",
+                        "settings.appearance.interface_font_size.description",
+                        &[("min", &font_size_min), ("max", &font_size_max)],
+                    )),
+                    SettingItem::new(
+                        i18n::string("settings.appearance.terminal_font_size.label"),
+                        SettingField::render({
+                            let entity = entity.clone();
+                            move |options, _, cx| {
+                                let size = options.size();
+                                let id_prefix = SharedString::from(format!(
+                                    "settings-terminal-font-size-{}-{}-{}",
+                                    options.page_ix(),
+                                    options.group_ix(),
+                                    options.item_ix()
+                                ));
+                                render_terminal_font_size_stepper(
+                                    entity.clone(),
+                                    id_prefix,
+                                    size,
+                                    cx,
+                                )
+                            }
+                        }),
+                    )
+                    .description(i18n::string_args(
+                        "settings.appearance.terminal_font_size.description",
                         &[("min", &font_size_min), ("max", &font_size_max)],
                     )),
                     SettingItem::new(
@@ -2392,13 +2422,13 @@ fn render_recent_connections_stepper(
     .into_any_element()
 }
 
-fn render_font_size_stepper(
+fn render_interface_font_size_stepper(
     entity: Entity<SettingsController>,
     id_prefix: SharedString,
     size: Size,
     cx: &App,
 ) -> AnyElement {
-    let value = format!("{:.1}", entity.read(cx).settings().font_size);
+    let value = format!("{:.1}", entity.read(cx).settings().interface_font_size);
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 
@@ -2409,13 +2439,43 @@ fn render_font_size_stepper(
         move |_, cx| {
             let entity = entity_for_dec.clone();
             entity.update(cx, |this, cx| {
-                this.adjust_font_size(-miaominal_settings::STEP, cx);
+                this.adjust_interface_font_size(-miaominal_settings::STEP, cx);
             });
         },
         move |_, cx| {
             let entity = entity_for_inc.clone();
             entity.update(cx, |this, cx| {
-                this.adjust_font_size(miaominal_settings::STEP, cx);
+                this.adjust_interface_font_size(miaominal_settings::STEP, cx);
+            });
+        },
+    )
+    .into_any_element()
+}
+
+fn render_terminal_font_size_stepper(
+    entity: Entity<SettingsController>,
+    id_prefix: SharedString,
+    size: Size,
+    cx: &App,
+) -> AnyElement {
+    let value = format!("{:.1}", entity.read(cx).settings().terminal_font_size);
+    let entity_for_dec = entity.clone();
+    let entity_for_inc = entity;
+
+    stepper_control(
+        id_prefix,
+        value,
+        size,
+        move |_, cx| {
+            let entity = entity_for_dec.clone();
+            entity.update(cx, |this, cx| {
+                this.adjust_terminal_font_size(-miaominal_settings::STEP, cx);
+            });
+        },
+        move |_, cx| {
+            let entity = entity_for_inc.clone();
+            entity.update(cx, |this, cx| {
+                this.adjust_terminal_font_size(miaominal_settings::STEP, cx);
             });
         },
     )

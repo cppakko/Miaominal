@@ -33,8 +33,9 @@ pub fn sync_component_theme(cx: &mut App) {
         .effective_terminal_font_family()
         .to_string()
         .into();
-    component_theme.font_size = px(app_settings.font_size);
-    component_theme.mono_font_size = px(app_settings.font_size);
+    let (font_size, mono_font_size) = component_font_sizes(&app_settings);
+    component_theme.font_size = font_size;
+    component_theme.mono_font_size = mono_font_size;
 
     let colors = &mut component_theme.colors;
     let hsla = |color: u32| rgb(color).into();
@@ -350,7 +351,7 @@ pub fn interface_font() -> Font {
 }
 
 pub fn scaled_font_size(base_size: f32) -> Pixels {
-    px(base_size / DEFAULT_FONT_SIZE * current_settings().font_size)
+    px(base_size / DEFAULT_FONT_SIZE * current_settings().interface_font_size)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -391,7 +392,14 @@ impl FontSize {
 }
 
 pub fn scaled_line_height(base_height: f32) -> Pixels {
-    px(base_height / DEFAULT_FONT_SIZE * current_settings().font_size)
+    px(base_height / DEFAULT_FONT_SIZE * current_settings().interface_font_size)
+}
+
+fn component_font_sizes(settings: &crate::AppSettings) -> (Pixels, Pixels) {
+    (
+        px(settings.interface_font_size),
+        px(settings.terminal_font_size),
+    )
 }
 
 impl KeyBinding {
@@ -449,6 +457,20 @@ mod tests {
             }
             None => assert!(configured_fallbacks.is_empty()),
         }
+    }
+
+    #[test]
+    fn component_theme_uses_independent_interface_and_terminal_font_sizes() {
+        let settings = crate::AppSettings {
+            interface_font_size: 16.0,
+            terminal_font_size: 18.0,
+            ..crate::AppSettings::default()
+        };
+
+        let (font_size, mono_font_size) = component_font_sizes(&settings);
+
+        assert_eq!(font_size.as_f32(), 16.0);
+        assert_eq!(mono_font_size.as_f32(), 18.0);
     }
 
     #[test]

@@ -64,8 +64,12 @@ pub fn font_fallbacks() -> Vec<String> {
     current_settings().effective_font_fallbacks().to_vec()
 }
 
-pub fn font_size() -> f32 {
-    current_settings().font_size
+pub fn interface_font_size() -> f32 {
+    current_settings().interface_font_size
+}
+
+pub fn terminal_font_size() -> f32 {
+    current_settings().terminal_font_size
 }
 
 pub fn line_height_default() -> f32 {

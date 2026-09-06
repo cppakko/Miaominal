@@ -79,7 +79,7 @@ pub fn terminal_font() -> Font {
 }
 
 pub fn terminal_font_size() -> f32 {
-    settings::font_size()
+    settings::terminal_font_size()
 }
 
 pub fn terminal_line_height_default() -> f32 {

@@ -11,8 +11,8 @@ pub use desktop::{
     FontSize, interface_font, scaled_font_size, scaled_line_height, sync_component_theme,
 };
 pub use global::{
-    cell_width_default, current_settings, current_theme, font_fallbacks, font_family, font_size,
-    install, line_height_default, terminal_font_family,
+    cell_width_default, current_settings, current_theme, font_fallbacks, font_family, install,
+    interface_font_size, line_height_default, terminal_font_family, terminal_font_size,
 };
 #[cfg(feature = "desktop-ui")]
 pub use model::available_font_families;

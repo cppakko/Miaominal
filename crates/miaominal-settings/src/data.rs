@@ -752,7 +752,9 @@ pub struct AppSettings {
     #[serde(default = "default_font_fallbacks")]
     pub font_fallbacks: Vec<String>,
     #[serde(default = "default_font_size")]
-    pub font_size: f32,
+    pub interface_font_size: f32,
+    #[serde(default = "default_font_size")]
+    pub terminal_font_size: f32,
     #[serde(default = "default_line_height")]
     pub line_height: f32,
     #[serde(default = "default_theme")]
@@ -941,7 +943,8 @@ impl Default for AppSettings {
             font_family: default_font_family(),
             terminal_font_family: default_font_family(),
             font_fallbacks: default_font_fallbacks(),
-            font_size: default_font_size(),
+            interface_font_size: default_font_size(),
+            terminal_font_size: default_font_size(),
             line_height: default_line_height(),
             theme_id: default_theme(),
             seed_color: default_seed_color(),
@@ -983,7 +986,8 @@ impl AppSettings {
         {
             self.terminal_font_family = default_font_family();
         }
-        self.font_size = self.font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+        self.interface_font_size = self.interface_font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+        self.terminal_font_size = self.terminal_font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
         self.line_height = self.line_height.clamp(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX);
         self.seed_color = material_theme::normalize_seed_color(&self.seed_color)
             .unwrap_or_else(default_seed_color);
@@ -1118,7 +1122,8 @@ mod tests {
             font_family: "JetBrains Mono".into(),
             terminal_font_family: "Fira Code".into(),
             font_fallbacks: vec!["Noto Sans CJK SC".into()],
-            font_size: 18.0,
+            interface_font_size: 18.0,
+            terminal_font_size: 19.0,
             line_height: 26.0,
             theme_id: ThemeId::Dark,
             seed_color: "#123456".into(),
@@ -1132,7 +1137,8 @@ mod tests {
             font_family: "Fira Code".into(),
             terminal_font_family: "Cascadia Mono".into(),
             font_fallbacks: vec!["Sarasa Mono SC".into()],
-            font_size: 13.0,
+            interface_font_size: 13.0,
+            terminal_font_size: 15.0,
             line_height: 17.0,
             theme_id: ThemeId::Light,
             seed_color: "#abcdef".into(),
@@ -1168,7 +1174,8 @@ mod tests {
         assert_eq!(local.font_family, "JetBrains Mono");
         assert_eq!(local.terminal_font_family, "Fira Code");
         assert_eq!(local.font_fallbacks, vec!["Noto Sans CJK SC"]);
-        assert_eq!(local.font_size, 18.0);
+        assert_eq!(local.interface_font_size, 18.0);
+        assert_eq!(local.terminal_font_size, 19.0);
         assert_eq!(local.line_height, 26.0);
         assert_eq!(local.theme_id, ThemeId::Dark);
         assert_eq!(local.seed_color, "#123456");

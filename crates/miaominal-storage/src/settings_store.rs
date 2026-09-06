@@ -32,12 +32,19 @@ impl SettingsStore {
         let (
             mut settings,
             has_onboarding_field,
+            migrated_font_sizes,
             migrated_terminal_font_family,
             migrated_open_ssh_integration,
         ) = if settings_file_exists {
             read_settings_file(&settings_file)?
         } else {
-            (AppSettings::default_for_system(), false, false, false)
+            (
+                AppSettings::default_for_system(),
+                false,
+                false,
+                false,
+                false,
+            )
         };
 
         let migrated_legacy_onboarding = if settings_file_exists {
@@ -68,6 +75,7 @@ impl SettingsStore {
                 log::warn!("failed to persist repaired SSH Bridge policy: {error:?}");
             }
         } else if (migrated_legacy_onboarding
+            || migrated_font_sizes
             || migrated_terminal_font_family
             || migrated_open_ssh_integration)
             && let Err(error) = store.persist()
@@ -276,15 +284,21 @@ fn settings_lock_path(settings_file: &Path) -> PathBuf {
     path.into()
 }
 
-fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, bool)> {
+fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, bool, bool)> {
     let content = fs::read_to_string(settings_file)
         .with_context(|| format!("failed to read {}", settings_file.display()))?;
 
     if content.trim().is_empty() {
-        return Ok((AppSettings::default_for_system(), false, false, false));
+        return Ok((
+            AppSettings::default_for_system(),
+            false,
+            false,
+            false,
+            false,
+        ));
     }
 
-    let raw: toml::Value = toml::from_str(&content)
+    let mut raw: toml::Value = toml::from_str(&content)
         .with_context(|| format!("failed to parse {}", settings_file.display()))?;
     let table = raw.as_table();
     let has_onboarding_field =
@@ -293,7 +307,26 @@ fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, 
         table.is_some_and(|table| table.contains_key("terminal_font_family"));
     let has_open_ssh_integration_mode =
         table.is_some_and(|table| table.contains_key("open_ssh_integration_mode"));
-    let mut settings: AppSettings = toml::from_str(&content)
+    let has_interface_font_size =
+        table.is_some_and(|table| table.contains_key("interface_font_size"));
+    let has_terminal_font_size =
+        table.is_some_and(|table| table.contains_key("terminal_font_size"));
+    let legacy_font_size = raw
+        .as_table_mut()
+        .and_then(|table| table.remove("font_size"));
+    let migrated_font_sizes = legacy_font_size.is_some();
+    if let Some(legacy_font_size) = legacy_font_size
+        && let Some(table) = raw.as_table_mut()
+    {
+        if !has_interface_font_size {
+            table.insert("interface_font_size".into(), legacy_font_size.clone());
+        }
+        if !has_terminal_font_size {
+            table.insert("terminal_font_size".into(), legacy_font_size);
+        }
+    }
+    let mut settings: AppSettings = raw
+        .try_into()
         .with_context(|| format!("failed to parse {}", settings_file.display()))?;
     let migrated_terminal_font_family = !has_terminal_font_family;
     if migrated_terminal_font_family {
@@ -309,6 +342,7 @@ fn read_settings_file(settings_file: &Path) -> Result<(AppSettings, bool, bool, 
     Ok((
         settings,
         has_onboarding_field,
+        migrated_font_sizes,
         migrated_terminal_font_family,
         migrated_open_ssh_integration,
     ))
@@ -440,6 +474,45 @@ mod tests {
         let persisted = fs::read_to_string(&paths.settings_file)
             .expect("migrated settings file should be readable");
         assert!(persisted.contains("completed_onboarding_version = 1"));
+        assert!(persisted.contains("interface_font_size = 14.0"));
+        assert!(persisted.contains("terminal_font_size = 14.0"));
+        assert!(
+            !persisted
+                .lines()
+                .any(|line| line.starts_with("font_size ="))
+        );
+    }
+
+    #[test]
+    fn explicit_new_font_sizes_take_precedence_over_legacy_font_size() {
+        let paths = TestSettingsPath::new();
+        paths.create_dir();
+        fs::write(
+            &paths.settings_file,
+            concat!(
+                "completed_onboarding_version = 1\n",
+                "font_size = 13.0\n",
+                "interface_font_size = 16.0\n",
+                "terminal_font_size = 18.0\n",
+            ),
+        )
+        .expect("settings file should be written");
+
+        let store = SettingsStore::load_with_path(paths.settings_file.clone())
+            .expect("mixed font size settings should load");
+
+        assert_eq!(store.settings().interface_font_size, 16.0);
+        assert_eq!(store.settings().terminal_font_size, 18.0);
+
+        let persisted = fs::read_to_string(&paths.settings_file)
+            .expect("migrated settings file should be readable");
+        assert!(persisted.contains("interface_font_size = 16.0"));
+        assert!(persisted.contains("terminal_font_size = 18.0"));
+        assert!(
+            !persisted
+                .lines()
+                .any(|line| line.starts_with("font_size ="))
+        );
     }
 
     #[test]
@@ -584,7 +657,7 @@ mod tests {
             )
             .expect("policy should persist");
 
-        assert!(settings_store.update(|settings| settings.font_size = 18.0));
+        assert!(settings_store.update(|settings| settings.interface_font_size = 18.0));
 
         assert_eq!(policy_store.policy().unwrap(), policy);
         assert_eq!(settings_store.settings().ssh_bridge.security_policy, policy);
@@ -595,21 +668,21 @@ mod tests {
         let paths = TestSettingsPath::new();
         let mut initial = SettingsStore::load_with_path(paths.settings_file.clone())
             .expect("initial settings should load");
-        assert!(initial.update(|settings| settings.font_size = 15.0));
+        assert!(initial.update(|settings| settings.interface_font_size = 15.0));
 
         let mut stale = SettingsStore::load_with_path(paths.settings_file.clone())
             .expect("stale settings copy should load");
         let mut current = SettingsStore::load_with_path(paths.settings_file.clone())
             .expect("current settings copy should load");
-        assert!(current.update(|settings| settings.font_size = 17.0));
-        assert_eq!(stale.settings().font_size, 15.0);
+        assert!(current.update(|settings| settings.interface_font_size = 17.0));
+        assert_eq!(stale.settings().interface_font_size, 15.0);
 
-        assert!(stale.update(|settings| settings.font_size = 15.0));
+        assert!(stale.update(|settings| settings.interface_font_size = 15.0));
 
         let persisted = load_settings_document_unlocked(&paths.settings_file)
             .expect("updated settings should remain readable");
-        assert_eq!(persisted.font_size, 15.0);
-        assert_eq!(stale.settings().font_size, 15.0);
+        assert_eq!(persisted.interface_font_size, 15.0);
+        assert_eq!(stale.settings().interface_font_size, 15.0);
     }
 
     #[test]
@@ -633,7 +706,8 @@ mod tests {
 
         let mut store = SettingsStore::load_with_path(paths.settings_file.clone())
             .expect("invalid bridge policy should not discard all settings");
-        assert_eq!(store.settings().font_size, 18.0);
+        assert_eq!(store.settings().interface_font_size, 18.0);
+        assert_eq!(store.settings().terminal_font_size, 18.0);
         assert_eq!(
             store.settings().ssh_bridge.security_policy,
             miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
@@ -648,10 +722,10 @@ mod tests {
             miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()
         );
 
-        assert!(store.update(|settings| settings.font_size = 19.0));
+        assert!(store.update(|settings| settings.interface_font_size = 19.0));
         let repaired = load_settings_document_unlocked(&paths.settings_file)
             .expect("repaired settings should remain valid on disk");
-        assert_eq!(repaired.font_size, 19.0);
+        assert_eq!(repaired.interface_font_size, 19.0);
         assert_eq!(
             repaired.ssh_bridge.security_policy,
             miaominal_core::ssh_bridge_security::BridgeSecurityPolicy::default()

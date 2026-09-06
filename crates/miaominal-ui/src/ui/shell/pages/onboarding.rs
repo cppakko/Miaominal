@@ -55,7 +55,8 @@ pub(in crate::ui::shell) fn render_onboarding_page(
         font_fallbacks_input,
         seed_color_picker,
         terminal_right_click_behavior_select,
-        current_font_size,
+        current_interface_font_size,
+        current_terminal_font_size,
         current_line_height,
         current_seed_color,
         current_shift_right_click_context_menu,
@@ -85,7 +86,8 @@ pub(in crate::ui::shell) fn render_onboarding_page(
                 .forms
                 .terminal_right_click_behavior_select
                 .clone(),
-            format!("{:.1}", settings.font_size),
+            format!("{:.1}", settings.interface_font_size),
+            format!("{:.1}", settings.terminal_font_size),
             format!("{:.1}", settings.line_height),
             settings.seed_color.clone(),
             settings.terminal_shift_right_click_context_menu,
@@ -118,7 +120,8 @@ pub(in crate::ui::shell) fn render_onboarding_page(
             font_fallbacks_input,
             seed_color_picker,
             terminal_right_click_behavior_select,
-            current_font_size,
+            current_interface_font_size,
+            current_terminal_font_size,
             current_line_height,
             current_shift_right_click_context_menu,
             settings_entity.clone(),
@@ -701,7 +704,8 @@ fn render_onboarding_preferences_step(
     terminal_right_click_behavior_select: Entity<
         SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>,
     >,
-    current_font_size: String,
+    current_interface_font_size: String,
+    current_terminal_font_size: String,
     current_line_height: String,
     current_shift_right_click_context_menu: bool,
     settings: Entity<SettingsController>,
@@ -774,9 +778,20 @@ fn render_onboarding_preferences_step(
                                     .flex_1()
                                     .gap_5()
                                     .child(onboarding_field(
-                                        i18n::string("settings.appearance.font_size.label"),
-                                        onboarding_font_size_stepper(
-                                            current_font_size,
+                                        i18n::string(
+                                            "settings.appearance.interface_font_size.label",
+                                        ),
+                                        onboarding_interface_font_size_stepper(
+                                            current_interface_font_size,
+                                            settings.clone(),
+                                        ),
+                                    ))
+                                    .child(onboarding_field(
+                                        i18n::string(
+                                            "settings.appearance.terminal_font_size.label",
+                                        ),
+                                        onboarding_terminal_font_size_stepper(
+                                            current_terminal_font_size,
                                             settings.clone(),
                                         ),
                                     ))
@@ -1449,21 +1464,47 @@ fn onboarding_seed_color_control(
         .into_any_element()
 }
 
-fn onboarding_font_size_stepper(value: String, entity: Entity<SettingsController>) -> AnyElement {
+fn onboarding_interface_font_size_stepper(
+    value: String,
+    entity: Entity<SettingsController>,
+) -> AnyElement {
     let entity_for_dec = entity.clone();
     let entity_for_inc = entity;
 
     onboarding_stepper(
-        "onboarding-font-size",
+        "onboarding-interface-font-size",
         value,
         move |_, cx| {
             entity_for_dec.update(cx, |this, cx| {
-                this.adjust_font_size(-miaominal_settings::STEP, cx);
+                this.adjust_interface_font_size(-miaominal_settings::STEP, cx);
             });
         },
         move |_, cx| {
             entity_for_inc.update(cx, |this, cx| {
-                this.adjust_font_size(miaominal_settings::STEP, cx);
+                this.adjust_interface_font_size(miaominal_settings::STEP, cx);
+            });
+        },
+    )
+}
+
+fn onboarding_terminal_font_size_stepper(
+    value: String,
+    entity: Entity<SettingsController>,
+) -> AnyElement {
+    let entity_for_dec = entity.clone();
+    let entity_for_inc = entity;
+
+    onboarding_stepper(
+        "onboarding-terminal-font-size",
+        value,
+        move |_, cx| {
+            entity_for_dec.update(cx, |this, cx| {
+                this.adjust_terminal_font_size(-miaominal_settings::STEP, cx);
+            });
+        },
+        move |_, cx| {
+            entity_for_inc.update(cx, |this, cx| {
+                this.adjust_terminal_font_size(miaominal_settings::STEP, cx);
             });
         },
     )

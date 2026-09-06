@@ -91,7 +91,8 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.font_family != b.font_family
         || a.terminal_font_family != b.terminal_font_family
         || a.font_fallbacks != b.font_fallbacks
-        || (a.font_size - b.font_size).abs() > f32::EPSILON
+        || (a.interface_font_size - b.interface_font_size).abs() > f32::EPSILON
+        || (a.terminal_font_size - b.terminal_font_size).abs() > f32::EPSILON
         || (a.line_height - b.line_height).abs() > f32::EPSILON
         || a.theme_id != b.theme_id
         || a.seed_color != b.seed_color
@@ -127,7 +128,8 @@ mod tests {
             language: AppLanguage::English,
             font_family: " ".into(),
             terminal_font_family: "monospace".into(),
-            font_size: 3.0,
+            interface_font_size: 3.0,
+            terminal_font_size: 40.0,
             line_height: 100.0,
             theme_id: ThemeId::Light,
             seed_color: "#6750A4".into(),
@@ -138,7 +140,8 @@ mod tests {
 
         assert_eq!(settings.font_family, default_font_family());
         assert_eq!(settings.terminal_font_family, default_font_family());
-        assert_eq!(settings.font_size, FONT_SIZE_MIN);
+        assert_eq!(settings.interface_font_size, FONT_SIZE_MIN);
+        assert_eq!(settings.terminal_font_size, FONT_SIZE_MAX);
         assert_eq!(settings.line_height, LINE_HEIGHT_MAX);
         assert_eq!(settings.seed_color, "#6750a4");
     }
@@ -183,7 +186,10 @@ mod tests {
     #[test]
     fn deserialize_missing_last_tab_close_behavior_uses_default() {
         let settings: AppSettings = toml::from_str("").expect("settings should deserialize");
+        let defaults = AppSettings::default();
 
+        assert_eq!(settings.interface_font_size, defaults.interface_font_size);
+        assert_eq!(settings.terminal_font_size, defaults.terminal_font_size);
         assert_eq!(
             settings.last_tab_close_behavior,
             LastTabCloseBehavior::ExitApplication
@@ -279,6 +285,43 @@ mod tests {
         modified.font_fallbacks = vec!["Noto Sans CJK SC".into()];
 
         assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn changed_detects_interface_and_terminal_font_sizes_independently() {
+        let original = AppSettings::default();
+        let mut modified = original.clone();
+        modified.interface_font_size += STEP;
+
+        assert!(changed(&original, &modified));
+
+        modified = original.clone();
+        modified.terminal_font_size += STEP;
+
+        assert!(changed(&original, &modified));
+    }
+
+    #[test]
+    fn interface_and_terminal_font_sizes_round_trip_independently() {
+        let settings = AppSettings {
+            interface_font_size: 16.0,
+            terminal_font_size: 18.0,
+            ..AppSettings::default()
+        };
+
+        let serialized = toml::to_string(&settings).expect("settings should serialize");
+        assert!(serialized.contains("interface_font_size = 16.0"));
+        assert!(serialized.contains("terminal_font_size = 18.0"));
+        assert!(
+            !serialized
+                .lines()
+                .any(|line| line.starts_with("font_size ="))
+        );
+
+        let restored: AppSettings =
+            toml::from_str(&serialized).expect("settings should deserialize");
+        assert_eq!(restored.interface_font_size, 16.0);
+        assert_eq!(restored.terminal_font_size, 18.0);
     }
 
     #[test]

@@ -60,9 +60,13 @@ no_matches = "没有匹配的字体"
 label = "CJK 回退字体"
 description = "用逗号分隔 CJK 字符的回退字体列表。留空时只使用系统默认回退。"
 
-[settings.appearance.font_size]
-label = "字号"
-description = "调整界面与终端共享的字号，范围 {min} 到 {max}。"
+[settings.appearance.interface_font_size]
+label = "界面字体大小"
+description = "调整应用界面的字体大小，范围 {min} 到 {max}。"
+
+[settings.appearance.terminal_font_size]
+label = "终端字体大小"
+description = "调整 PTY 终端与代码块的字体大小，范围 {min} 到 {max}。"
 
 [settings.appearance.line_height]
 label = "行高"
@@ -2037,7 +2041,8 @@ interface_font_set = "界面字体已设为 {font}"
 interface_font_reset = "界面字体已重置为 {font}"
 terminal_font_set = "终端字体已设为 {font}"
 terminal_font_reset = "终端字体已重置为 {font}"
-font_size = "字号 {value}"
+interface_font_size = "界面字体大小 {value}"
+terminal_font_size = "终端字体大小 {value}"
 line_height = "行高 {value}"
 theme_seed = "主题种子色：{value}"
 theme_seed_reset = "主题种子色已重置为 {value}"

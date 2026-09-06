@@ -141,11 +141,25 @@ impl SettingsService {
         }
     }
 
-    pub fn adjust_font_size(settings_store: &mut SettingsStore, delta: f32) -> Option<f32> {
-        let target =
-            (settings_store.settings().font_size + delta).clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+    pub fn adjust_interface_font_size(
+        settings_store: &mut SettingsStore,
+        delta: f32,
+    ) -> Option<f32> {
+        let target = (settings_store.settings().interface_font_size + delta)
+            .clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
         settings_store
-            .update(|settings| settings.font_size = target)
+            .update(|settings| settings.interface_font_size = target)
+            .then_some(target)
+    }
+
+    pub fn adjust_terminal_font_size(
+        settings_store: &mut SettingsStore,
+        delta: f32,
+    ) -> Option<f32> {
+        let target = (settings_store.settings().terminal_font_size + delta)
+            .clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+        settings_store
+            .update(|settings| settings.terminal_font_size = target)
             .then_some(target)
     }
 
@@ -684,13 +698,23 @@ mod tests {
     }
 
     #[test]
-    fn adjust_font_size_clamps_to_supported_range() {
-        let (mut store, settings_path) = test_settings_store("adjust-font-size");
+    fn adjust_font_sizes_clamp_independently_to_supported_range() {
+        let (mut store, settings_path) = test_settings_store("adjust-font-sizes");
 
-        let value =
-            SettingsService::adjust_font_size(&mut store, 99.0).expect("font size should update");
+        let interface_value = SettingsService::adjust_interface_font_size(&mut store, 99.0)
+            .expect("interface font size should update");
+        let terminal_before = store.settings().terminal_font_size;
+        let terminal_value = SettingsService::adjust_terminal_font_size(&mut store, -99.0)
+            .expect("terminal font size should update");
 
-        assert_eq!(value, FONT_SIZE_MAX);
+        assert_eq!(interface_value, FONT_SIZE_MAX);
+        assert_eq!(terminal_value, miaominal_settings::FONT_SIZE_MIN);
+        assert_eq!(
+            terminal_before,
+            miaominal_settings::AppSettings::default().terminal_font_size
+        );
+        assert_eq!(store.settings().interface_font_size, FONT_SIZE_MAX);
+        assert_eq!(store.settings().terminal_font_size, terminal_value);
 
         let _ = fs::remove_dir_all(settings_path.parent().unwrap());
     }
@@ -738,7 +762,7 @@ mod tests {
         let mut ui_store = worker_store.clone();
         let (secrets, _, _, secrets_path, sync_path) =
             test_keyring_like_backend("persist-web-search");
-        ui_store.update(|settings| settings.font_size = 19.0);
+        ui_store.update(|settings| settings.interface_font_size = 19.0);
         let mut config = WebSearchConfig::default();
         config.enabled = true;
 
@@ -750,7 +774,7 @@ mod tests {
         )
         .expect("web search transaction should succeed");
 
-        assert_eq!(worker_store.settings().font_size, 19.0);
+        assert_eq!(worker_store.settings().interface_font_size, 19.0);
         assert!(worker_store.settings().web_search.enabled);
         assert!(worker_store.settings().web_search.has_api_key);
         assert_eq!(

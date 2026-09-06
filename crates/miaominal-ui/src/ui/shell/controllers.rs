@@ -238,7 +238,7 @@ fn clear_managed_key_profile_references(profiles: &mut [SessionProfile], key_id:
 fn terminal_metrics_changed(previous: &AppSettings, next: &AppSettings) -> bool {
     previous.terminal_font_family != next.terminal_font_family
         || previous.font_fallbacks != next.font_fallbacks
-        || previous.font_size != next.font_size
+        || previous.terminal_font_size != next.terminal_font_size
         || previous.line_height != next.line_height
 }
 
@@ -438,6 +438,24 @@ mod tests {
         let previous = AppSettings::default();
         let mut next = previous.clone();
         next.terminal_font_family = "JetBrains Mono".into();
+
+        assert!(terminal_metrics_changed(&previous, &next));
+    }
+
+    #[test]
+    fn interface_font_size_change_does_not_invalidate_terminal_metrics() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.interface_font_size += miaominal_settings::STEP;
+
+        assert!(!terminal_metrics_changed(&previous, &next));
+    }
+
+    #[test]
+    fn terminal_font_size_change_invalidates_terminal_metrics() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.terminal_font_size += miaominal_settings::STEP;
 
         assert!(terminal_metrics_changed(&previous, &next));
     }
