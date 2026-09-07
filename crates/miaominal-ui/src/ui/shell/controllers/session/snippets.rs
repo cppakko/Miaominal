@@ -88,6 +88,9 @@ impl SessionController {
         self.set_selected_snippet(None);
         self.clear_snippet_inputs(window, cx);
         self.set_snippets_editor_open(true);
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Snippets,
+        )));
         cx.emit(AppCommand::Feedback(i18n::string(
             "snippets.messages.preparing_new",
         )));
@@ -107,6 +110,9 @@ impl SessionController {
         self.set_selected_snippet(Some(index));
         self.populate_snippet_inputs(&snippet, window, cx);
         self.set_snippets_editor_open(true);
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Snippets,
+        )));
         cx.emit(AppCommand::Feedback(i18n::string_args(
             "snippets.messages.editing",
             &[("description", &snippet.description)],
@@ -279,6 +285,7 @@ impl SessionController {
             Ok(snippet) => {
                 self.set_snippets_editor_open(false);
                 self.set_selected_snippet(None);
+                cx.emit(AppCommand::SidebarEditorStateChanged(None));
                 let message = if self.services.snippet_store.is_some() {
                     i18n::string_args(
                         "snippets.messages.saved",
@@ -366,6 +373,7 @@ impl SessionController {
                         (true, None) => {
                             controller.set_snippets_editor_open(false);
                             controller.set_selected_snippet(None);
+                            cx.emit(AppCommand::SidebarEditorStateChanged(None));
                             i18n::string_args(
                                 "snippets.messages.saved",
                                 &[("description", result.description.as_str())],
@@ -374,6 +382,7 @@ impl SessionController {
                         (false, None) => {
                             controller.set_snippets_editor_open(false);
                             controller.set_selected_snippet(None);
+                            cx.emit(AppCommand::SidebarEditorStateChanged(None));
                             i18n::string_args(
                                 "snippets.messages.saved_memory_only",
                                 &[("description", result.description.as_str())],
@@ -427,6 +436,7 @@ impl SessionController {
         let removed = self.snippets.borrow_mut().remove(index);
         self.set_selected_snippet(None);
         self.set_snippets_editor_open(false);
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
 
         if self
             .catalog_view()

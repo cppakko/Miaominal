@@ -257,6 +257,9 @@ impl KeychainController {
         self.clear_keychain_inputs(window, cx);
         self.editor_mode = KeychainEditorMode::Import;
         self.editor_open = true;
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Keychain,
+        )));
         self.status_message = i18n::string("keychain.messages.preparing_new_managed_key");
         cx.notify();
     }
@@ -282,6 +285,9 @@ impl KeychainController {
         self.editor_mode = KeychainEditorMode::Deploy;
         self.deploy_key_id = Some(target_key_id);
         self.editor_open = true;
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Keychain,
+        )));
         self.status_message = i18n::string_args(
             "keychain.messages.preparing_deploy",
             &[("summary", &summary)],
@@ -299,6 +305,7 @@ impl KeychainController {
         self.deploy_key_id = None;
         self.generation_task = None;
         self.generation_in_progress = false;
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
         self.status_message = i18n::string("keychain.messages.closed_sidebar");
         cx.notify();
     }
@@ -823,6 +830,7 @@ impl KeychainController {
                 self.managed_keys.push(imported.record.clone());
                 self.clear_keychain_inputs(window, cx);
                 self.editor_open = false;
+                cx.emit(AppCommand::SidebarEditorStateChanged(None));
                 let summary = imported.record.summary();
                 self.status_message =
                     i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
@@ -998,6 +1006,7 @@ impl KeychainController {
                             this.managed_keys = result.updated_keys;
                             this.clear_keychain_inputs(window, cx);
                             this.editor_open = false;
+                            cx.emit(AppCommand::SidebarEditorStateChanged(None));
                             let summary = result.record.summary();
                             this.status_message =
                                 i18n::string_args("keychain.messages.imported", &[("summary", &summary)]);
@@ -1277,6 +1286,7 @@ impl KeychainController {
             self.deploy_key_id = None;
             self.editor_mode = KeychainEditorMode::Import;
             self.editor_open = false;
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
         }
 
         let summary = removed.summary();

@@ -170,7 +170,8 @@ pub(in crate::ui::shell) use terminal::WorkspaceTerminalInputExt;
 use workspace::{
     ClosePlanStep, ClosedSftpTabState, ClosedTabBundle, PaneLayout, SplitAxis, SplitDirection,
     TabDescriptor, TabId, TabKindTag, TabPlacement, TabRegistry, TabState, TabWorkspaceState,
-    WorkspaceModel, reopened_tab_id,
+    WorkspaceModel, remember_page_editor_sidebar, remember_sidebar_section, reopened_tab_id,
+    restored_page_editor_sidebar, restored_sidebar_section,
 };
 
 pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};

@@ -272,19 +272,6 @@ impl AppView {
             return;
         }
 
-        let should_animate_hosts_to_terminal = self
-            .workspace
-            .active_topbar_tab
-            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
-            .is_some_and(|tab| tab.is_hosts())
-            && self.shell.shell_state.sidebar_section == SidebarSection::Hosts;
-        let preserve_host_editor_sidebar = should_animate_hosts_to_terminal
-            && self
-                .controllers
-                .session
-                .read(cx)
-                .editor_state()
-                .host_editor_open;
         let replace_index = self
             .workspace
             .active_topbar_tab
@@ -312,13 +299,7 @@ impl AppView {
         self.load_topbar_workspace(index, cx);
         self.rebind_terminal_focus_reporting(window, cx);
 
-        self.shell.shell_state.sidebar_section = SidebarSection::Hosts;
-        if !preserve_host_editor_sidebar {
-            self.controllers
-                .session
-                .read(cx)
-                .set_host_editor_state(false, false);
-        }
+        self.restore_active_topbar_sidebar_section(cx);
         self.shell.status_message = i18n::string_args(
             "session.messages.opening_tab_for",
             &[("profile", &profile.name)],
@@ -687,11 +668,7 @@ impl AppView {
                 self.workspace.active_topbar_tab = self.workspace.tabs.id_at(visible_index);
                 self.load_topbar_workspace(visible_index, cx);
                 self.rebind_terminal_focus_reporting(window, cx);
-                self.shell.shell_state.sidebar_section = SidebarSection::Hosts;
-                self.controllers
-                    .session
-                    .read(cx)
-                    .set_host_editor_state(false, false);
+                self.restore_active_topbar_sidebar_section(cx);
                 let title = self
                     .workspace
                     .tabs
@@ -819,6 +796,7 @@ impl AppView {
             } else {
                 self.reset_loaded_workspace(cx);
             }
+            self.restore_active_topbar_sidebar_section(cx);
         }
 
         if let Some(active_session_tab_id) = self.workspace.workspace.active_tab {
@@ -882,23 +860,6 @@ impl AppView {
         let target_is_session = target_tab.is_session();
         let target_is_sftp = target_tab.is_sftp();
 
-        let previous_active_tab_id = self.workspace.active_topbar_tab;
-        let previous_active_tab =
-            previous_active_tab_id.and_then(|tab_id| self.workspace.tabs.get(tab_id));
-        let previous_active_is_hosts = previous_active_tab.is_some_and(|tab| tab.is_hosts())
-            && self.shell.shell_state.sidebar_section == SidebarSection::Hosts;
-        let target_is_terminal = self.workspace.tabs.at(index).is_some_and(|tab| {
-            self.controllers.session.read(cx).tab_purpose(tab.id) == Some(SessionPurpose::Terminal)
-        });
-        let preserve_host_editor_sidebar = previous_active_is_hosts
-            && target_is_terminal
-            && self
-                .controllers
-                .session
-                .read(cx)
-                .editor_state()
-                .host_editor_open;
-
         if self.workspace.active_topbar_tab != self.workspace.tabs.id_at(index) {
             self.unload_active_topbar_workspace(cx);
             self.workspace.active_topbar_tab = self.workspace.tabs.id_at(index);
@@ -910,14 +871,7 @@ impl AppView {
             self.rebind_terminal_focus_reporting(window, cx);
         }
 
-        self.shell.shell_state.sidebar_section = SidebarSection::Hosts;
-
-        if !preserve_host_editor_sidebar {
-            self.controllers
-                .session
-                .read(cx)
-                .set_host_editor_state(false, false);
-        }
+        self.restore_active_topbar_sidebar_section(cx);
 
         if let Some(active_session_tab_id) = self.workspace.workspace.active_tab {
             self.controllers
@@ -1134,6 +1088,7 @@ impl AppView {
             self.workspace.active_topbar_tab = None;
             self.reset_loaded_workspace(cx);
         }
+        self.restore_active_topbar_sidebar_section(cx);
 
         self.workspace.renaming_tab = None;
         self.rebind_terminal_focus_reporting(window, cx);

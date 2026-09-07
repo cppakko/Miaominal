@@ -1,8 +1,153 @@
 use super::*;
 use crate::ui::application::application_state;
-use crate::ui::shell::SettingsDestination;
+use crate::ui::shell::{
+    PageEditorSidebarKind, SettingsDestination, remember_page_editor_sidebar,
+    remember_sidebar_section, restored_page_editor_sidebar, restored_sidebar_section,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarSectionTransition {
+    Navigation,
+    TabRestore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SidebarEditorRetention {
+    host_profile: bool,
+    port_forwarding: bool,
+    snippets: bool,
+    keychain: bool,
+    known_hosts: bool,
+}
+
+impl SidebarEditorRetention {
+    const ALL: Self = Self {
+        host_profile: true,
+        port_forwarding: true,
+        snippets: true,
+        keychain: true,
+        known_hosts: true,
+    };
+}
+
+fn sidebar_editor_retention(
+    transition: SidebarSectionTransition,
+    visible_section: Option<SidebarSection>,
+) -> SidebarEditorRetention {
+    if transition == SidebarSectionTransition::TabRestore {
+        return SidebarEditorRetention::ALL;
+    }
+
+    let section = visible_section.expect("explicit sidebar navigation has a visible destination");
+    SidebarEditorRetention {
+        host_profile: section == SidebarSection::Hosts,
+        port_forwarding: section == SidebarSection::PortForwarding,
+        snippets: section == SidebarSection::Snippets,
+        keychain: section == SidebarSection::Keychain,
+        known_hosts: section == SidebarSection::KnownHosts,
+    }
+}
 
 impl AppView {
+    pub(in crate::ui::shell) fn remember_active_page_editor_sidebar(
+        &mut self,
+        sidebar: Option<PageEditorSidebarKind>,
+    ) {
+        remember_page_editor_sidebar(
+            &mut self.workspace.tabs,
+            self.workspace.active_topbar_tab,
+            sidebar,
+        );
+    }
+
+    fn set_sidebar_section_state(&mut self, section: SidebarSection) {
+        self.shell.shell_state.sidebar_section = section;
+        remember_sidebar_section(
+            &mut self.workspace.tabs,
+            self.workspace.active_topbar_tab,
+            section,
+        );
+    }
+
+    fn apply_sidebar_section_effects(
+        &mut self,
+        transition: SidebarSectionTransition,
+        visible_section: Option<SidebarSection>,
+        cx: &mut Context<Self>,
+    ) {
+        let retention = sidebar_editor_retention(transition, visible_section);
+        if !retention.host_profile {
+            self.controllers
+                .session
+                .read(cx)
+                .set_host_editor_state(false, false);
+        }
+        if !retention.port_forwarding {
+            self.controllers
+                .session
+                .read(cx)
+                .clear_port_forward_editor();
+        }
+        if !retention.snippets {
+            let controller = self.controllers.session.read(cx);
+            controller.set_snippets_editor_open(false);
+            controller.set_selected_snippet(None);
+        }
+        if !retention.keychain {
+            self.controllers
+                .keychain
+                .update(cx, |controller, cx| controller.dismiss_editor(cx));
+        }
+        if !retention.known_hosts {
+            self.controllers
+                .session
+                .read(cx)
+                .set_selected_known_host(None);
+        }
+
+        match visible_section {
+            Some(SidebarSection::Keychain) => {
+                self.controllers
+                    .keychain
+                    .update(cx, |controller, cx| controller.refresh_keychain_data(cx));
+            }
+            Some(section) => {
+                let title = section.title();
+                self.shell.status_message = i18n::string_args(
+                    "navigation.messages.viewing_section",
+                    &[("section", &title)],
+                );
+                cx.notify();
+            }
+            None => {}
+        }
+    }
+
+    pub(in crate::ui::shell) fn restore_active_topbar_sidebar_section(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let active_topbar_tab = self.workspace.active_topbar_tab;
+        let visible_section = active_topbar_tab
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .map_or(true, |tab| tab.is_hosts());
+        let Some(section) = restored_sidebar_section(&self.workspace.tabs, active_topbar_tab)
+        else {
+            return;
+        };
+        self.set_sidebar_section_state(section);
+        if visible_section {
+            self.shell.shell_state.visible_page_editor_sidebar =
+                restored_page_editor_sidebar(&self.workspace.tabs, active_topbar_tab);
+            self.shell.shell_state.page_editor_sidebar_transition = None;
+        }
+        self.apply_sidebar_section_effects(
+            SidebarSectionTransition::TabRestore,
+            visible_section.then_some(section),
+            cx,
+        );
+    }
+
     pub(in crate::ui::shell) fn navigate_to_settings_destination(
         &mut self,
         destination: SettingsDestination,
@@ -154,11 +299,7 @@ impl AppView {
         self.reset_loaded_workspace(cx);
         self.rebind_terminal_focus_reporting(window, cx);
         self.sync_terminal_focus_reporting(window, cx);
-        self.shell.shell_state.sidebar_section = SidebarSection::Hosts;
-        self.controllers
-            .session
-            .read(cx)
-            .set_host_editor_state(false, false);
+        self.restore_active_topbar_sidebar_section(cx);
         self.sync_sftp_path_inputs_for_tab(tab_id, cx);
         self.sync_sftp_tables_for_tab(tab_id, cx);
         self.shell.status_message = i18n::string_args(
@@ -175,11 +316,7 @@ impl AppView {
         self.workspace.push_hosts_tab(TabState::new_hosts(tab_id));
         self.workspace.active_topbar_tab = Some(tab_id);
         self.workspace.workspace.active_tab = None;
-        self.shell.shell_state.sidebar_section = SidebarSection::Hosts;
-        self.controllers
-            .session
-            .read(cx)
-            .set_host_editor_state(false, false);
+        self.restore_active_topbar_sidebar_section(cx);
         self.shell.status_message = i18n::string("navigation.messages.opened_new_hosts_tab");
         cx.notify();
     }
@@ -198,40 +335,13 @@ impl AppView {
         }
 
         self.unload_active_topbar_workspace(cx);
-        self.shell.shell_state.sidebar_section = section;
+        self.remember_active_page_editor_sidebar(None);
+        self.set_sidebar_section_state(section);
         if !preserve_hosts_tab_selection {
             self.workspace.active_topbar_tab = None;
         }
         self.workspace.workspace.active_tab = None;
-        if section != SidebarSection::PortForwarding {
-            self.controllers
-                .session
-                .read(cx)
-                .clear_port_forward_editor();
-        }
-        if section != SidebarSection::Snippets {
-            self.controllers
-                .session
-                .read(cx)
-                .set_snippets_editor_open(false);
-        }
-        if section != SidebarSection::Keychain {
-            self.controllers
-                .keychain
-                .update(cx, |controller, cx| controller.dismiss_editor(cx));
-        }
-        if section == SidebarSection::Keychain {
-            self.controllers
-                .keychain
-                .update(cx, |controller, cx| controller.refresh_keychain_data(cx));
-        } else {
-            let title = section.title();
-            self.shell.status_message = i18n::string_args(
-                "navigation.messages.viewing_section",
-                &[("section", &title)],
-            );
-            cx.notify();
-        }
+        self.apply_sidebar_section_effects(SidebarSectionTransition::Navigation, Some(section), cx);
     }
 
     pub(in crate::ui::shell) fn open_terminal_search(
@@ -490,10 +600,13 @@ impl AppView {
                             let managed_key_options = ManagedKeySelectItem::sorted_items(
                                 this.controllers.keychain.read(cx).managed_keys(),
                             );
-                            this.shell.shell_state.sidebar_section = super::SidebarSection::Hosts;
+                            this.set_sidebar_section(super::SidebarSection::Hosts, cx);
                             this.controllers.session.update(cx, |controller, cx| {
                                 controller.add_profile(managed_key_options, window, cx);
                             });
+                            this.remember_active_page_editor_sidebar(Some(
+                                PageEditorSidebarKind::Hosts,
+                            ));
                         });
                     }) {
                         log::debug!("failed to open new host profile editor: {error:?}");
@@ -533,8 +646,7 @@ impl AppView {
                             if open_hosts_tab {
                                 this.open_hosts_tab(cx);
                             } else {
-                                this.shell.shell_state.sidebar_section =
-                                    super::SidebarSection::Hosts;
+                                this.set_sidebar_section(super::SidebarSection::Hosts, cx);
                             }
                             this.controllers.session.update(cx, |controller, cx| {
                                 controller.open_profile_editor(
@@ -544,6 +656,9 @@ impl AppView {
                                     cx,
                                 );
                             });
+                            this.remember_active_page_editor_sidebar(Some(
+                                PageEditorSidebarKind::Hosts,
+                            ));
                         });
                     }) {
                         log::debug!("failed to open linked host profile: {error:?}");
@@ -838,6 +953,9 @@ impl AppView {
             | AppCommand::ManualSyncCompleted(_) => {}
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),
+            AppCommand::SidebarEditorStateChanged(sidebar) => {
+                self.remember_active_page_editor_sidebar(*sidebar);
+            }
             AppCommand::EnsureSessionSftpRequested(tab_id) => {
                 self.ensure_session_side_panel_sftp_tab(*tab_id, cx);
             }
@@ -1027,5 +1145,71 @@ impl AppView {
                 cx,
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_restore_never_closes_sidebar_editor_drafts() {
+        for visible_section in [
+            None,
+            Some(SidebarSection::Hosts),
+            Some(SidebarSection::PortForwarding),
+            Some(SidebarSection::Snippets),
+            Some(SidebarSection::Keychain),
+            Some(SidebarSection::Settings),
+        ] {
+            assert_eq!(
+                sidebar_editor_retention(SidebarSectionTransition::TabRestore, visible_section),
+                SidebarEditorRetention::ALL
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_navigation_still_closes_editors_outside_the_destination() {
+        assert_eq!(
+            sidebar_editor_retention(
+                SidebarSectionTransition::Navigation,
+                Some(SidebarSection::PortForwarding),
+            ),
+            SidebarEditorRetention {
+                host_profile: false,
+                port_forwarding: true,
+                snippets: false,
+                keychain: false,
+                known_hosts: false,
+            }
+        );
+        assert_eq!(
+            sidebar_editor_retention(
+                SidebarSectionTransition::Navigation,
+                Some(SidebarSection::Settings),
+            ),
+            SidebarEditorRetention {
+                host_profile: false,
+                port_forwarding: false,
+                snippets: false,
+                keychain: false,
+                known_hosts: false,
+            }
+        );
+
+        assert_eq!(
+            sidebar_editor_retention(
+                SidebarSectionTransition::Navigation,
+                Some(SidebarSection::KnownHosts),
+            ),
+            SidebarEditorRetention {
+                host_profile: false,
+                port_forwarding: false,
+                snippets: false,
+                keychain: false,
+                known_hosts: true,
+            }
+        );
     }
 }

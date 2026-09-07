@@ -3,9 +3,9 @@ use super::panes::{
     TerminalPaneFreeTypeDropTarget,
 };
 use super::{
-    ClosedSessionTabState, PrimaryViewKind, PrimaryViewTransition, SessionProfile,
-    TopbarActiveTabTransition, TopbarTabEnterTransition, TopbarTabExitTransition,
-    TopbarTabSnapshot,
+    ClosedSessionTabState, PageEditorSidebarKind, PrimaryViewKind, PrimaryViewTransition,
+    SessionProfile, SidebarSection, TopbarActiveTabTransition, TopbarTabEnterTransition,
+    TopbarTabExitTransition, TopbarTabSnapshot,
 };
 #[cfg(test)]
 use super::{SessionController, SessionTabState};
@@ -23,6 +23,8 @@ pub(in crate::ui::shell) struct TabDescriptor {
     pub(in crate::ui::shell) status: String,
     pub(in crate::ui::shell) kind: TabKindTag,
     pub(in crate::ui::shell) placement: TabPlacement,
+    sidebar_section: SidebarSection,
+    page_editor_sidebar: Option<PageEditorSidebarKind>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +48,8 @@ impl TabState {
                 status,
                 kind,
                 placement,
+                sidebar_section: SidebarSection::Hosts,
+                page_editor_sidebar: None,
             },
         }
     }
@@ -354,6 +358,54 @@ impl TabRegistry {
                 descriptor,
             })
     }
+}
+
+pub(in crate::ui::shell) fn remember_sidebar_section(
+    tabs: &mut TabRegistry,
+    active_topbar_tab: Option<TabId>,
+    section: SidebarSection,
+) {
+    if let Some(tab_id) = active_topbar_tab
+        && let Some(mut tab) = tabs.get_mut(tab_id)
+        && tab.is_hosts()
+    {
+        tab.sidebar_section = section;
+    }
+}
+
+pub(in crate::ui::shell) fn restored_sidebar_section(
+    tabs: &TabRegistry,
+    active_topbar_tab: Option<TabId>,
+) -> Option<SidebarSection> {
+    let tab_id = active_topbar_tab?;
+    Some(
+        tabs.get(tab_id)
+            .filter(|tab| tab.is_hosts())
+            .map_or(SidebarSection::Hosts, |tab| tab.sidebar_section),
+    )
+}
+
+pub(in crate::ui::shell) fn remember_page_editor_sidebar(
+    tabs: &mut TabRegistry,
+    active_topbar_tab: Option<TabId>,
+    sidebar: Option<PageEditorSidebarKind>,
+) {
+    if let Some(tab_id) = active_topbar_tab
+        && let Some(mut tab) = tabs.get_mut(tab_id)
+        && tab.is_hosts()
+    {
+        tab.page_editor_sidebar = sidebar;
+    }
+}
+
+pub(in crate::ui::shell) fn restored_page_editor_sidebar(
+    tabs: &TabRegistry,
+    active_topbar_tab: Option<TabId>,
+) -> Option<PageEditorSidebarKind> {
+    let tab_id = active_topbar_tab?;
+    tabs.get(tab_id)
+        .filter(|tab| tab.is_hosts())
+        .and_then(|tab| tab.page_editor_sidebar)
 }
 
 impl WorkspaceModel {
@@ -982,6 +1034,114 @@ mod tests {
         );
         assert_eq!(registry.index_of(active), Some(2));
         assert_eq!(registry.get(active).map(|tab| tab.id), Some(active));
+    }
+
+    #[test]
+    fn switching_hosts_tabs_restores_each_remembered_sidebar_section() {
+        let first = TabId::new(10);
+        let second = TabId::new(20);
+        let session = TabId::new(30);
+        let mut registry = TabRegistry::from_tabs([
+            TabState::new_hosts(first),
+            TabState::new_hosts(second),
+            tab(session.raw(), TabPlacement::TopLevel),
+        ]);
+
+        remember_sidebar_section(&mut registry, Some(first), SidebarSection::Settings);
+        remember_sidebar_section(&mut registry, Some(second), SidebarSection::Keychain);
+
+        assert_eq!(
+            restored_sidebar_section(&registry, Some(first)),
+            Some(SidebarSection::Settings)
+        );
+        assert_eq!(
+            restored_sidebar_section(&registry, Some(second)),
+            Some(SidebarSection::Keychain)
+        );
+        assert_eq!(
+            restored_sidebar_section(&registry, Some(session)),
+            Some(SidebarSection::Hosts)
+        );
+        assert_eq!(restored_sidebar_section(&registry, None), None);
+    }
+
+    #[test]
+    fn remember_page_editor_sidebar_is_scoped_to_each_hosts_tab() {
+        let first = TabId::new(10);
+        let second = TabId::new(20);
+        let session = TabId::new(30);
+        let mut registry = TabRegistry::from_tabs([
+            TabState::new_hosts(first),
+            TabState::new_hosts(second),
+            tab(session.raw(), TabPlacement::TopLevel),
+        ]);
+
+        // Fresh hosts tabs start without any page editor sidebar.
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(first)), None);
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(second)), None);
+
+        remember_page_editor_sidebar(
+            &mut registry,
+            Some(first),
+            Some(PageEditorSidebarKind::Hosts),
+        );
+        remember_page_editor_sidebar(
+            &mut registry,
+            Some(second),
+            Some(PageEditorSidebarKind::Keychain),
+        );
+
+        assert_eq!(
+            restored_page_editor_sidebar(&registry, Some(first)),
+            Some(PageEditorSidebarKind::Hosts)
+        );
+        assert_eq!(
+            restored_page_editor_sidebar(&registry, Some(second)),
+            Some(PageEditorSidebarKind::Keychain)
+        );
+
+        // Non-hosts tabs never retain (nor accept) a page editor sidebar.
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(session)), None);
+        remember_page_editor_sidebar(
+            &mut registry,
+            Some(session),
+            Some(PageEditorSidebarKind::Snippets),
+        );
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(session)), None);
+        assert_eq!(restored_page_editor_sidebar(&registry, None), None);
+    }
+
+    #[test]
+    fn clearing_and_closing_tabs_updates_remembered_page_editor_sidebar() {
+        let first = TabId::new(10);
+        let second = TabId::new(20);
+        let mut registry =
+            TabRegistry::from_tabs([TabState::new_hosts(first), TabState::new_hosts(second)]);
+
+        remember_page_editor_sidebar(
+            &mut registry,
+            Some(first),
+            Some(PageEditorSidebarKind::PortForwarding),
+        );
+        assert_eq!(
+            restored_page_editor_sidebar(&registry, Some(first)),
+            Some(PageEditorSidebarKind::PortForwarding)
+        );
+
+        // Closing the sidebar editor clears only the active tab's memory.
+        remember_page_editor_sidebar(&mut registry, Some(first), None);
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(first)), None);
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(second)), None);
+
+        // Closing the tab itself drops its memory for good.
+        remember_page_editor_sidebar(
+            &mut registry,
+            Some(first),
+            Some(PageEditorSidebarKind::KnownHosts),
+        );
+        let removed = registry.remove_id(first).expect("first hosts tab exists");
+        assert_eq!(removed.id, first);
+        assert_eq!(restored_page_editor_sidebar(&registry, Some(first)), None);
     }
 
     #[test]

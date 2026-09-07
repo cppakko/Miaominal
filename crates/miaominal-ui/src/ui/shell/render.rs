@@ -29,6 +29,38 @@ struct PrimarySurfaceRenderState {
     show_known_hosts_sidebar: bool,
 }
 
+fn suspended_page_editor_sidebar_kind(
+    visible: Option<PageEditorSidebarKind>,
+    transition: Option<PageEditorSidebarTransition>,
+) -> Option<PageEditorSidebarKind> {
+    transition.map_or(visible, |transition| match transition.phase {
+        PageEditorSidebarTransitionPhase::Entering => Some(transition.kind),
+        PageEditorSidebarTransitionPhase::Exiting => None,
+    })
+}
+
+fn page_editor_sidebar_matches_view(kind: PageEditorSidebarKind, view: PrimaryViewKind) -> bool {
+    matches!(
+        (kind, view),
+        (
+            PageEditorSidebarKind::Hosts,
+            PrimaryViewKind::Sidebar(SidebarSection::Hosts)
+        ) | (
+            PageEditorSidebarKind::PortForwarding,
+            PrimaryViewKind::Sidebar(SidebarSection::PortForwarding),
+        ) | (
+            PageEditorSidebarKind::Snippets,
+            PrimaryViewKind::Sidebar(SidebarSection::Snippets),
+        ) | (
+            PageEditorSidebarKind::Keychain,
+            PrimaryViewKind::Sidebar(SidebarSection::Keychain),
+        ) | (
+            PageEditorSidebarKind::KnownHosts,
+            PrimaryViewKind::Sidebar(SidebarSection::KnownHosts),
+        )
+    )
+}
+
 #[derive(Clone, Copy)]
 struct ShellBodyRenderState {
     show_sidebar: bool,
@@ -179,34 +211,24 @@ impl Render for AppView {
             );
         });
 
-        let editor_state = self.controllers.session.read(cx).editor_state();
-        let show_host_editor_sidebar = editor_state.host_editor_open
-            && !has_active_session
-            && self.shell.shell_state.sidebar_section == SidebarSection::Hosts;
-        let show_port_forward_editor_sidebar = editor_state.port_forward_editor_open
-            && !has_active_session
-            && !has_active_sftp_tab
-            && self.shell.shell_state.sidebar_section == SidebarSection::PortForwarding;
-        let show_snippets_editor_sidebar = editor_state.snippets_editor_open
-            && !has_active_session
-            && !has_active_sftp_tab
-            && self.shell.shell_state.sidebar_section == SidebarSection::Snippets;
-        let show_keychain_editor_sidebar = self.controllers.keychain.read(cx).editor_open()
-            && !has_active_session
-            && !has_active_sftp_tab
-            && self.shell.shell_state.sidebar_section == SidebarSection::Keychain;
-        let show_known_hosts_sidebar = self
-            .controllers
-            .session
-            .read(cx)
-            .selected_known_host()
-            .is_some()
-            && !has_active_session
-            && !has_active_sftp_tab
-            && self.shell.shell_state.sidebar_section == SidebarSection::KnownHosts;
+        let current_page_editor_sidebar = if has_active_session || has_active_sftp_tab {
+            None
+        } else {
+            self.page_editor_sidebar_for_view(desired_primary_view, cx)
+        };
+        let show_host_editor_sidebar =
+            current_page_editor_sidebar == Some(PageEditorSidebarKind::Hosts);
+        let show_port_forward_editor_sidebar =
+            current_page_editor_sidebar == Some(PageEditorSidebarKind::PortForwarding);
+        let show_snippets_editor_sidebar =
+            current_page_editor_sidebar == Some(PageEditorSidebarKind::Snippets);
+        let show_keychain_editor_sidebar =
+            current_page_editor_sidebar == Some(PageEditorSidebarKind::Keychain);
+        let show_known_hosts_sidebar =
+            current_page_editor_sidebar == Some(PageEditorSidebarKind::KnownHosts);
         let page_editor_sidebar =
             if primary_view_animating || has_active_session || has_active_sftp_tab {
-                self.clear_page_editor_sidebar_transition_state();
+                self.suspend_page_editor_sidebar_transition();
                 None
             } else {
                 self.page_editor_sidebar_render_state(
@@ -565,21 +587,11 @@ impl AppView {
         }
     }
 
-    fn finish_primary_view_transition(&mut self, transition: PrimaryViewTransition, cx: &App) {
-        if matches!(
-            (transition.from, transition.to),
-            (
-                PrimaryViewKind::Sidebar(SidebarSection::Hosts),
-                PrimaryViewKind::Terminal(_)
-            )
-        ) {
-            self.controllers
-                .session
-                .read(cx)
-                .set_host_editor_state(false, false);
-        }
-
+    fn finish_primary_view_transition(&mut self, desired: PrimaryViewKind, cx: &App) {
         self.workspace.primary_view_transition = None;
+        self.shell.shell_state.visible_page_editor_sidebar =
+            self.page_editor_sidebar_for_view(desired, cx);
+        self.shell.shell_state.page_editor_sidebar_transition = None;
     }
 
     fn primary_view_transition_render_state(
@@ -629,6 +641,9 @@ impl AppView {
         {
             self.workspace.primary_view_transition = None;
             self.workspace.visible_primary_view = Some(desired);
+            self.shell.shell_state.visible_page_editor_sidebar =
+                self.page_editor_sidebar_for_view(desired, cx);
+            self.shell.shell_state.page_editor_sidebar_transition = None;
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -639,7 +654,7 @@ impl AppView {
 
         let duration_seconds = transition.duration.as_secs_f32();
         if duration_seconds <= f32::EPSILON {
-            self.finish_primary_view_transition(transition, cx);
+            self.finish_primary_view_transition(desired, cx);
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -653,7 +668,7 @@ impl AppView {
         let eased = progress * progress * (3.0 - 2.0 * progress);
 
         if progress >= 1.0 {
-            self.finish_primary_view_transition(transition, cx);
+            self.finish_primary_view_transition(desired, cx);
             return PrimaryViewTransitionRenderState {
                 from: desired,
                 to: desired,
@@ -834,9 +849,12 @@ impl AppView {
         )
     }
 
-    fn clear_page_editor_sidebar_transition_state(&mut self) {
+    fn suspend_page_editor_sidebar_transition(&mut self) {
+        self.shell.shell_state.visible_page_editor_sidebar = suspended_page_editor_sidebar_kind(
+            self.shell.shell_state.visible_page_editor_sidebar,
+            self.shell.shell_state.page_editor_sidebar_transition,
+        );
         self.shell.shell_state.page_editor_sidebar_transition = None;
-        self.shell.shell_state.visible_page_editor_sidebar = None;
     }
 
     fn render_terminal_page_for_tab(
@@ -1068,6 +1086,95 @@ impl AppView {
             .into_any_element()
     }
 
+    pub(in crate::ui::shell) fn page_editor_sidebar_for_view(
+        &self,
+        view: PrimaryViewKind,
+        cx: &App,
+    ) -> Option<PageEditorSidebarKind> {
+        let PrimaryViewKind::Sidebar(section) = view else {
+            return None;
+        };
+        let active_hosts_tab = self
+            .workspace
+            .active_topbar_tab
+            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
+            .is_some_and(|tab| tab.is_hosts());
+        if active_hosts_tab {
+            let Some(kind) = restored_page_editor_sidebar(
+                &self.workspace.tabs,
+                self.workspace.active_topbar_tab,
+            )
+            .filter(|kind| page_editor_sidebar_matches_view(*kind, view)) else {
+                return None;
+            };
+            let controller = self.controllers.session.read(cx);
+            let is_open = match kind {
+                PageEditorSidebarKind::Hosts => controller.editor_state().host_editor_open,
+                PageEditorSidebarKind::PortForwarding => {
+                    controller.editor_state().port_forward_editor_open
+                }
+                PageEditorSidebarKind::Snippets => controller.editor_state().snippets_editor_open,
+                PageEditorSidebarKind::Keychain => self.controllers.keychain.read(cx).editor_open(),
+                PageEditorSidebarKind::KnownHosts => controller.selected_known_host().is_some(),
+            };
+            return is_open.then_some(kind);
+        }
+        let controller = self.controllers.session.read(cx);
+        let editors = controller.editor_state();
+        match section {
+            SidebarSection::Hosts if editors.host_editor_open => Some(PageEditorSidebarKind::Hosts),
+            SidebarSection::PortForwarding if editors.port_forward_editor_open => {
+                Some(PageEditorSidebarKind::PortForwarding)
+            }
+            SidebarSection::Snippets if editors.snippets_editor_open => {
+                Some(PageEditorSidebarKind::Snippets)
+            }
+            SidebarSection::Keychain if self.controllers.keychain.read(cx).editor_open() => {
+                Some(PageEditorSidebarKind::Keychain)
+            }
+            SidebarSection::KnownHosts if controller.selected_known_host().is_some() => {
+                Some(PageEditorSidebarKind::KnownHosts)
+            }
+            _ => None,
+        }
+    }
+
+    fn render_primary_transition_surface(
+        &mut self,
+        view: PrimaryViewKind,
+        sidebar: Option<PageEditorSidebarKind>,
+        entity: Entity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (panel, mut state) = self.render_primary_view_panel(view, None, window, cx);
+        state.show_host_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Hosts);
+        state.show_port_forward_editor_sidebar =
+            sidebar == Some(PageEditorSidebarKind::PortForwarding);
+        state.show_snippets_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Snippets);
+        state.show_keychain_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Keychain);
+        state.show_known_hosts_sidebar = sidebar == Some(PageEditorSidebarKind::KnownHosts);
+
+        // The retained editor travels with its page at full width. Its independent
+        // open animation must not restart after the page transition finishes.
+        div()
+            .size_full()
+            .flex()
+            .items_stretch()
+            .child(self.render_primary_surface_layer(entity.clone(), panel, state, cx))
+            .when_some(sidebar, |this, kind| {
+                this.child(self.render_page_editor_sidebar(
+                    PageEditorSidebarRenderState {
+                        kind,
+                        visibility: 1.0,
+                    },
+                    entity,
+                    cx,
+                ))
+            })
+            .into_any_element()
+    }
+
     fn render_primary_view_transition(
         &mut self,
         transition: PrimaryViewTransitionRenderState,
@@ -1093,14 +1200,27 @@ impl AppView {
             (false, false) => PRIMARY_VIEW_GUTTER,
         };
 
-        let (incoming_panel, incoming_state) =
-            self.render_primary_view_panel(transition.to, None, window, cx);
-        let (outgoing_panel, outgoing_state) =
-            self.render_primary_view_panel(transition.from, None, window, cx);
-        let incoming_surface =
-            self.render_primary_surface_layer(entity.clone(), incoming_panel, incoming_state, cx);
-        let outgoing_surface =
-            self.render_primary_surface_layer(entity.clone(), outgoing_panel, outgoing_state, cx);
+        let incoming_sidebar = self.page_editor_sidebar_for_view(transition.to, cx);
+        let outgoing_sidebar = self
+            .shell
+            .shell_state
+            .visible_page_editor_sidebar
+            .filter(|kind| page_editor_sidebar_matches_view(*kind, transition.from))
+            .or_else(|| self.page_editor_sidebar_for_view(transition.from, cx));
+        let incoming_surface = self.render_primary_transition_surface(
+            transition.to,
+            incoming_sidebar,
+            entity.clone(),
+            window,
+            cx,
+        );
+        let outgoing_surface = self.render_primary_transition_surface(
+            transition.from,
+            outgoing_sidebar,
+            entity.clone(),
+            window,
+            cx,
+        );
         let incoming_opacity = if full_surface_to_full_surface {
             0.7 + progress * 0.3
         } else {
@@ -3860,5 +3980,50 @@ impl AppView {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sidebar_transition(
+        kind: PageEditorSidebarKind,
+        phase: PageEditorSidebarTransitionPhase,
+    ) -> PageEditorSidebarTransition {
+        PageEditorSidebarTransition {
+            kind,
+            phase,
+            started_at: Instant::now(),
+            duration: Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn suspending_sidebar_transition_preserves_logical_editor_visibility() {
+        assert_eq!(
+            suspended_page_editor_sidebar_kind(Some(PageEditorSidebarKind::Hosts), None),
+            Some(PageEditorSidebarKind::Hosts)
+        );
+        assert_eq!(
+            suspended_page_editor_sidebar_kind(
+                None,
+                Some(sidebar_transition(
+                    PageEditorSidebarKind::Hosts,
+                    PageEditorSidebarTransitionPhase::Entering,
+                )),
+            ),
+            Some(PageEditorSidebarKind::Hosts)
+        );
+        assert_eq!(
+            suspended_page_editor_sidebar_kind(
+                Some(PageEditorSidebarKind::Hosts),
+                Some(sidebar_transition(
+                    PageEditorSidebarKind::Hosts,
+                    PageEditorSidebarTransitionPhase::Exiting,
+                )),
+            ),
+            None
+        );
     }
 }

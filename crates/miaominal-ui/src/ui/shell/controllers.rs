@@ -4,8 +4,8 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Window};
 
 use super::{
     AppView, AuthMethod, DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus,
-    ManagedKeySelectItem, PaneId, SecretRevealTarget, SessionProfile, SftpBrowserSide,
-    SidebarSection, SplitDirection, SyncProvider, TabId, TabPlacement, TabState,
+    ManagedKeySelectItem, PageEditorSidebarKind, PaneId, SecretRevealTarget, SessionProfile,
+    SftpBrowserSide, SidebarSection, SplitDirection, SyncProvider, TabId, TabPlacement, TabState,
     WorkspaceTerminalInputExt, terminal_cell_width_default, terminal_line_height_default,
 };
 use crate::ui::i18n;
@@ -102,6 +102,7 @@ pub(in crate::ui::shell) enum AppCommand {
         outcome: SessionEventOutcome,
     },
     SidebarSectionRequested(SidebarSection),
+    SidebarEditorStateChanged(Option<PageEditorSidebarKind>),
     EnsureSessionSftpRequested(TabId),
     TerminalMenuRequested {
         pane_id: Option<PaneId>,

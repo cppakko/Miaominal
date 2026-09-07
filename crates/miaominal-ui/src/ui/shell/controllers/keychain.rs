@@ -341,6 +341,7 @@ impl KeychainController {
             self.editor_open = false;
             self.editor_mode = KeychainEditorMode::Import;
             self.deploy_key_id = None;
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
             cx.notify();
         }
     }

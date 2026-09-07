@@ -137,6 +137,7 @@ impl SessionController {
             && editor_state.port_forward_editor_rule_id.as_deref() == Some(rule_id)
         {
             self.clear_port_forward_editor();
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
         }
 
         self.port_forward_manager().stop(profile_id, rule_id);

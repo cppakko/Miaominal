@@ -338,6 +338,7 @@ impl AppView {
         }
 
         self.workspace.active_topbar_tab = Some(root_id);
+        self.restore_active_topbar_sidebar_section(cx);
         self.workspace.advance_next_tab_id_past(max_tab_id);
         if let Some(mut workspace) = bundle.workspace {
             Self::prepare_transferred_workspace_for_window(&mut workspace, cx);
@@ -416,6 +417,7 @@ impl AppView {
             }
         }
         self.workspace.active_topbar_tab = bundle.source.active_topbar_before;
+        self.restore_active_topbar_sidebar_section(cx);
         if let Some(session_ui) = bundle.session_ui.take() {
             let active_tab_id = self.workspace.workspace.active_tab;
             self.controllers.session.update(cx, |controller, cx| {
@@ -484,6 +486,8 @@ impl AppView {
                 }
             }
         }
+
+        self.restore_active_topbar_sidebar_section(cx);
 
         if let Some(root_id) = self.workspace.active_topbar_tab {
             self.sync_transferred_sftp_browser(root_id, window, cx);

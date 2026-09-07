@@ -31,6 +31,7 @@ impl SessionController {
         let auth_method = host_editor.editing_auth_method;
         let host_editor_is_new = self.editor_state().host_editor_is_new;
         let connection_test_in_progress = self.connection_test_in_progress();
+        let scroll_handle = self.host_editor_scroll_handle();
 
         let title = if host_editor_is_new {
             i18n::string("hosts.editor.titles.add")
@@ -723,18 +724,29 @@ impl SessionController {
                     .size_full()
                     .child(div().px_4().pt_4().pb_3().child(header))
                     .child(
-                        div().flex_1().min_h_0().child(
-                            div().size_full().overflow_y_scrollbar().child(
-                                v_flex()
-                                    .w_full()
-                                    .px_4()
-                                    .gap_3()
-                                    .pb_4()
-                                    .child(general_section)
-                                    .child(credentials_section)
-                                    .child(advanced_section),
-                            ),
-                        ),
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .child(
+                                div()
+                                    .id("host-editor-scroll")
+                                    .size_full()
+                                    .track_scroll(&scroll_handle)
+                                    .overflow_y_scroll()
+                                    .child(
+                                        v_flex()
+                                            .w_full()
+                                            .min_h_full()
+                                            .px_4()
+                                            .gap_3()
+                                            .pb_4()
+                                            .child(general_section)
+                                            .child(credentials_section)
+                                            .child(advanced_section),
+                                    ),
+                            )
+                            .vertical_scrollbar(&scroll_handle),
                     )
                     .child(div().px_4().py_4().child(footer)),
             )

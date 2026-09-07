@@ -47,11 +47,11 @@ use crate::ui::{
     i18n,
     shell::{
         AppIcon, DialogOverlaySnapshot, ForwardProfileSelectItem, LocalVaultStatus,
-        ManagedKeySelectItem, ProfileViewMode, ProxyJumpCandidateSelectItem, SelectOption,
-        SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation, ValidationFailure,
-        WorkspaceSidePanelTransition, error_notification, localized_secret_placeholder,
-        new_input_state, set_code_editor_input_placeholder, set_editor_value,
-        set_input_placeholder, set_input_value, validation_notification,
+        ManagedKeySelectItem, PageEditorSidebarKind, ProfileViewMode, ProxyJumpCandidateSelectItem,
+        SelectOption, SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation,
+        ValidationFailure, WorkspaceSidePanelTransition, error_notification,
+        localized_secret_placeholder, new_input_state, set_code_editor_input_placeholder,
+        set_editor_value, set_input_placeholder, set_input_value, validation_notification,
     },
 };
 
@@ -578,6 +578,7 @@ pub(in crate::ui::shell) struct SessionController {
     tabs: RefCell<HashMap<TabId, SessionTabState>>,
     shared_profile_monitoring: RefCell<HashMap<String, SessionMonitoringState>>,
     monitor_source_tabs: RefCell<HashMap<String, TabId>>,
+    host_editor_scroll_handle: ScrollHandle,
     monitor_scroll_handle: ScrollHandle,
     reported_terminal_focus_tab_id: RefCell<Option<TabId>>,
     panel: RefCell<SessionPanelState>,
@@ -1523,6 +1524,7 @@ impl SessionController {
             tabs: RefCell::new(HashMap::new()),
             shared_profile_monitoring: RefCell::new(HashMap::new()),
             monitor_source_tabs: RefCell::new(HashMap::new()),
+            host_editor_scroll_handle: ScrollHandle::new(),
             monitor_scroll_handle: ScrollHandle::new(),
             reported_terminal_focus_tab_id: RefCell::new(None),
             panel: RefCell::new(SessionPanelState::default()),
@@ -1964,6 +1966,7 @@ impl SessionController {
             return;
         }
         self.set_host_editor_state(false, false);
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
         cx.notify();
     }
 
@@ -2099,6 +2102,7 @@ impl SessionController {
             Ok(profile) => {
                 self.load_selected_profile_into_inputs(managed_key_options, window, cx);
                 self.set_host_editor_state(false, false);
+                cx.emit(AppCommand::SidebarEditorStateChanged(None));
                 let message = if self.session_store_available() {
                     i18n::string_args("profile.messages.saved", &[("name", &profile.name)])
                 } else {
@@ -2499,6 +2503,10 @@ impl SessionController {
         self.set_selected_profile(None);
         self.set_host_editor_state(true, true);
         self.populate_profile_inputs(&profile, managed_key_options, window, cx);
+        self.reset_host_editor_scroll();
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Hosts,
+        )));
         cx.emit(AppCommand::Feedback(i18n::string(
             "profile.messages.new_profile_created",
         )));
@@ -2519,6 +2527,10 @@ impl SessionController {
         self.set_selected_profile(Some(index));
         self.populate_profile_inputs(&profile, managed_key_options, window, cx);
         self.set_host_editor_state(true, false);
+        self.reset_host_editor_scroll();
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Hosts,
+        )));
         cx.emit(AppCommand::Feedback(i18n::string_args(
             "navigation.messages.editing_profile",
             &[("name", &profile.name)],
@@ -2573,6 +2585,7 @@ impl SessionController {
 
         if deleted_selected_profile {
             self.set_host_editor_state(false, false);
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
         }
 
         self.sync_port_profiles();
@@ -3131,6 +3144,7 @@ impl SessionController {
                     controller.replace_profiles(result.profiles);
                     controller.set_selected_profile(result.selected_profile);
                     controller.set_host_editor_state(false, false);
+                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
                     let message = if controller.session_store_available() {
                         i18n::string_args(
                             "profile.messages.saved",
@@ -3802,6 +3816,7 @@ impl SessionController {
             let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
 
             self.clear_port_forward_editor();
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
             let message = match self.persist_profiles() {
                 Ok(()) => i18n::string_args(
                     "forwarding.messages.saved",
@@ -3853,6 +3868,7 @@ impl SessionController {
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
 
         self.clear_port_forward_editor();
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
         let message = match self.persist_profiles() {
             Ok(()) => i18n::string_args(
                 "forwarding.messages.added",
@@ -4002,6 +4018,7 @@ impl SessionController {
                         controller.sync_current_port_forward_rules_for_profile(&result.profile_id);
                     let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
                     controller.clear_port_forward_editor();
+                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
 
                     let message = if let Some(error) = result.persist_error {
                         if result.is_edit {
@@ -4070,6 +4087,9 @@ impl SessionController {
         set_input_value(&forms.target_host_input, "", window, cx);
         set_input_value(&forms.target_port_input, "", window, cx);
         self.sync_port_forward_profile_select(None, window, cx);
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::PortForwarding,
+        )));
         let message = if self.profiles.borrow().is_empty() {
             i18n::string("forwarding.messages.create_host_profile_before_adding")
         } else {
@@ -4137,6 +4157,9 @@ impl SessionController {
             cx,
         );
         self.sync_port_forward_profile_select(Some(profile.id.as_str()), window, cx);
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::PortForwarding,
+        )));
         let rule_label = Self::rule_summary_label(&rule);
         cx.emit(AppCommand::Feedback(i18n::string_args(
             "forwarding.messages.editing_rule",
@@ -4157,6 +4180,7 @@ impl SessionController {
             i18n::string("forwarding.messages.canceled_new")
         };
         self.clear_port_forward_editor();
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
     }
@@ -4230,6 +4254,15 @@ impl SessionController {
         self.host_editor_forms_state().borrow_mut()
     }
 
+    pub(in crate::ui::shell) fn host_editor_scroll_handle(&self) -> ScrollHandle {
+        self.host_editor_scroll_handle.clone()
+    }
+
+    fn reset_host_editor_scroll(&self) {
+        self.host_editor_scroll_handle
+            .set_offset(Default::default());
+    }
+
     fn snippets_forms_state(&self) -> &RefCell<SnippetsForms> {
         self.snippets_forms
             .as_ref()
@@ -4275,6 +4308,7 @@ impl SessionController {
         }
         self.set_snippets_editor_open(false);
         self.set_selected_snippet(None);
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
         cx.emit(AppCommand::Feedback(i18n::string(
             "snippets.messages.closed_sidebar",
         )));
@@ -4354,11 +4388,15 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         self.set_selected_known_host(Some((host, port, fingerprint)));
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::KnownHosts,
+        )));
         cx.notify();
     }
 
     pub(in crate::ui::shell) fn close_trusted_known_host_sidebar(&self, cx: &mut Context<Self>) {
         if self.take_selected_known_host().is_some() {
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
             cx.notify();
         }
     }
@@ -4432,6 +4470,7 @@ impl SessionController {
             .is_some_and(|(host, port, _)| host == &pending.host && *port == pending.port)
         {
             self.set_selected_known_host(None);
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
         }
 
         let message = match self
@@ -6306,7 +6345,26 @@ fn release_retired_lease_if_ready(
 mod tests {
     use super::*;
     use crate::ui::shell::{SessionConnectionState, SessionMonitoringState, TerminalState};
+    use gpui_kit::{point, px};
     use miaominal_ssh::SessionEvent;
+
+    #[test]
+    fn host_editor_scroll_position_survives_view_recreation_until_editor_reopens() {
+        let controller = SessionController::new_for_test();
+        let retained_handle = controller.host_editor_scroll_handle();
+        let scrolled_offset = point(px(0.0), px(-128.0));
+
+        retained_handle.set_offset(scrolled_offset);
+
+        assert_eq!(
+            controller.host_editor_scroll_handle().offset(),
+            scrolled_offset
+        );
+
+        controller.reset_host_editor_scroll();
+
+        assert_eq!(retained_handle.offset(), point(px(0.0), px(0.0)));
+    }
 
     fn session_payload(profile_id: &str) -> SessionTabState {
         SessionTabState {
