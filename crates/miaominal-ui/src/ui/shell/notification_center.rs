@@ -543,7 +543,7 @@ fn schedule_notification_removals(removals: Vec<(String, u64)>, cx: &mut App) {
         cx.background_executor()
             .timer(NOTIFICATION_ITEM_EXIT_DURATION)
             .await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if cx.has_global::<GlobalNotificationCenter>()
                 && cx
                     .global_mut::<GlobalNotificationCenter>()

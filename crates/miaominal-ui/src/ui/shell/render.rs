@@ -1100,13 +1100,11 @@ impl AppView {
             .and_then(|tab_id| self.workspace.tabs.get(tab_id))
             .is_some_and(|tab| tab.is_hosts());
         if active_hosts_tab {
-            let Some(kind) = restored_page_editor_sidebar(
+            let kind = restored_page_editor_sidebar(
                 &self.workspace.tabs,
                 self.workspace.active_topbar_tab,
             )
-            .filter(|kind| page_editor_sidebar_matches_view(*kind, view)) else {
-                return None;
-            };
+            .filter(|kind| page_editor_sidebar_matches_view(*kind, view))?;
             let controller = self.controllers.session.read(cx);
             let is_open = match kind {
                 PageEditorSidebarKind::Hosts => controller.editor_state().host_editor_open,

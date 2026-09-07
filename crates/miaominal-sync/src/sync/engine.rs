@@ -563,6 +563,7 @@ impl SyncEngine {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn pull_internal(
         &mut self,
         session_store: &SessionStore,

@@ -74,7 +74,7 @@ enum AutoSyncCommand {
     ReconcileManualSync {
         status: SyncStatus,
         engine: SyncEngine,
-        settings_store: SettingsStore,
+        settings_store: Box<SettingsStore>,
     },
     SetVaultLocked(bool),
     Wake,
@@ -151,33 +151,9 @@ impl AutoSyncService {
             runtime,
             command_tx,
             state_rx,
-            task,
+            task: task.clone(),
         };
-        service.spawn_task(
-            command_rx,
-            state_tx,
-            executor,
-            settings_store,
-            engine,
-            config_dir,
-            vault_locked,
-        );
-        service
-    }
-
-    fn spawn_task<S: SyncOps>(
-        &self,
-        command_rx: mpsc::UnboundedReceiver<AutoSyncCommand>,
-        state_tx: watch::Sender<AutoSyncSnapshot>,
-        executor: S,
-        settings_store: SettingsStore,
-        engine: SyncEngine,
-        config_dir: PathBuf,
-        vault_locked: bool,
-    ) {
-        let runtime = self.runtime.clone();
-        let task = self.task.clone();
-        let handle = runtime.spawn(async move {
+        let handle = service.runtime.spawn(async move {
             run_auto_sync(
                 command_rx,
                 state_tx,
@@ -191,10 +167,8 @@ impl AutoSyncService {
             .await;
         });
         let mut slot = task.try_lock().expect("auto-sync task slot should lock");
-        if let Some(previous) = slot.take() {
-            previous.abort();
-        }
         *slot = Some(handle);
+        service
     }
 
     pub fn subscribe(&self) -> watch::Receiver<AutoSyncSnapshot> {
@@ -220,7 +194,7 @@ impl AutoSyncService {
         let _ = self.command_tx.send(AutoSyncCommand::ReconcileManualSync {
             status,
             engine,
-            settings_store,
+            settings_store: Box::new(settings_store),
         });
     }
 
@@ -236,10 +210,10 @@ impl AutoSyncService {
 
     pub fn shutdown(&self) {
         let _ = self.command_tx.send(AutoSyncCommand::Shutdown);
-        if let Ok(mut slot) = self.task.try_lock() {
-            if let Some(handle) = slot.take() {
-                handle.abort();
-            }
+        if let Ok(mut slot) = self.task.try_lock()
+            && let Some(handle) = slot.take()
+        {
+            handle.abort();
         }
     }
 }
@@ -689,6 +663,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_auto_sync<S: SyncOps>(
     mut command_rx: mpsc::UnboundedReceiver<AutoSyncCommand>,
     state_tx: watch::Sender<AutoSyncSnapshot>,
@@ -790,7 +765,8 @@ async fn run_auto_sync<S: SyncOps>(
                         engine,
                         settings_store,
                     } => {
-                        task.reconcile_manual_sync(status, engine, settings_store).await;
+                        task.reconcile_manual_sync(status, engine, *settings_store)
+                            .await;
                     }
                     AutoSyncCommand::SetVaultLocked(locked) => {
                         task.vault_locked = locked;

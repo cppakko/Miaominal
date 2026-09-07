@@ -130,7 +130,7 @@ impl AppView {
         let active_topbar_tab = self.workspace.active_topbar_tab;
         let visible_section = active_topbar_tab
             .and_then(|tab_id| self.workspace.tabs.get(tab_id))
-            .map_or(true, |tab| tab.is_hosts());
+            .is_none_or(|tab| tab.is_hosts());
         let Some(section) = restored_sidebar_section(&self.workspace.tabs, active_topbar_tab)
         else {
             return;

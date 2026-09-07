@@ -543,7 +543,7 @@ mod platform {
             let pixel_count = (source_size * source_size) as usize;
             let bgra = unsafe { std::slice::from_raw_parts(bits as *const u8, pixel_count * 4) };
             let mut rgba = Vec::with_capacity(pixel_count * 4);
-            for pixel in bgra.chunks_exact(4) {
+            for pixel in bgra.as_chunks::<4>().0 {
                 rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
             }
             let normalized = normalize_icon_alpha_bounds(&rgba, source_size, output_size);

@@ -2564,10 +2564,11 @@ impl SessionController {
         let deleted_selected_profile = self.selected_profile() == Some(index);
         let service = self.profile_service();
         let mut selected_profile = self.selected_profile();
-        let outcome = match {
+        let outcome = {
             let mut profiles = self.profiles.borrow_mut();
             service.delete_and_persist_profile(&mut profiles, &mut selected_profile, index)
-        } {
+        };
+        let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
                 cx.emit(AppCommand::Feedback(i18n::string_args(
