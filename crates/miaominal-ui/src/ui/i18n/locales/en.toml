@@ -66,11 +66,11 @@ description = "Comma-separated list of fallback fonts for CJK characters. Leave 
 
 [settings.appearance.interface_font_size]
 label = "Interface font size"
-description = "Adjust the application interface size between {min} and {max}."
+description = "Adjust the application interface and code block font size between {min} and {max}."
 
 [settings.appearance.terminal_font_size]
 label = "Terminal font size"
-description = "Adjust the PTY terminal and code block font size between {min} and {max}."
+description = "Adjust the PTY terminal font size between {min} and {max}."
 
 [settings.appearance.line_height]
 label = "Line height"

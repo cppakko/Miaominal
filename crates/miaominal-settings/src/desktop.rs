@@ -395,11 +395,15 @@ pub fn scaled_line_height(base_height: f32) -> Pixels {
     px(base_height / DEFAULT_FONT_SIZE * current_settings().interface_font_size)
 }
 
+/// Component-theme font sizes for regular and mono (code) text.
+///
+/// Code blocks are interface content, so both sizes follow the interface font
+/// size setting. `terminal_font_size` drives the PTY terminal only: terminal
+/// rendering applies it directly and it must never leak into markdown or code
+/// UI through the component theme.
 fn component_font_sizes(settings: &crate::AppSettings) -> (Pixels, Pixels) {
-    (
-        px(settings.interface_font_size),
-        px(settings.terminal_font_size),
-    )
+    let interface_font_size = px(settings.interface_font_size);
+    (interface_font_size, interface_font_size)
 }
 
 impl KeyBinding {
@@ -460,17 +464,19 @@ mod tests {
     }
 
     #[test]
-    fn component_theme_uses_independent_interface_and_terminal_font_sizes() {
+    fn code_font_follows_interface_font_size_setting_not_terminal() {
         let settings = crate::AppSettings {
             interface_font_size: 16.0,
-            terminal_font_size: 18.0,
+            terminal_font_size: 22.0,
             ..crate::AppSettings::default()
         };
 
         let (font_size, mono_font_size) = component_font_sizes(&settings);
 
         assert_eq!(font_size.as_f32(), 16.0);
-        assert_eq!(mono_font_size.as_f32(), 18.0);
+        // Code blocks render inside the interface, so their size tracks the
+        // interface font size setting and ignores the terminal one.
+        assert_eq!(mono_font_size.as_f32(), 16.0);
     }
 
     #[test]
