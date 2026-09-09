@@ -584,7 +584,6 @@ pub(in crate::ui::shell) struct SettingsController {
     open_ssh_integration_service: OpenSshIntegrationService,
     sync_executor: Option<SyncExecutor>,
     auto_sync_snapshot: miaominal_services::AutoSyncSnapshot,
-    pub(in crate::ui::shell) capability_details_open: bool,
     ssh_bridge_status: SshBridgeStatus,
     ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
     ssh_bridge_security: BridgeSecuritySnapshot,
@@ -1885,7 +1884,6 @@ impl SettingsController {
             open_ssh_integration_service: args.open_ssh_integration_service,
             sync_executor: args.sync_executor,
             auto_sync_snapshot: args.auto_sync,
-            capability_details_open: false,
             ssh_bridge_status,
             ssh_bridge_sync_result,
             ssh_bridge_security,
@@ -2501,6 +2499,8 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn auto_sync_enabled(&self) -> bool {
         self.sync_config().auto_sync_enabled
+            || self.auto_sync_snapshot.phase
+                == miaominal_services::AutoSyncPhase::CheckingCapability
     }
 
     pub(in crate::ui::shell) fn auto_sync_snapshot(&self) -> &miaominal_services::AutoSyncSnapshot {
@@ -2566,18 +2566,6 @@ impl SettingsController {
                 miaominal_sync::capability::CapabilityState::Checking;
             cx.notify();
         }
-    }
-
-    pub(in crate::ui::shell) fn cancel_auto_sync_check(&mut self, cx: &mut Context<Self>) {
-        crate::ui::application::application_state(cx)
-            .read(cx)
-            .cancel_auto_sync_check();
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn toggle_capability_details(&mut self, cx: &mut Context<Self>) {
-        self.capability_details_open = !self.capability_details_open;
-        cx.notify();
     }
 
     pub(in crate::ui::shell) fn set_sync_provider(

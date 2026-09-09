@@ -363,7 +363,6 @@ impl<S: SyncOps> AutoSyncTask<S> {
 
     fn record_capability(&mut self, report: CapabilityReport, notify: bool) {
         if notify
-            && self.enabled
             && report.state != CapabilityState::Supported
             && report.reason != Some(CapabilityReason::Cancelled)
             && self.capability_notice_id.is_none()
@@ -380,6 +379,13 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     async fn ensure_capability(&mut self, explicit: bool) -> bool {
+        self.check_capability(explicit, explicit).await
+    }
+
+    async fn check_capability(&mut self, explicit: bool, notify_user: bool) -> bool {
+        if notify_user {
+            self.capability_notice_id = None;
+        }
         self.engine.config_store.sync_from_disk();
         self.refresh_capability_binding();
         if self.engine.config_store.config.provider != SyncProvider::WebDav {
@@ -441,7 +447,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
             return true;
         }
         let retry = report.reason == Some(CapabilityReason::Network) && self.enabled;
-        self.record_capability(report, !explicit && !retry);
+        self.record_capability(report, notify_user || (!explicit && !retry));
         if retry {
             self.schedule_retry(
                 RetryAction::Poll,
@@ -452,6 +458,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     async fn enable_checked(&mut self) {
+        self.capability_notice_id = None;
         if self.vault_locked {
             self.set_phase(AutoSyncPhase::PausedVaultLocked);
             return;
@@ -465,7 +472,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     None,
                     EtagKind::Missing,
                 ),
-                false,
+                true,
             );
             return;
         }
@@ -491,7 +498,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     None,
                     EtagKind::Missing,
                 ),
-                false,
+                true,
             ),
         }
     }
@@ -766,7 +773,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
                     self.schedule_retry(RetryAction::Push, error);
                     if let Some(report) = recheck {
                         let notice = self.capability_notice_id.clone();
-                        if self.ensure_capability(true).await {
+                        if self.check_capability(true, false).await {
                             // A disposable file passing cannot negate a failed
                             // precondition on the actual configuration resource.
                             self.capability_notice_id = notice;
@@ -1643,14 +1650,20 @@ mod tests {
         task.enable_checked().await;
         assert!(!task.engine.config_store.config.auto_sync_enabled);
         assert!(!task.enabled);
-        assert!(task.capability_notice_id.is_none());
+        assert!(task.capability_notice_id.is_some());
+        let notice = task.capability_notice_id.clone();
+        task.enable_checked().await;
+        assert_ne!(
+            task.capability_notice_id, notice,
+            "each user retry must report its failure"
+        );
         assert_eq!(task.capability.state, CapabilityState::Incomplete);
         assert_eq!(*mock.push_calls.lock().unwrap(), 0);
         *mock.capability_result.lock().unwrap() = CapabilityReport::supported();
         task.enable_checked().await;
         assert!(task.enabled);
         assert!(task.engine.config_store.config.auto_sync_enabled);
-        assert_eq!(*mock.capability_calls.lock().unwrap(), 2);
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 3);
     }
 
     #[tokio::test]

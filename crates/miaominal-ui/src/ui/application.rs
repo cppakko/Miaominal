@@ -474,8 +474,12 @@ impl ApplicationState {
                 crate::ui::shell::AppNotification::new(
                     crate::ui::shell::AppNotificationTone::Warning,
                     crate::ui::shell::AppNotificationPriority::High,
-                    i18n::string("settings.sync.capability.paused"),
-                    webdav_capability_summary(&snapshot.capability, true),
+                    i18n::string(if snapshot.enabled {
+                        "settings.sync.capability.paused"
+                    } else {
+                        "settings.sync.capability.failed"
+                    }),
+                    webdav_capability_summary(&snapshot.capability, snapshot.enabled),
                 )
                 .stable_id(format!("webdav-capability:{id}"))
                 .structured_action(
@@ -1067,7 +1071,23 @@ pub(crate) fn webdav_capability_summary(
             _ => "settings.sync.capability.incomplete",
         },
     };
-    let text = i18n::string(key);
+    let mut text = i18n::string(key);
+    if report.state == State::Unsupported {
+        use miaominal_sync::capability::EtagKind;
+        let reason = match report.reason {
+            Some(Reason::VersionUnavailable) => match report.etag_kind {
+                EtagKind::Weak => "settings.sync.capability.reason_weak",
+                EtagKind::Missing => "settings.sync.capability.reason_missing",
+                _ => "settings.sync.capability.reason_invalid",
+            },
+            Some(Reason::ConditionalRead) => "settings.sync.capability.reason_read",
+            _ => "settings.sync.capability.reason_write",
+        };
+        text = format!("{} {text}", i18n::string(reason));
+    }
+    if let Some(status) = report.http_status.filter(|status| *status != 0) {
+        text.push_str(&format!(" (HTTP {status})"));
+    }
     match &report.cleanup_file {
         Some(file) => format!("{text} {file}"),
         None => text,
