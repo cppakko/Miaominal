@@ -6,9 +6,9 @@ use miaominal_sync::{RemoteSyncState, SyncEngine};
 
 /// Abstraction over the sync operations used by the auto-sync scheduler.
 ///
-/// The production implementation delegates to `SyncService`, which serializes
-/// every operation through one process-wide mutex; tests can substitute an
-/// in-memory mock.
+/// The production implementation delegates to `SyncService`. Content operations
+/// share a process-wide mutex; capability probes and cleanup use a separate lock
+/// so a slow probe cannot block manual sync. Tests can substitute an in-memory mock.
 pub trait SyncOps: Send + Sync + 'static {
     fn check_capability(
         &self,

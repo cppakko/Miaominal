@@ -90,7 +90,9 @@ impl SyncService {
         mut engine: SyncEngine,
         cancel: ProbeCancellation,
     ) -> CapabilityReport {
-        let _guard = self.operation_lock.lock().await;
+        // The probe only reads the real resource and writes its own random file.
+        // Serialize probes and cleanup with each other, without blocking manual
+        // content sync while a service is slow or unavailable.
         let mut pending = self.pending_probe.lock().await;
         if let Some(probe) = pending.as_ref() {
             if let Err(report) = probe.cleanup().await {
@@ -376,6 +378,96 @@ mod tests {
     };
     use miaominal_sync::SyncConfigStore;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn stalled_capability_check_does_not_block_manual_sync() {
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        set_vault_test_parameters();
+        let temp = tempdir().unwrap();
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                temp.path().join("vault.json"),
+                miaominal_secrets::ProtectedPassphrase::try_from_string("test-passphrase".into())
+                    .unwrap(),
+            ),
+        );
+        credentials.initialize().unwrap();
+        let service = SyncService::new(
+            TokioHandle::current(),
+            Some(SessionStore::with_path(temp.path().join("sessions.toml"))),
+            Some(ProxyStore::with_path(temp.path().join("proxies.toml"))),
+            Some(SnippetStore::with_path(temp.path().join("snippets.toml"))),
+            Some(ManagedKeyStore::with_path(temp.path().join("keys.toml"))),
+            SecretStore::with_credentials(credentials.clone()),
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/sync.json", listener.local_addr().unwrap());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let read = stream.read(&mut bytes).await.unwrap();
+            assert!(
+                read > 0,
+                "probe must send a request before the server stalls"
+            );
+            started_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nETag: W/\"weak\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let probe_engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("probe-config.toml"),
+                SyncConfig {
+                    provider: miaominal_sync::SyncProvider::WebDav,
+                    webdav_url: url,
+                    ..SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        probe_engine
+            .config_store
+            .set_webdav_password("test-password")
+            .unwrap();
+        let probe_service = service.clone();
+        let probe = tokio::spawn(async move {
+            probe_service
+                .check_capability(probe_engine, ProbeCancellation::default())
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let manual_engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("manual-config.toml"),
+                SyncConfig::default(),
+                credentials,
+            ),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            service.push_manual(
+                manual_engine,
+                SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap(),
+            ),
+        )
+        .await;
+        release_tx.send(()).unwrap();
+        probe.await.unwrap();
+        server.await.unwrap();
+        assert!(
+            result.is_ok(),
+            "manual sync waited for the capability probe"
+        );
+        assert!(matches!(result.unwrap().unwrap().status, SyncStatus::Idle));
+    }
 
     #[test]
     fn sync_service_requires_all_stores() {

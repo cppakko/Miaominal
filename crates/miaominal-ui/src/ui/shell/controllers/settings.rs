@@ -2546,9 +2546,6 @@ impl SettingsController {
         enable: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.auto_sync_snapshot.phase == miaominal_services::AutoSyncPhase::CheckingCapability {
-            return;
-        }
         if self.sync_requires_local_vault_unlock() {
             cx.emit(AppCommand::vault_unlock(
                 crate::ui::shell::DeferredAppCommand::Settings(
@@ -2560,13 +2557,15 @@ impl SettingsController {
         if self.sync_config().provider != SyncProvider::WebDav {
             return;
         }
-        self.auto_sync_snapshot.phase = miaominal_services::AutoSyncPhase::CheckingCapability;
-        self.auto_sync_snapshot.capability.state =
-            miaominal_sync::capability::CapabilityState::Checking;
-        crate::ui::application::application_state(cx)
+        let accepted = crate::ui::application::application_state(cx)
             .read(cx)
             .request_auto_sync_check(enable);
-        cx.notify();
+        if accepted {
+            self.auto_sync_snapshot.phase = miaominal_services::AutoSyncPhase::CheckingCapability;
+            self.auto_sync_snapshot.capability.state =
+                miaominal_sync::capability::CapabilityState::Checking;
+            cx.notify();
+        }
     }
 
     pub(in crate::ui::shell) fn cancel_auto_sync_check(&mut self, cx: &mut Context<Self>) {

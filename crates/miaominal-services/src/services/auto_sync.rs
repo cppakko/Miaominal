@@ -15,7 +15,7 @@ use notify::{RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::{mpsc, watch};
@@ -78,8 +78,8 @@ enum RetryAction {
 }
 
 enum AutoSyncCommand {
-    EnableChecked(ProbeCancellation),
-    RecheckCapability(ProbeCancellation),
+    EnableChecked(Arc<ProbeCancellation>),
+    RecheckCapability(Arc<ProbeCancellation>),
     CancelCheck,
     SetEngine(SyncEngine),
     SetSettingsStore(SettingsStore),
@@ -121,11 +121,31 @@ impl Fingerprint {
 #[derive(Clone)]
 pub struct AutoSyncService {
     cancellation: ProbeCancellation,
-    check_queued: Arc<std::sync::atomic::AtomicBool>,
+    check_requests: Arc<StdMutex<CheckRequests>>,
     runtime: TokioHandle,
     command_tx: mpsc::UnboundedSender<AutoSyncCommand>,
     state_rx: watch::Receiver<AutoSyncSnapshot>,
     task: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+#[derive(Default)]
+struct CheckRequests {
+    pending: Option<Arc<ProbeCancellation>>,
+    cancelled: bool,
+}
+
+impl CheckRequests {
+    fn finish(&mut self, token: &Arc<ProbeCancellation>) {
+        // A cancelled request may finish after its replacement was queued.
+        // Only the owner of the current slot may release it.
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(pending, token))
+        {
+            self.pending = None;
+        }
+    }
 }
 
 impl AutoSyncService {
@@ -166,14 +186,14 @@ impl AutoSyncService {
         let task = Arc::new(tokio::sync::Mutex::new(None));
         let service = Self {
             cancellation: ProbeCancellation::default(),
-            check_queued: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            check_requests: Arc::default(),
             runtime,
             command_tx,
             state_rx,
             task: task.clone(),
         };
         let cancellation = service.cancellation.clone();
-        let check_queued = service.check_queued.clone();
+        let check_requests = service.check_requests.clone();
         let handle = service.runtime.spawn(async move {
             run_auto_sync_with_cancellation(
                 command_rx,
@@ -185,7 +205,7 @@ impl AutoSyncService {
                 vault_locked,
                 AUTO_SYNC_POLL_INTERVAL,
                 cancellation,
-                check_queued,
+                check_requests,
             )
             .await;
         });
@@ -244,33 +264,47 @@ impl AutoSyncService {
         }
     }
 
-    pub fn enable_checked(&self) {
-        self.request_check(true);
+    pub fn enable_checked(&self) -> bool {
+        self.request_check(true)
     }
-    pub fn recheck_capability(&self) {
-        self.request_check(false);
+    pub fn recheck_capability(&self) -> bool {
+        self.request_check(false)
     }
-    fn request_check(&self, enable: bool) {
-        if self.state_rx.borrow().phase == AutoSyncPhase::CheckingCapability
-            || self
-                .check_queued
-                .swap(true, std::sync::atomic::Ordering::SeqCst)
+    fn request_check(&self, enable: bool) -> bool {
+        let mut requests = self
+            .check_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if requests
+            .pending
+            .as_ref()
+            .is_some_and(|token| !token.is_cancelled())
+            || (requests.pending.is_none()
+                && !requests.cancelled
+                && self.state_rx.borrow().phase == AutoSyncPhase::CheckingCapability)
         {
-            return;
+            return false;
         }
-        let token = self.cancellation.fresh();
+        let token = Arc::new(self.cancellation.fresh());
         let command = if enable {
-            AutoSyncCommand::EnableChecked(token)
+            AutoSyncCommand::EnableChecked(token.clone())
         } else {
-            AutoSyncCommand::RecheckCapability(token)
+            AutoSyncCommand::RecheckCapability(token.clone())
         };
         if self.command_tx.send(command).is_err() {
-            self.check_queued
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return false;
         }
+        requests.pending = Some(token);
+        requests.cancelled = false;
+        true
     }
     pub fn cancel_check(&self) {
+        let mut requests = self
+            .check_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.cancellation.cancel();
+        requests.cancelled = true;
         let _ = self.command_tx.send(AutoSyncCommand::CancelCheck);
     }
 }
@@ -945,7 +979,7 @@ async fn run_auto_sync<S: SyncOps>(
         vault_locked,
         poll_interval,
         ProbeCancellation::default(),
-        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Arc::default(),
     )
     .await;
 }
@@ -961,7 +995,7 @@ async fn run_auto_sync_with_cancellation<S: SyncOps>(
     vault_locked: bool,
     poll_interval: Duration,
     cancellation: ProbeCancellation,
-    check_queued: Arc<std::sync::atomic::AtomicBool>,
+    check_requests: Arc<StdMutex<CheckRequests>>,
 ) {
     let enabled = engine.config_store.config.auto_sync_enabled;
     let fingerprint = Fingerprint::sample(&config_dir);
@@ -1046,11 +1080,11 @@ async fn run_auto_sync_with_cancellation<S: SyncOps>(
                 match command {
                     AutoSyncCommand::EnableChecked(token) => {
                         if !token.is_cancelled() { task.enable_checked().await; }
-                        check_queued.store(false, std::sync::atomic::Ordering::SeqCst);
+                        check_requests.lock().unwrap_or_else(std::sync::PoisonError::into_inner).finish(&token);
                     }
                     AutoSyncCommand::RecheckCapability(token) => {
                         if !token.is_cancelled() && task.ensure_capability(true).await && task.enabled { task.on_tick().await; }
-                        check_queued.store(false, std::sync::atomic::Ordering::SeqCst);
+                        check_requests.lock().unwrap_or_else(std::sync::PoisonError::into_inner).finish(&token);
                     }
                     AutoSyncCommand::CancelCheck => {
                         task.retry_deadline = None;
@@ -1177,6 +1211,104 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
+    #[tokio::test]
+    async fn cancelled_check_accepts_replacement_before_cleanup_finishes() {
+        let (command_tx, mut commands) = mpsc::unbounded_channel();
+        let (state_tx, state_rx) = watch::channel(snapshot(false, AutoSyncPhase::Disabled));
+        let service = AutoSyncService {
+            cancellation: ProbeCancellation::default(),
+            check_requests: Arc::default(),
+            runtime: TokioHandle::current(),
+            command_tx,
+            state_rx,
+            task: Arc::new(tokio::sync::Mutex::new(None)),
+        };
+        assert!(service.recheck_capability());
+        let AutoSyncCommand::RecheckCapability(old) = commands.try_recv().unwrap() else {
+            panic!("expected check")
+        };
+        state_tx
+            .send(snapshot(false, AutoSyncPhase::CheckingCapability))
+            .unwrap();
+        service.cancel_check();
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            AutoSyncCommand::CancelCheck
+        ));
+        assert!(service.recheck_capability());
+        let AutoSyncCommand::RecheckCapability(replacement) = commands.try_recv().unwrap() else {
+            panic!("expected replacement")
+        };
+        assert!(old.is_cancelled());
+        assert!(!replacement.is_cancelled());
+        service.check_requests.lock().unwrap().finish(&old);
+        assert!(
+            !service.clone().recheck_capability(),
+            "old completion released the replacement slot"
+        );
+        service.check_requests.lock().unwrap().finish(&replacement);
+        state_tx
+            .send(snapshot(false, AutoSyncPhase::Disabled))
+            .unwrap();
+        assert!(service.recheck_capability());
+    }
+
+    #[tokio::test]
+    async fn queued_retry_runs_after_cancelled_check_finishes_cleanup() {
+        let dir = temp_config_dir("cancel-retry-cleanup");
+        let mock = Arc::new(MockSyncOps::new());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        *mock.probe_gate.lock().unwrap() = Some((started_tx, finish_rx));
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (state_tx, state_rx) = watch::channel(snapshot(false, AutoSyncPhase::Disabled));
+        let service = AutoSyncService {
+            cancellation: ProbeCancellation::default(),
+            check_requests: Arc::default(),
+            runtime: TokioHandle::current(),
+            command_tx,
+            state_rx,
+            task: Arc::new(tokio::sync::Mutex::new(None)),
+        };
+        let run = tokio::spawn(run_auto_sync_with_cancellation(
+            command_rx,
+            state_tx,
+            mock.clone(),
+            task.settings_store,
+            task.engine,
+            dir,
+            false,
+            Duration::from_secs(3600),
+            service.cancellation.clone(),
+            service.check_requests.clone(),
+        ));
+        assert!(service.recheck_capability());
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        service.cancel_check();
+        assert!(service.clone().recheck_capability());
+        assert!(!service.recheck_capability());
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
+        finish_tx.send(()).unwrap();
+        let mut state = service.subscribe();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while state.borrow().capability.state != CapabilityState::Supported {
+                state.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 2);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        service.shutdown();
+        run.await.unwrap();
+    }
+
     #[derive(Default)]
     struct MemoryCredentialBackend(Mutex<BTreeMap<String, String>>);
 
@@ -1216,6 +1348,12 @@ mod tests {
     }
 
     struct MockSyncOps {
+        probe_gate: Mutex<
+            Option<(
+                tokio::sync::oneshot::Sender<()>,
+                tokio::sync::oneshot::Receiver<()>,
+            )>,
+        >,
         capability_calls: Mutex<usize>,
         capability_result: Mutex<CapabilityReport>,
         cancel_probe: std::sync::atomic::AtomicBool,
@@ -1230,6 +1368,7 @@ mod tests {
     impl MockSyncOps {
         fn new() -> Self {
             Self {
+                probe_gate: Mutex::new(None),
                 capability_calls: Mutex::new(0),
                 capability_result: Mutex::new(CapabilityReport::supported()),
                 cancel_probe: std::sync::atomic::AtomicBool::new(false),
@@ -1283,6 +1422,11 @@ mod tests {
             cancel: ProbeCancellation,
         ) -> CapabilityReport {
             *self.capability_calls.lock().unwrap() += 1;
+            let gate = self.probe_gate.lock().unwrap().take();
+            if let Some((started, finish)) = gate {
+                started.send(()).unwrap();
+                finish.await.unwrap();
+            }
             if self.cancel_probe.load(std::sync::atomic::Ordering::SeqCst) {
                 cancel.cancel();
             }

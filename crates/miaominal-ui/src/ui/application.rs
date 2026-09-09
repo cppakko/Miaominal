@@ -168,14 +168,14 @@ struct GlobalApplicationState(Entity<ApplicationState>);
 impl Global for GlobalApplicationState {}
 
 impl ApplicationState {
-    pub(crate) fn request_auto_sync_check(&self, enable: bool) {
-        if let Some(service) = &self.auto_sync {
+    pub(crate) fn request_auto_sync_check(&self, enable: bool) -> bool {
+        self.auto_sync.as_ref().is_some_and(|service| {
             if enable {
-                service.enable_checked();
+                service.enable_checked()
             } else {
-                service.recheck_capability();
+                service.recheck_capability()
             }
-        }
+        })
     }
 
     pub(crate) fn cancel_auto_sync_check(&self) {
