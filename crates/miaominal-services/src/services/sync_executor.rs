@@ -56,6 +56,14 @@ impl SyncExecutor {
         self.service.push(engine, settings_store).await
     }
 
+    pub async fn push_manual(
+        &self,
+        engine: SyncEngine,
+        settings_store: SettingsStore,
+    ) -> anyhow::Result<SyncTaskResult> {
+        self.service.push_manual(engine, settings_store).await
+    }
+
     pub async fn push_force(
         &self,
         engine: SyncEngine,

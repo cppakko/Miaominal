@@ -103,6 +103,30 @@ impl SyncService {
         self.push_inner(&mut engine, settings_store, false).await
     }
 
+    pub async fn push_manual(
+        &self,
+        mut engine: SyncEngine,
+        settings_store: SettingsStore,
+    ) -> Result<SyncTaskResult> {
+        let _guard = self.operation_lock.lock().await;
+        let secrets = self.secrets();
+        let status = engine
+            .push_manual(
+                &self.session_store,
+                &self.proxy_store,
+                &self.snippet_store,
+                &self.keychain_store,
+                &secrets,
+                &settings_store,
+            )
+            .await?;
+        Ok(SyncTaskResult {
+            status,
+            updated_config: engine.config_store.config.clone(),
+            reload: None,
+        })
+    }
+
     pub async fn push_force(
         &self,
         mut engine: SyncEngine,

@@ -274,7 +274,7 @@ impl SettingsController {
         let (tx, rx) = std::sync::mpsc::sync_channel::<anyhow::Result<SyncTaskResult>>(1);
         runtime.spawn(async move {
             let result = match action {
-                ManualSyncAction::Push => executor.push(engine, settings_store).await,
+                ManualSyncAction::Push => executor.push_manual(engine, settings_store).await,
                 ManualSyncAction::ForcePush => executor.push_force(engine, settings_store).await,
                 ManualSyncAction::ForcePull => executor.pull_force(engine, settings_store).await,
             };
