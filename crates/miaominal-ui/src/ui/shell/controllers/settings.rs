@@ -584,6 +584,7 @@ pub(in crate::ui::shell) struct SettingsController {
     open_ssh_integration_service: OpenSshIntegrationService,
     sync_executor: Option<SyncExecutor>,
     auto_sync_snapshot: miaominal_services::AutoSyncSnapshot,
+    pub(in crate::ui::shell) capability_details_open: bool,
     ssh_bridge_status: SshBridgeStatus,
     ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
     ssh_bridge_security: BridgeSecuritySnapshot,
@@ -1884,6 +1885,7 @@ impl SettingsController {
             open_ssh_integration_service: args.open_ssh_integration_service,
             sync_executor: args.sync_executor,
             auto_sync_snapshot: args.auto_sync,
+            capability_details_open: false,
             ssh_bridge_status,
             ssh_bridge_sync_result,
             ssh_bridge_security,
@@ -2521,12 +2523,61 @@ impl SettingsController {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
+        if enabled && self.sync_config().provider == SyncProvider::WebDav {
+            self.check_auto_sync_capability(true, cx);
+            return;
+        }
+        if !enabled {
+            crate::ui::application::application_state(cx)
+                .read(cx)
+                .cancel_auto_sync_check();
+        }
         if let Err(error) =
             SettingsService::set_auto_sync_enabled(&mut self.sync.sync_engine, enabled)
         {
             log::warn!("failed to persist auto-sync preference: {error:?}");
             return;
         }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn check_auto_sync_capability(
+        &mut self,
+        enable: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.auto_sync_snapshot.phase == miaominal_services::AutoSyncPhase::CheckingCapability {
+            return;
+        }
+        if self.sync_requires_local_vault_unlock() {
+            cx.emit(AppCommand::vault_unlock(
+                crate::ui::shell::DeferredAppCommand::Settings(
+                    crate::ui::shell::SettingsDeferredCommand::CheckAutoSync(enable),
+                ),
+            ));
+            return;
+        }
+        if self.sync_config().provider != SyncProvider::WebDav {
+            return;
+        }
+        self.auto_sync_snapshot.phase = miaominal_services::AutoSyncPhase::CheckingCapability;
+        self.auto_sync_snapshot.capability.state =
+            miaominal_sync::capability::CapabilityState::Checking;
+        crate::ui::application::application_state(cx)
+            .read(cx)
+            .request_auto_sync_check(enable);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn cancel_auto_sync_check(&mut self, cx: &mut Context<Self>) {
+        crate::ui::application::application_state(cx)
+            .read(cx)
+            .cancel_auto_sync_check();
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn toggle_capability_details(&mut self, cx: &mut Context<Self>) {
+        self.capability_details_open = !self.capability_details_open;
         cx.notify();
     }
 

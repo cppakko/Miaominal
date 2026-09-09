@@ -6,7 +6,7 @@ use crate::ui::components::{
 };
 use crate::ui::i18n;
 use gpui_kit::component::{
-    Disableable, Icon, Size,
+    ActiveTheme, Disableable, Icon, Size,
     group_box::GroupBoxVariant,
     setting::{
         RenderOptions, SelectIndex, SettingField, SettingFieldElement, SettingGroup, SettingItem,
@@ -113,8 +113,10 @@ pub(in crate::ui::shell) fn render_settings_page(
     settings: Entity<SettingsController>,
     settings_instance_generation: u64,
     destination: Option<SettingsDestination>,
+    cx: &App,
 ) -> gpui_kit::AnyElement {
-    let pages = setting_pages(settings);
+    let webdav = settings.read(cx).sync_config().provider == SyncProvider::WebDav;
+    let pages = setting_pages(settings, webdav);
     let initial_selection =
         destination.and_then(|destination| settings_destination_index(&pages, destination));
     let settings_id = format!("app-settings-{settings_instance_generation}");
@@ -131,7 +133,7 @@ pub(in crate::ui::shell) fn render_settings_page(
         .into_any_element()
 }
 
-fn setting_pages(settings: Entity<SettingsController>) -> Vec<NamedSettingPage> {
+fn setting_pages(settings: Entity<SettingsController>, webdav: bool) -> Vec<NamedSettingPage> {
     vec![
         NamedSettingPage::new(
             SettingsPageId::Appearance,
@@ -147,7 +149,7 @@ fn setting_pages(settings: Entity<SettingsController>) -> Vec<NamedSettingPage> 
             SettingsPageId::AiProviders,
             ai_providers_page(settings.clone()),
         ),
-        NamedSettingPage::new(SettingsPageId::Sync, sync_page(settings.clone())),
+        NamedSettingPage::new(SettingsPageId::Sync, sync_page(settings.clone(), webdav)),
         NamedSettingPage::new(SettingsPageId::Vault, vault_page(settings.clone())),
         NamedSettingPage::new(SettingsPageId::About, about_page(settings)),
     ]
@@ -3199,13 +3201,13 @@ fn format_keystroke_preview(ks: &gpui_kit::Keystroke) -> String {
     parts
 }
 
-fn sync_page(settings: Entity<SettingsController>) -> SettingPage {
+fn sync_page(settings: Entity<SettingsController>, webdav: bool) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.sync.title"))
         .description(i18n::string("settings.pages.sync.description"))
         .resettable(false)
         .groups(vec![
             sync_status_group(settings.clone()),
-            sync_auto_sync_group(settings.clone()),
+            sync_auto_sync_group(settings.clone(), webdav),
             sync_encryption_group(settings.clone()),
             sync_provider_group(settings),
         ])
@@ -3576,6 +3578,10 @@ fn sync_status_group(settings: Entity<SettingsController>) -> SettingGroup {
 
 fn auto_sync_phase_label(phase: miaominal_services::AutoSyncPhase) -> String {
     let key = match phase {
+        miaominal_services::AutoSyncPhase::CheckingCapability => {
+            "settings.sync.capability.checking"
+        }
+        miaominal_services::AutoSyncPhase::PausedCapability => "settings.sync.capability.paused",
         miaominal_services::AutoSyncPhase::Disabled => "settings.sync.auto_sync.status.disabled",
         miaominal_services::AutoSyncPhase::Watching => "settings.sync.auto_sync.status.watching",
         miaominal_services::AutoSyncPhase::Debouncing => {
@@ -3594,55 +3600,200 @@ fn auto_sync_phase_label(phase: miaominal_services::AutoSyncPhase) -> String {
     i18n::string(key)
 }
 
-fn sync_auto_sync_group(settings: Entity<SettingsController>) -> SettingGroup {
+fn sync_auto_sync_group(settings: Entity<SettingsController>, webdav: bool) -> SettingGroup {
     SettingGroup::new()
         .title(i18n::string("settings.sync.auto_sync_group.title"))
         .description(i18n::string("settings.sync.auto_sync_group.description"))
-        .items(vec![
-            SettingItem::new(
-                i18n::string("settings.sync.auto_sync.label"),
-                SettingField::switch(
-                    {
-                        let entity = settings.clone();
-                        move |cx: &App| entity.read(cx).auto_sync_enabled()
-                    },
-                    {
-                        let entity = settings.clone();
-                        move |enabled: bool, cx: &mut App| {
-                            entity.update(cx, |controller, cx| {
-                                controller.set_auto_sync_enabled(enabled, cx);
-                            });
+        .items(
+            vec![
+                SettingItem::new(
+                    i18n::string("settings.sync.auto_sync.label"),
+                    SettingField::switch(
+                        {
+                            let entity = settings.clone();
+                            move |cx: &App| entity.read(cx).auto_sync_enabled()
+                        },
+                        {
+                            let entity = settings.clone();
+                            move |enabled: bool, cx: &mut App| {
+                                entity.update(cx, |controller, cx| {
+                                    controller.set_auto_sync_enabled(enabled, cx);
+                                });
+                            }
+                        },
+                    ),
+                )
+                .description(i18n::string("settings.sync.auto_sync.description")),
+                SettingItem::new(
+                    i18n::string("settings.sync.auto_sync.status.label"),
+                    SettingField::render({
+                        let settings = settings.clone();
+                        move |_, _, cx| {
+                            let snapshot = settings.read(cx).auto_sync_snapshot();
+                            let status_text = auto_sync_phase_label(snapshot.phase);
+                            let text = match snapshot.message.as_deref() {
+                                Some(message) if !message.is_empty() => {
+                                    format!("{status_text} · {message}")
+                                }
+                                _ => status_text,
+                            };
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
+                                .text_color(cx.theme().muted_foreground)
+                                .child(text)
+                                .into_any_element()
                         }
-                    },
-                ),
-            )
-            .description(i18n::string("settings.sync.auto_sync.description")),
-            SettingItem::new(
-                i18n::string("settings.sync.auto_sync.status.label"),
-                SettingField::render({
+                    }),
+                )
+                .description(i18n::string("settings.sync.auto_sync.status.description")),
+                SettingItem::render({
                     let settings = settings.clone();
                     move |_, _, cx| {
-                        let snapshot = settings.read(cx).auto_sync_snapshot();
-                        let status_text = auto_sync_phase_label(snapshot.phase);
-                        let text = match snapshot.message.as_deref() {
-                            Some(message) if !message.is_empty() => {
-                                format!("{status_text} · {message}")
-                            }
-                            _ => status_text,
-                        };
-                        let roles = miaominal_settings::current_theme().material.roles;
-                        div()
+                        let controller = settings.read(cx);
+                        let snapshot = controller.auto_sync_snapshot();
+                        let report = snapshot.capability.clone();
+                        let checking =
+                            report.state == miaominal_sync::capability::CapabilityState::Checking;
+                        let details_open = controller.capability_details_open;
+                        let text = crate::ui::application::webdav_capability_summary(
+                            &report,
+                            snapshot.enabled,
+                        );
+                        let controls = settings.clone();
+                        let details = settings.clone();
+                        let mut view = v_flex()
                             .w_full()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .text_color(rgb(roles.on_surface_variant))
-                            .child(text)
-                            .into_any_element()
+                            .min_w_0()
+                            .gap_2()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                div()
+                                    .text_color(cx.theme().foreground)
+                                    .child(i18n::string("settings.sync.capability.label")),
+                            )
+                            .child(div().child(text))
+                            .child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(sync_capability_button(
+                                        "webdav-capability-check",
+                                        i18n::string(if checking {
+                                            "settings.sync.capability.cancel"
+                                        } else if report.cleanup_file.is_some() {
+                                            "settings.sync.capability.retry_cleanup"
+                                        } else {
+                                            "settings.sync.capability.recheck"
+                                        }),
+                                        move |_, cx| {
+                                            controls.update(cx, |controller, cx| {
+                                                if checking {
+                                                    controller.cancel_auto_sync_check(cx);
+                                                } else {
+                                                    controller
+                                                        .check_auto_sync_capability(false, cx);
+                                                }
+                                            })
+                                        },
+                                    ))
+                                    .child(sync_capability_button(
+                                        "webdav-capability-details",
+                                        i18n::string("settings.sync.capability.details"),
+                                        move |_, cx| {
+                                            details.update(cx, |controller, cx| {
+                                                controller.toggle_capability_details(cx)
+                                            })
+                                        },
+                                    )),
+                            );
+                        if details_open {
+                            let diagnostics = report.diagnostics();
+                            let copied = diagnostics.clone();
+                            view =
+                                view.child(div().child(diagnostics))
+                                    .child(sync_capability_button(
+                                        "webdav-capability-copy",
+                                        i18n::string("settings.sync.capability.copy"),
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(
+                                                gpui_kit::ClipboardItem::new_string(copied.clone()),
+                                            )
+                                        },
+                                    ));
+                        }
+                        view.into_any_element()
                     }
                 }),
-            )
-            .description(i18n::string("settings.sync.auto_sync.status.description")),
-        ])
+            ]
+            .into_iter()
+            .take(if webdav { 3 } else { 2 }),
+        )
+}
+
+fn sync_capability_button(
+    id: &'static str,
+    label: String,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    Button::new(id)
+        .small()
+        .label(label)
+        .on_click(move |_, window, cx| on_click(window, cx))
+}
+
+#[cfg(test)]
+mod capability_ui_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+    use std::{cell::Cell, rc::Rc};
+
+    struct CapabilityActionHarness {
+        clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for CapabilityActionHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            div().tab_group().child(sync_capability_button(
+                "webdav-capability-check",
+                "重新检查 / Retry cleanup and check".into(),
+                move |_, _| clicks.set(clicks.get() + 1),
+            ))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn capability_actions_support_keyboard_activation_in_both_themes(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::component::init);
+        let clicks = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let clicks = clicks.clone();
+            move |_, _| CapabilityActionHarness { clicks }
+        });
+        for mode in [
+            gpui_kit::component::ThemeMode::Light,
+            gpui_kit::component::ThemeMode::Dark,
+        ] {
+            cx.update(|window, cx| {
+                gpui_kit::component::Theme::change(mode, Some(window), cx);
+                window.draw(cx).clear(cx);
+                window.focus_next(cx);
+                assert!(window.focused(cx).is_some());
+                window.draw(cx).clear(cx);
+            });
+            let before = clicks.get();
+            for key in ["enter", "space"] {
+                let keystroke = gpui_kit::Keystroke::parse(key).unwrap();
+                cx.simulate_event(gpui_kit::KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                });
+                cx.simulate_event(gpui_kit::KeyUpEvent { keystroke });
+            }
+            assert_eq!(clicks.get(), before + 2);
+        }
+    }
 }

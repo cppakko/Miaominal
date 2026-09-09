@@ -739,7 +739,7 @@ impl AppView {
                 let settings = self.controllers.settings.clone();
                 let (settings_instance_generation, destination) =
                     settings.read(cx).take_settings_render_request();
-                pages::render_settings_page(settings, settings_instance_generation, destination)
+                pages::render_settings_page(settings, settings_instance_generation, destination, cx)
             }
             SidebarSection::Snippets => {
                 let controller = self.controllers.session.clone();

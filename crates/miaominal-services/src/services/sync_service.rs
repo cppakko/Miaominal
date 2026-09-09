@@ -7,6 +7,9 @@ use miaominal_secrets::SecretStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::{ProxyStore, SettingsStore};
+use miaominal_sync::capability::{
+    CapabilityReason, CapabilityReport, EtagKind, PendingProbe, ProbeCancellation, check_webdav,
+};
 use miaominal_sync::engine::SyncEngine;
 use miaominal_sync::{RemoteSyncState, SyncConfig, SyncStatus};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -53,6 +56,7 @@ pub struct SyncService {
     keychain_store: ManagedKeyStore,
     secrets: Arc<RwLock<SecretStore>>,
     operation_lock: Arc<Mutex<()>>,
+    pending_probe: Arc<Mutex<Option<PendingProbe>>>,
 }
 
 impl SyncService {
@@ -73,11 +77,57 @@ impl SyncService {
                 .ok_or_else(|| anyhow!("managed key store unavailable"))?,
             secrets: Arc::new(RwLock::new(secrets)),
             operation_lock: process_sync_lock(),
+            pending_probe: Arc::new(Mutex::new(None)),
         })
     }
 
     pub fn runtime(&self) -> &TokioHandle {
         &self.runtime
+    }
+
+    pub async fn check_capability(
+        &self,
+        mut engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> CapabilityReport {
+        let _guard = self.operation_lock.lock().await;
+        let mut pending = self.pending_probe.lock().await;
+        if let Some(probe) = pending.as_ref() {
+            if let Err(report) = probe.cleanup().await {
+                return report;
+            }
+            *pending = None;
+        }
+        if cancel.is_cancelled() {
+            return CapabilityReport::issue(
+                CapabilityReason::Cancelled,
+                "cancel",
+                None,
+                EtagKind::Missing,
+            );
+        }
+        engine.config_store.sync_from_disk();
+        let config = &engine.config_store.config;
+        let password = match engine.config_store.get_webdav_password() {
+            Ok(Some(password)) if !password.is_empty() => password,
+            _ => {
+                return CapabilityReport::issue(
+                    CapabilityReason::Configuration,
+                    "credentials",
+                    None,
+                    EtagKind::Missing,
+                );
+            }
+        };
+        let (report, cleanup) = check_webdav(
+            &config.webdav_url,
+            config.webdav_username.clone(),
+            password,
+            cancel,
+        )
+        .await;
+        *pending = cleanup;
+        report
     }
 
     pub fn replace_secrets(&self, secrets: SecretStore) {

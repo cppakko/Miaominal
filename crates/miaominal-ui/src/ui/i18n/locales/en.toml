@@ -2139,6 +2139,28 @@ missing_baseline_message = "This device has no record of the previous sync, so M
 force_push = "Keep this device's configuration"
 confirm = "Keep remote configuration"
 
+[settings.sync.capability]
+retry_cleanup = "Retry cleanup and check"
+label = "WebDAV auto-sync compatibility"
+unchecked = "Compatibility will be checked before enabling auto-sync."
+checking = "Checking sync service…"
+supported = "This service passed the auto-sync compatibility check."
+paused = "Auto-sync paused"
+unsupported = "This service does not currently support safe auto-sync. Automatic uploads could overwrite changes from another device. You can still push or pull manually."
+unsupported_paused = "Auto-sync is paused because this service cannot safely complete automatic synchronization. Sync manually or check the service again."
+network = "Could not complete the check. Check your connection and try again."
+authentication = "Could not complete the check. The service rejected your credentials. Check your username and password."
+permission = "Could not complete the check. The service denied a test operation. Check read, create, overwrite and delete permissions in the configuration directory, or sync manually."
+redirect = "Could not complete the check. The service redirected the request. Enter the direct WebDAV file URL and try again."
+cleanup = "Could not remove the test file. Checking again will first retry cleanup:"
+cancelled = "Compatibility check cancelled."
+configuration = "Could not complete the check. Check the WebDAV file URL, username, saved password and sync encryption passphrase."
+incomplete = "Could not complete the check. The service returned an unexpected response. Review the diagnostics and try again."
+cancel = "Cancel check"
+recheck = "Check again"
+details = "Diagnostics"
+copy = "Copy diagnostics"
+
 [settings.sync.status.notifications]
 succeeded_title = "Sync completed"
 failed_title = "Sync failed"

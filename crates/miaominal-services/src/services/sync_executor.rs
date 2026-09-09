@@ -1,6 +1,7 @@
 use super::sync_service::{SyncService, SyncTaskResult};
 use miaominal_secrets::SecretStore;
 use miaominal_storage::SettingsStore;
+use miaominal_sync::capability::{CapabilityReport, ProbeCancellation};
 use miaominal_sync::{RemoteSyncState, SyncEngine};
 
 /// Abstraction over the sync operations used by the auto-sync scheduler.
@@ -9,6 +10,11 @@ use miaominal_sync::{RemoteSyncState, SyncEngine};
 /// every operation through one process-wide mutex; tests can substitute an
 /// in-memory mock.
 pub trait SyncOps: Send + Sync + 'static {
+    fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> impl std::future::Future<Output = CapabilityReport> + Send;
     fn push(
         &self,
         engine: SyncEngine,
@@ -46,6 +52,14 @@ impl SyncExecutor {
 
     pub fn replace_secrets(&self, secrets: SecretStore) {
         self.service.replace_secrets(secrets);
+    }
+
+    pub async fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> CapabilityReport {
+        self.service.check_capability(engine, cancel).await
     }
 
     pub async fn push(
@@ -102,6 +116,13 @@ impl SyncExecutor {
 }
 
 impl SyncOps for SyncExecutor {
+    async fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> CapabilityReport {
+        SyncExecutor::check_capability(self, engine, cancel).await
+    }
     async fn push(
         &self,
         engine: SyncEngine,

@@ -1,5 +1,8 @@
 mod model;
 
+#[path = "sync/capability.rs"]
+pub mod capability;
+
 #[path = "sync/credential_migration.rs"]
 pub mod credential_migration;
 #[path = "sync/encryption.rs"]

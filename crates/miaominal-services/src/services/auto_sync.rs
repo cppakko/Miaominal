@@ -3,6 +3,10 @@ use super::sync_service::SyncTaskResult;
 use anyhow::Result;
 use miaominal_paths as paths;
 use miaominal_storage::SettingsStore;
+use miaominal_sync::capability::{
+    CapabilityError, CapabilityReason, CapabilityReport, CapabilityState, EtagKind,
+    ProbeCancellation,
+};
 use miaominal_sync::{
     RemoteSyncState, SyncContentRelation, SyncEngine, SyncInterventionReason, SyncProvider,
     SyncStatus, classify_content_revisions,
@@ -32,6 +36,8 @@ const TRACKED_CONFIG_FILES: [&str; 5] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoSyncPhase {
+    CheckingCapability,
+    PausedCapability,
     Disabled,
     Watching,
     Debouncing,
@@ -51,6 +57,9 @@ pub struct AutoSyncIntervention {
 
 #[derive(Debug, Clone)]
 pub struct AutoSyncSnapshot {
+    pub capability: CapabilityReport,
+    pub capability_notice_id: Option<String>,
+    pub updated_config: Option<miaominal_sync::SyncConfig>,
     pub revision: u64,
     pub enabled: bool,
     pub phase: AutoSyncPhase,
@@ -69,6 +78,9 @@ enum RetryAction {
 }
 
 enum AutoSyncCommand {
+    EnableChecked(ProbeCancellation),
+    RecheckCapability(ProbeCancellation),
+    CancelCheck,
     SetEngine(SyncEngine),
     SetSettingsStore(SettingsStore),
     ReconcileManualSync {
@@ -108,6 +120,8 @@ impl Fingerprint {
 
 #[derive(Clone)]
 pub struct AutoSyncService {
+    cancellation: ProbeCancellation,
+    check_queued: Arc<std::sync::atomic::AtomicBool>,
     runtime: TokioHandle,
     command_tx: mpsc::UnboundedSender<AutoSyncCommand>,
     state_rx: watch::Receiver<AutoSyncSnapshot>,
@@ -135,6 +149,9 @@ impl AutoSyncService {
             AutoSyncPhase::Watching
         };
         let (state_tx, state_rx) = watch::channel(AutoSyncSnapshot {
+            capability: CapabilityReport::default(),
+            capability_notice_id: None,
+            updated_config: None,
             revision: 0,
             enabled,
             phase: initial_phase,
@@ -148,13 +165,17 @@ impl AutoSyncService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let task = Arc::new(tokio::sync::Mutex::new(None));
         let service = Self {
+            cancellation: ProbeCancellation::default(),
+            check_queued: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             runtime,
             command_tx,
             state_rx,
             task: task.clone(),
         };
+        let cancellation = service.cancellation.clone();
+        let check_queued = service.check_queued.clone();
         let handle = service.runtime.spawn(async move {
-            run_auto_sync(
+            run_auto_sync_with_cancellation(
                 command_rx,
                 state_tx,
                 executor,
@@ -163,6 +184,8 @@ impl AutoSyncService {
                 config_dir,
                 vault_locked,
                 AUTO_SYNC_POLL_INTERVAL,
+                cancellation,
+                check_queued,
             )
             .await;
         });
@@ -176,6 +199,7 @@ impl AutoSyncService {
     }
 
     pub fn set_engine(&self, engine: SyncEngine) {
+        self.cancellation.cancel();
         let _ = self.command_tx.send(AutoSyncCommand::SetEngine(engine));
     }
 
@@ -199,6 +223,9 @@ impl AutoSyncService {
     }
 
     pub fn set_vault_locked(&self, locked: bool) {
+        if locked {
+            self.cancellation.cancel();
+        }
         let _ = self
             .command_tx
             .send(AutoSyncCommand::SetVaultLocked(locked));
@@ -209,16 +236,50 @@ impl AutoSyncService {
     }
 
     pub fn shutdown(&self) {
+        self.cancellation.cancel();
         let _ = self.command_tx.send(AutoSyncCommand::Shutdown);
-        if let Ok(mut slot) = self.task.try_lock()
-            && let Some(handle) = slot.take()
-        {
-            handle.abort();
+        // Do not abort: a check must finish its bounded cleanup first.
+        if let Ok(mut slot) = self.task.try_lock() {
+            slot.take();
         }
+    }
+
+    pub fn enable_checked(&self) {
+        self.request_check(true);
+    }
+    pub fn recheck_capability(&self) {
+        self.request_check(false);
+    }
+    fn request_check(&self, enable: bool) {
+        if self.state_rx.borrow().phase == AutoSyncPhase::CheckingCapability
+            || self
+                .check_queued
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let token = self.cancellation.fresh();
+        let command = if enable {
+            AutoSyncCommand::EnableChecked(token)
+        } else {
+            AutoSyncCommand::RecheckCapability(token)
+        };
+        if self.command_tx.send(command).is_err() {
+            self.check_queued
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    pub fn cancel_check(&self) {
+        self.cancellation.cancel();
+        let _ = self.command_tx.send(AutoSyncCommand::CancelCheck);
     }
 }
 
 struct AutoSyncTask<S: SyncOps> {
+    capability: CapabilityReport,
+    capability_notice_id: Option<String>,
+    capability_binding: Option<(String, String, u64)>,
+    cancellation: ProbeCancellation,
     executor: S,
     settings_store: SettingsStore,
     engine: SyncEngine,
@@ -244,9 +305,169 @@ struct AutoSyncTask<S: SyncOps> {
 }
 
 impl<S: SyncOps> AutoSyncTask<S> {
+    fn refresh_capability_binding(&mut self) {
+        let config = &self.engine.config_store.config;
+        let binding = (
+            format!("{:?}:{}", config.provider, config.webdav_url),
+            config.webdav_username.clone(),
+            self.engine.config_store.webdav_credential_generation(),
+        );
+        if self.capability_binding.as_ref() != Some(&binding) {
+            self.capability_binding = Some(binding);
+            // A pending cleanup still belongs to the original service endpoint.
+            if self.capability.cleanup_file.is_none() {
+                self.capability = CapabilityReport::default();
+            }
+            self.capability_notice_id = None;
+        }
+    }
+
+    fn capability_blocks(&self) -> bool {
+        self.engine.config_store.config.provider == SyncProvider::WebDav
+            && self.capability.state != CapabilityState::Supported
+    }
+
+    fn record_capability(&mut self, report: CapabilityReport, notify: bool) {
+        if notify
+            && self.enabled
+            && report.state != CapabilityState::Supported
+            && report.reason != Some(CapabilityReason::Cancelled)
+            && self.capability_notice_id.is_none()
+        {
+            self.capability_notice_id = Some(uuid::Uuid::new_v4().to_string());
+        }
+        self.capability = report;
+        self.phase = if self.enabled {
+            AutoSyncPhase::PausedCapability
+        } else {
+            AutoSyncPhase::Disabled
+        };
+        self.publish();
+    }
+
+    async fn ensure_capability(&mut self, explicit: bool) -> bool {
+        self.engine.config_store.sync_from_disk();
+        self.refresh_capability_binding();
+        if self.engine.config_store.config.provider != SyncProvider::WebDav {
+            return true;
+        }
+        if self.vault_locked {
+            self.set_phase(AutoSyncPhase::PausedVaultLocked);
+            return false;
+        }
+        if !explicit && self.capability.state == CapabilityState::Supported {
+            return true;
+        }
+        if !explicit
+            && matches!(
+                self.capability.state,
+                CapabilityState::Unsupported | CapabilityState::Incomplete
+            )
+            && (self.capability.reason != Some(CapabilityReason::Network)
+                || self.retry_deadline.is_some())
+        {
+            self.set_phase(if self.retry_deadline.is_some() {
+                AutoSyncPhase::RetryBackoff
+            } else {
+                AutoSyncPhase::PausedCapability
+            });
+            return false;
+        }
+        let cancellation = self.cancellation.fresh();
+        let config_revision = self.engine.config_store.config.config_revision;
+        let credential_generation = self.engine.config_store.webdav_credential_generation();
+        self.capability.state = CapabilityState::Checking;
+        self.set_phase(AutoSyncPhase::CheckingCapability);
+        let mut report = self
+            .executor
+            .check_capability(self.engine.clone(), cancellation.clone())
+            .await;
+        self.engine.config_store.sync_from_disk();
+        if (cancellation.is_cancelled()
+            || self.engine.config_store.config.config_revision != config_revision
+            || self.engine.config_store.webdav_credential_generation() != credential_generation)
+            && report.cleanup_file.is_none()
+        {
+            report = CapabilityReport::issue(
+                CapabilityReason::Cancelled,
+                "cancel",
+                None,
+                EtagKind::Missing,
+            );
+        }
+        if report.state == CapabilityState::Supported {
+            self.capability = report;
+            self.capability_notice_id = None;
+            self.reset_backoff();
+            self.set_phase(if self.enabled {
+                AutoSyncPhase::Watching
+            } else {
+                AutoSyncPhase::Disabled
+            });
+            return true;
+        }
+        let retry = report.reason == Some(CapabilityReason::Network) && self.enabled;
+        self.record_capability(report, !explicit && !retry);
+        if retry {
+            self.schedule_retry(
+                RetryAction::Poll,
+                anyhow::anyhow!("WebDAV connection unavailable"),
+            );
+        }
+        false
+    }
+
+    async fn enable_checked(&mut self) {
+        if self.vault_locked {
+            self.set_phase(AutoSyncPhase::PausedVaultLocked);
+            return;
+        }
+        if !matches!(self.engine.config_store.get_passphrase(), Ok(Some(value)) if !value.trim().is_empty())
+        {
+            self.record_capability(
+                CapabilityReport::issue(
+                    CapabilityReason::Configuration,
+                    "encryption-passphrase",
+                    None,
+                    EtagKind::Missing,
+                ),
+                false,
+            );
+            return;
+        }
+        let generation = self.cancellation.fresh();
+        if !self.ensure_capability(true).await || generation.is_cancelled() {
+            return;
+        }
+        let revision = self.engine.config_store.config.config_revision;
+        match self
+            .engine
+            .config_store
+            .update_if_revision(revision, |config| config.auto_sync_enabled = true)
+        {
+            Ok(true) => {
+                self.enabled = true;
+                self.publish();
+                self.on_tick().await;
+            }
+            _ => self.record_capability(
+                CapabilityReport::issue(
+                    CapabilityReason::Configuration,
+                    "save-preference",
+                    None,
+                    EtagKind::Missing,
+                ),
+                false,
+            ),
+        }
+    }
+
     fn publish(&mut self) {
         self.revision = self.revision.wrapping_add(1);
         let _ = self.state_tx.send(AutoSyncSnapshot {
+            capability: self.capability.clone(),
+            capability_notice_id: self.capability_notice_id.clone(),
+            updated_config: Some(self.engine.config_store.config.clone()),
             revision: self.revision,
             enabled: self.enabled,
             phase: self.phase,
@@ -312,6 +533,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
 
     async fn apply_engine(&mut self, engine: SyncEngine) {
         self.engine = engine;
+        self.refresh_capability_binding();
         self.clear_last_result();
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
         self.fingerprint = Fingerprint::sample(&self.config_dir);
@@ -331,6 +553,8 @@ impl<S: SyncOps> AutoSyncTask<S> {
             self.set_phase(AutoSyncPhase::Disabled);
         } else if self.vault_locked {
             self.set_phase(AutoSyncPhase::PausedVaultLocked);
+        } else if self.capability_blocks() {
+            self.set_phase(AutoSyncPhase::PausedCapability);
         } else {
             self.set_phase(AutoSyncPhase::Watching);
         }
@@ -343,6 +567,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
         settings_store: SettingsStore,
     ) {
         self.engine = engine;
+        self.refresh_capability_binding();
         self.settings_store = settings_store;
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
         self.clear_last_result();
@@ -382,6 +607,8 @@ impl<S: SyncOps> AutoSyncTask<S> {
             AutoSyncPhase::Disabled
         } else if self.vault_locked {
             AutoSyncPhase::PausedVaultLocked
+        } else if self.capability_blocks() {
+            AutoSyncPhase::PausedCapability
         } else if self.pending_conflict {
             AutoSyncPhase::PullRequired
         } else {
@@ -398,6 +625,13 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     fn schedule_retry(&mut self, action: RetryAction, error: anyhow::Error) {
+        if let Some(capability) = error.downcast_ref::<CapabilityError>() {
+            self.retry_deadline = None;
+            self.retry_at_unix = None;
+            self.message = None;
+            self.record_capability(capability.0.clone(), true);
+            return;
+        }
         let delay = self.backoff_delay;
         self.backoff_delay = (delay * 2).min(AUTO_SYNC_BACKOFF_MAX);
         self.retry_action = action;
@@ -409,7 +643,11 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     fn schedule_debounced_push(&mut self, debounce_deadline: &mut Option<Instant>) {
-        if !self.enabled || self.vault_locked || self.retry_deadline.is_some() {
+        if !self.enabled
+            || self.vault_locked
+            || self.retry_deadline.is_some()
+            || self.capability_blocks()
+        {
             return;
         }
         *debounce_deadline = Some(Instant::now() + AUTO_SYNC_DEBOUNCE);
@@ -433,6 +671,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     async fn push_if_dirty(&mut self) {
+        if !self.ensure_capability(false).await {
+            return;
+        }
         const MAX_IMMEDIATE_PUSHES: usize = 2;
         for attempt in 0..MAX_IMMEDIATE_PUSHES {
             if self.pending_conflict {
@@ -484,7 +725,20 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 }
                 Err(error) => {
                     self.dirty = true;
+                    let recheck = error
+                        .downcast_ref::<CapabilityError>()
+                        .filter(|issue| issue.0.step == "upload-412-unchanged")
+                        .map(|issue| issue.0.clone());
                     self.schedule_retry(RetryAction::Push, error);
+                    if let Some(report) = recheck {
+                        let notice = self.capability_notice_id.clone();
+                        if self.ensure_capability(true).await {
+                            // A disposable file passing cannot negate a failed
+                            // precondition on the actual configuration resource.
+                            self.capability_notice_id = notice;
+                            self.record_capability(report, true);
+                        }
+                    }
                     return;
                 }
             }
@@ -492,6 +746,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 
     async fn poll_remote(&mut self) {
+        if !self.ensure_capability(false).await {
+            return;
+        }
         self.set_phase(AutoSyncPhase::Pulling);
         let engine = self.engine.clone();
         match self.executor.remote_state(engine).await {
@@ -650,6 +907,9 @@ impl<S: SyncOps> AutoSyncTask<S> {
         if !self.enabled || self.vault_locked || self.retry_deadline.is_some() {
             return;
         }
+        if !self.ensure_capability(false).await {
+            return;
+        }
         self.push_if_dirty().await;
         if self.pending_conflict {
             return;
@@ -663,9 +923,10 @@ impl<S: SyncOps> AutoSyncTask<S> {
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 async fn run_auto_sync<S: SyncOps>(
-    mut command_rx: mpsc::UnboundedReceiver<AutoSyncCommand>,
+    command_rx: mpsc::UnboundedReceiver<AutoSyncCommand>,
     state_tx: watch::Sender<AutoSyncSnapshot>,
     executor: S,
     settings_store: SettingsStore,
@@ -674,9 +935,41 @@ async fn run_auto_sync<S: SyncOps>(
     vault_locked: bool,
     poll_interval: Duration,
 ) {
+    run_auto_sync_with_cancellation(
+        command_rx,
+        state_tx,
+        executor,
+        settings_store,
+        engine,
+        config_dir,
+        vault_locked,
+        poll_interval,
+        ProbeCancellation::default(),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_auto_sync_with_cancellation<S: SyncOps>(
+    mut command_rx: mpsc::UnboundedReceiver<AutoSyncCommand>,
+    state_tx: watch::Sender<AutoSyncSnapshot>,
+    executor: S,
+    settings_store: SettingsStore,
+    engine: SyncEngine,
+    config_dir: PathBuf,
+    vault_locked: bool,
+    poll_interval: Duration,
+    cancellation: ProbeCancellation,
+    check_queued: Arc<std::sync::atomic::AtomicBool>,
+) {
     let enabled = engine.config_store.config.auto_sync_enabled;
     let fingerprint = Fingerprint::sample(&config_dir);
     let mut task = AutoSyncTask {
+        capability: CapabilityReport::default(),
+        capability_notice_id: None,
+        capability_binding: None,
+        cancellation,
         executor,
         settings_store,
         engine,
@@ -751,6 +1044,21 @@ async fn run_auto_sync<S: SyncOps>(
             command = command_rx.recv() => {
                 let Some(command) = command else { break };
                 match command {
+                    AutoSyncCommand::EnableChecked(token) => {
+                        if !token.is_cancelled() { task.enable_checked().await; }
+                        check_queued.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    AutoSyncCommand::RecheckCapability(token) => {
+                        if !token.is_cancelled() && task.ensure_capability(true).await && task.enabled { task.on_tick().await; }
+                        check_queued.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    AutoSyncCommand::CancelCheck => {
+                        task.retry_deadline = None;
+                        task.retry_at_unix = None;
+                        if task.capability.cleanup_file.is_none() {
+                            task.record_capability(CapabilityReport::issue(CapabilityReason::Cancelled, "cancel", None, EtagKind::Missing), false);
+                        }
+                    }
                     AutoSyncCommand::SetEngine(engine) => {
                         task.apply_engine(engine).await;
                         if task.enabled && !task.vault_locked {
@@ -773,6 +1081,11 @@ async fn run_auto_sync<S: SyncOps>(
                         if locked {
                             task.set_phase(AutoSyncPhase::PausedVaultLocked);
                         } else if task.enabled {
+                            if task.capability.reason == Some(CapabilityReason::Cancelled)
+                                && task.capability.cleanup_file.is_none()
+                            {
+                                task.capability = CapabilityReport::default();
+                            }
                             task.reset_backoff();
                             task.set_phase(AutoSyncPhase::Watching);
                             task.on_tick().await;
@@ -903,6 +1216,10 @@ mod tests {
     }
 
     struct MockSyncOps {
+        capability_calls: Mutex<usize>,
+        capability_result: Mutex<CapabilityReport>,
+        cancel_probe: std::sync::atomic::AtomicBool,
+        mutate_during_probe: Mutex<Option<&'static str>>,
         push_calls: Mutex<usize>,
         pull_calls: Mutex<usize>,
         remote_calls: Mutex<usize>,
@@ -913,6 +1230,10 @@ mod tests {
     impl MockSyncOps {
         fn new() -> Self {
             Self {
+                capability_calls: Mutex::new(0),
+                capability_result: Mutex::new(CapabilityReport::supported()),
+                cancel_probe: std::sync::atomic::AtomicBool::new(false),
+                mutate_during_probe: Mutex::new(None),
                 push_calls: Mutex::new(0),
                 pull_calls: Mutex::new(0),
                 remote_calls: Mutex::new(0),
@@ -956,6 +1277,40 @@ mod tests {
     }
 
     impl SyncOps for Arc<MockSyncOps> {
+        async fn check_capability(
+            &self,
+            mut engine: SyncEngine,
+            cancel: ProbeCancellation,
+        ) -> CapabilityReport {
+            *self.capability_calls.lock().unwrap() += 1;
+            if self.cancel_probe.load(std::sync::atomic::Ordering::SeqCst) {
+                cancel.cancel();
+            }
+            match self.mutate_during_probe.lock().unwrap().take() {
+                Some("endpoint") => {
+                    engine
+                        .config_store
+                        .update(|config| {
+                            config.webdav_url = "https://other.example/sync.json".into()
+                        })
+                        .unwrap();
+                }
+                Some("disable") => {
+                    // Disabling an already-off preference still cancels its
+                    // pending enable request, even when no disk value changes.
+                    cancel.cancel();
+                    engine
+                        .config_store
+                        .update(|config| config.auto_sync_enabled = false)
+                        .unwrap();
+                }
+                Some("credentials") => {
+                    engine.config_store.set_webdav_password("changed").unwrap();
+                }
+                _ => {}
+            }
+            self.capability_result.lock().unwrap().clone()
+        }
         async fn push(
             &self,
             _engine: SyncEngine,
@@ -1027,6 +1382,9 @@ mod tests {
 
     fn snapshot(enabled: bool, phase: AutoSyncPhase) -> AutoSyncSnapshot {
         AutoSyncSnapshot {
+            capability: CapabilityReport::default(),
+            capability_notice_id: None,
+            updated_config: None,
             revision: 0,
             enabled,
             phase,
@@ -1055,8 +1413,16 @@ mod tests {
             ),
         };
         let fingerprint = Fingerprint::sample(config_dir);
+        engine
+            .config_store
+            .set_passphrase("test-passphrase")
+            .unwrap();
         let (state_tx, _state_rx) = watch::channel(snapshot(true, AutoSyncPhase::Watching));
         AutoSyncTask {
+            capability: CapabilityReport::default(),
+            capability_notice_id: None,
+            capability_binding: None,
+            cancellation: ProbeCancellation::default(),
             executor: mock,
             settings_store,
             engine,
@@ -1080,6 +1446,162 @@ mod tests {
             revision: 0,
             state_tx,
         }
+    }
+
+    #[tokio::test]
+    async fn unsupported_webdav_stops_polling_and_manual_success_does_not_resume_it() {
+        let dir = temp_config_dir("capability-pause");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::VersionUnavailable,
+            "poll",
+            Some(200),
+            EtagKind::Weak,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        for _ in 0..3 {
+            task.on_tick().await;
+        }
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
+        assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        assert_eq!(task.phase, AutoSyncPhase::PausedCapability);
+        let notice = task.capability_notice_id.clone();
+        assert!(notice.is_some());
+        task.reconcile_manual_sync(
+            SyncStatus::Pushed { at: 42 },
+            task.engine.clone(),
+            task.settings_store.clone(),
+        )
+        .await;
+        task.on_tick().await;
+        assert_eq!(task.phase, AutoSyncPhase::PausedCapability);
+        assert_eq!(task.capability_notice_id, notice);
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
+        assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn explicit_enable_is_persisted_only_after_a_successful_check() {
+        let dir = temp_config_dir("capability-enable");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::Permission,
+            "create",
+            Some(403),
+            EtagKind::Missing,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        task.enabled = false;
+        task.enable_checked().await;
+        assert!(!task.engine.config_store.config.auto_sync_enabled);
+        assert!(!task.enabled);
+        assert!(task.capability_notice_id.is_none());
+        assert_eq!(task.capability.state, CapabilityState::Incomplete);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+        *mock.capability_result.lock().unwrap() = CapabilityReport::supported();
+        task.enable_checked().await;
+        assert!(task.enabled);
+        assert!(task.engine.config_store.config.auto_sync_enabled);
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn cancelled_probe_cannot_enable_auto_sync() {
+        let dir = temp_config_dir("capability-cancel");
+        let mock = Arc::new(MockSyncOps::new());
+        mock.cancel_probe
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        task.enabled = false;
+        task.enable_checked().await;
+        assert!(!task.enabled);
+        assert_eq!(task.capability.reason, Some(CapabilityReason::Cancelled));
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_encryption_configuration_does_not_enable_or_probe() {
+        let dir = temp_config_dir("capability-no-passphrase");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        task.engine.config_store.delete_passphrase().unwrap();
+        task.enabled = false;
+        task.enable_checked().await;
+        assert!(!task.enabled);
+        assert_eq!(
+            task.capability.reason,
+            Some(CapabilityReason::Configuration)
+        );
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn stale_checks_cannot_enable_after_another_window_changes_configuration() {
+        for mutation in ["endpoint", "disable", "credentials"] {
+            let dir = temp_config_dir(mutation);
+            let mock = Arc::new(MockSyncOps::new());
+            *mock.mutate_during_probe.lock().unwrap() = Some(mutation);
+            let mut task = test_task(mock.clone(), &dir);
+            task.engine.config_store.config.provider = SyncProvider::WebDav;
+            task.engine.config_store.config.auto_sync_enabled = false;
+            task.engine.config_store.update(|_| {}).unwrap();
+            task.enabled = false;
+            task.enable_checked().await;
+            assert!(!task.enabled, "{mutation}");
+            assert!(!task.engine.config_store.config.auto_sync_enabled);
+            assert_eq!(task.capability.reason, Some(CapabilityReason::Cancelled));
+            assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+            assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_cache_tracks_endpoint_and_credentials_but_not_baseline() {
+        let dir = temp_config_dir("capability-binding");
+        let mock = Arc::new(MockSyncOps::new());
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        assert!(task.ensure_capability(false).await);
+        task.engine.config_store.config.last_sync_at = 42;
+        assert!(task.ensure_capability(false).await);
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
+        task.engine.config_store.config.webdav_url = "https://example.com/new.json".into();
+        assert!(task.ensure_capability(false).await);
+        task.engine
+            .config_store
+            .set_webdav_password("new-password")
+            .unwrap();
+        assert!(task.ensure_capability(false).await);
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn network_probe_failures_back_off_without_polling_payloads() {
+        let dir = temp_config_dir("capability-network");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::Network,
+            "read-resource",
+            None,
+            EtagKind::Missing,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.on_tick().await;
+        assert_eq!(task.phase, AutoSyncPhase::RetryBackoff);
+        assert!(task.retry_deadline.is_some());
+        task.on_tick().await;
+        assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
+        assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
     }
 
     #[test]

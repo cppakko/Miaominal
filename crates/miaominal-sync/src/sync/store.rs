@@ -17,6 +17,11 @@ const ACCOUNT_PASSPHRASE: &str = "sync:encryption-passphrase";
 // configuration. Serialize read-modify-write cycles so a stale engine clone
 // cannot replace settings that were just saved by the UI.
 static SYNC_CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+fn webdav_credential_generations() -> &'static Mutex<std::collections::BTreeMap<PathBuf, u64>> {
+    static GENERATIONS: std::sync::OnceLock<Mutex<std::collections::BTreeMap<PathBuf, u64>>> =
+        std::sync::OnceLock::new();
+    GENERATIONS.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()))
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncSecrets {
@@ -263,11 +268,29 @@ impl SyncConfigStore {
         self.get_secret(ACCOUNT_WEBDAV_PASSWORD)
     }
 
+    pub fn webdav_credential_generation(&self) -> u64 {
+        *webdav_credential_generations()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.config_file)
+            .unwrap_or(&0)
+    }
+
+    fn invalidate_webdav_credentials(&self) {
+        let mut generations = webdav_credential_generations()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = generations.entry(self.config_file.clone()).or_default();
+        *generation = generation.wrapping_add(1);
+    }
+
     pub fn set_webdav_password(&self, password: &str) -> Result<()> {
+        self.invalidate_webdav_credentials();
         self.set_secret(ACCOUNT_WEBDAV_PASSWORD, password)
     }
 
     pub fn delete_webdav_password(&self) -> Result<()> {
+        self.invalidate_webdav_credentials();
         self.delete_secret(ACCOUNT_WEBDAV_PASSWORD)
     }
 

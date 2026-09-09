@@ -3,13 +3,17 @@ use reqwest::{Client, Url};
 use std::time::Duration;
 
 use super::providers::PushCondition;
+use crate::capability::{
+    CapabilityError, CapabilityReason, CapabilityReport, EtagKind, classify_etag,
+};
 
-const WEBDAV_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const WEBDAV_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const WEBDAV_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const WEBDAV_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) enum WebDavPushOutcome {
     Pushed { etag: Option<String> },
     Conflict,
+    ChangedAfterPush,
 }
 
 #[derive(Debug)]
@@ -67,6 +71,18 @@ impl WebDavBackend {
         payload_json: &str,
         condition: &PushCondition,
     ) -> Result<WebDavPushOutcome> {
+        if let PushCondition::IfMatch(tag) = condition {
+            let kind = classify_etag(Some(tag));
+            if kind != EtagKind::Strong {
+                return Err(CapabilityError(CapabilityReport::issue(
+                    CapabilityReason::VersionUnavailable,
+                    "upload-precondition",
+                    None,
+                    kind,
+                ))
+                .into());
+            }
+        }
         let mut request = self
             .client
             .put(&self.url)
@@ -91,15 +107,47 @@ impl WebDavBackend {
             let text = response.text().await.unwrap_or_default();
             bail!("WebDAV PUT failed: {status} - {text}");
         }
-        Ok(WebDavPushOutcome::Pushed {
-            etag: response_etag(&response),
-        })
+        let mut etag = response_etag(&response);
+        if !matches!(condition, PushCondition::Unconditional) {
+            if classify_etag(etag.as_deref()) != EtagKind::Strong {
+                // A successful PUT may omit ETag. Bind the fetched version only
+                // to the snapshot we uploaded, never to a concurrent writer.
+                drop(response);
+                match self.pull_checked(None, true).await? {
+                    WebDavPullOutcome::Payload {
+                        content,
+                        etag: fetched,
+                    } if content == payload_json => etag = fetched,
+                    _ => return Ok(WebDavPushOutcome::ChangedAfterPush),
+                }
+            }
+            if let PushCondition::IfMatch(previous) = condition
+                && etag.as_ref() == Some(previous)
+            {
+                return Err(CapabilityError(CapabilityReport::issue(
+                    CapabilityReason::ConditionalWrite,
+                    "upload-version-unchanged",
+                    None,
+                    EtagKind::Strong,
+                ))
+                .into());
+            }
+        }
+        Ok(WebDavPushOutcome::Pushed { etag })
     }
 
     /// Download the payload JSON with HTTP GET.
     /// Returns `None` when the resource does not exist yet (HTTP 404) and
     /// `NotModified` when `etag` matches the remote representation (HTTP 304).
     pub async fn pull(&self, etag: Option<&str>) -> Result<WebDavPullOutcome> {
+        self.pull_checked(etag, false).await
+    }
+
+    pub async fn pull_checked(
+        &self,
+        etag: Option<&str>,
+        automatic: bool,
+    ) -> Result<WebDavPullOutcome> {
         let mut request = self
             .client
             .get(&self.url)
@@ -113,6 +161,22 @@ impl WebDavBackend {
             .context("failed to GET from WebDAV server")?;
 
         if response.status().as_u16() == 304 {
+            if automatic {
+                let returned = response_etag(&response);
+                let kind = classify_etag(returned.as_deref().or(etag));
+                if etag.is_none()
+                    || kind != EtagKind::Strong
+                    || returned.as_deref().is_some_and(|tag| Some(tag) != etag)
+                {
+                    return Err(CapabilityError(CapabilityReport::issue(
+                        CapabilityReason::VersionUnavailable,
+                        "poll-304",
+                        Some(304),
+                        kind,
+                    ))
+                    .into());
+                }
+            }
             return Ok(WebDavPullOutcome::NotModified);
         }
         if response.status().as_u16() == 404 {
@@ -125,6 +189,27 @@ impl WebDavBackend {
         }
 
         let remote_etag = response_etag(&response);
+        if automatic {
+            let kind = classify_etag(remote_etag.as_deref());
+            if kind != EtagKind::Strong {
+                return Err(CapabilityError(CapabilityReport::issue(
+                    CapabilityReason::VersionUnavailable,
+                    "poll",
+                    Some(200),
+                    kind,
+                ))
+                .into());
+            }
+            if etag.is_some() && etag == remote_etag.as_deref() {
+                return Err(CapabilityError(CapabilityReport::issue(
+                    CapabilityReason::ConditionalRead,
+                    "poll",
+                    Some(200),
+                    kind,
+                ))
+                .into());
+            }
+        }
         let content = response
             .text()
             .await
@@ -140,8 +225,7 @@ fn response_etag(response: &reqwest::Response) -> Option<String> {
     response
         .headers()
         .get(reqwest::header::ETAG)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_string())
+        .map(|value| value.to_str().unwrap_or("invalid").to_owned())
 }
 
 fn validate_webdav_url(url: &str) -> Result<()> {
@@ -253,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_webdav_push_requires_the_resource_to_be_absent() {
-        let (url, request) = test_server("201 Created");
+        let (url, request) = test_server("201 Created\r\nETag: \"created\"");
         let backend = WebDavBackend::new(url, "user".into(), "password".into()).unwrap();
 
         let outcome = backend
@@ -292,5 +376,110 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(200));
         assert!(error.to_string().contains("failed to GET"));
         server.join().expect("stalled server should finish");
+    }
+
+    #[tokio::test]
+    async fn conditional_upload_rejects_weak_or_invalid_tags_before_sending() {
+        let backend = WebDavBackend::new(
+            "http://127.0.0.1:1/sync.json".into(),
+            "user".into(),
+            "password".into(),
+        )
+        .unwrap();
+        for tag in ["W/\"weak\"", "", "unquoted", "*"] {
+            let error = backend
+                .push("{}", &PushCondition::IfMatch(tag.into()))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(
+                error.downcast_ref::<CapabilityError>().unwrap().0.step,
+                "upload-precondition"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn conditional_poll_rejects_ignored_conditions_and_invalid_versions() {
+        for (response, sent, reason) in [
+            (
+                "200 OK\r\nETag: \"same\"",
+                Some("\"same\""),
+                CapabilityReason::ConditionalRead,
+            ),
+            (
+                "200 OK\r\nETag: W/\"weak\"",
+                None,
+                CapabilityReason::VersionUnavailable,
+            ),
+            ("200 OK", None, CapabilityReason::VersionUnavailable),
+            (
+                "200 OK\r\nETag: invalid",
+                None,
+                CapabilityReason::VersionUnavailable,
+            ),
+            (
+                "304 Not Modified",
+                None,
+                CapabilityReason::VersionUnavailable,
+            ),
+            (
+                "304 Not Modified\r\nETag: \"other\"",
+                Some("\"same\""),
+                CapabilityReason::VersionUnavailable,
+            ),
+        ] {
+            let (url, server) = test_server(response);
+            let backend = WebDavBackend::new(url, "user".into(), "password".into()).unwrap();
+            let error = backend.pull_checked(sent, true).await.unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<CapabilityError>().unwrap().0.reason,
+                Some(reason)
+            );
+            server.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_without_etag_reads_back_only_the_uploaded_snapshot() {
+        for condition in [
+            PushCondition::MustNotExist,
+            PushCondition::IfMatch("\"old\"".into()),
+        ] {
+            for body in ["{}", "concurrent-edit"] {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let url = format!("http://{}/sync.json", listener.local_addr().unwrap());
+                let server = std::thread::spawn(move || {
+                    for method in ["PUT", "GET"] {
+                        let (mut stream, _) = listener.accept().unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        let mut bytes = [0; 4096];
+                        let count = stream.read(&mut bytes).unwrap();
+                        assert!(String::from_utf8_lossy(&bytes[..count]).starts_with(method));
+                        let response = if method == "PUT" {
+                            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+                        } else {
+                            format!(
+                                "HTTP/1.1 200 OK\r\nETag: \"new\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                        };
+                        stream.write_all(response.as_bytes()).unwrap();
+                    }
+                });
+                let backend = WebDavBackend::new(url, "user".into(), "password".into()).unwrap();
+                let outcome = backend.push("{}", &condition).await.unwrap();
+                if body == "{}" {
+                    assert!(
+                        matches!(outcome, WebDavPushOutcome::Pushed { etag: Some(tag) } if tag == "\"new\"")
+                    );
+                } else {
+                    assert!(matches!(outcome, WebDavPushOutcome::ChangedAfterPush));
+                }
+                server.join().unwrap();
+            }
+        }
     }
 }
