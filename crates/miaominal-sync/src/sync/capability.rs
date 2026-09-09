@@ -7,6 +7,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::{Client, Method, Response, Url};
 
+/// A cleanup can issue up to three serial requests (read, delete, verify), each
+/// bounded only by `WEBDAV_REQUEST_TIMEOUT`. The deadline must cover that whole
+/// budget: a slow but healthy server would otherwise be reported as a failed
+/// cleanup, leaving an orphaned probe file behind. The margin stays well inside
+/// the probe's own 90s deadline plus this cleanup, so shutdown is still bounded.
+fn cleanup_deadline() -> Duration {
+    const REQUESTS: u32 = 3;
+    crate::webdav::WEBDAV_REQUEST_TIMEOUT * REQUESTS + Duration::from_secs(10)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EtagKind {
     #[default]
@@ -413,7 +423,7 @@ impl PendingProbe {
     }
 
     pub async fn cleanup(&self) -> Result<(), CapabilityReport> {
-        let result = tokio::time::timeout(Duration::from_secs(35), async {
+        let result = tokio::time::timeout(cleanup_deadline(), async {
             let response = self
                 .request(Method::GET, None, None, "cleanup-read")
                 .await?;
@@ -862,6 +872,19 @@ mod tests {
         ] {
             assert_eq!(classify_etag(tag), expected, "{tag:?}");
         }
+    }
+
+    /// A cleanup issues up to three serial requests, so its deadline has to
+    /// cover three full request timeouts. A shorter deadline would abort a
+    /// healthy but slow server mid-cleanup and strand the probe file.
+    #[test]
+    fn cleanup_deadline_covers_every_request_it_can_issue() {
+        assert!(
+            cleanup_deadline() >= crate::webdav::WEBDAV_REQUEST_TIMEOUT * 3,
+            "{:?} cannot cover three {:?} requests",
+            cleanup_deadline(),
+            crate::webdav::WEBDAV_REQUEST_TIMEOUT
+        );
     }
 
     #[tokio::test]
