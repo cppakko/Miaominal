@@ -221,6 +221,11 @@ impl LocalVaultRootExt for AppView {
                 });
             }
             DeferredAppCommand::Settings(command) => match command {
+                SettingsDeferredCommand::CheckAutoSync(enable) => {
+                    self.controllers.settings.update(cx, |controller, cx| {
+                        controller.check_auto_sync_capability(enable, cx)
+                    });
+                }
                 SettingsDeferredCommand::ResumeSync => {
                     self.controllers.settings.update(cx, |controller, cx| {
                         controller.trigger_sync_now(window, cx);

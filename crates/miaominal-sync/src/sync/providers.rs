@@ -21,6 +21,7 @@ pub(super) enum PushOutcome {
         etag: Option<String>,
     },
     Conflict,
+    ChangedAfterPush,
 }
 
 pub(super) struct PullPayload {
@@ -91,11 +92,20 @@ impl RemoteBackend {
                     etag,
                 }),
                 WebDavPushOutcome::Conflict => Ok(PushOutcome::Conflict),
+                WebDavPushOutcome::ChangedAfterPush => Ok(PushOutcome::ChangedAfterPush),
             },
         }
     }
 
     pub(super) async fn pull(&self, etag: Option<&str>) -> Result<PullOutcome> {
+        self.pull_checked(etag, false).await
+    }
+
+    pub(super) async fn pull_checked(
+        &self,
+        etag: Option<&str>,
+        automatic: bool,
+    ) -> Result<PullOutcome> {
         match self {
             Self::Gist(backend) => match backend.pull(etag).await? {
                 GithubGistPullOutcome::BindingRequired => Ok(PullOutcome::BindingRequired {
@@ -110,7 +120,11 @@ impl RemoteBackend {
                     }))
                 }
             },
-            Self::WebDav(backend) => match backend.pull(etag).await? {
+            Self::WebDav(backend) => match if automatic {
+                backend.pull_checked(etag, true).await?
+            } else {
+                backend.pull(etag).await?
+            } {
                 WebDavPullOutcome::Missing => Ok(PullOutcome::Missing { etag: None }),
                 WebDavPullOutcome::NotModified => Ok(PullOutcome::NotModified),
                 WebDavPullOutcome::Payload { content, etag } => {

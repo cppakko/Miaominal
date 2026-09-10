@@ -4,6 +4,9 @@ use super::payload::{
 };
 use super::providers::{PullOutcome, PushCondition, PushOutcome, RemoteBackend};
 use super::store::SyncConfigStore;
+use crate::capability::{
+    CapabilityError, CapabilityReason, CapabilityReport, EtagKind, classify_etag,
+};
 use crate::{SyncInterventionReason, SyncPayload, SyncPlaintextPayload, SyncProvider, SyncStatus};
 use anyhow::{Context, Result};
 use miaominal_secrets::{CredentialStore, ProtectedPassphrase, SecretStore};
@@ -71,6 +74,13 @@ enum RemotePayloadState {
     NotModified,
     Current(SyncPayload, Option<String>),
     Changed(SyncPayload, Option<String>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PushMode {
+    Automatic,
+    Manual,
+    Force,
 }
 
 fn automatic_push_requires_confirmation(
@@ -167,7 +177,30 @@ impl SyncEngine {
             key_store,
             secret_store,
             settings_store,
-            false,
+            PushMode::Automatic,
+        )
+        .await
+    }
+
+    /// Push after an explicit user action. WebDAV uses unconditional HTTP
+    /// requests while retaining content conflict checks before uploading.
+    pub async fn push_manual(
+        &mut self,
+        session_store: &SessionStore,
+        proxy_store: &ProxyStore,
+        snippet_store: &SnippetStore,
+        key_store: &ManagedKeyStore,
+        secret_store: &SecretStore,
+        settings_store: &SettingsStore,
+    ) -> Result<SyncStatus> {
+        self.push_internal(
+            session_store,
+            proxy_store,
+            snippet_store,
+            key_store,
+            secret_store,
+            settings_store,
+            PushMode::Manual,
         )
         .await
     }
@@ -188,7 +221,7 @@ impl SyncEngine {
             key_store,
             secret_store,
             settings_store,
-            true,
+            PushMode::Force,
         )
         .await
     }
@@ -202,14 +235,19 @@ impl SyncEngine {
         key_store: &ManagedKeyStore,
         secret_store: &SecretStore,
         settings_store: &SettingsStore,
-        force: bool,
+        mode: PushMode,
     ) -> Result<SyncStatus> {
         if !self.sync_enabled_for_provider() {
             return Ok(SyncStatus::Idle);
         }
 
         self.config_store.sync_from_disk();
-        let remote = self.remote_payload_state(true).await?;
+        let force = mode == PushMode::Force;
+        let manual_webdav = mode != PushMode::Automatic
+            && self.config_store.config.provider == SyncProvider::WebDav;
+        let remote = self
+            .remote_payload_state(!manual_webdav, mode == PushMode::Automatic)
+            .await?;
         let start_config_revision = self.config_store.config.config_revision;
         let passphrase = self.sync_passphrase()?;
         let local = self.local_snapshot(
@@ -220,7 +258,7 @@ impl SyncEngine {
             secret_store,
             settings_store,
         )?;
-        let (condition, parent_payload_id, observed_remote_at) = match remote {
+        let (mut condition, parent_payload_id, observed_remote_at) = match remote {
             RemotePayloadState::BindingRequired(provider) => {
                 if provider == SyncProvider::GithubGist
                     && self.config_store.config.gist_id.is_none()
@@ -367,12 +405,37 @@ impl SyncEngine {
                 )
             }
         };
+        // Explicit WebDAV uploads must also work with weak ETags or servers
+        // that reject conditional writes. Content conflicts above still need
+        // confirmation; only the HTTP preconditions are omitted here.
+        if manual_webdav {
+            condition = PushCondition::Unconditional;
+        }
+        if mode == PushMode::Automatic && self.config_store.config.provider == SyncProvider::WebDav
+        {
+            let kind = match &condition {
+                PushCondition::MustNotExist => EtagKind::Strong,
+                PushCondition::IfMatch(tag) => classify_etag(Some(tag)),
+                PushCondition::Unconditional => EtagKind::Missing,
+            };
+            if kind != EtagKind::Strong {
+                return Err(CapabilityError(CapabilityReport::issue(
+                    CapabilityReason::VersionUnavailable,
+                    "upload-precondition",
+                    None,
+                    kind,
+                ))
+                .into());
+            }
+        }
         // A marker followed by an unconditional write is still racy: another
         // device may write between the final GET and our PUT/PATCH. Automatic
         // sync therefore refuses to overwrite an existing remote when the
         // provider supplies no atomic write precondition. The explicit force
         // action is the user-confirmed escape hatch for such providers.
-        if automatic_push_requires_confirmation(&condition, observed_remote_at, force) {
+        if !manual_webdav
+            && automatic_push_requires_confirmation(&condition, observed_remote_at, force)
+        {
             return Ok(SyncStatus::PullRequired {
                 remote_at: observed_remote_at,
                 reason: SyncInterventionReason::UnsafeProviderWrite,
@@ -398,6 +461,30 @@ impl SyncEngine {
             etag,
         } = outcome
         else {
+            if matches!(outcome, PushOutcome::Conflict)
+                && mode == PushMode::Automatic
+                && self.config_store.config.provider == SyncProvider::WebDav
+            {
+                let observed_tag = match &condition {
+                    PushCondition::IfMatch(tag) => Some(tag.as_str()),
+                    _ => None,
+                };
+                let after = backend.pull_checked(None, true).await?;
+                let unchanged = match &after {
+                    PullOutcome::Payload(payload) => observed_tag == payload.etag.as_deref(),
+                    PullOutcome::Missing { .. } => observed_tag.is_none(),
+                    _ => false,
+                };
+                if unchanged {
+                    return Err(CapabilityError(CapabilityReport::issue(
+                        CapabilityReason::ConditionalWrite,
+                        "upload-412-unchanged",
+                        Some(412),
+                        EtagKind::Strong,
+                    ))
+                    .into());
+                }
+            }
             return Ok(SyncStatus::PullRequired {
                 remote_at: observed_remote_at,
                 reason: SyncInterventionReason::RemoteChangedBeforePush,
@@ -435,7 +522,7 @@ impl SyncEngine {
             return Ok(RemoteSyncState::Disabled);
         }
         self.config_store.sync_from_disk();
-        Ok(match self.remote_payload_state(true).await? {
+        Ok(match self.remote_payload_state(true, true).await? {
             RemotePayloadState::BindingRequired(provider) => {
                 RemoteSyncState::BindingRequired(provider)
             }
@@ -600,7 +687,9 @@ impl SyncEngine {
         // A real pull must fetch the representation even when a preceding
         // poll, or a legacy config without the new revision baseline, already
         // has a matching ETag.
-        let remote = self.remote_payload_state(false).await?;
+        let remote = self
+            .remote_payload_state(false, expected_local_revision.is_some())
+            .await?;
         // remote_payload_state already rejects configuration changes made while
         // the request is in flight. Capture its resulting revision (including a
         // refreshed ETag) so the final apply guard only rejects later changes.
@@ -737,7 +826,11 @@ impl SyncEngine {
         })
     }
 
-    async fn remote_payload_state(&mut self, conditional: bool) -> Result<RemotePayloadState> {
+    async fn remote_payload_state(
+        &mut self,
+        conditional: bool,
+        automatic: bool,
+    ) -> Result<RemotePayloadState> {
         self.config_store.sync_from_disk();
         let config_revision = self.config_store.config.config_revision;
         let backend = match RemoteBackend::build(&self.config_store)? {
@@ -756,7 +849,11 @@ impl SyncEngine {
                 .is_some())
         .then(|| self.config_store.config.remote_etag.clone())
         .flatten();
-        let outcome = backend.pull(etag.as_deref()).await?;
+        let outcome = if automatic {
+            backend.pull_checked(etag.as_deref(), true).await?
+        } else {
+            backend.pull(etag.as_deref()).await?
+        };
         self.config_store.sync_from_disk();
         anyhow::ensure!(
             self.config_store.config.config_revision == config_revision,
@@ -966,6 +1063,369 @@ mod tests {
 
     fn memory_credentials() -> CredentialStore {
         CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, MemoryCredentialBackend::default())
+    }
+
+    /// A WebDAV server whose weak ETag cannot satisfy conditional PUTs.
+    /// Read the complete upload so tests can verify the actual remote content.
+    fn weak_etag_server(
+        payload: String,
+        request_count: usize,
+        put_status: &'static str,
+        remote_etag: &'static str,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for _ in 0..request_count {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "request timed out");
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("accept failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).expect("request should read");
+                    assert_ne!(read, 0, "request ended before its body was complete");
+                    request.extend_from_slice(&buffer[..read]);
+                    if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                        let length = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let request = String::from_utf8(request).unwrap();
+                let headers = request
+                    .split_once("\r\n\r\n")
+                    .unwrap()
+                    .0
+                    .to_ascii_lowercase();
+                let (status, body, etag) = if headers.starts_with("get ") {
+                    if remote_etag.starts_with('"') && headers.contains("if-none-match:") {
+                        ("304 Not Modified", "", remote_etag)
+                    } else {
+                        ("200 OK", payload.as_str(), remote_etag)
+                    }
+                } else {
+                    assert!(headers.starts_with("put "));
+                    let conditional =
+                        headers.contains("\r\nif-match:") || headers.contains("\r\nif-none-match:");
+                    (
+                        if conditional {
+                            "412 Precondition Failed"
+                        } else {
+                            put_status
+                        },
+                        "",
+                        "W/\"uploaded-etag\"",
+                    )
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nETag: {etag}\r\nConnection: close\r\n\r\n{body}",
+                    body.len(),
+                )
+                .expect("response should write");
+                requests.push(request);
+            }
+            requests
+        });
+        (format!("http://{address}/sync.json"), handle)
+    }
+
+    struct WebDavPushFixture {
+        temp: tempfile::TempDir,
+        engine: SyncEngine,
+        sessions: SessionStore,
+        proxies: ProxyStore,
+        snippets: SnippetStore,
+        keys: ManagedKeyStore,
+        secrets: SecretStore,
+        settings: SettingsStore,
+        server: std::thread::JoinHandle<Vec<String>>,
+    }
+
+    impl WebDavPushFixture {
+        fn new(request_count: usize, put_status: &'static str) -> Self {
+            Self::with_etag(request_count, put_status, "W/\"remote-etag\"")
+        }
+
+        fn with_etag(
+            request_count: usize,
+            put_status: &'static str,
+            remote_etag: &'static str,
+        ) -> Self {
+            let temp = tempdir().unwrap();
+            let settings =
+                SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
+            let plaintext = empty_plaintext(&settings);
+            let baseline = local_data_revision(&plaintext).unwrap();
+            let payload =
+                build_payload("remote-device", None, &plaintext, "test-passphrase").unwrap();
+            let (url, server) = weak_etag_server(
+                serde_json::to_string(&payload).unwrap(),
+                request_count,
+                put_status,
+                remote_etag,
+            );
+            let credentials = memory_credentials();
+            let mut engine = SyncEngine {
+                config_store: SyncConfigStore::with_credentials(
+                    temp.path().join("sync_config.toml"),
+                    crate::SyncConfig {
+                        provider: SyncProvider::WebDav,
+                        webdav_url: url,
+                        webdav_username: "user".into(),
+                        last_sync_at: 42,
+                        remote_etag: Some(remote_etag.into()),
+                        remote_payload_id: Some(payload.payload_id),
+                        last_synced_local_revision: Some(baseline),
+                        ..crate::SyncConfig::default()
+                    },
+                    credentials.clone(),
+                ),
+            };
+            engine.config_store.set_webdav_password("password").unwrap();
+            engine
+                .config_store
+                .set_passphrase("test-passphrase")
+                .unwrap();
+            engine.config_store.update(|_| {}).unwrap();
+            let sessions = SessionStore::with_path(temp.path().join("sessions.toml"));
+            let mut session = SessionProfile::blank("local-session", 1);
+            session.host = "latest.example.com".into();
+            sessions.save(&[session]).unwrap();
+            Self {
+                proxies: ProxyStore::with_path(temp.path().join("proxies.toml")),
+                snippets: SnippetStore::with_path(temp.path().join("snippets.toml")),
+                keys: ManagedKeyStore::with_path(temp.path().join("managed_keys.toml")),
+                secrets: SecretStore::with_credentials(credentials),
+                settings,
+                sessions,
+                engine,
+                server,
+                temp,
+            }
+        }
+
+        async fn push(&mut self, mode: PushMode) -> Result<SyncStatus> {
+            match mode {
+                PushMode::Force => {
+                    self.engine
+                        .push_force(
+                            &self.sessions,
+                            &self.proxies,
+                            &self.snippets,
+                            &self.keys,
+                            &self.secrets,
+                            &self.settings,
+                        )
+                        .await
+                }
+                PushMode::Manual => {
+                    self.engine
+                        .push_manual(
+                            &self.sessions,
+                            &self.proxies,
+                            &self.snippets,
+                            &self.keys,
+                            &self.secrets,
+                            &self.settings,
+                        )
+                        .await
+                }
+                PushMode::Automatic => {
+                    self.engine
+                        .push(
+                            &self.sessions,
+                            &self.proxies,
+                            &self.snippets,
+                            &self.keys,
+                            &self.secrets,
+                            &self.settings,
+                        )
+                        .await
+                }
+            }
+        }
+
+        fn assert_uploaded(self, status: SyncStatus) {
+            let requests = self.server.join().unwrap();
+            assert!(matches!(status, SyncStatus::Pushed { .. }), "{status:?}");
+            assert!(requests.len() >= 2);
+            for request in &requests {
+                let headers = request
+                    .split_once("\r\n\r\n")
+                    .unwrap()
+                    .0
+                    .to_ascii_lowercase();
+                assert!(!headers.contains("\r\nif-match:"), "{headers}");
+                assert!(!headers.contains("\r\nif-none-match:"), "{headers}");
+            }
+            let uploaded =
+                parse_remote_payload(requests.last().unwrap().split_once("\r\n\r\n").unwrap().1)
+                    .unwrap();
+            let (plaintext, revision) =
+                decrypt_normalized_remote_payload(&uploaded, "test-passphrase").unwrap();
+            assert_eq!(plaintext.sessions[0].host, "latest.example.com");
+            assert_eq!(
+                self.sessions.load(&self.secrets).unwrap()[0].host,
+                "latest.example.com"
+            );
+            let persisted: crate::SyncConfig = toml::from_str(
+                &fs::read_to_string(self.temp.path().join("sync_config.toml")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(persisted, self.engine.config_store.config);
+            assert_eq!(persisted.last_sync_at, uploaded.synced_at);
+            assert_eq!(persisted.remote_payload_id, Some(uploaded.payload_id));
+            assert_eq!(
+                persisted.remote_etag.as_deref(),
+                Some("W/\"uploaded-etag\"")
+            );
+            assert_eq!(persisted.last_synced_local_revision, Some(revision));
+        }
+    }
+
+    #[tokio::test]
+    async fn webdav_force_push_overwrites_despite_weak_etag() {
+        let mut fixture = WebDavPushFixture::new(2, "204 No Content");
+        let status = fixture.push(PushMode::Force).await.unwrap();
+        fixture.assert_uploaded(status);
+    }
+
+    #[tokio::test]
+    async fn webdav_manual_push_uploads_local_changes_despite_weak_etag() {
+        let mut fixture = WebDavPushFixture::new(2, "204 No Content");
+        let status = fixture.push(PushMode::Manual).await.unwrap();
+        fixture.assert_uploaded(status);
+    }
+
+    #[tokio::test]
+    async fn webdav_manual_push_requires_confirmation_without_baseline_then_force_push_succeeds() {
+        let mut fixture = WebDavPushFixture::new(3, "204 No Content");
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                config.last_synced_local_revision = None;
+                config.remote_payload_id = None;
+                config.remote_etag = None;
+            })
+            .unwrap();
+        let status = fixture.push(PushMode::Manual).await.unwrap();
+        assert!(matches!(
+            status,
+            SyncStatus::PullRequired {
+                reason: SyncInterventionReason::MissingSyncBaseline,
+                ..
+            }
+        ));
+        assert_eq!(fixture.engine.config_store.config.last_sync_at, 42);
+        assert_eq!(
+            fixture
+                .engine
+                .config_store
+                .config
+                .last_synced_local_revision,
+            None
+        );
+        let status = fixture.push(PushMode::Force).await.unwrap();
+        fixture.assert_uploaded(status);
+    }
+
+    #[tokio::test]
+    async fn webdav_manual_push_preserves_diverged_content_until_confirmation() {
+        let mut fixture = WebDavPushFixture::new(1, "204 No Content");
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                config.remote_payload_id = Some("older-payload".into());
+                config.last_synced_local_revision = Some("older-content".into());
+            })
+            .unwrap();
+        let before = fixture.engine.config_store.config.clone();
+        let status = fixture.push(PushMode::Manual).await.unwrap();
+        let requests = fixture.server.join().unwrap();
+        assert!(matches!(
+            status,
+            SyncStatus::PullRequired {
+                reason: SyncInterventionReason::BothSidesChanged,
+                ..
+            }
+        ));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(fixture.engine.config_store.config, before);
+    }
+
+    #[tokio::test]
+    async fn webdav_manual_push_does_not_record_success_after_failed_upload() {
+        let mut fixture = WebDavPushFixture::new(2, "500 Internal Server Error");
+        let before = fixture.engine.config_store.config.clone();
+        let error = fixture.push(PushMode::Manual).await.unwrap_err();
+        let requests = fixture.server.join().unwrap();
+        assert!(error.to_string().contains("WebDAV PUT failed: 500"));
+        assert_eq!(requests.len(), 2);
+        assert_eq!(fixture.engine.config_store.config, before);
+        let persisted: crate::SyncConfig = toml::from_str(
+            &fs::read_to_string(fixture.temp.path().join("sync_config.toml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted, before);
+    }
+
+    #[tokio::test]
+    async fn webdav_automatic_push_preserves_conditions_and_baseline_on_412() {
+        let mut fixture = WebDavPushFixture::with_etag(3, "204 No Content", "\"remote-etag\"");
+        let before = fixture.engine.config_store.config.clone();
+        let error = fixture.push(PushMode::Automatic).await.unwrap_err();
+        let requests = fixture.server.join().unwrap();
+        assert_eq!(
+            error.downcast_ref::<CapabilityError>().unwrap().0.reason,
+            Some(CapabilityReason::ConditionalWrite)
+        );
+        assert!(
+            requests[0]
+                .to_ascii_lowercase()
+                .contains("if-none-match: \"remote-etag\"")
+        );
+        assert!(
+            requests[1]
+                .to_ascii_lowercase()
+                .contains("if-match: \"remote-etag\"")
+        );
+        assert_eq!(fixture.engine.config_store.config, before);
+    }
+
+    #[tokio::test]
+    async fn webdav_automatic_push_rejects_weak_etags_before_upload() {
+        let mut fixture = WebDavPushFixture::new(1, "204 No Content");
+        let before = fixture.engine.config_store.config.clone();
+        let error = fixture.push(PushMode::Automatic).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CapabilityError>().unwrap().0.etag_kind,
+            EtagKind::Weak
+        );
+        assert_eq!(fixture.server.join().unwrap().len(), 1);
+        assert_eq!(fixture.engine.config_store.config, before);
     }
 
     fn payload_server(payload: String) -> (String, std::thread::JoinHandle<()>) {
@@ -1443,7 +1903,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_skips_unsafe_write_when_remote_without_etag_is_identical() {
+    async fn manual_push_skips_upload_when_remote_without_etag_is_identical() {
         let temp = tempdir().expect("temporary directory should exist");
         let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
         let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
@@ -1488,6 +1948,67 @@ mod tests {
         let secret_store = SecretStore::with_credentials(credentials);
 
         let status = engine
+            .push_manual(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("manual sync should allow a remote without ETag");
+
+        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        server.join().expect("payload server should finish");
+    }
+
+    #[tokio::test]
+    async fn automatic_push_skips_upload_when_remote_without_etag_is_identical() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml"))
+            .expect("settings store should load");
+        let plaintext = empty_plaintext(&settings_store);
+        let passphrase = "no-etag-passphrase";
+        let payload = build_payload("remote-device", None, &plaintext, passphrase)
+            .expect("payload should build");
+        let payload_id = payload.payload_id.clone();
+        let payload_revision = local_data_revision(&plaintext).expect("revision should build");
+        let (url, server) = payload_server_with_etag(
+            serde_json::to_string(&payload).expect("payload should serialize"),
+            None,
+        );
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    last_sync_at: payload.synced_at,
+                    remote_payload_id: Some(payload_id),
+                    last_synced_local_revision: Some(payload_revision),
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine
+            .config_store
+            .set_webdav_password("password")
+            .expect("password should persist");
+        engine
+            .config_store
+            .set_passphrase(passphrase)
+            .expect("passphrase should persist");
+        let secret_store = SecretStore::with_credentials(credentials);
+
+        let error = engine
             .push(
                 &session_store,
                 &proxy_store,
@@ -1497,9 +2018,12 @@ mod tests {
                 &settings_store,
             )
             .await
-            .expect("identical content should not require an unsafe write");
+            .expect_err("automatic sync must refuse a remote without ETag");
 
-        assert!(matches!(status, SyncStatus::UpToDate { .. }));
+        assert_eq!(
+            error.downcast_ref::<CapabilityError>().unwrap().0.reason,
+            Some(CapabilityReason::VersionUnavailable)
+        );
         server.join().expect("payload server should finish");
     }
 

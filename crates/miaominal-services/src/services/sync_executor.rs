@@ -1,14 +1,20 @@
 use super::sync_service::{SyncService, SyncTaskResult};
 use miaominal_secrets::SecretStore;
 use miaominal_storage::SettingsStore;
+use miaominal_sync::capability::{CapabilityReport, ProbeCancellation};
 use miaominal_sync::{RemoteSyncState, SyncEngine};
 
 /// Abstraction over the sync operations used by the auto-sync scheduler.
 ///
-/// The production implementation delegates to `SyncService`, which serializes
-/// every operation through one process-wide mutex; tests can substitute an
-/// in-memory mock.
+/// The production implementation delegates to `SyncService`. Content operations
+/// share a process-wide mutex; capability probes and cleanup use a separate lock
+/// so a slow probe cannot block manual sync. Tests can substitute an in-memory mock.
 pub trait SyncOps: Send + Sync + 'static {
+    fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> impl std::future::Future<Output = CapabilityReport> + Send;
     fn push(
         &self,
         engine: SyncEngine,
@@ -48,12 +54,28 @@ impl SyncExecutor {
         self.service.replace_secrets(secrets);
     }
 
+    pub async fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> CapabilityReport {
+        self.service.check_capability(engine, cancel).await
+    }
+
     pub async fn push(
         &self,
         engine: SyncEngine,
         settings_store: SettingsStore,
     ) -> anyhow::Result<SyncTaskResult> {
         self.service.push(engine, settings_store).await
+    }
+
+    pub async fn push_manual(
+        &self,
+        engine: SyncEngine,
+        settings_store: SettingsStore,
+    ) -> anyhow::Result<SyncTaskResult> {
+        self.service.push_manual(engine, settings_store).await
     }
 
     pub async fn push_force(
@@ -94,6 +116,13 @@ impl SyncExecutor {
 }
 
 impl SyncOps for SyncExecutor {
+    async fn check_capability(
+        &self,
+        engine: SyncEngine,
+        cancel: ProbeCancellation,
+    ) -> CapabilityReport {
+        SyncExecutor::check_capability(self, engine, cancel).await
+    }
     async fn push(
         &self,
         engine: SyncEngine,

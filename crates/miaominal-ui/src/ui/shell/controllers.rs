@@ -196,6 +196,7 @@ pub(in crate::ui::shell) enum SftpDeferredCommand {
 
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) enum SettingsDeferredCommand {
+    CheckAutoSync(bool),
     ResumeSync,
     SaveSyncPassphrase(String),
     OpenSyncProviderConfig(SyncProvider),

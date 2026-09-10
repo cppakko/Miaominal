@@ -155,6 +155,7 @@ pub(crate) struct ApplicationState {
     last_auto_sync_revision: u64,
     last_applied_auto_sync_result_id: Option<u64>,
     last_auto_sync_intervention_id: Option<String>,
+    last_capability_notice_id: Option<String>,
     bridge_status: SshBridgeStatus,
     bridge_sync_result: Option<SshBridgeSyncResult>,
     bridge_security: BridgeSecuritySnapshot,
@@ -167,6 +168,22 @@ struct GlobalApplicationState(Entity<ApplicationState>);
 impl Global for GlobalApplicationState {}
 
 impl ApplicationState {
+    pub(crate) fn request_auto_sync_check(&self, enable: bool) -> bool {
+        self.auto_sync.as_ref().is_some_and(|service| {
+            if enable {
+                service.enable_checked()
+            } else {
+                service.recheck_capability()
+            }
+        })
+    }
+
+    pub(crate) fn cancel_auto_sync_check(&self) {
+        if let Some(service) = &self.auto_sync {
+            service.cancel_check();
+        }
+    }
+
     fn load(runtime: TokioHandle) -> Self {
         let settings_store = match SettingsStore::load() {
             Ok(store) => store,
@@ -243,6 +260,9 @@ impl ApplicationState {
             .as_ref()
             .map(|service| service.subscribe().borrow().clone())
             .unwrap_or_else(|| AutoSyncSnapshot {
+                capability: Default::default(),
+                capability_notice_id: None,
+                updated_config: None,
                 revision: 0,
                 enabled: false,
                 phase: miaominal_services::AutoSyncPhase::Disabled,
@@ -283,6 +303,7 @@ impl ApplicationState {
             last_auto_sync_revision: 0,
             last_applied_auto_sync_result_id: None,
             last_auto_sync_intervention_id: None,
+            last_capability_notice_id: None,
             generations: ApplicationGenerations {
                 catalogs: 1,
                 settings: 1,
@@ -441,6 +462,33 @@ impl ApplicationState {
             return;
         }
         self.last_auto_sync_revision = snapshot.revision;
+        if let Some(config) = &snapshot.updated_config
+            && config.config_revision >= self.sync_engine.config_store.config.config_revision
+        {
+            self.sync_engine.config_store.config = config.clone();
+        }
+        if let Some(id) =
+            newly_observed_capability_notice(&snapshot, &mut self.last_capability_notice_id)
+        {
+            crate::ui::shell::publish_app_notification(
+                crate::ui::shell::AppNotification::new(
+                    crate::ui::shell::AppNotificationTone::Warning,
+                    crate::ui::shell::AppNotificationPriority::High,
+                    i18n::string(if snapshot.enabled {
+                        "settings.sync.capability.paused"
+                    } else {
+                        "settings.sync.capability.failed"
+                    }),
+                    webdav_capability_summary(&snapshot.capability, snapshot.enabled),
+                )
+                .stable_id(format!("webdav-capability:{id}"))
+                .structured_action(
+                    crate::ui::shell::AppNotificationAction::OpenSyncSettings,
+                    i18n::string("notifications.auto_sync_conflict.open_sync"),
+                ),
+                cx,
+            );
+        }
         if let Some(intervention) = newly_observed_auto_sync_intervention(
             &snapshot,
             &mut self.last_auto_sync_intervention_id,
@@ -483,6 +531,8 @@ impl ApplicationState {
         self.auto_sync_snapshot = snapshot.clone();
         if let Some(result) =
             newly_observed_auto_sync_result(&snapshot, &mut self.last_applied_auto_sync_result_id)
+            && result.updated_config.config_revision
+                >= self.sync_engine.config_store.config.config_revision
         {
             self.apply_sync_task_data(result, cx);
         }
@@ -987,6 +1037,63 @@ pub(crate) fn application_state(cx: &App) -> Entity<ApplicationState> {
     cx.global::<GlobalApplicationState>().0.clone()
 }
 
+fn newly_observed_capability_notice<'a>(
+    snapshot: &'a AutoSyncSnapshot,
+    previous: &mut Option<String>,
+) -> Option<&'a str> {
+    let id = snapshot.capability_notice_id.as_deref();
+    let changed = id.is_some() && id != previous.as_deref();
+    if id.is_some() {
+        *previous = snapshot.capability_notice_id.clone();
+    }
+    changed.then_some(id).flatten()
+}
+
+pub(crate) fn webdav_capability_summary(
+    report: &miaominal_sync::capability::CapabilityReport,
+    enabled: bool,
+) -> String {
+    use miaominal_sync::capability::{CapabilityReason as Reason, CapabilityState as State};
+    let key = match report.state {
+        State::Unchecked => "settings.sync.capability.unchecked",
+        State::Checking => "settings.sync.capability.checking",
+        State::Supported => "settings.sync.capability.supported",
+        State::Unsupported if enabled => "settings.sync.capability.unsupported_paused",
+        State::Unsupported => "settings.sync.capability.unsupported",
+        State::Incomplete => match report.reason {
+            Some(Reason::Network) => "settings.sync.capability.network",
+            Some(Reason::Authentication) => "settings.sync.capability.authentication",
+            Some(Reason::Permission) => "settings.sync.capability.permission",
+            Some(Reason::Redirect) => "settings.sync.capability.redirect",
+            Some(Reason::Cleanup) => "settings.sync.capability.cleanup",
+            Some(Reason::Cancelled) => "settings.sync.capability.cancelled",
+            Some(Reason::Configuration) => "settings.sync.capability.configuration",
+            _ => "settings.sync.capability.incomplete",
+        },
+    };
+    let mut text = i18n::string(key);
+    if report.state == State::Unsupported {
+        use miaominal_sync::capability::EtagKind;
+        let reason = match report.reason {
+            Some(Reason::VersionUnavailable) => match report.etag_kind {
+                EtagKind::Weak => "settings.sync.capability.reason_weak",
+                EtagKind::Missing => "settings.sync.capability.reason_missing",
+                _ => "settings.sync.capability.reason_invalid",
+            },
+            Some(Reason::ConditionalRead) => "settings.sync.capability.reason_read",
+            _ => "settings.sync.capability.reason_write",
+        };
+        text = format!("{} {text}", i18n::string(reason));
+    }
+    if let Some(status) = report.http_status.filter(|status| *status != 0) {
+        text.push_str(&format!(" (HTTP {status})"));
+    }
+    match &report.cleanup_file {
+        Some(file) => format!("{text} {file}"),
+        None => text,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,8 +1101,42 @@ mod tests {
     use miaominal_services::{PortForwardKey, PortForwardRuntimeSnapshot, PortForwardRuntimeState};
     use std::time::Duration;
 
+    #[test]
+    fn capability_notices_are_deduplicated_across_snapshot_updates() {
+        let mut snapshot = intervention_snapshot(None);
+        snapshot.capability_notice_id = Some("pause-one".into());
+        let mut previous = None;
+        assert_eq!(
+            newly_observed_capability_notice(&snapshot, &mut previous),
+            Some("pause-one")
+        );
+        snapshot.revision += 1;
+        assert_eq!(
+            newly_observed_capability_notice(&snapshot, &mut previous),
+            None
+        );
+        snapshot.capability_notice_id = None;
+        assert_eq!(
+            newly_observed_capability_notice(&snapshot, &mut previous),
+            None
+        );
+        snapshot.capability_notice_id = Some("pause-one".into());
+        assert_eq!(
+            newly_observed_capability_notice(&snapshot, &mut previous),
+            None
+        );
+        snapshot.capability_notice_id = Some("pause-two".into());
+        assert_eq!(
+            newly_observed_capability_notice(&snapshot, &mut previous),
+            Some("pause-two")
+        );
+    }
+
     fn intervention_snapshot(id: Option<&str>) -> AutoSyncSnapshot {
         AutoSyncSnapshot {
+            capability: Default::default(),
+            capability_notice_id: None,
+            updated_config: None,
             revision: 1,
             enabled: true,
             phase: if id.is_some() {

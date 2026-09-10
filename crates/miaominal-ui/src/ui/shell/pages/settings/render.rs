@@ -6,7 +6,7 @@ use crate::ui::components::{
 };
 use crate::ui::i18n;
 use gpui_kit::component::{
-    Disableable, Icon, Size,
+    ActiveTheme, Disableable, Icon, Size,
     group_box::GroupBoxVariant,
     setting::{
         RenderOptions, SelectIndex, SettingField, SettingFieldElement, SettingGroup, SettingItem,
@@ -3576,6 +3576,10 @@ fn sync_status_group(settings: Entity<SettingsController>) -> SettingGroup {
 
 fn auto_sync_phase_label(phase: miaominal_services::AutoSyncPhase) -> String {
     let key = match phase {
+        miaominal_services::AutoSyncPhase::CheckingCapability => {
+            "settings.sync.capability.checking"
+        }
+        miaominal_services::AutoSyncPhase::PausedCapability => "settings.sync.capability.paused",
         miaominal_services::AutoSyncPhase::Disabled => "settings.sync.auto_sync.status.disabled",
         miaominal_services::AutoSyncPhase::Watching => "settings.sync.auto_sync.status.watching",
         miaominal_services::AutoSyncPhase::Debouncing => {
@@ -3630,14 +3634,11 @@ fn sync_auto_sync_group(settings: Entity<SettingsController>) -> SettingGroup {
                             }
                             _ => status_text,
                         };
-                        let roles = miaominal_settings::current_theme().material.roles;
                         div()
                             .w_full()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .min_w_0()
                             .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .text_color(rgb(roles.on_surface_variant))
+                            .text_color(cx.theme().muted_foreground)
                             .child(text)
                             .into_any_element()
                     }

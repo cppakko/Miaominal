@@ -2499,6 +2499,8 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn auto_sync_enabled(&self) -> bool {
         self.sync_config().auto_sync_enabled
+            || self.auto_sync_snapshot.phase
+                == miaominal_services::AutoSyncPhase::CheckingCapability
     }
 
     pub(in crate::ui::shell) fn auto_sync_snapshot(&self) -> &miaominal_services::AutoSyncSnapshot {
@@ -2521,6 +2523,15 @@ impl SettingsController {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
+        if enabled && self.sync_config().provider == SyncProvider::WebDav {
+            self.check_auto_sync_capability(true, cx);
+            return;
+        }
+        if !enabled {
+            crate::ui::application::application_state(cx)
+                .read(cx)
+                .cancel_auto_sync_check();
+        }
         if let Err(error) =
             SettingsService::set_auto_sync_enabled(&mut self.sync.sync_engine, enabled)
         {
@@ -2528,6 +2539,33 @@ impl SettingsController {
             return;
         }
         cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn check_auto_sync_capability(
+        &mut self,
+        enable: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sync_requires_local_vault_unlock() {
+            cx.emit(AppCommand::vault_unlock(
+                crate::ui::shell::DeferredAppCommand::Settings(
+                    crate::ui::shell::SettingsDeferredCommand::CheckAutoSync(enable),
+                ),
+            ));
+            return;
+        }
+        if self.sync_config().provider != SyncProvider::WebDav {
+            return;
+        }
+        let accepted = crate::ui::application::application_state(cx)
+            .read(cx)
+            .request_auto_sync_check(enable);
+        if accepted {
+            self.auto_sync_snapshot.phase = miaominal_services::AutoSyncPhase::CheckingCapability;
+            self.auto_sync_snapshot.capability.state =
+                miaominal_sync::capability::CapabilityState::Checking;
+            cx.notify();
+        }
     }
 
     pub(in crate::ui::shell) fn set_sync_provider(
