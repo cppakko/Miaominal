@@ -78,7 +78,10 @@ enum RetryAction {
 }
 
 enum AutoSyncCommand {
-    EnableChecked(Arc<ProbeCancellation>),
+    EnableChecked {
+        token: Arc<ProbeCancellation>,
+        unsafe_write_consent: bool,
+    },
     RecheckCapability(Arc<ProbeCancellation>),
     CancelCheck,
     SetEngine(SyncEngine),
@@ -264,13 +267,13 @@ impl AutoSyncService {
         }
     }
 
-    pub fn enable_checked(&self) -> bool {
-        self.request_check(true)
+    pub fn enable_checked(&self, unsafe_write_consent: bool) -> bool {
+        self.request_check(true, unsafe_write_consent)
     }
     pub fn recheck_capability(&self) -> bool {
-        self.request_check(false)
+        self.request_check(false, false)
     }
-    fn request_check(&self, enable: bool) -> bool {
+    fn request_check(&self, enable: bool, unsafe_write_consent: bool) -> bool {
         let mut requests = self
             .check_requests
             .lock()
@@ -287,7 +290,10 @@ impl AutoSyncService {
         }
         let token = Arc::new(self.cancellation.fresh());
         let command = if enable {
-            AutoSyncCommand::EnableChecked(token.clone())
+            AutoSyncCommand::EnableChecked {
+                token: token.clone(),
+                unsafe_write_consent,
+            }
         } else {
             AutoSyncCommand::RecheckCapability(token.clone())
         };
@@ -352,6 +358,11 @@ impl<S: SyncOps> AutoSyncTask<S> {
             if self.capability.cleanup_file.is_none() {
                 self.capability = CapabilityReport::default();
             }
+            // The probe verdict belongs to the endpoint and credentials it was
+            // taken against, so a different binding must also withdraw it from
+            // the push path. Otherwise a later tick could drop a write
+            // precondition on an endpoint nobody probed.
+            self.engine.last_capability_report = None;
             self.capability_notice_id = None;
         }
     }
@@ -359,17 +370,88 @@ impl<S: SyncOps> AutoSyncTask<S> {
     fn capability_blocks(&self) -> bool {
         self.engine.config_store.config.provider == SyncProvider::WebDav
             && self.capability.state != CapabilityState::Supported
+            // User-confirmed last-write-wins consent replaces the HTTP write
+            // preconditions the probe failed on, so those failures stop gating
+            // automatic sync. Every other failure still blocks it.
+            && !self
+                .capability
+                .permits_unpreconditioned_write(self.unsafe_write_consent())
     }
 
-    fn record_capability(&mut self, report: CapabilityReport, notify: bool) {
+    /// Whether the user has accepted unpreconditioned WebDAV uploads.
+    fn unsafe_write_consent(&self) -> bool {
+        self.engine.config_store.config.webdav_unsafe_write_consent
+    }
+
+    /// Turning automatic sync off withdraws the unsafe-write consent, so the
+    /// next enable runs the strict capability check and prompts again. This
+    /// covers a preference persisted anywhere — the settings path already
+    /// clears it, and an already-cleared flag needs no write.
+    fn clear_consent_when_disabled(&mut self) {
+        if self.enabled || !self.unsafe_write_consent() {
+            return;
+        }
+        let revision = self.engine.config_store.config.config_revision;
+        if let Err(error) = self
+            .engine
+            .config_store
+            .update_if_revision(revision, |config| {
+                config.webdav_unsafe_write_consent = false
+            })
+        {
+            log::warn!("failed to withdraw unsafe-write consent: {error:?}");
+        }
+        self.capability_notice_id = None;
+    }
+
+    /// Whether a capability report should reach the user as a notice.
+    ///
+    /// A precondition failure needs no notice in exactly two situations, because
+    /// something else already owns the message:
+    ///
+    /// * consent is recorded, so automatic sync is running in the fallback and
+    ///   "paused" would contradict the `Watching` phase beside it;
+    /// * this call is the user's own enable request, whose result the
+    ///   confirmation dialog is about to show.
+    ///
+    /// Everywhere else the failure really does stop or hold back automatic sync,
+    /// so the notice stays — including a background pause with no dialog pending,
+    /// where it is the only feedback the user gets.
+    fn capability_needs_notice(&self, report: &CapabilityReport, dialog_owns_it: bool) -> bool {
+        if report.state == CapabilityState::Supported
+            || report.reason == Some(CapabilityReason::Cancelled)
+        {
+            return false;
+        }
+        if !report
+            .reason
+            .is_some_and(CapabilityReason::is_write_precondition_only)
+        {
+            return true;
+        }
+        if dialog_owns_it {
+            return false;
+        }
+        !report.permits_unpreconditioned_write(self.unsafe_write_consent())
+    }
+
+    fn record_capability_with(
+        &mut self,
+        report: CapabilityReport,
+        notify: bool,
+        dialog_owns_it: bool,
+    ) {
         if notify
-            && report.state != CapabilityState::Supported
-            && report.reason != Some(CapabilityReason::Cancelled)
             && self.capability_notice_id.is_none()
+            && self.capability_needs_notice(&report, dialog_owns_it)
         {
             self.capability_notice_id = Some(uuid::Uuid::new_v4().to_string());
         }
         self.capability = report;
+        // Publish the verdict to the push path. A strong ETag alone does not
+        // prove a server honours conditional requests, so only the probe may
+        // authorise dropping a write precondition.
+        self.engine.last_capability_report = Some(self.capability.clone());
         self.phase = if self.enabled {
             AutoSyncPhase::PausedCapability
         } else {
@@ -378,15 +460,19 @@ impl<S: SyncOps> AutoSyncTask<S> {
         self.publish();
     }
 
+    fn record_capability(&mut self, report: CapabilityReport, notify: bool) {
+        self.record_capability_with(report, notify, false);
+    }
+
     async fn ensure_capability(&mut self, explicit: bool) -> bool {
         self.check_capability(explicit, explicit).await
     }
 
     async fn check_capability(&mut self, explicit: bool, notify_user: bool) -> bool {
+        let unsafe_write_consent = self.unsafe_write_consent();
         if notify_user {
             self.capability_notice_id = None;
         }
-        self.engine.config_store.sync_from_disk();
         self.refresh_capability_binding();
         if self.engine.config_store.config.provider != SyncProvider::WebDav {
             return true;
@@ -396,6 +482,11 @@ impl<S: SyncOps> AutoSyncTask<S> {
             return false;
         }
         if !explicit && self.capability.state == CapabilityState::Supported {
+            return true;
+        }
+        // A probe failure that consent already covers does not need to be
+        // repeated on every tick; the endpoint is healthy enough to sync.
+        if !explicit && !self.capability_blocks() {
             return true;
         }
         if !explicit
@@ -437,6 +528,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
         }
         if report.state == CapabilityState::Supported {
             self.capability = report;
+            self.engine.last_capability_report = Some(self.capability.clone());
             self.capability_notice_id = None;
             self.reset_backoff();
             self.set_phase(if self.enabled {
@@ -447,17 +539,33 @@ impl<S: SyncOps> AutoSyncTask<S> {
             return true;
         }
         let retry = report.reason == Some(CapabilityReason::Network) && self.enabled;
-        self.record_capability(report, notify_user || (!explicit && !retry));
+        // The caller's consent decision, not a possibly-stale store value,
+        // decides whether this failure is already accepted.
+        let covered_by_consent = report.permits_unpreconditioned_write(unsafe_write_consent);
+        let dialog_owns_it =
+            explicit && !report.permits_unpreconditioned_write(unsafe_write_consent);
+        self.record_capability_with(report, notify_user || (!explicit && !retry), dialog_owns_it);
         if retry {
             self.schedule_retry(
                 RetryAction::Poll,
                 anyhow::anyhow!("WebDAV connection unavailable"),
             );
         }
+        if covered_by_consent && !retry {
+            // Consent already accepted exactly this precondition failure, so
+            // automatic sync proceeds on the content comparison instead. The
+            // report is still recorded so the settings status stays truthful.
+            self.set_phase(if self.enabled {
+                AutoSyncPhase::Watching
+            } else {
+                AutoSyncPhase::Disabled
+            });
+            return true;
+        }
         false
     }
 
-    async fn enable_checked(&mut self) {
+    async fn enable_checked(&mut self, unsafe_write_consent: bool) {
         self.capability_notice_id = None;
         if self.vault_locked {
             self.set_phase(AutoSyncPhase::PausedVaultLocked);
@@ -475,6 +583,31 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 true,
             );
             return;
+        }
+        // Consent is stored before the probe so `check_capability` can recognise
+        // a failure it already covers instead of blocking on it. An unchanged
+        // value needs no write, which keeps `config_revision` and any concurrent
+        // optimistic writer unaffected.
+        if self.unsafe_write_consent() != unsafe_write_consent {
+            let revision = self.engine.config_store.config.config_revision;
+            let saved = self
+                .engine
+                .config_store
+                .update_if_revision(revision, |config| {
+                    config.webdav_unsafe_write_consent = unsafe_write_consent
+                });
+            if !matches!(saved, Ok(true)) {
+                self.record_capability(
+                    CapabilityReport::issue(
+                        CapabilityReason::Configuration,
+                        "save-preference",
+                        None,
+                        EtagKind::Missing,
+                    ),
+                    true,
+                );
+                return;
+            }
         }
         let generation = self.cancellation.fresh();
         if !self.ensure_capability(true).await || generation.is_cancelled() {
@@ -577,6 +710,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
         self.refresh_capability_binding();
         self.clear_last_result();
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
+        self.clear_consent_when_disabled();
         self.fingerprint = Fingerprint::sample(&self.config_dir);
         self.remote_missing = false;
         self.clear_intervention();
@@ -611,6 +745,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
         self.refresh_capability_binding();
         self.settings_store = settings_store;
         self.enabled = self.engine.config_store.config.auto_sync_enabled;
+        self.clear_consent_when_disabled();
         self.clear_last_result();
         self.reset_backoff();
 
@@ -1085,8 +1220,8 @@ async fn run_auto_sync_with_cancellation<S: SyncOps>(
             command = command_rx.recv() => {
                 let Some(command) = command else { break };
                 match command {
-                    AutoSyncCommand::EnableChecked(token) => {
-                        if !token.is_cancelled() { task.enable_checked().await; }
+                    AutoSyncCommand::EnableChecked { token, unsafe_write_consent } => {
+                        if !token.is_cancelled() { task.enable_checked(unsafe_write_consent).await; }
                         check_requests.lock().unwrap_or_else(std::sync::PoisonError::into_inner).finish(&token);
                     }
                     AutoSyncCommand::RecheckCapability(token) => {
@@ -1552,6 +1687,7 @@ mod tests {
         let settings_store = SettingsStore::load_with_path(config_dir.join("settings.toml"))
             .expect("test settings store should load");
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 config_dir.join("sync_config.toml"),
                 SyncConfig {
@@ -1647,12 +1783,12 @@ mod tests {
         task.engine.config_store.config.provider = SyncProvider::WebDav;
         task.engine.config_store.config.auto_sync_enabled = false;
         task.enabled = false;
-        task.enable_checked().await;
+        task.enable_checked(false).await;
         assert!(!task.engine.config_store.config.auto_sync_enabled);
         assert!(!task.enabled);
         assert!(task.capability_notice_id.is_some());
         let notice = task.capability_notice_id.clone();
-        task.enable_checked().await;
+        task.enable_checked(false).await;
         assert_ne!(
             task.capability_notice_id, notice,
             "each user retry must report its failure"
@@ -1660,7 +1796,7 @@ mod tests {
         assert_eq!(task.capability.state, CapabilityState::Incomplete);
         assert_eq!(*mock.push_calls.lock().unwrap(), 0);
         *mock.capability_result.lock().unwrap() = CapabilityReport::supported();
-        task.enable_checked().await;
+        task.enable_checked(false).await;
         assert!(task.enabled);
         assert!(task.engine.config_store.config.auto_sync_enabled);
         assert_eq!(*mock.capability_calls.lock().unwrap(), 3);
@@ -1676,7 +1812,7 @@ mod tests {
         task.engine.config_store.config.provider = SyncProvider::WebDav;
         task.engine.config_store.config.auto_sync_enabled = false;
         task.enabled = false;
-        task.enable_checked().await;
+        task.enable_checked(false).await;
         assert!(!task.enabled);
         assert_eq!(task.capability.reason, Some(CapabilityReason::Cancelled));
         assert_eq!(*mock.push_calls.lock().unwrap(), 0);
@@ -1691,7 +1827,7 @@ mod tests {
         task.engine.config_store.config.auto_sync_enabled = false;
         task.engine.config_store.delete_passphrase().unwrap();
         task.enabled = false;
-        task.enable_checked().await;
+        task.enable_checked(false).await;
         assert!(!task.enabled);
         assert_eq!(
             task.capability.reason,
@@ -1711,13 +1847,182 @@ mod tests {
             task.engine.config_store.config.auto_sync_enabled = false;
             task.engine.config_store.update(|_| {}).unwrap();
             task.enabled = false;
-            task.enable_checked().await;
+            task.enable_checked(false).await;
             assert!(!task.enabled, "{mutation}");
             assert!(!task.engine.config_store.config.auto_sync_enabled);
             assert_eq!(task.capability.reason, Some(CapabilityReason::Cancelled));
             assert_eq!(*mock.push_calls.lock().unwrap(), 0);
             assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn consented_precondition_failure_enables_sync_but_other_failures_still_block() {
+        for (reason, etag_kind, expected_enabled) in [
+            (CapabilityReason::VersionUnavailable, EtagKind::Weak, true),
+            (CapabilityReason::ConditionalRead, EtagKind::Strong, true),
+            (CapabilityReason::ConditionalWrite, EtagKind::Strong, true),
+            (CapabilityReason::Permission, EtagKind::Missing, false),
+            (CapabilityReason::Authentication, EtagKind::Missing, false),
+            (CapabilityReason::Cleanup, EtagKind::Strong, false),
+        ] {
+            let dir = temp_config_dir("capability-consent");
+            let mock = Arc::new(MockSyncOps::new());
+            *mock.capability_result.lock().unwrap() =
+                CapabilityReport::issue(reason, "probe", Some(200), etag_kind);
+            let mut task = test_task(mock.clone(), &dir);
+            task.engine.config_store.config.provider = SyncProvider::WebDav;
+            task.engine.config_store.config.auto_sync_enabled = false;
+            task.enabled = false;
+
+            task.enable_checked(true).await;
+
+            assert_eq!(
+                task.enabled,
+                expected_enabled,
+                "{reason:?} should {} consented enable",
+                if expected_enabled { "allow" } else { "block" }
+            );
+            assert_eq!(
+                task.engine.config_store.config.auto_sync_enabled, expected_enabled,
+                "{reason:?}"
+            );
+            assert!(
+                task.engine.config_store.config.webdav_unsafe_write_consent,
+                "{reason:?} must keep the recorded consent"
+            );
+            assert_eq!(
+                task.phase,
+                if expected_enabled {
+                    AutoSyncPhase::Watching
+                } else {
+                    // The user's enable never took effect, so automatic sync is
+                    // still off rather than paused.
+                    AutoSyncPhase::Disabled
+                },
+                "{reason:?}"
+            );
+            assert_eq!(
+                task.capability.reason,
+                Some(reason),
+                "the report is recorded"
+            );
+            // The push path reads this field, so the service has to hand the
+            // probe's verdict over rather than only keeping it for the UI.
+            assert_eq!(
+                task.engine
+                    .last_capability_report
+                    .as_ref()
+                    .and_then(|report| report.reason),
+                Some(reason),
+                "{reason:?} must reach the engine's write path"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_consent_blocks_the_same_failure_that_consent_allowed() {
+        let dir = temp_config_dir("capability-consent-revoked");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::VersionUnavailable,
+            "poll",
+            Some(200),
+            EtagKind::Weak,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        task.enabled = false;
+        task.enable_checked(true).await;
+        assert!(task.enabled);
+
+        // Disabling automatic sync withdraws the consent, so polling pauses and
+        // the next enable is gated by the strict check again. Reset the counters
+        // so the assertions below describe only what the re-enabled tick does.
+        task.engine
+            .config_store
+            .update(|config| config.auto_sync_enabled = false)
+            .unwrap();
+        task.apply_engine(task.engine.clone()).await;
+        assert!(!task.engine.config_store.config.webdav_unsafe_write_consent);
+        assert_eq!(task.phase, AutoSyncPhase::Disabled);
+
+        *mock.remote_calls.lock().unwrap() = 0;
+        *mock.push_calls.lock().unwrap() = 0;
+
+        task.engine
+            .config_store
+            .update(|config| config.auto_sync_enabled = true)
+            .unwrap();
+        task.enabled = true;
+        task.on_tick().await;
+        assert_eq!(task.phase, AutoSyncPhase::PausedCapability);
+        assert_eq!(
+            *mock.remote_calls.lock().unwrap(),
+            0,
+            "a withdrawn consent must stop the poll, not just the report"
+        );
+        assert_eq!(*mock.push_calls.lock().unwrap(), 0);
+    }
+
+    /// Granting consent must not also announce "auto-sync paused". The notice is
+    /// only accurate when the failure actually stops sync; here consent lets it
+    /// run, so a pause notice would contradict the `Watching` phase beside it.
+    #[tokio::test]
+    async fn consent_covered_failure_does_not_announce_a_pause() {
+        let dir = temp_config_dir("capability-consent-no-notice");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::VersionUnavailable,
+            "read-resource",
+            Some(200),
+            EtagKind::Missing,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = false;
+        task.enabled = false;
+
+        task.enable_checked(true).await;
+
+        assert!(task.enabled, "consent must enable automatic sync");
+        assert_eq!(
+            task.phase,
+            AutoSyncPhase::Watching,
+            "automatic sync is running, not paused"
+        );
+        assert!(
+            task.capability_notice_id.is_none(),
+            "a running fallback must not report itself as paused"
+        );
+        // The failure is still recorded, so the status stays truthful.
+        assert_eq!(task.capability.state, CapabilityState::Unsupported);
+    }
+
+    /// A failure that genuinely stops automatic sync keeps its notice.
+    #[tokio::test]
+    async fn blocking_failure_still_announces_a_pause() {
+        let dir = temp_config_dir("capability-blocking-notice");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::Permission,
+            "create",
+            Some(403),
+            EtagKind::Missing,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.auto_sync_enabled = true;
+        task.enabled = true;
+
+        task.on_tick().await;
+
+        assert_eq!(task.phase, AutoSyncPhase::PausedCapability);
+        assert!(
+            task.capability_notice_id.is_some(),
+            "a permission failure must still tell the user sync is paused"
+        );
     }
 
     #[tokio::test]
@@ -2146,6 +2451,7 @@ mod tests {
         let mut task = test_task(mock, &dir);
 
         let disabled_engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 dir.join("sync_config.toml"),
                 SyncConfig {
@@ -2160,6 +2466,7 @@ mod tests {
         assert_eq!(task.phase, AutoSyncPhase::Disabled);
 
         let enabled_engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 dir.join("sync_config.toml"),
                 SyncConfig {
@@ -2188,6 +2495,7 @@ mod tests {
             .expect("tracked file should be writable");
 
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 dir.join("sync_config.toml"),
                 SyncConfig {
@@ -2271,6 +2579,7 @@ mod tests {
         let settings_store = SettingsStore::load_with_path(dir.join("settings.toml"))
             .expect("test settings store should load");
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 dir.join("sync_config.toml"),
                 SyncConfig {
@@ -2328,6 +2637,7 @@ mod tests {
         let settings_store = SettingsStore::load_with_path(dir.join("settings.toml"))
             .expect("test settings store should load");
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 dir.join("sync_config.toml"),
                 SyncConfig {

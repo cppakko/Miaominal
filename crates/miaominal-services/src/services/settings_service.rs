@@ -182,9 +182,15 @@ impl SettingsService {
     }
 
     pub fn set_auto_sync_enabled(sync_engine: &mut SyncEngine, enabled: bool) -> Result<()> {
-        sync_engine
-            .config_store
-            .update(|config| config.auto_sync_enabled = enabled)
+        sync_engine.config_store.update(|config| {
+            config.auto_sync_enabled = enabled;
+            // Disabling automatic sync is also how the user revokes consent for
+            // unpreconditioned WebDAV uploads, so it never outlives the feature
+            // it was granted for.
+            if !enabled {
+                config.webdav_unsafe_write_consent = false;
+            }
+        })
     }
 
     pub fn persist_sync_github_token(sync_engine: &mut SyncEngine, token: &str) -> Result<()> {
@@ -654,6 +660,7 @@ mod tests {
 
         (
             SyncEngine {
+                last_capability_report: None,
                 config_store: SyncConfigStore::with_credentials(
                     config_path.clone(),
                     SyncConfig::default(),
@@ -685,6 +692,7 @@ mod tests {
         (
             SecretStore::with_credentials(credentials.clone()),
             SyncEngine {
+                last_capability_report: None,
                 config_store: SyncConfigStore::with_credentials(
                     config_path.clone(),
                     SyncConfig::default(),
@@ -826,6 +834,7 @@ mod tests {
     #[test]
     fn set_sync_provider_updates_provider() {
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::fallback(),
         };
 

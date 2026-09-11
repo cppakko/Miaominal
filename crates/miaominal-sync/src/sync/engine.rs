@@ -5,7 +5,7 @@ use super::payload::{
 use super::providers::{PullOutcome, PushCondition, PushOutcome, RemoteBackend};
 use super::store::SyncConfigStore;
 use crate::capability::{
-    CapabilityError, CapabilityReason, CapabilityReport, EtagKind, classify_etag,
+    CapabilityError, CapabilityReason, CapabilityReport, CapabilityState, EtagKind, classify_etag,
 };
 use crate::{SyncInterventionReason, SyncPayload, SyncPlaintextPayload, SyncProvider, SyncStatus};
 use anyhow::{Context, Result};
@@ -109,6 +109,14 @@ impl StdError for SyncConfigurationChangedDuringPull {}
 
 pub struct SyncEngine {
     pub config_store: SyncConfigStore,
+    /// Result of the most recent WebDAV capability probe, when one has run in
+    /// this process.
+    ///
+    /// A strong ETag does not prove the server honours conditional requests, so
+    /// the write path needs the probe's actual verdict before it may drop a
+    /// precondition. `None` means "not probed", which keeps preconditions — the
+    /// conservative default for every engine that is not driven by auto-sync.
+    pub last_capability_report: Option<CapabilityReport>,
 }
 
 impl Default for SyncEngine {
@@ -121,6 +129,7 @@ impl Clone for SyncEngine {
     fn clone(&self) -> Self {
         Self {
             config_store: self.config_store.clone(),
+            last_capability_report: self.last_capability_report.clone(),
         }
     }
 }
@@ -131,7 +140,10 @@ impl SyncEngine {
             log::warn!("failed to load sync config: {err:?}");
             SyncConfigStore::fallback()
         });
-        Self { config_store }
+        Self {
+            config_store,
+            last_capability_report: None,
+        }
     }
 
     pub fn new_locked_vault() -> Self {
@@ -139,7 +151,10 @@ impl SyncEngine {
             log::warn!("failed to load locked vault sync config: {err:?}");
             SyncConfigStore::fallback_with_locked_vault()
         });
-        Self { config_store }
+        Self {
+            config_store,
+            last_capability_report: None,
+        }
     }
 
     pub fn new_vault(passphrase: ProtectedPassphrase) -> Result<Self> {
@@ -147,7 +162,10 @@ impl SyncEngine {
             log::warn!("failed to load vault sync config: {err:?}");
             SyncConfigStore::fallback_with_vault(passphrase)
         })?;
-        Ok(Self { config_store })
+        Ok(Self {
+            config_store,
+            last_capability_report: None,
+        })
     }
 
     pub fn new_with_credentials(credentials: CredentialStore) -> Self {
@@ -156,7 +174,10 @@ impl SyncEngine {
                 log::warn!("failed to load sync config with shared credentials: {err:?}");
                 SyncConfigStore::fallback_with_credentials(credentials)
             });
-        Self { config_store }
+        Self {
+            config_store,
+            last_capability_report: None,
+        }
     }
 
     /// Read data from all stores, build an encrypted payload, and push it to the
@@ -245,8 +266,19 @@ impl SyncEngine {
         let force = mode == PushMode::Force;
         let manual_webdav = mode != PushMode::Automatic
             && self.config_store.config.provider == SyncProvider::WebDav;
+        // Consent replaces every HTTP write precondition with the three-way
+        // content comparison below, so the remote must be read in full rather
+        // than answered with a conditional 304.
+        let unsafe_webdav_write = mode == PushMode::Automatic
+            && self
+                .config_store
+                .config
+                .allows_unpreconditioned_webdav_write();
         let remote = self
-            .remote_payload_state(!manual_webdav, mode == PushMode::Automatic)
+            .remote_payload_state(
+                !manual_webdav && !unsafe_webdav_write,
+                mode == PushMode::Automatic && !unsafe_webdav_write,
+            )
             .await?;
         let start_config_revision = self.config_store.config.config_revision;
         let passphrase = self.sync_passphrase()?;
@@ -418,7 +450,17 @@ impl SyncEngine {
                 PushCondition::IfMatch(tag) => classify_etag(Some(tag)),
                 PushCondition::Unconditional => EtagKind::Missing,
             };
-            if kind != EtagKind::Strong {
+            // Whether a precondition must be dropped depends on the probe's
+            // verdict, never on how strong the tag looks. A server can return a
+            // perfectly good ETag and still reject every conditional request
+            // (`ConditionalWrite`), including the `If-None-Match: *` create that
+            // `MustNotExist` relies on.
+            let drop_precondition =
+                unsafe_webdav_write && self.probe_found_preconditions_unsupported();
+            if kind != EtagKind::Strong && !drop_precondition {
+                // No consent, or an endpoint the probe never cleared for
+                // unconditional writes: report the missing precondition instead
+                // of writing blind.
                 return Err(CapabilityError(CapabilityReport::issue(
                     CapabilityReason::VersionUnavailable,
                     "upload-precondition",
@@ -427,14 +469,23 @@ impl SyncEngine {
                 ))
                 .into());
             }
+            if condition != PushCondition::Unconditional && drop_precondition {
+                // User-confirmed fallback: the remote cannot prove it still holds
+                // the revision we synced, so the write goes out without a
+                // precondition and the content comparison above is the guard.
+                condition = PushCondition::Unconditional;
+            }
         }
         // A marker followed by an unconditional write is still racy: another
         // device may write between the final GET and our PUT/PATCH. Automatic
         // sync therefore refuses to overwrite an existing remote when the
         // provider supplies no atomic write precondition. The explicit force
-        // action is the user-confirmed escape hatch for such providers.
+        // action is the user-confirmed escape hatch for such providers, and the
+        // recorded unsafe-write consent is the standing equivalent for automatic
+        // sync — without it, this stays an intervention.
         if !manual_webdav
             && automatic_push_requires_confirmation(&condition, observed_remote_at, force)
+            && !unsafe_webdav_write
         {
             return Ok(SyncStatus::PullRequired {
                 remote_at: observed_remote_at,
@@ -464,6 +515,7 @@ impl SyncEngine {
             if matches!(outcome, PushOutcome::Conflict)
                 && mode == PushMode::Automatic
                 && self.config_store.config.provider == SyncProvider::WebDav
+                && !unsafe_webdav_write
             {
                 let observed_tag = match &condition {
                     PushCondition::IfMatch(tag) => Some(tag.as_str()),
@@ -522,7 +574,17 @@ impl SyncEngine {
             return Ok(RemoteSyncState::Disabled);
         }
         self.config_store.sync_from_disk();
-        Ok(match self.remote_payload_state(true, true).await? {
+        // Polling normally proves freshness with `If-None-Match` and demands a
+        // strong ETag. Under unsafe-write consent neither is available, so the
+        // remote is read in full and classified by content revision instead.
+        let unsafe_webdav_write = self
+            .config_store
+            .config
+            .allows_unpreconditioned_webdav_write();
+        let remote = self
+            .remote_payload_state(!unsafe_webdav_write, !unsafe_webdav_write)
+            .await?;
+        Ok(match remote {
             RemotePayloadState::BindingRequired(provider) => {
                 RemoteSyncState::BindingRequired(provider)
             }
@@ -686,9 +748,17 @@ impl SyncEngine {
             .unwrap_or(observed_revision);
         // A real pull must fetch the representation even when a preceding
         // poll, or a legacy config without the new revision baseline, already
-        // has a matching ETag.
+        // has a matching ETag. Under unsafe-write consent a conditional read is
+        // what the server cannot honour, so the body is always fetched.
+        let unsafe_webdav_write = self
+            .config_store
+            .config
+            .allows_unpreconditioned_webdav_write();
         let remote = self
-            .remote_payload_state(false, expected_local_revision.is_some())
+            .remote_payload_state(
+                false,
+                expected_local_revision.is_some() && !unsafe_webdav_write,
+            )
             .await?;
         // remote_payload_state already rejects configuration changes made while
         // the request is in flight. Capture its resulting revision (including a
@@ -956,6 +1026,30 @@ impl SyncEngine {
         }
     }
 
+    /// Whether the last WebDAV probe proved that conditional requests do *not*
+    /// work on this endpoint.
+    ///
+    /// Only a probe that failed specifically on a write precondition is that
+    /// evidence. Any other failure (`Cleanup`, `Network`, `Http`, an in-flight
+    /// `Checking`, or a never-run `Unchecked` probe) says nothing, so the
+    /// precondition must be kept: dropping it on the strength of an unrelated
+    /// probe result would silently widen the race the content comparison is
+    /// meant to close.
+    fn probe_found_preconditions_unsupported(&self) -> bool {
+        let Some(capability) = self.last_capability_report.as_ref() else {
+            // Not probed: nothing is proven, so keep the precondition.
+            return false;
+        };
+        if capability.state == CapabilityState::Supported {
+            // The server proved it handles the full conditional protocol.
+            return false;
+        }
+        capability.reason != Some(CapabilityReason::Cancelled)
+            && capability
+                .reason
+                .is_some_and(CapabilityReason::is_write_precondition_only)
+    }
+
     fn sync_passphrase(&self) -> Result<String> {
         let passphrase = self
             .config_store
@@ -1176,9 +1270,25 @@ mod tests {
             let settings =
                 SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
             let plaintext = empty_plaintext(&settings);
+            Self::with_plaintext(request_count, put_status, remote_etag, plaintext)
+        }
+
+        /// Build a fixture whose remote already holds `remote_plaintext`. The
+        /// stored baseline is the local revision, so a caller can stage a
+        /// diverged remote by passing content the local stores do not match.
+        fn with_plaintext(
+            request_count: usize,
+            put_status: &'static str,
+            remote_etag: &'static str,
+            remote_plaintext: SyncPlaintextPayload,
+        ) -> Self {
+            let temp = tempdir().unwrap();
+            let settings =
+                SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
+            let plaintext = empty_plaintext(&settings);
             let baseline = local_data_revision(&plaintext).unwrap();
             let payload =
-                build_payload("remote-device", None, &plaintext, "test-passphrase").unwrap();
+                build_payload("remote-device", None, &remote_plaintext, "test-passphrase").unwrap();
             let (url, server) = weak_etag_server(
                 serde_json::to_string(&payload).unwrap(),
                 request_count,
@@ -1187,6 +1297,7 @@ mod tests {
             );
             let credentials = memory_credentials();
             let mut engine = SyncEngine {
+                last_capability_report: None,
                 config_store: SyncConfigStore::with_credentials(
                     temp.path().join("sync_config.toml"),
                     crate::SyncConfig {
@@ -1266,7 +1377,11 @@ mod tests {
             }
         }
 
-        fn assert_uploaded(self, status: SyncStatus) {
+        /// Assert the upload succeeded and verify what actually reached the
+        /// remote. `preconditions_expected` states whether the write should have
+        /// carried `If-Match`/`If-None-Match`, which is a property of the write
+        /// path under test rather than of a successful upload.
+        fn assert_pushed(self, status: SyncStatus, preconditions_expected: bool) {
             let requests = self.server.join().unwrap();
             assert!(matches!(status, SyncStatus::Pushed { .. }), "{status:?}");
             assert!(requests.len() >= 2);
@@ -1276,8 +1391,11 @@ mod tests {
                     .unwrap()
                     .0
                     .to_ascii_lowercase();
-                assert!(!headers.contains("\r\nif-match:"), "{headers}");
-                assert!(!headers.contains("\r\nif-none-match:"), "{headers}");
+                assert_eq!(
+                    headers.contains("\r\nif-match:") || headers.contains("\r\nif-none-match:"),
+                    preconditions_expected,
+                    "unexpected precondition use: {headers}"
+                );
             }
             let uploaded =
                 parse_remote_payload(requests.last().unwrap().split_once("\r\n\r\n").unwrap().1)
@@ -1301,6 +1419,12 @@ mod tests {
                 Some("W/\"uploaded-etag\"")
             );
             assert_eq!(persisted.last_synced_local_revision, Some(revision));
+        }
+
+        /// The consent fallback: the upload must reach the remote without a
+        /// precondition.
+        fn assert_uploaded(self, status: SyncStatus) {
+            self.assert_pushed(status, false);
         }
     }
 
@@ -1425,6 +1549,204 @@ mod tests {
             EtagKind::Weak
         );
         assert_eq!(fixture.server.join().unwrap().len(), 1);
+        assert_eq!(fixture.engine.config_store.config, before);
+    }
+
+    /// A server can hand out a perfectly strong ETag and still reject every
+    /// conditional `PUT`. The probe reports that as `ConditionalWrite`, so
+    /// checking only the tag's strength left consent mode sending `If-Match`
+    /// into a 412 that never went away. Consent must drop the precondition on
+    /// the probe's verdict, not on how the tag looks.
+    #[tokio::test]
+    async fn consented_push_drops_precondition_for_rejected_conditional_writes() {
+        let mut fixture = WebDavPushFixture::with_etag(2, "204 No Content", "\"remote-etag\"");
+        consent_to_unpreconditioned_writes(&mut fixture);
+
+        let status = fixture.push(PushMode::Automatic).await.unwrap();
+        fixture.assert_uploaded(status);
+    }
+
+    /// Without that probe verdict the precondition must stay, even under
+    /// consent: an unprobed endpoint gets the safe write, not a silent
+    /// unconditional overwrite.
+    ///
+    /// Consent also disables the 412 escalation that would otherwise turn this
+    /// into a capability error, so the outcome is an ordinary conflict — which
+    /// is exactly the "stuck on 412" state the probe verdict exists to avoid.
+    #[tokio::test]
+    async fn consent_without_probe_evidence_keeps_the_precondition() {
+        let mut fixture = WebDavPushFixture::with_etag(2, "204 No Content", "\"remote-etag\"");
+        // Consent only, deliberately without the helper that also records a
+        // probe verdict: a strong tag alone is not evidence.
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+            })
+            .unwrap();
+        assert!(fixture.engine.last_capability_report.is_none());
+
+        let status = fixture.push(PushMode::Automatic).await.unwrap();
+        let requests = fixture.server.join().unwrap();
+        assert!(
+            matches!(
+                status,
+                SyncStatus::PullRequired {
+                    reason: SyncInterventionReason::RemoteChangedBeforePush,
+                    ..
+                }
+            ),
+            "{status:?}"
+        );
+        assert!(
+            requests[1]
+                .to_ascii_lowercase()
+                .contains("if-match: \"remote-etag\""),
+            "an unprobed endpoint must still send the conditional write"
+        );
+    }
+
+    /// A supported probe means the preconditions work, so consent must not
+    /// weaken the write: the conditional `PUT` still goes out.
+    ///
+    /// The mock answers a conditional `PUT` with 412, which is the point — the
+    /// assertion is that the precondition was *sent*, so the conflict it causes
+    /// is expected and is what this test checks.
+    #[tokio::test]
+    async fn supported_probe_keeps_the_precondition_under_consent() {
+        let mut fixture = WebDavPushFixture::with_etag(2, "204 No Content", "\"remote-etag\"");
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+            })
+            .unwrap();
+        fixture.engine.last_capability_report = Some(CapabilityReport::supported());
+
+        let status = fixture.push(PushMode::Automatic).await.unwrap();
+        let requests = fixture.server.join().unwrap();
+        assert!(
+            matches!(
+                status,
+                SyncStatus::PullRequired {
+                    reason: SyncInterventionReason::RemoteChangedBeforePush,
+                    ..
+                }
+            ),
+            "{status:?}"
+        );
+        assert!(
+            requests[1]
+                .to_ascii_lowercase()
+                .contains("if-match: \"remote-etag\""),
+            "a server that honours conditions must keep receiving them"
+        );
+    }
+
+    /// Grant the unsafe-write consent for an already-configured WebDAV fixture,
+    /// together with the probe verdict the fallback depends on.
+    ///
+    /// Consent alone is not enough: without a probe that found the preconditions
+    /// unusable, the write must keep them, so a fixture that means to exercise
+    /// the fallback has to state that verdict explicitly.
+    fn consent_to_unpreconditioned_writes(fixture: &mut WebDavPushFixture) {
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+            })
+            .unwrap();
+        fixture.engine.last_capability_report = Some(CapabilityReport::issue(
+            CapabilityReason::ConditionalWrite,
+            "create-existing",
+            Some(412),
+            EtagKind::Strong,
+        ));
+    }
+
+    #[tokio::test]
+    async fn consented_automatic_push_drops_preconditions_but_still_uploads() {
+        let mut fixture = WebDavPushFixture::new(2, "204 No Content");
+        consent_to_unpreconditioned_writes(&mut fixture);
+        let status = fixture.push(PushMode::Automatic).await.unwrap();
+        // `assert_uploaded` also proves no `If-Match`/`If-None-Match` was sent.
+        fixture.assert_uploaded(status);
+    }
+
+    #[tokio::test]
+    async fn consent_is_inert_while_automatic_sync_is_disabled() {
+        let mut fixture = WebDavPushFixture::new(1, "204 No Content");
+        fixture
+            .engine
+            .config_store
+            .update(|config| config.webdav_unsafe_write_consent = true)
+            .unwrap();
+        let before = fixture.engine.config_store.config.clone();
+        let error = fixture.push(PushMode::Automatic).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CapabilityError>().unwrap().0.etag_kind,
+            EtagKind::Weak
+        );
+        assert_eq!(fixture.server.join().unwrap().len(), 1);
+        assert_eq!(fixture.engine.config_store.config, before);
+    }
+
+    #[tokio::test]
+    async fn consented_automatic_push_still_refuses_to_overwrite_diverged_content() {
+        // The remote holds content this device never synced, so the three-way
+        // comparison reports divergence. Consent only removes the HTTP
+        // preconditions; it must not turn that into an overwrite.
+        let staging = tempdir().unwrap();
+        let staging_settings =
+            SettingsStore::load_with_path(staging.path().join("settings.toml")).unwrap();
+        let mut remote_plaintext = empty_plaintext(&staging_settings);
+        remote_plaintext.sessions = vec![SessionProfile::blank("remote-session", 9)];
+        let mut fixture = WebDavPushFixture::with_plaintext(
+            1,
+            "204 No Content",
+            "W/\"remote-etag\"",
+            remote_plaintext,
+        );
+        fixture
+            .engine
+            .config_store
+            .update(|config| {
+                // The remote is a revision this device never acknowledged, so
+                // it is compared by content rather than treated as current.
+                config.remote_payload_id = None;
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+            })
+            .unwrap();
+
+        let before = fixture.engine.config_store.config.clone();
+        let status = fixture
+            .push(PushMode::Automatic)
+            .await
+            .expect("push should classify, not fail");
+        let requests = fixture.server.join().unwrap();
+
+        assert!(
+            matches!(
+                status,
+                SyncStatus::PullRequired {
+                    reason: SyncInterventionReason::BothSidesChanged,
+                    ..
+                }
+            ),
+            "{status:?}"
+        );
+        assert_eq!(
+            requests.len(),
+            1,
+            "the diverged remote must not be overwritten"
+        );
         assert_eq!(fixture.engine.config_store.config, before);
     }
 
@@ -1569,6 +1891,7 @@ mod tests {
             payload_server(serde_json::to_string(&payload).expect("payload should serialize"));
         let credentials = memory_credentials();
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 root.join("sync_config.toml"),
                 crate::SyncConfig {
@@ -1725,6 +2048,7 @@ mod tests {
         .expect("payload should build");
         payload.payload_id.clear();
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {
@@ -1853,6 +2177,7 @@ mod tests {
         );
         let credentials = memory_credentials();
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {
@@ -1923,6 +2248,7 @@ mod tests {
         );
         let credentials = memory_credentials();
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {
@@ -1984,6 +2310,7 @@ mod tests {
         );
         let credentials = memory_credentials();
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {
@@ -2033,6 +2360,7 @@ mod tests {
         let (url, server) = not_modified_server();
         let credentials = memory_credentials();
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {
@@ -2095,6 +2423,7 @@ mod tests {
         let temp = tempdir().expect("temporary directory should exist");
         let credentials = memory_credentials();
         let mut engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 crate::SyncConfig {

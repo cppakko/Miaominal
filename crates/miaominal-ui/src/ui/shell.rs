@@ -117,7 +117,7 @@ pub(in crate::ui::shell) use controllers::{
     PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
     PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
-    PendingWebSearchConfigPopupState, PromptHistoryDirection,
+    PendingSyncUnsafeWriteConsentState, PendingWebSearchConfigPopupState, PromptHistoryDirection,
     SessionAgentBackgroundNotificationKind, SessionAgentMessage, SessionAgentMessageMotion,
     SessionAgentMessageRole, SessionAgentPanelDragState, SessionAgentTargetCandidate,
     SessionAgentToolCall, SessionAgentToolStatus, SessionConnectionState, SessionController,

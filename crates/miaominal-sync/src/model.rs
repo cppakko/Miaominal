@@ -44,6 +44,18 @@ pub struct SyncConfig {
     pub device_id: String,
     #[serde(default)]
     pub auto_sync_enabled: bool,
+    /// Explicit, revocable user consent for last-write-wins automatic uploads.
+    ///
+    /// A WebDAV server that offers no usable HTTP write precondition (missing or
+    /// weak ETag, ignored `If-None-Match`, or `412` on conditional `PUT`) cannot
+    /// prove that the remote still holds the revision this device last synced.
+    /// With this consent recorded, automatic sync still classifies the three-way
+    /// content relation and still refuses to overwrite genuinely diverged
+    /// remote content, but drops the HTTP preconditions and therefore accepts a
+    /// narrow race between its final read and its write. Consent is cleared
+    /// whenever automatic sync is turned off, so re-enabling always re-prompts.
+    #[serde(default)]
+    pub webdav_unsafe_write_consent: bool,
     #[serde(default)]
     pub remote_etag: Option<String>,
     #[serde(default)]
@@ -68,6 +80,7 @@ impl Default for SyncConfig {
             last_sync_at: 0,
             device_id: String::new(),
             auto_sync_enabled: false,
+            webdav_unsafe_write_consent: false,
             remote_etag: None,
             remote_payload_id: None,
             last_synced_local_revision: None,
@@ -79,6 +92,17 @@ impl SyncConfig {
     pub fn normalize_legacy_provider_flags(&mut self) {
         self.gist_enabled = true;
         self.webdav_enabled = true;
+    }
+
+    /// Whether automatic WebDAV uploads may drop HTTP write preconditions.
+    ///
+    /// Only WebDAV is ever gated by the capability probe, and consent is
+    /// meaningless for a provider that supplies real preconditions, so the flag
+    /// is scoped to the WebDAV provider as well as to automatic sync.
+    pub fn allows_unpreconditioned_webdav_write(&self) -> bool {
+        self.webdav_unsafe_write_consent
+            && self.auto_sync_enabled
+            && self.provider == SyncProvider::WebDav
     }
 }
 

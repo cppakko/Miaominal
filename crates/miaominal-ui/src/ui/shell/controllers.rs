@@ -62,8 +62,9 @@ pub(in crate::ui::shell) use settings::{
     PendingProxyConfigPopupState, PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
     PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
-    PendingWebSearchConfigPopupState, ProxySaveDraft, SettingsController, SettingsControllerArgs,
-    SettingsForms, SyncProviderConfigSaveDraft, SyncPullConfirmReason, WebSearchSaveDraft,
+    PendingSyncUnsafeWriteConsentState, PendingWebSearchConfigPopupState, ProxySaveDraft,
+    SettingsController, SettingsControllerArgs, SettingsForms, SyncProviderConfigSaveDraft,
+    SyncPullConfirmReason, WebSearchSaveDraft,
 };
 pub(in crate::ui::shell) use sftp::{
     LocalSftpEntry, SessionSftpProgressCenterDragState, SessionSftpProgressLayoutState,

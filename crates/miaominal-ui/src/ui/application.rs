@@ -168,10 +168,14 @@ struct GlobalApplicationState(Entity<ApplicationState>);
 impl Global for GlobalApplicationState {}
 
 impl ApplicationState {
-    pub(crate) fn request_auto_sync_check(&self, enable: bool) -> bool {
+    /// Ask the auto-sync service to run the capability check for an enable
+    /// request. `unsafe_write_consent` records the user's acceptance of
+    /// unpreconditioned WebDAV uploads before the probe runs, so a failure the
+    /// consent already covers enables automatic sync instead of blocking it.
+    pub(crate) fn request_auto_sync_check(&self, enable: bool, unsafe_write_consent: bool) -> bool {
         self.auto_sync.as_ref().is_some_and(|service| {
             if enable {
-                service.enable_checked()
+                service.enable_checked(unsafe_write_consent)
             } else {
                 service.recheck_capability()
             }

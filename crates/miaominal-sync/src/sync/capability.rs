@@ -155,6 +155,45 @@ impl std::fmt::Display for CapabilityError {
 }
 impl std::error::Error for CapabilityError {}
 
+impl CapabilityReason {
+    /// Whether this failure is only about the HTTP write preconditions that the
+    /// user-confirmed last-write-wins fallback replaces.
+    ///
+    /// These are exactly the failures where the remote pair (ETag,
+    /// `If-None-Match`, conditional `PUT`) is unusable but the endpoint is
+    /// otherwise healthy: the payload is self-describing through `payload_id`,
+    /// so a plain `GET` still reveals whether another device moved the remote
+    /// on, and a plain `PUT` still lands. Every other reason — a network,
+    /// authentication, permission, redirect, cleanup, HTTP or configuration
+    /// problem — means nothing was proven about preconditions at all, so the
+    /// fallback would be built on an unverified endpoint.
+    pub fn is_write_precondition_only(self) -> bool {
+        matches!(
+            self,
+            Self::VersionUnavailable | Self::ConditionalRead | Self::ConditionalWrite
+        )
+    }
+}
+
+impl CapabilityReport {
+    /// Whether this report may be set aside under explicit unsafe-write consent.
+    ///
+    /// `Supported` needs no consent. A failure only qualifies when the user has
+    /// already accepted unpreconditioned writes *and* the failure is limited to
+    /// the replaced preconditions. Cancellation is deliberately excluded: it
+    /// says nothing about the endpoint and must be re-probed.
+    pub fn permits_unpreconditioned_write(&self, consent: bool) -> bool {
+        if self.state == CapabilityState::Supported {
+            return true;
+        }
+        if !consent || self.reason == Some(CapabilityReason::Cancelled) {
+            return false;
+        }
+        self.reason
+            .is_some_and(CapabilityReason::is_write_precondition_only)
+    }
+}
+
 /// Cancellation generations let the UI invalidate an in-flight check without
 /// aborting its cleanup future. A new operation captures the latest generation.
 #[derive(Clone, Debug, Default)]
@@ -872,6 +911,66 @@ mod tests {
         ] {
             assert_eq!(classify_etag(tag), expected, "{tag:?}");
         }
+    }
+
+    /// Only a failure about the HTTP write preconditions may be set aside by
+    /// consent. Every other reason means nothing was proven about the endpoint,
+    /// so the fallback would be built on an unverified service.
+    #[test]
+    fn consent_covers_write_preconditions_and_nothing_else() {
+        let issue = |reason, state_kind| {
+            let mut report = CapabilityReport::issue(reason, "probe", Some(200), EtagKind::Strong);
+            report.state = state_kind;
+            report
+        };
+
+        for reason in [
+            CapabilityReason::VersionUnavailable,
+            CapabilityReason::ConditionalRead,
+            CapabilityReason::ConditionalWrite,
+        ] {
+            assert!(
+                reason.is_write_precondition_only(),
+                "{reason:?} should be replaceable by the content comparison"
+            );
+            assert!(
+                issue(reason, CapabilityState::Unsupported).permits_unpreconditioned_write(true),
+                "{reason:?} should not block a consented enable"
+            );
+            assert!(
+                !issue(reason, CapabilityState::Unsupported).permits_unpreconditioned_write(false),
+                "{reason:?} must still block without consent"
+            );
+        }
+
+        for reason in [
+            CapabilityReason::Network,
+            CapabilityReason::Authentication,
+            CapabilityReason::Permission,
+            CapabilityReason::Redirect,
+            CapabilityReason::Http,
+            CapabilityReason::Cleanup,
+            CapabilityReason::Configuration,
+        ] {
+            assert!(
+                !reason.is_write_precondition_only(),
+                "{reason:?} is not a write-precondition failure"
+            );
+            assert!(
+                !issue(reason, CapabilityState::Incomplete).permits_unpreconditioned_write(true),
+                "{reason:?} must block even with consent"
+            );
+        }
+
+        // Cancellation and an in-flight check say nothing about the service, so
+        // consent must not turn either into an enable.
+        assert!(
+            !issue(CapabilityReason::Cancelled, CapabilityState::Incomplete)
+                .permits_unpreconditioned_write(true)
+        );
+        assert!(!CapabilityReport::default().permits_unpreconditioned_write(true));
+        // A supported service never needed consent.
+        assert!(CapabilityReport::supported().permits_unpreconditioned_write(false));
     }
 
     /// A cleanup issues up to three serial requests, so its deadline has to

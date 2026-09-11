@@ -343,6 +343,7 @@ fn merge_external_config_changes(
     merge_field!(last_sync_at);
     merge_field!(device_id);
     merge_field!(auto_sync_enabled);
+    merge_field!(webdav_unsafe_write_consent);
     merge_field!(remote_etag);
     merge_field!(remote_payload_id);
     merge_field!(last_synced_local_revision);
@@ -457,6 +458,11 @@ mod tests {
         let config = SyncConfig::default();
         assert!(!config.auto_sync_enabled);
         assert_eq!(config.remote_etag, None);
+        assert!(
+            !config.webdav_unsafe_write_consent,
+            "unpreconditioned writes must be opt-in"
+        );
+        assert!(!config.allows_unpreconditioned_webdav_write());
 
         let config_path = temp_sync_config_path();
         let credentials =
@@ -478,6 +484,57 @@ mod tests {
 
         assert!(loaded.auto_sync_enabled);
         assert_eq!(loaded.remote_etag.as_deref(), Some("\"etag-v1\""));
+        assert!(!loaded.webdav_unsafe_write_consent);
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn unsafe_write_consent_roundtrips_and_needs_automatic_webdav_sync() {
+        let mut config = SyncConfig {
+            provider: crate::SyncProvider::WebDav,
+            auto_sync_enabled: true,
+            webdav_unsafe_write_consent: true,
+            ..SyncConfig::default()
+        };
+        assert!(config.allows_unpreconditioned_webdav_write());
+
+        // Consent is scoped to automatic sync and to the WebDAV provider, so it
+        // can never relax a manual push or another provider's preconditions.
+        config.auto_sync_enabled = false;
+        assert!(!config.allows_unpreconditioned_webdav_write());
+        config.auto_sync_enabled = true;
+        config.provider = crate::SyncProvider::GithubGist;
+        assert!(!config.allows_unpreconditioned_webdav_write());
+
+        let config_path = temp_sync_config_path();
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+        let mut store = SyncConfigStore::with_credentials(
+            config_path.clone(),
+            SyncConfig::default(),
+            credentials,
+        );
+        store
+            .update(|config| {
+                config.provider = crate::SyncProvider::WebDav;
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+            })
+            .expect("config update should persist");
+
+        let content = std::fs::read_to_string(&config_path).expect("config should be readable");
+        let loaded = toml::from_str::<SyncConfig>(&content).expect("config should parse");
+        assert!(loaded.webdav_unsafe_write_consent);
+        assert!(loaded.allows_unpreconditioned_webdav_write());
+
+        store
+            .update(|config| config.webdav_unsafe_write_consent = false)
+            .expect("withdrawing consent should persist");
+        let content = std::fs::read_to_string(&config_path).expect("config should be readable");
+        let loaded = toml::from_str::<SyncConfig>(&content).expect("config should parse");
+        assert!(!loaded.webdav_unsafe_write_consent);
+        assert!(!loaded.allows_unpreconditioned_webdav_write());
 
         let _ = fs::remove_file(config_path);
     }

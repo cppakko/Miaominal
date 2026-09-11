@@ -2139,6 +2139,18 @@ missing_baseline_message = "This device has no record of the previous sync, so M
 force_push = "Keep this device's configuration"
 confirm = "Keep remote configuration"
 
+[settings.sync.dialogs.unsafe_write_consent]
+title = "Turn on auto-sync anyway?"
+message = "This sync service cannot confirm, before an upload, that the remote configuration has not just been changed by another device. If two devices upload at almost the same time, the later upload overwrites the earlier one and those changes are lost."
+defect = "Service limitation: {{defect}}"
+defect_missing = "returns no ETag, so configuration versions cannot be marked"
+defect_weak = "returns only a weak ETag, so configuration versions cannot be marked"
+defect_invalid = "returns an invalid ETag"
+defect_read = "ignores conditional reads"
+defect_write = "does not check the version on write"
+confirm = "Turn on anyway"
+cancel = "Keep it off"
+
 [settings.sync.capability]
 failed = "Could not enable automatic sync"
 reason_weak = "The service returned a weak ETag, which cannot protect conditional uploads."

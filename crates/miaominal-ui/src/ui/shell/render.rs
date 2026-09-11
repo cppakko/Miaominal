@@ -4,6 +4,27 @@ use crate::ui::i18n;
 use gpui_kit::component::Disableable;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProtocol};
 
+/// One short phrase naming what is wrong with this WebDAV service.
+///
+/// The dialog's main line describes the general risk; this names the concrete
+/// defect behind it so the user can tell whether their server can be fixed. It
+/// stays a single phrase because every report that reaches this dialog is a
+/// precondition failure — reusing the longer upstream diagnostics would restate
+/// the risk already on screen.
+fn sync_defect_summary(report: &miaominal_sync::capability::CapabilityReport) -> String {
+    use miaominal_sync::capability::{CapabilityReason as Reason, EtagKind};
+    let key = match report.reason {
+        Some(Reason::VersionUnavailable) => match report.etag_kind {
+            EtagKind::Weak => "settings.sync.dialogs.unsafe_write_consent.defect_weak",
+            EtagKind::Missing => "settings.sync.dialogs.unsafe_write_consent.defect_missing",
+            _ => "settings.sync.dialogs.unsafe_write_consent.defect_invalid",
+        },
+        Some(Reason::ConditionalRead) => "settings.sync.dialogs.unsafe_write_consent.defect_read",
+        _ => "settings.sync.dialogs.unsafe_write_consent.defect_write",
+    };
+    i18n::string(key)
+}
+
 #[derive(Clone, Copy)]
 struct PageEditorSidebarRenderState {
     kind: PageEditorSidebarKind,
@@ -180,6 +201,7 @@ impl Render for AppView {
         let pending_chat_session_rename = self.pending_chat_session_rename_prompt(cx);
         let pending_sync_direction = self.pending_sync_direction_prompt(cx);
         let pending_sync_pull_confirm = self.pending_sync_pull_confirm_prompt(cx);
+        let pending_sync_unsafe_write_consent = self.pending_sync_unsafe_write_consent_prompt(cx);
         let pending_local_vault_disable_confirm =
             self.pending_local_vault_disable_confirm_prompt(cx);
         let pending_local_data_reset_confirm = self.pending_local_data_reset_confirm_prompt(cx);
@@ -373,6 +395,9 @@ impl Render for AppView {
             })
             .when_some(pending_sync_pull_confirm, |this, prompt| {
                 this.child(self.render_sync_pull_confirm_prompt(entity.clone(), &prompt, None))
+            })
+            .when_some(pending_sync_unsafe_write_consent, |this, prompt| {
+                this.child(self.render_sync_unsafe_write_consent_prompt(&prompt, None))
             })
             .when_some(pending_local_vault_disable_confirm, |this, prompt| {
                 this.child(self.render_local_vault_disable_confirm_prompt(
@@ -2270,6 +2295,74 @@ impl AppView {
         )
     }
 
+    /// Ask the user to accept last-write-wins uploads for a WebDAV service that
+    /// cannot prove the remote is unchanged before an upload.
+    fn render_sync_unsafe_write_consent_prompt(
+        &self,
+        prompt: &PendingSyncUnsafeWriteConsentState,
+        exit_progress: Option<f32>,
+    ) -> gpui_kit::AnyElement {
+        let controller_cancel = self.controllers.settings.clone();
+        let controller_confirm = self.controllers.settings.clone();
+        let roles = miaominal_settings::current_theme().material.roles;
+
+        let body = v_flex()
+            .w_full()
+            .min_w(px(0.0))
+            .gap_2()
+            .child(i18n::string(
+                "settings.sync.dialogs.unsafe_write_consent.message",
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                    .line_height(miaominal_settings::scaled_line_height(16.0))
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(i18n::string_args(
+                        "settings.sync.dialogs.unsafe_write_consent.defect",
+                        &[("defect", &sync_defect_summary(&prompt.capability))],
+                    )),
+            );
+
+        render_basic_dialog(
+            "sync-unsafe-write-consent",
+            i18n::string("settings.sync.dialogs.unsafe_write_consent.title"),
+            None,
+            Some(body.into_any_element()),
+            h_flex()
+                .gap_2()
+                .justify_end()
+                .child(
+                    basic_dialog_action_button(
+                        "sync-unsafe-write-consent-cancel",
+                        i18n::string("settings.sync.dialogs.unsafe_write_consent.cancel"),
+                        BasicDialogActionTone::Default,
+                    )
+                    .on_click(move |_, _, cx| {
+                        controller_cancel.update(cx, |controller, cx| {
+                            controller.cancel_sync_unsafe_write_consent(cx);
+                        });
+                    }),
+                )
+                .child(
+                    basic_dialog_action_button(
+                        "sync-unsafe-write-consent-confirm",
+                        i18n::string("settings.sync.dialogs.unsafe_write_consent.confirm"),
+                        BasicDialogActionTone::Default,
+                    )
+                    .on_click(move |_, _, cx| {
+                        controller_confirm.update(cx, |controller, cx| {
+                            controller.confirm_sync_unsafe_write_consent(cx);
+                        });
+                    }),
+                )
+                .into_any_element(),
+            exit_progress,
+        )
+    }
+
     fn render_local_vault_disable_confirm_prompt(
         &self,
         _entity: Entity<Self>,
@@ -3898,6 +3991,9 @@ impl AppView {
             DialogOverlaySnapshot::SyncPullConfirm(prompt) => {
                 self.render_sync_pull_confirm_prompt(entity, &prompt, Some(exit_progress))
             }
+            DialogOverlaySnapshot::SyncUnsafeWriteConsent(prompt) => {
+                self.render_sync_unsafe_write_consent_prompt(&prompt, Some(exit_progress))
+            }
             DialogOverlaySnapshot::LocalVaultDisableConfirm(prompt) => {
                 self.render_local_vault_disable_confirm_prompt(entity, &prompt, Some(exit_progress))
             }
@@ -3984,6 +4080,65 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every precondition failure must name a concrete defect, so the dialog
+    /// line is never empty, and the report's ETag kind must pick the matching
+    /// phrase rather than falling through to the write wording.
+    #[test]
+    fn defect_summary_names_each_precondition_failure() {
+        use miaominal_sync::capability::{
+            CapabilityReason as Reason, CapabilityReport, CapabilityState, EtagKind,
+        };
+
+        let report = |reason, etag_kind| CapabilityReport {
+            state: CapabilityState::Unsupported,
+            reason: Some(reason),
+            step: "read-resource".into(),
+            http_status: Some(200),
+            etag_kind,
+            checked_at: 0,
+            cleanup_file: None,
+        };
+
+        for (reason, etag_kind, expected_key) in [
+            (
+                Reason::VersionUnavailable,
+                EtagKind::Missing,
+                "settings.sync.dialogs.unsafe_write_consent.defect_missing",
+            ),
+            (
+                Reason::VersionUnavailable,
+                EtagKind::Weak,
+                "settings.sync.dialogs.unsafe_write_consent.defect_weak",
+            ),
+            (
+                Reason::VersionUnavailable,
+                EtagKind::Invalid,
+                "settings.sync.dialogs.unsafe_write_consent.defect_invalid",
+            ),
+            (
+                Reason::ConditionalRead,
+                EtagKind::Strong,
+                "settings.sync.dialogs.unsafe_write_consent.defect_read",
+            ),
+            (
+                Reason::ConditionalWrite,
+                EtagKind::Strong,
+                "settings.sync.dialogs.unsafe_write_consent.defect_write",
+            ),
+        ] {
+            let summary = sync_defect_summary(&report(reason, etag_kind));
+            assert_eq!(
+                summary,
+                i18n::string(expected_key),
+                "{reason:?}/{etag_kind:?}"
+            );
+            assert!(
+                !summary.trim().is_empty(),
+                "{reason:?}/{etag_kind:?} must not render an empty defect"
+            );
+        }
+    }
 
     fn sidebar_transition(
         kind: PageEditorSidebarKind,

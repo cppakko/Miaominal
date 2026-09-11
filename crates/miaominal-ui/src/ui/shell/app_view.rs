@@ -1107,6 +1107,17 @@ impl AppView {
         self.controllers.settings.read(cx).sync_pull_confirm()
     }
 
+    pub(in crate::ui::shell) fn pending_sync_unsafe_write_consent_prompt(
+        &self,
+        cx: &App,
+    ) -> Option<PendingSyncUnsafeWriteConsentState> {
+        self.controllers
+            .settings
+            .read(cx)
+            .sync_unsafe_write_consent()
+            .cloned()
+    }
+
     pub(in crate::ui::shell) fn pending_local_vault_disable_confirm_prompt(
         &self,
         cx: &App,

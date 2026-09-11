@@ -9,6 +9,7 @@ use crate::SyncProvider;
 /// providers (currently GitHub Gist) report a resource id that the engine must
 /// persist so subsequent pushes target the same remote object. `etag` lets the
 /// engine persist the remote representation for conditional pulls.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PushCondition {
     IfMatch(String),
     MustNotExist,

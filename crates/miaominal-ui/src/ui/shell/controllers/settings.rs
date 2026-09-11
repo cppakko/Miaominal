@@ -47,7 +47,8 @@ use miaominal_settings::{
 use miaominal_ssh::{SshBridgeStatus, SshBridgeSyncResult};
 use miaominal_storage::{ProxyStore, SettingsStore};
 use miaominal_sync::{
-    SyncConfig, SyncInterventionReason, SyncProvider, SyncStatus, engine::SyncEngine,
+    SyncConfig, SyncInterventionReason, SyncProvider, SyncStatus, capability::CapabilityReason,
+    engine::SyncEngine,
 };
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -350,6 +351,81 @@ pub(in crate::ui::shell) struct PendingSyncPullConfirmState {
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingLocalVaultDisableConfirmState;
 
+/// The WebDAV capability probe failed on a write precondition. Enabling
+/// automatic sync anyway accepts last-write-wins uploads for this endpoint.
+///
+/// Carries the probe report so the dialog can name the exact defect instead of
+/// describing only the general risk.
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingSyncUnsafeWriteConsentState {
+    pub(in crate::ui::shell) capability: miaominal_sync::capability::CapabilityReport,
+}
+
+/// Why the WebDAV capability probe is running.
+///
+/// This is deliberately *not* a consent decision. Turning the switch on only
+/// asks whether automatic sync is possible; accepting unpreconditioned uploads
+/// is a separate, explicit choice the confirmation dialog collects. Conflating
+/// the two let a plain toggle record consent, which answered the strict probe,
+/// enabled automatic sync, and suppressed the dialog entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoSyncEnableRequest {
+    /// The user turned the switch on and has accepted nothing yet.
+    UserEnable,
+    /// A background recheck; never prompts and never records consent.
+    Recheck,
+}
+
+/// What a finished capability probe means for a pending user-initiated enable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoSyncEnableDecision {
+    /// The probe passed: the service already enabled automatic sync with the
+    /// strict request, so the UI only stops waiting and must not re-request.
+    AlreadyEnabled,
+    /// The stored consent covers this failure; re-enable with that consent.
+    EnableWithConsent,
+    /// Ask the user to accept last-write-wins uploads for this endpoint.
+    AskForConsent,
+    /// Not a precondition failure, so the existing failure notification stands.
+    ReportFailure,
+}
+
+/// Decide how a capability result resolves a pending user-initiated enable.
+///
+/// Returns `None` while the probe this surface started is still running, so a
+/// later snapshot can resolve it. This is the whole enable decision, kept free
+/// of controller state so it can be tested directly.
+///
+/// The already-enabled state is deliberately *not* consulted: a capability that
+/// consent does not cover must still be offered to the user even if the service
+/// somehow recorded the preference, otherwise the accepted risk would never be
+/// shown. Case 3 also keeps confirmation from looping.
+fn auto_sync_enable_decision(
+    phase: miaominal_services::AutoSyncPhase,
+    unsafe_write_consent: bool,
+    capability: &miaominal_sync::capability::CapabilityReport,
+) -> Option<AutoSyncEnableDecision> {
+    if phase == miaominal_services::AutoSyncPhase::CheckingCapability {
+        return None;
+    }
+    // A passing probe needs no consent at all. Re-requesting here would persist
+    // an acceptance the user was never shown, granting standing permission to
+    // drop write preconditions on a server that does not need it.
+    if capability.state == miaominal_sync::capability::CapabilityState::Supported {
+        return Some(AutoSyncEnableDecision::AlreadyEnabled);
+    }
+    if capability.permits_unpreconditioned_write(unsafe_write_consent) {
+        return Some(AutoSyncEnableDecision::EnableWithConsent);
+    }
+    if capability
+        .reason
+        .is_some_and(CapabilityReason::is_write_precondition_only)
+    {
+        return Some(AutoSyncEnableDecision::AskForConsent);
+    }
+    Some(AutoSyncEnableDecision::ReportFailure)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct PendingLocalDataResetConfirmState;
 
@@ -611,6 +687,8 @@ pub(in crate::ui::shell) struct SettingsController {
     editing_ai_provider_id: Option<String>,
     sync_direction: Option<PendingSyncDirectionState>,
     sync_pull_confirm: Option<PendingSyncPullConfirmState>,
+    sync_unsafe_write_consent: Option<PendingSyncUnsafeWriteConsentState>,
+    pending_auto_sync_enable: Option<AutoSyncEnableRequest>,
     local_vault_disable_confirm: Option<PendingLocalVaultDisableConfirmState>,
     local_data_reset_confirm: Option<PendingLocalDataResetConfirmState>,
     local_data_reset_confirmation_popup: Option<PendingLocalDataResetConfirmationPopupState>,
@@ -1908,6 +1986,8 @@ impl SettingsController {
             editing_ai_provider_id: None,
             sync_direction: None,
             sync_pull_confirm: None,
+            sync_unsafe_write_consent: None,
+            pending_auto_sync_enable: None,
             local_vault_disable_confirm: None,
             local_data_reset_confirm: None,
             local_data_reset_confirmation_popup: None,
@@ -2515,6 +2595,9 @@ impl SettingsController {
     ) {
         self.replace_sync_engine(sync_engine);
         self.auto_sync_snapshot = snapshot;
+        // A user-initiated enable awaits this probe result: it either enables
+        // automatic sync or asks the user to accept last-write-wins uploads.
+        self.resolve_pending_auto_sync_enable(cx);
         cx.notify();
     }
 
@@ -2528,6 +2611,13 @@ impl SettingsController {
             return;
         }
         if !enabled {
+            // Turning automatic sync off also withdraws any recorded consent,
+            // so a later enable starts from the strict capability check.
+            self.sync_unsafe_write_consent = None;
+            // Invalidate a user-enable request whose capability probe is still
+            // completing; its late snapshot must not reopen the consent dialog
+            // or enable automatic sync after the switch was turned off.
+            self.pending_auto_sync_enable = None;
             crate::ui::application::application_state(cx)
                 .read(cx)
                 .cancel_auto_sync_check();
@@ -2557,13 +2647,103 @@ impl SettingsController {
         if self.sync_config().provider != SyncProvider::WebDav {
             return;
         }
+        let request = if enable {
+            AutoSyncEnableRequest::UserEnable
+        } else {
+            AutoSyncEnableRequest::Recheck
+        };
+        // A plain toggle carries no consent. The probe must run strict first, so
+        // a precondition failure can be reported back and offered to the user
+        // instead of being silently accepted by the enable request itself.
         let accepted = crate::ui::application::application_state(cx)
             .read(cx)
-            .request_auto_sync_check(enable);
+            .request_auto_sync_check(enable, false);
         if accepted {
+            self.pending_auto_sync_enable = enable.then_some(request);
             self.auto_sync_snapshot.phase = miaominal_services::AutoSyncPhase::CheckingCapability;
             self.auto_sync_snapshot.capability.state =
                 miaominal_sync::capability::CapabilityState::Checking;
+            cx.notify();
+        }
+    }
+
+    /// Turn the capability probe result into a decision for a pending enable.
+    ///
+    /// Only a probe this surface started can prompt, so a background pause never
+    /// interrupts the user. A failure the recorded consent already covers is
+    /// applied directly; a precondition-only failure without consent asks the
+    /// user to accept last-write-wins uploads; anything else leaves the existing
+    /// failure notification to report it.
+    fn resolve_pending_auto_sync_enable(&mut self, cx: &mut Context<Self>) {
+        let Some(request) = self.pending_auto_sync_enable else {
+            return;
+        };
+        if request != AutoSyncEnableRequest::UserEnable {
+            return;
+        }
+        let decision = auto_sync_enable_decision(
+            self.auto_sync_snapshot.phase,
+            self.sync_config().webdav_unsafe_write_consent,
+            &self.auto_sync_snapshot.capability,
+        );
+        let Some(decision) = decision else {
+            return;
+        };
+        self.pending_auto_sync_enable = None;
+        match decision {
+            AutoSyncEnableDecision::AlreadyEnabled => {
+                // The strict request already succeeded; consent stays untouched.
+            }
+            AutoSyncEnableDecision::EnableWithConsent => {
+                // Consent was granted earlier and survives, so this enable needs
+                // no second prompt.
+                self.enable_auto_sync_after_capability_check(true, cx);
+            }
+            AutoSyncEnableDecision::AskForConsent => {
+                self.sync_unsafe_write_consent = Some(PendingSyncUnsafeWriteConsentState {
+                    capability: self.auto_sync_snapshot.capability.clone(),
+                });
+                cx.notify();
+            }
+            AutoSyncEnableDecision::ReportFailure => {}
+        }
+    }
+
+    /// Re-ask the auto-sync service to enable automatic sync, this time telling
+    /// it which consent applies. The service stores the consent before probing,
+    /// so a failure it covers enables automatic sync instead of blocking it.
+    fn enable_auto_sync_after_capability_check(
+        &mut self,
+        unsafe_write_consent: bool,
+        cx: &mut Context<Self>,
+    ) {
+        crate::ui::application::application_state(cx)
+            .read(cx)
+            .request_auto_sync_check(true, unsafe_write_consent);
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn confirm_sync_unsafe_write_consent(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(prompt) = self.sync_unsafe_write_consent.take() else {
+            return;
+        };
+        cx.emit(AppCommand::OverlayDismissed(
+            DialogOverlaySnapshot::SyncUnsafeWriteConsent(prompt),
+        ));
+        self.enable_auto_sync_after_capability_check(true, cx);
+    }
+
+    pub(in crate::ui::shell) fn cancel_sync_unsafe_write_consent(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(prompt) = self.sync_unsafe_write_consent.take() {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::SyncUnsafeWriteConsent(prompt),
+            ));
             cx.notify();
         }
     }
@@ -2608,6 +2788,12 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn sync_pull_confirm(&self) -> Option<PendingSyncPullConfirmState> {
         self.sync_pull_confirm
+    }
+
+    pub(in crate::ui::shell) fn sync_unsafe_write_consent(
+        &self,
+    ) -> Option<&PendingSyncUnsafeWriteConsentState> {
+        self.sync_unsafe_write_consent.as_ref()
     }
 
     pub(in crate::ui::shell) fn local_vault_disable_confirm(
@@ -3590,6 +3776,132 @@ mod tests {
         assert_eq!(integration.mode(), OpenSshIntegrationMode::Bridge);
         assert_eq!(std::fs::read(&known_hosts_path).unwrap(), original_sidecar);
         runtime.block_on(bridge.disable());
+    }
+
+    /// A WebDAV service with no ETag anywhere is exactly what the `missing`
+    /// mode of `tools/dav_etag_mock.py` produces: the probe creates its file,
+    /// then fails reading it back because no strong validator came back.
+    ///
+    /// Uses the `read-resource` step and `EtagKind::Missing` seen in the field
+    /// trace, and covers the three inputs that matter: a toggle without consent
+    /// must ask, a still-running probe must wait, and a recorded consent is the
+    /// only thing that enables without asking.
+    #[test]
+    fn missing_etag_probe_asks_for_consent() {
+        use miaominal_services::AutoSyncPhase;
+        use miaominal_sync::capability::{CapabilityReport, CapabilityState, EtagKind};
+
+        let report = CapabilityReport {
+            state: CapabilityState::Unsupported,
+            reason: Some(CapabilityReason::VersionUnavailable),
+            step: "read-resource".into(),
+            http_status: Some(200),
+            etag_kind: EtagKind::Missing,
+            checked_at: 0,
+            cleanup_file: None,
+        };
+
+        // A toggle without consent, at either phase, must ask the user.
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Disabled, false, &report),
+            Some(AutoSyncEnableDecision::AskForConsent),
+            "a toggle without consent must ask the user"
+        );
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Watching, false, &report),
+            Some(AutoSyncEnableDecision::AskForConsent),
+            "the phase must not let an unconsented enable slip through"
+        );
+        // Still probing: the dialog must wait for the real result.
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::CheckingCapability, false, &report),
+            None
+        );
+        // Only a recorded consent enables without asking.
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Disabled, true, &report),
+            Some(AutoSyncEnableDecision::EnableWithConsent)
+        );
+    }
+
+    /// A passing probe must not become a standing risk acceptance. The strict
+    /// request already enabled automatic sync, so the UI stops waiting without
+    /// re-requesting; otherwise it would persist consent for a server that never
+    /// needed it and that the user was never asked about.
+    #[test]
+    fn supported_probe_never_grants_consent() {
+        use miaominal_services::AutoSyncPhase;
+        use miaominal_sync::capability::{CapabilityReport, CapabilityState};
+
+        let supported = CapabilityReport::supported();
+        assert_eq!(supported.state, CapabilityState::Supported);
+
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Watching, false, &supported),
+            Some(AutoSyncEnableDecision::AlreadyEnabled),
+            "a successful check must resolve without re-requesting"
+        );
+        // Even if a consent somehow already exists, a passing probe still does
+        // not re-request: there is nothing to fall back from.
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Watching, true, &supported),
+            Some(AutoSyncEnableDecision::AlreadyEnabled)
+        );
+    }
+
+    /// A service that rejects conditional writes (`create-existing` is the step
+    /// the ETag mock reports) is the other shape of the same fallback case.
+    #[test]
+    fn conditional_write_failure_asks_for_consent() {
+        use miaominal_services::AutoSyncPhase;
+        use miaominal_sync::capability::{CapabilityReport, CapabilityState, EtagKind};
+
+        let report = CapabilityReport {
+            state: CapabilityState::Unsupported,
+            reason: Some(CapabilityReason::ConditionalWrite),
+            step: "create-existing".into(),
+            http_status: Some(200),
+            etag_kind: EtagKind::Strong,
+            checked_at: 0,
+            cleanup_file: None,
+        };
+        assert_eq!(
+            auto_sync_enable_decision(AutoSyncPhase::Disabled, false, &report),
+            Some(AutoSyncEnableDecision::AskForConsent)
+        );
+    }
+
+    /// A failure that is not about write preconditions keeps the existing
+    /// notification and never offers the unsafe-write fallback.
+    #[test]
+    fn non_precondition_failures_never_offer_the_fallback() {
+        use miaominal_services::AutoSyncPhase;
+        use miaominal_sync::capability::{CapabilityReport, CapabilityState, EtagKind};
+
+        for reason in [
+            CapabilityReason::Network,
+            CapabilityReason::Authentication,
+            CapabilityReason::Permission,
+            CapabilityReason::Redirect,
+            CapabilityReason::Cleanup,
+            CapabilityReason::Configuration,
+            CapabilityReason::Cancelled,
+        ] {
+            let report = CapabilityReport {
+                state: CapabilityState::Incomplete,
+                reason: Some(reason),
+                step: "probe".into(),
+                http_status: Some(403),
+                etag_kind: EtagKind::Missing,
+                checked_at: 0,
+                cleanup_file: None,
+            };
+            assert_eq!(
+                auto_sync_enable_decision(AutoSyncPhase::Disabled, false, &report),
+                Some(AutoSyncEnableDecision::ReportFailure),
+                "{reason:?} must not offer the fallback"
+            );
+        }
     }
 
     #[test]

@@ -420,6 +420,7 @@ mod tests {
             stream.write_all(b"HTTP/1.1 200 OK\r\nETag: W/\"weak\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
         });
         let probe_engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("probe-config.toml"),
                 SyncConfig {
@@ -445,6 +446,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let manual_engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("manual-config.toml"),
                 SyncConfig::default(),
@@ -529,6 +531,7 @@ mod tests {
             .expect("password should persist");
 
         let engine = SyncEngine {
+            last_capability_report: None,
             config_store: SyncConfigStore::with_credentials(
                 temp.path().join("sync_config.toml"),
                 SyncConfig::default(),

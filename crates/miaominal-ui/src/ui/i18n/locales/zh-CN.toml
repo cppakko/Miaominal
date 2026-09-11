@@ -2002,6 +2002,18 @@ missing_baseline_message = "这台设备没有上次同步记录，因此无法�
 force_push = "保留这台设备的配置"
 confirm = "保留远端配置"
 
+[settings.sync.dialogs.unsafe_write_consent]
+title = "仍要开启自动同步？"
+message = "这个同步服务无法在上传前确认远端配置是否刚被其他设备改过。若两台设备几乎同时上传，后一次上传会覆盖前一次，被覆盖的改动会丢失。"
+defect = "服务缺陷：{{defect}}"
+defect_missing = "不返回 ETag，无法标记配置版本"
+defect_weak = "只返回弱 ETag，无法标记配置版本"
+defect_invalid = "返回的 ETag 无效"
+defect_read = "忽略条件读取"
+defect_write = "不校验写入版本"
+confirm = "仍然开启"
+cancel = "保持关闭"
+
 [settings.sync.status.notifications]
 succeeded_title = "同步完成"
 failed_title = "同步失败"
