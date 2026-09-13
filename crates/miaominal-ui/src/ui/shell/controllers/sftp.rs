@@ -572,6 +572,17 @@ impl SftpTransferRow {
     }
 }
 
+fn retain_unfinished_transfer_rows(transfers: &mut Vec<SftpTransferRow>) -> usize {
+    let before = transfers.len();
+    transfers.retain(|transfer| {
+        matches!(
+            transfer.status,
+            SftpTransferStatus::Queued | SftpTransferStatus::Running | SftpTransferStatus::Paused
+        )
+    });
+    before - transfers.len()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(in crate::ui::shell) struct SftpDragSelectionState {
     pub(in crate::ui::shell) start: Point<Pixels>,
@@ -4664,6 +4675,25 @@ impl SftpController {
         cx.notify();
     }
 
+    pub(in crate::ui::shell) fn clear_finished_transfers(&mut self, cx: &mut Context<Self>) {
+        let mut cleared_total = 0usize;
+        for tab in self.tabs.borrow_mut().tabs.values_mut() {
+            let cleared = retain_unfinished_transfer_rows(&mut tab.transfers);
+            if cleared == 0 {
+                continue;
+            }
+            cleared_total += cleared;
+            tab.last_status = i18n::string_args(
+                "sftp.messages.cleared_transfer_records",
+                &[("count", &cleared.to_string())],
+            );
+        }
+        if cleared_total == 0 {
+            return;
+        }
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn toggle_transfer_expanded(
         &mut self,
         tab_id: TabId,
@@ -6026,5 +6056,38 @@ mod tests {
             transfer.children.front().map(|child| child.child_id),
             Some(TransferChildId(7))
         );
+    }
+
+    #[test]
+    fn clearing_transfer_history_keeps_unfinished_rows() {
+        let mut transfers = vec![
+            SftpTransferRow {
+                status: SftpTransferStatus::Done,
+                ..transfer_row()
+            },
+            SftpTransferRow {
+                status: SftpTransferStatus::Running,
+                ..transfer_row()
+            },
+            SftpTransferRow {
+                status: SftpTransferStatus::Failed("boom".to_string()),
+                ..transfer_row()
+            },
+            SftpTransferRow {
+                status: SftpTransferStatus::Paused,
+                ..transfer_row()
+            },
+            SftpTransferRow {
+                status: SftpTransferStatus::Cancelled,
+                ..transfer_row()
+            },
+        ];
+
+        let cleared = retain_unfinished_transfer_rows(&mut transfers);
+
+        assert_eq!(cleared, 3);
+        assert_eq!(transfers.len(), 2);
+        assert!(matches!(transfers[0].status, SftpTransferStatus::Running));
+        assert!(matches!(transfers[1].status, SftpTransferStatus::Paused));
     }
 }

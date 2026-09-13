@@ -1648,8 +1648,13 @@ impl SftpController {
             .iter()
             .filter(|(_, (_, transfer))| matches!(transfer.status, SftpTransferStatus::Failed(_)))
             .count();
-        let header =
-            self.render_sftp_progress_center_header(transfer_count, active_count, failed_count);
+        let header = self.render_sftp_progress_center_header(
+            controller.clone(),
+            section_id.clone(),
+            transfer_count,
+            active_count,
+            failed_count,
+        );
         let scroll_handle = self.progress_scroll_handle();
 
         let content = if transfers.is_empty() {
@@ -1701,6 +1706,8 @@ impl SftpController {
 
     fn render_sftp_progress_center_header(
         &self,
+        controller: Entity<Self>,
+        section_id: ElementId,
         transfer_count: usize,
         active_count: usize,
         failed_count: usize,
@@ -1708,6 +1715,7 @@ impl SftpController {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
+        let finished_count = transfer_count.saturating_sub(active_count);
 
         h_flex()
             .w_full()
@@ -1762,6 +1770,21 @@ impl SftpController {
                     roles.error_container,
                     roles.on_error_container,
                 ))
+            })
+            .when(finished_count > 0, |this| {
+                this.child(div().flex_1()).child(
+                    Button::new((section_id, "clear-history"))
+                        .ghost()
+                        .compact()
+                        .rounded(px(20.0))
+                        .label(i18n::string("sftp.ui.clear_history"))
+                        .on_click(move |_, _, cx| {
+                            let controller = controller.clone();
+                            controller.update(cx, |controller, cx| {
+                                controller.clear_finished_transfers(cx);
+                            });
+                        }),
+                )
             })
             .into_any_element()
     }

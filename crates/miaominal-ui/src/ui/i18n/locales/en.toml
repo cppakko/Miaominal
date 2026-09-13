@@ -1272,6 +1272,7 @@ transfer_center_title = "Transfers"
 transfer_count = "{count} total"
 transfer_active_count = "{count} active"
 transfer_failed_count = "{count} failed"
+clear_history = "Clear history"
 
 [sftp.dialogs]
 download_file_title = "Choose where to save the downloaded file"
@@ -1348,6 +1349,7 @@ pause_transfer_failed = "Failed to pause transfer: {error}"
 resume_transfer_failed = "Failed to resume transfer: {error}"
 cancel_transfer_failed = "Failed to cancel transfer: {error}"
 removed_transfer_record = "Removed transfer {id}"
+cleared_transfer_records = "Cleared {count} transfer records"
 
 [sftp.notifications]
 download_complete_title = "Download Complete"

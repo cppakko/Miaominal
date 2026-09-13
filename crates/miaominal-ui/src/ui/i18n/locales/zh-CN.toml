@@ -1134,6 +1134,7 @@ transfer_center_title = "传输任务"
 transfer_count = "共 {count} 项"
 transfer_active_count = "进行中 {count}"
 transfer_failed_count = "失败 {count}"
+clear_history = "清除历史"
 
 [sftp.dialogs]
 download_file_title = "选择下载文件的保存位置"
@@ -1210,6 +1211,7 @@ pause_transfer_failed = "暂停传输失败：{error}"
 resume_transfer_failed = "恢复传输失败：{error}"
 cancel_transfer_failed = "取消传输失败：{error}"
 removed_transfer_record = "已移除传输 {id}"
+cleared_transfer_records = "已清除 {count} 条传输记录"
 
 [sftp.notifications]
 download_complete_title = "下载完成"
