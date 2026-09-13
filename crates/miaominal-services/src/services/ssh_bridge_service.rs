@@ -1646,6 +1646,9 @@ fn validate_and_build_routes(
     let mut diagnostics = Vec::new();
 
     for profile in profiles {
+        if profile.kind != ProfileKind::Ssh {
+            continue;
+        }
         let mut stack = Vec::new();
         match validate_profile_topology(profile, &by_id, &proxy_ids, &mut memo, &mut stack) {
             Ok(()) => routes.push(SshBridgeRoute::derive(instance_id, profile)),
@@ -3147,5 +3150,27 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), upstream.stop())
             .await
             .expect("upstream should stop");
+    }
+
+    #[test]
+    fn validate_and_build_routes_skips_local_terminal_profiles() {
+        let ssh = SessionProfile {
+            id: "ssh-1".into(),
+            name: "ssh".into(),
+            host: "example.test".into(),
+            username: "root".into(),
+            ..SessionProfile::blank("ssh-1", 1)
+        };
+        let local = SessionProfile::blank_local("local-1", 2);
+
+        let refresh = validate_and_build_routes("instance", &[ssh, local], &[]);
+
+        assert_eq!(refresh.routes.len(), 1);
+        assert_eq!(refresh.routes[0].profile_id, "ssh-1");
+        assert!(
+            refresh.diagnostics.is_empty(),
+            "local terminal profiles must not be reported as invalid: {:?}",
+            refresh.diagnostics
+        );
     }
 }

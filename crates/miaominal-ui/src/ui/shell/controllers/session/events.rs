@@ -220,6 +220,9 @@ impl SessionController {
                                 &[("connection", &connection_label)],
                             ),
                         });
+                    } else if session.local_terminal {
+                        outcome.tab_status = Some(i18n::string("session.status.local_running"));
+                        record_connected_profile_id = Some(session.profile_id.clone());
                     } else {
                         outcome.tab_status = Some(i18n::string_args(
                             "session.status.connected",
@@ -274,7 +277,14 @@ impl SessionController {
                     let is_in_reconnect_cycle = session.reconnect_attempt > 0;
                     outcome.tab_status = Some(i18n::string("session.status.error"));
                     if !is_connection_test && (was_ready || is_in_reconnect_cycle) {
-                        outcome.schedule_reconnect_error = Some(error.clone());
+                        if session.local_terminal {
+                            session.set_connection_state(SessionConnectionState::Failed {
+                                error: error.clone(),
+                                status: None,
+                            });
+                        } else {
+                            outcome.schedule_reconnect_error = Some(error.clone());
+                        }
                     } else if !is_connection_test && !was_ready {
                         session.set_connection_state(SessionConnectionState::Failed {
                             error: error.clone(),
@@ -354,74 +364,132 @@ impl SessionController {
                         session.has_activity = true;
                     }
                 }
+                SessionEvent::Exited { exit_code, signal } => {
+                    terminal_port.close_session(tab_id);
+                    let abnormal_exit = exit_code != 0 || signal.is_some();
+                    let status = if let Some(signal) = signal.as_deref() {
+                        i18n::string_args(
+                            "session.status.local_exited_signal",
+                            &[("signal", signal)],
+                        )
+                    } else {
+                        i18n::string_args(
+                            "session.status.local_exited",
+                            &[("code", &exit_code.to_string())],
+                        )
+                    };
+                    let marker = if let Some(signal) = signal.as_deref() {
+                        i18n::string_args(
+                            "session.terminal.exited_signal_marker",
+                            &[("signal", signal)],
+                        )
+                    } else {
+                        i18n::string_args(
+                            "session.terminal.exited_marker",
+                            &[("code", &exit_code.to_string())],
+                        )
+                    };
+                    outcome.tab_status = Some(status.clone());
+                    session
+                        .set_connection_state(SessionConnectionState::Exited { exit_code, signal });
+                    session.terminal.push_text(&format!("{marker}\r\n"));
+                    if abnormal_exit {
+                        let notification_message = if tab_title.trim().is_empty() {
+                            status
+                        } else {
+                            format!("{tab_title}: {status}")
+                        };
+                        outcome.notification = Some(SessionNotificationRequest {
+                            tone: SessionNotificationTone::Error,
+                            title: i18n::string("session.notifications.local_exited_title"),
+                            message: notification_message,
+                            id: format!("session-local-exit-{tab_id}"),
+                        });
+                    }
+                    if inactive_tab {
+                        session.has_activity = true;
+                    }
+                }
                 SessionEvent::Closed => {
                     terminal_port.close_session(tab_id);
-                    let already_disconnected = matches!(
+                    if matches!(
                         session.connection_state,
-                        SessionConnectionState::Disconnected
-                    );
-                    if !already_disconnected {
-                        let was_ready =
-                            matches!(session.connection_state, SessionConnectionState::Ready);
-                        outcome.tab_status = Some(i18n::string("session.status.closed"));
-                        if !is_connection_test && was_ready {
-                            session.set_connection_state(SessionConnectionState::Disconnected);
-                        } else if !is_connection_test
-                            && matches!(
-                                session.connection_state,
-                                SessionConnectionState::Connecting
-                            )
-                        {
-                            let failure_message =
-                                i18n::string("session.status.connection_closed_before_ready");
-                            session.set_connection_state(SessionConnectionState::Failed {
-                                error: failure_message.clone(),
-                                status: Some(SessionFailureStatus::Closed),
-                            });
-                            let notification_message = if tab_title.trim().is_empty() {
-                                failure_message
-                            } else {
-                                format!("{tab_title}: {failure_message}")
-                            };
-                            outcome.notification = Some(SessionNotificationRequest {
-                                tone: SessionNotificationTone::Error,
-                                title: i18n::string(
-                                    "session.notifications.connection_closed_title",
-                                ),
-                                message: notification_message,
-                                id: format!("session-failure-{tab_id}"),
-                            });
-                        }
-                        session.terminal.push_text(&format!(
-                            "{}\r\n",
-                            i18n::string("session.terminal.closed_marker")
-                        ));
+                        SessionConnectionState::Exited { .. }
+                    ) {
                         if inactive_tab {
                             session.has_activity = true;
                         }
-                    }
-                    if is_connection_test {
-                        if matches!(session.connection_state, SessionConnectionState::Connecting) {
-                            outcome.notification = Some(SessionNotificationRequest {
-                                tone: SessionNotificationTone::Error,
-                                title: i18n::string(
-                                    "session.notifications.test_connection_failed_title",
-                                ),
-                                message: i18n::string_args(
-                                    "session.messages.connection_test_closed_before_complete",
+                    } else {
+                        let already_disconnected = matches!(
+                            session.connection_state,
+                            SessionConnectionState::Disconnected
+                        );
+                        if !already_disconnected {
+                            let was_ready =
+                                matches!(session.connection_state, SessionConnectionState::Ready);
+                            outcome.tab_status = Some(i18n::string("session.status.closed"));
+                            if !is_connection_test && was_ready {
+                                session.set_connection_state(SessionConnectionState::Disconnected);
+                            } else if !is_connection_test
+                                && matches!(
+                                    session.connection_state,
+                                    SessionConnectionState::Connecting
+                                )
+                            {
+                                let failure_message =
+                                    i18n::string("session.status.connection_closed_before_ready");
+                                session.set_connection_state(SessionConnectionState::Failed {
+                                    error: failure_message.clone(),
+                                    status: Some(SessionFailureStatus::Closed),
+                                });
+                                let notification_message = if tab_title.trim().is_empty() {
+                                    failure_message
+                                } else {
+                                    format!("{tab_title}: {failure_message}")
+                                };
+                                outcome.notification = Some(SessionNotificationRequest {
+                                    tone: SessionNotificationTone::Error,
+                                    title: i18n::string(
+                                        "session.notifications.connection_closed_title",
+                                    ),
+                                    message: notification_message,
+                                    id: format!("session-failure-{tab_id}"),
+                                });
+                            }
+                            session.terminal.push_text(&format!(
+                                "{}\r\n",
+                                i18n::string("session.terminal.closed_marker")
+                            ));
+                            if inactive_tab {
+                                session.has_activity = true;
+                            }
+                        }
+                        if is_connection_test {
+                            if matches!(
+                                session.connection_state,
+                                SessionConnectionState::Connecting
+                            ) {
+                                outcome.notification = Some(SessionNotificationRequest {
+                                    tone: SessionNotificationTone::Error,
+                                    title: i18n::string(
+                                        "session.notifications.test_connection_failed_title",
+                                    ),
+                                    message: i18n::string_args(
+                                        "session.messages.connection_test_closed_before_complete",
+                                        &[("title", tab_title)],
+                                    ),
+                                    id: format!("connection-test-failure-{tab_id}"),
+                                });
+                            }
+                            outcome.removal = Some(SessionEventTabRemoval::ConnectionTest {
+                                status_message: i18n::string_args(
+                                    "session.messages.finished_test_connection_for",
                                     &[("title", tab_title)],
                                 ),
-                                id: format!("connection-test-failure-{tab_id}"),
                             });
+                        } else {
+                            outcome.refresh_monitoring_profile = Some(session.profile_id.clone());
                         }
-                        outcome.removal = Some(SessionEventTabRemoval::ConnectionTest {
-                            status_message: i18n::string_args(
-                                "session.messages.finished_test_connection_for",
-                                &[("title", tab_title)],
-                            ),
-                        });
-                    } else {
-                        outcome.refresh_monitoring_profile = Some(session.profile_id.clone());
                     }
                 }
             }
@@ -430,6 +498,13 @@ impl SessionController {
                 match emu_event {
                     miaominal_terminal::TerminalEvent::ClipboardStore(content) => {
                         outcome.clipboard_writes.push(content);
+                    }
+                    miaominal_terminal::TerminalEvent::PtyWrite(text) => {
+                        if let Some(commands) = session.commands.as_ref()
+                            && let Err(error) = commands.send_bytes(text.into_bytes())
+                        {
+                            log::debug!("failed to answer terminal write-back request: {error:?}");
+                        }
                     }
                     miaominal_terminal::TerminalEvent::Bell => {
                         if inactive_tab {
@@ -501,6 +576,7 @@ mod tests {
                 port_forward_revision: 0,
                 port_forward_log_len: 0,
                 sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+                local_terminal: false,
                 owner_route: None,
             },
         );
@@ -511,6 +587,163 @@ mod tests {
         assert!(matches!(
             outcome.removal,
             Some(SessionEventTabRemoval::ConnectionTest { .. })
+        ));
+    }
+
+    fn local_terminal_controller() -> (SessionController, TabId) {
+        let controller = SessionController::new_for_test();
+        let tab_id = TabId::new(8);
+        controller.insert_tab(
+            tab_id,
+            SessionTabState {
+                profile_id: "local-a".to_string(),
+                port_forward_rule_id: None,
+                terminal: TerminalState::default(),
+                connection_state: SessionConnectionState::Ready,
+                preserved_history_popup_hidden: false,
+                pending_profile: None,
+                commands: None,
+                bytes_in: 0,
+                bytes_out: 0,
+                pending_host_key: None,
+                pending_keyboard_interactive: None,
+                reconnect_task: None,
+                reconnect_attempt: 0,
+                has_activity: false,
+                monitoring: SessionMonitoringState::new(false),
+                purpose: SessionPurpose::Terminal,
+                port_forward_revision: 0,
+                port_forward_log_len: 0,
+                sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+                local_terminal: true,
+                owner_route: None,
+            },
+        );
+        (controller, tab_id)
+    }
+
+    fn terminal_text(terminal: &TerminalState) -> String {
+        terminal
+            .snapshot(false)
+            .cells
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.character).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn local_process_exit_records_status_marker_and_notification() {
+        let (controller, tab_id) = local_terminal_controller();
+
+        let outcome = controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Exited {
+                    exit_code: 7,
+                    signal: None,
+                },
+                false,
+                "Local",
+            )
+            .expect("local exit should be applied");
+
+        let session = controller.tab(tab_id).expect("local tab should exist");
+        assert_eq!(
+            session.connection_state,
+            SessionConnectionState::Exited {
+                exit_code: 7,
+                signal: None,
+            }
+        );
+        assert_eq!(
+            outcome.tab_status,
+            Some(i18n::string_args(
+                "session.status.local_exited",
+                &[("code", "7")]
+            ))
+        );
+        let notification = outcome
+            .notification
+            .as_ref()
+            .expect("abnormal exit should notify");
+        assert!(matches!(notification.tone, SessionNotificationTone::Error));
+        let text = terminal_text(&session.terminal);
+        assert!(text.contains(&i18n::string_args(
+            "session.terminal.exited_marker",
+            &[("code", "7")]
+        )));
+    }
+
+    #[test]
+    fn clean_local_process_exit_does_not_notify() {
+        let (controller, tab_id) = local_terminal_controller();
+
+        let outcome = controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Exited {
+                    exit_code: 0,
+                    signal: None,
+                },
+                false,
+                "Local",
+            )
+            .expect("local exit should be applied");
+
+        assert!(outcome.notification.is_none());
+    }
+
+    #[test]
+    fn closed_after_local_exit_keeps_the_exit_status() {
+        let (controller, tab_id) = local_terminal_controller();
+        controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Exited {
+                    exit_code: 3,
+                    signal: None,
+                },
+                false,
+                "Local",
+            )
+            .expect("local exit should be applied");
+
+        let outcome = controller
+            .apply_session_event(tab_id, SessionEvent::Closed, false, "Local")
+            .expect("closed should be applied");
+
+        let session = controller.tab(tab_id).expect("local tab should exist");
+        assert_eq!(
+            session.connection_state,
+            SessionConnectionState::Exited {
+                exit_code: 3,
+                signal: None,
+            }
+        );
+        assert!(outcome.tab_status.is_none());
+        let text = terminal_text(&session.terminal);
+        assert!(!text.contains(&i18n::string("session.terminal.closed_marker")));
+    }
+
+    #[test]
+    fn local_session_errors_do_not_request_reconnect() {
+        let (controller, tab_id) = local_terminal_controller();
+
+        let outcome = controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Error("pty failed".into()),
+                false,
+                "Local",
+            )
+            .expect("local error should be applied");
+
+        assert!(outcome.schedule_reconnect_error.is_none());
+        let session = controller.tab(tab_id).expect("local tab should exist");
+        assert!(matches!(
+            session.connection_state,
+            SessionConnectionState::Failed { .. }
         ));
     }
 

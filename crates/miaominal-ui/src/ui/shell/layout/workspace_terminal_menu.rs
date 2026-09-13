@@ -23,6 +23,7 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
     menu: PopupMenu,
     command_source: Entity<SessionController>,
     has_selection: bool,
+    allow_sftp: bool,
     target_pane_id: Option<PaneId>,
     _window: &mut Window,
     _cx: &mut App,
@@ -36,82 +37,97 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
     let sftp_entry = command_source.clone();
     let close = command_source;
 
-    menu.item(
-        PopupMenuItem::new(i18n::string("workspace.menu.copy"))
-            .disabled(!has_selection)
-            .on_click(move |_, _window, cx| {
-                emit_terminal_menu_command(&copy, target_pane_id, TerminalMenuCommand::Copy, cx);
-            }),
-    )
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.paste")).on_click(move |_, _window, cx| {
-            emit_terminal_menu_command(&paste, target_pane_id, TerminalMenuCommand::Paste, cx);
-        }),
-    )
-    .item(PopupMenuItem::separator())
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.split_right")).on_click(
-            move |_, _window, cx| {
-                emit_terminal_menu_command(
-                    &split_right,
-                    target_pane_id,
-                    TerminalMenuCommand::Split(SplitDirection::Right),
-                    cx,
-                );
-            },
-        ),
-    )
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.split_down")).on_click(
-            move |_, _window, cx| {
-                emit_terminal_menu_command(
-                    &split_down,
-                    target_pane_id,
-                    TerminalMenuCommand::Split(SplitDirection::Down),
-                    cx,
-                );
-            },
-        ),
-    )
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.split_left")).on_click(
-            move |_, _window, cx| {
-                emit_terminal_menu_command(
-                    &split_left,
-                    target_pane_id,
-                    TerminalMenuCommand::Split(SplitDirection::Left),
-                    cx,
-                );
-            },
-        ),
-    )
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.split_up")).on_click(
-            move |_, _window, cx| {
-                emit_terminal_menu_command(
-                    &split_up,
-                    target_pane_id,
-                    TerminalMenuCommand::Split(SplitDirection::Up),
-                    cx,
-                );
-            },
-        ),
-    )
-    .item(PopupMenuItem::separator())
-    .item(
-        PopupMenuItem::new(i18n::string("workspace.menu.open_sftp_tab")).on_click(
-            move |_, _window, cx| {
-                emit_terminal_menu_command(
-                    &sftp_entry,
-                    target_pane_id,
-                    TerminalMenuCommand::OpenSftp,
-                    cx,
-                );
-            },
-        ),
-    )
-    .item(PopupMenuItem::separator())
-    .item(
+    let menu = menu
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.copy"))
+                .disabled(!has_selection)
+                .on_click(move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &copy,
+                        target_pane_id,
+                        TerminalMenuCommand::Copy,
+                        cx,
+                    );
+                }),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.paste")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &paste,
+                        target_pane_id,
+                        TerminalMenuCommand::Paste,
+                        cx,
+                    );
+                },
+            ),
+        )
+        .item(PopupMenuItem::separator())
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.split_right")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &split_right,
+                        target_pane_id,
+                        TerminalMenuCommand::Split(SplitDirection::Right),
+                        cx,
+                    );
+                },
+            ),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.split_down")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &split_down,
+                        target_pane_id,
+                        TerminalMenuCommand::Split(SplitDirection::Down),
+                        cx,
+                    );
+                },
+            ),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.split_left")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &split_left,
+                        target_pane_id,
+                        TerminalMenuCommand::Split(SplitDirection::Left),
+                        cx,
+                    );
+                },
+            ),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.split_up")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &split_up,
+                        target_pane_id,
+                        TerminalMenuCommand::Split(SplitDirection::Up),
+                        cx,
+                    );
+                },
+            ),
+        );
+    let menu = if allow_sftp {
+        menu.item(PopupMenuItem::separator()).item(
+            PopupMenuItem::new(i18n::string("workspace.menu.open_sftp_tab")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &sftp_entry,
+                        target_pane_id,
+                        TerminalMenuCommand::OpenSftp,
+                        cx,
+                    );
+                },
+            ),
+        )
+    } else {
+        menu
+    };
+    menu.item(PopupMenuItem::separator()).item(
         PopupMenuItem::new(i18n::string("workspace.menu.close_pane")).on_click(
             move |_, _window, cx| {
                 emit_terminal_menu_command(

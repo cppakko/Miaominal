@@ -54,6 +54,7 @@ fn build_host_context_menu(
     actions: HostPageActions,
     index: usize,
     is_favorite: bool,
+    is_local: bool,
 ) -> PopupMenu {
     let favorite_controller = controller.clone();
     let duplicate_controller = controller.clone();
@@ -65,33 +66,42 @@ fn build_host_context_menu(
         i18n::string("hosts.menu.add_to_favorites")
     };
 
-    menu.item(PopupMenuItem::new(fav_label).on_click(move |_, _, cx| {
+    let menu = menu.item(PopupMenuItem::new(fav_label).on_click(move |_, _, cx| {
         favorite_controller.update(cx, |controller, cx| {
             controller.toggle_profile_favorite(index, cx);
         });
-    }))
-    .item(
-        PopupMenuItem::new(i18n::string("hosts.menu.open_sftp")).on_click(move |_, window, cx| {
-            actions.open_sftp(index, window, cx);
-        }),
-    )
-    .item(PopupMenuItem::separator())
-    .item(
-        PopupMenuItem::new(i18n::string("hosts.menu.duplicate_profile")).on_click(
-            move |_, _, cx| {
-                duplicate_controller.update(cx, |controller, cx| {
-                    controller.duplicate_profile_at_index(index, cx);
-                });
-            },
-        ),
-    )
-    .item(
-        PopupMenuItem::new(i18n::string("hosts.menu.delete_profile")).on_click(move |_, _, cx| {
-            delete_controller.update(cx, |controller, cx| {
-                controller.request_profile_delete_at_index(index, cx);
-            });
-        }),
-    )
+    }));
+    let menu = if is_local {
+        menu
+    } else {
+        menu.item(
+            PopupMenuItem::new(i18n::string("hosts.menu.open_sftp")).on_click(
+                move |_, window, cx| {
+                    actions.open_sftp(index, window, cx);
+                },
+            ),
+        )
+    };
+
+    menu.item(PopupMenuItem::separator())
+        .item(
+            PopupMenuItem::new(i18n::string("hosts.menu.duplicate_profile")).on_click(
+                move |_, _, cx| {
+                    duplicate_controller.update(cx, |controller, cx| {
+                        controller.duplicate_profile_at_index(index, cx);
+                    });
+                },
+            ),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("hosts.menu.delete_profile")).on_click(
+                move |_, _, cx| {
+                    delete_controller.update(cx, |controller, cx| {
+                        controller.request_profile_delete_at_index(index, cx);
+                    });
+                },
+            ),
+        )
 }
 
 fn group_icon(group: &str) -> String {
@@ -133,6 +143,19 @@ fn group_accent(name: &str) -> GroupAccentPalette {
 fn profile_subtitle(profile: &SessionProfile) -> Option<String> {
     let group = profile.group.trim();
     (!group.is_empty()).then(|| group.to_string())
+}
+
+/// Local terminal profiles are listed in their own page section rather than
+/// mixed into the SSH host sections.
+fn sessions_of_kind<'a>(
+    sessions: &[(usize, &'a SessionProfile)],
+    local: bool,
+) -> Vec<(usize, &'a SessionProfile)> {
+    sessions
+        .iter()
+        .copied()
+        .filter(|(_, profile)| profile.is_local() == local)
+        .collect()
 }
 
 fn host_card_tag_display_units(label: &str) -> usize {
@@ -302,6 +325,7 @@ fn prepare_host_card_metadata(profile: &SessionProfile) -> HostCardMetadata {
 
     HostCardMetadata {
         group,
+        local_terminal: profile.is_local(),
         tags: prepare_host_card_tags(&profile.tags, tags_row_unit_budget),
     }
 }
@@ -322,6 +346,7 @@ fn render_host_profile_item(
         profile.id
     ));
     let badge_id_prefix = SharedString::from(format!("{id_prefix}-card-metadata-{}", profile.id));
+    let is_local = profile.is_local();
     let menu_controller = controller;
     let menu_actions = actions.clone();
     let connect_actions = actions.clone();
@@ -339,6 +364,7 @@ fn render_host_profile_item(
                     menu_actions.clone(),
                     index,
                     is_favorite,
+                    is_local,
                 )
             })
             .child(host_list_row(
@@ -346,6 +372,7 @@ fn render_host_profile_item(
                 subtitle,
                 None,
                 0,
+                is_local,
                 Some(AppIcon::Edit),
                 move |window, cx| connect_actions.connect(index, window, cx),
                 move |window, cx| edit_actions.edit(index, window, cx),
@@ -363,6 +390,7 @@ fn render_host_profile_item(
                     menu_actions.clone(),
                     index,
                     is_favorite,
+                    is_local,
                 )
             })
             .child(host_card_with_action(
@@ -421,7 +449,9 @@ impl SessionController {
                 selected_group_filter.is_none_or(|group| profile.group.trim() == group)
             })
             .collect();
-        let favorite_sessions: Vec<_> = visible_sessions
+        let local_sessions = sessions_of_kind(&visible_sessions, true);
+        let remote_sessions = sessions_of_kind(&visible_sessions, false);
+        let favorite_sessions: Vec<_> = remote_sessions
             .iter()
             .copied()
             .filter(|(_, profile)| profile.is_favorite)
@@ -434,6 +464,7 @@ impl SessionController {
             let mut with_time: Vec<_> = profiles
                 .iter()
                 .enumerate()
+                .filter(|(_, profile)| !profile.is_local())
                 .filter_map(|(index, profile)| {
                     profile.last_connected_at.map(|ts| (ts, index, profile))
                 })
@@ -452,7 +483,7 @@ impl SessionController {
         }
 
         let mut grouped_sessions: BTreeMap<String, usize> = BTreeMap::new();
-        for (_, profile) in &search_matched_sessions {
+        for (_, profile) in sessions_of_kind(&search_matched_sessions, false) {
             let group = profile.group.trim();
             if group.is_empty() {
                 continue;
@@ -577,44 +608,74 @@ impl SessionController {
                     )
                 }
             })
-            .child({
-                let mut connections = if is_list {
+            .when(!local_sessions.is_empty(), {
+                let mut local_connections = if is_list {
                     v_flex().w_full().gap_2()
                 } else {
                     div().flex().flex_wrap().gap_4()
                 };
-
-                if visible_sessions.is_empty() {
-                    connections = connections.child(shell_empty_state(
-                        AppIcon::Computer,
-                        i18n::string("hosts.empty.no_filter_matches"),
+                for (index, profile) in local_sessions {
+                    local_connections = local_connections.child(render_host_profile_item(
+                        controller.clone(),
+                        actions.clone(),
+                        index,
+                        profile,
+                        is_list,
+                        "local",
                     ));
-                } else {
-                    for (index, profile) in visible_sessions {
-                        connections = connections.child(render_host_profile_item(
-                            controller.clone(),
-                            actions.clone(),
-                            index,
-                            profile,
-                            is_list,
-                            "host",
-                        ));
-                    }
                 }
-
-                v_flex()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .gap_3()
+                move |this| {
+                    this.child(
+                        v_flex()
+                            .gap_4()
                             .child(page_section_title(i18n::string(
-                                "hosts.page.active_connections",
-                            ))),
+                                "hosts.page.local_terminals",
+                            )))
+                            .child(local_connections),
                     )
-                    .child(connections)
-            });
+                }
+            })
+            .when(
+                !remote_sessions.is_empty() || visible_sessions.is_empty(),
+                {
+                    let mut connections = if is_list {
+                        v_flex().w_full().gap_2()
+                    } else {
+                        div().flex().flex_wrap().gap_4()
+                    };
+
+                    if remote_sessions.is_empty() {
+                        connections = connections.child(shell_empty_state(
+                            AppIcon::Computer,
+                            i18n::string("hosts.empty.no_filter_matches"),
+                        ));
+                    } else {
+                        for (index, profile) in remote_sessions {
+                            connections = connections.child(render_host_profile_item(
+                                controller.clone(),
+                                actions.clone(),
+                                index,
+                                profile,
+                                is_list,
+                                "host",
+                            ));
+                        }
+                    }
+
+                    move |this| {
+                        this.child(
+                            v_flex()
+                                .gap_4()
+                                .child(h_flex().w_full().items_center().gap_3().child(
+                                    page_section_title(i18n::string(
+                                        "hosts.page.active_connections",
+                                    )),
+                                ))
+                                .child(connections),
+                        )
+                    }
+                },
+            );
 
         div()
             .size_full()
@@ -700,6 +761,21 @@ mod tests {
         profile.host = "192.168.1.10".into();
 
         assert_eq!(profile_subtitle(&profile), None);
+    }
+
+    #[test]
+    fn sessions_of_kind_splits_local_terminals_from_host_profiles() {
+        let remote = SessionProfile::blank("remote-1", 1);
+        let local = SessionProfile::blank_local("local-1", 1);
+        let sessions = vec![(0usize, &remote), (1usize, &local)];
+
+        let locals = sessions_of_kind(&sessions, true);
+        assert_eq!(locals.len(), 1);
+        assert_eq!(locals[0].0, 1);
+
+        let remotes = sessions_of_kind(&sessions, false);
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].0, 0);
     }
 
     #[test]

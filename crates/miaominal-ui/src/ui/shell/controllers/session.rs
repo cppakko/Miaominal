@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet},
+    path::PathBuf,
     rc::Rc,
     time::SystemTime,
 };
@@ -18,7 +19,7 @@ use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::{
     AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssue, ImportSourceKind, ImportedBatch,
-    PortForwardKind, PortForwardRule, SessionEnvironmentVariable, ShellType,
+    PortForwardKind, PortForwardRule, ProfileKind, SessionEnvironmentVariable, ShellType,
 };
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
@@ -58,6 +59,7 @@ use crate::ui::{
 mod events;
 mod forwarding;
 mod lifecycle;
+mod local_session;
 mod profile_import;
 mod search;
 mod snippets;
@@ -203,6 +205,7 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) port_forward_revision: u64,
     pub(in crate::ui::shell) port_forward_log_len: usize,
     pub(in crate::ui::shell) sftp_progress_layout: SessionSftpProgressLayoutState,
+    pub(in crate::ui::shell) local_terminal: bool,
     pub(in crate::ui::shell) owner_route: Option<Entity<SessionTabOwnerRoute>>,
 }
 
@@ -400,6 +403,10 @@ pub(in crate::ui::shell) struct HostEditorForms {
     pub(in crate::ui::shell) shell_type: ShellType,
     pub(in crate::ui::shell) editing_auth_method: AuthMethod,
     pub(in crate::ui::shell) agent_forwarding_enabled: bool,
+    pub(in crate::ui::shell) profile_kind: ProfileKind,
+    pub(in crate::ui::shell) local_shell_input: Entity<InputState>,
+    pub(in crate::ui::shell) local_shell_args_input: Entity<InputState>,
+    pub(in crate::ui::shell) local_working_directory_input: Entity<InputState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -426,6 +433,10 @@ pub(in crate::ui::shell) enum SessionConnectionState {
     Failed {
         error: String,
         status: Option<SessionFailureStatus>,
+    },
+    Exited {
+        exit_code: u32,
+        signal: Option<String>,
     },
     Disconnected,
 }
@@ -513,7 +524,10 @@ pub(in crate::ui::shell) struct SessionEditorState {
 
 impl SessionConnectionState {
     pub(in crate::ui::shell) fn preserves_terminal_history(&self) -> bool {
-        matches!(self, Self::Failed { .. } | Self::Disconnected)
+        matches!(
+            self,
+            Self::Failed { .. } | Self::Exited { .. } | Self::Disconnected
+        )
     }
 }
 
@@ -868,6 +882,36 @@ impl SessionController {
             window,
             cx,
         );
+        let local_shell_input = new_input_state(
+            local_session::local_shell_placeholder(),
+            selected_profile_data
+                .as_ref()
+                .map(|profile| profile.local_shell.clone())
+                .unwrap_or_default(),
+            false,
+            window,
+            cx,
+        );
+        let local_shell_args_input = new_input_state(
+            i18n::string("placeholders.host_editor.local_shell_args"),
+            selected_profile_data
+                .as_ref()
+                .map(|profile| profile.local_shell_args.clone())
+                .unwrap_or_default(),
+            false,
+            window,
+            cx,
+        );
+        let local_working_directory_input = new_input_state(
+            i18n::string("placeholders.host_editor.local_working_directory"),
+            selected_profile_data
+                .as_ref()
+                .map(|profile| profile.local_working_directory.clone())
+                .unwrap_or_default(),
+            false,
+            window,
+            cx,
+        );
         let proxy_jump_profile_ids = selected_profile_data
             .as_ref()
             .map(|profile| profile.proxy_jump_profile_ids.clone())
@@ -1030,6 +1074,13 @@ impl SessionController {
                 agent_forwarding_enabled: selected_profile_data
                     .as_ref()
                     .is_some_and(|profile| profile.agent_forwarding),
+                profile_kind: selected_profile_data
+                    .as_ref()
+                    .map(|profile| profile.kind)
+                    .unwrap_or_default(),
+                local_shell_input,
+                local_shell_args_input,
+                local_working_directory_input,
             },
             snippets: SnippetsForms {
                 filter_input: new_input_state(
@@ -1681,6 +1732,9 @@ impl SessionController {
         lines: usize,
         monitoring_enabled: bool,
     ) -> SessionConnection {
+        if profile.is_local() {
+            return local_session::start_local_session(profile, columns, lines);
+        }
         self.terminal_service().start_session(
             profile,
             self.profiles.borrow().clone(),
@@ -1722,7 +1776,9 @@ impl SessionController {
             .borrow()
             .iter()
             .filter(|profile| {
-                profile.id != target_profile_id && !chained_ids.contains(profile.id.as_str())
+                !profile.is_local()
+                    && profile.id != target_profile_id
+                    && !chained_ids.contains(profile.id.as_str())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1786,6 +1842,45 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         self.host_editor_forms_mut().agent_forwarding_enabled = enabled;
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn set_host_editor_profile_kind(
+        &self,
+        kind: ProfileKind,
+        cx: &mut Context<Self>,
+    ) {
+        if self.host_editor_forms().profile_kind == kind {
+            return;
+        }
+        self.host_editor_forms_mut().profile_kind = kind;
+        cx.notify();
+    }
+
+    /// Applies the shell executable chosen in the host editor file picker.
+    pub(in crate::ui::shell) fn set_local_shell_path(
+        &self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.host_editor_forms().local_shell_input.clone();
+        set_input_value(&input, path.display().to_string(), window, cx);
+        cx.notify();
+    }
+
+    /// Applies the working directory chosen in the host editor folder picker.
+    pub(in crate::ui::shell) fn set_local_working_directory_path(
+        &self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self
+            .host_editor_forms()
+            .local_working_directory_input
+            .clone();
+        set_input_value(&input, path.display().to_string(), window, cx);
         cx.notify();
     }
 
@@ -2416,6 +2511,24 @@ impl SessionController {
             window,
             cx,
         );
+        set_input_value(
+            &forms.local_shell_input,
+            profile.local_shell.clone(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &forms.local_shell_args_input,
+            profile.local_shell_args.clone(),
+            window,
+            cx,
+        );
+        set_input_value(
+            &forms.local_working_directory_input,
+            profile.local_working_directory.clone(),
+            window,
+            cx,
+        );
         let selected_charset = if profile.charset.trim().is_empty() {
             DEFAULT_SESSION_CHARSET.to_string()
         } else {
@@ -2438,6 +2551,7 @@ impl SessionController {
         forms.shell_type = profile.shell_type;
         forms.editing_auth_method = Self::host_editor_auth_method(profile.effective_auth_method());
         forms.agent_forwarding_enabled = profile.agent_forwarding;
+        forms.profile_kind = profile.kind;
     }
 
     fn clear_profile_inputs(
@@ -2473,6 +2587,15 @@ impl SessionController {
             cx,
         );
         set_editor_value(&forms.startup_command_input, "", window, cx);
+        set_input_value(&forms.local_shell_input, "", window, cx);
+        set_input_placeholder(
+            &forms.local_shell_input,
+            local_session::local_shell_placeholder(),
+            window,
+            cx,
+        );
+        set_input_value(&forms.local_shell_args_input, "", window, cx);
+        set_input_value(&forms.local_working_directory_input, "", window, cx);
         forms.charset_select.update(cx, |select, cx| {
             select.set_selected_value(&DEFAULT_SESSION_CHARSET.to_string(), window, cx);
         });
@@ -2490,6 +2613,7 @@ impl SessionController {
         forms.shell_type = ShellType::Posix;
         forms.editing_auth_method = AuthMethod::Password;
         forms.agent_forwarding_enabled = false;
+        forms.profile_kind = ProfileKind::Ssh;
     }
 
     pub(in crate::ui::shell) fn add_profile(
@@ -2849,6 +2973,15 @@ impl SessionController {
             .next_profile_id(&self.profiles.borrow())
     }
 
+    /// The editor only offers SSH and local terminals; legacy remote kinds are
+    /// normalized to SSH so the saved kind matches the form.
+    fn host_editor_profile_kind(kind: ProfileKind) -> ProfileKind {
+        match kind {
+            ProfileKind::Local => ProfileKind::Local,
+            ProfileKind::Ssh | ProfileKind::Telnet | ProfileKind::Rdp => ProfileKind::Ssh,
+        }
+    }
+
     fn read_profile_from_inputs(
         &self,
         profile_id: String,
@@ -2892,13 +3025,22 @@ impl SessionController {
             charset
         };
         let environment_variables = self.read_environment_variables(cx)?;
-        let proxy_jump_profile_ids = self.read_proxy_jump_profile_ids(&profile_id)?;
-        let entry_proxy_id = forms
-            .entry_proxy_select
-            .read(cx)
-            .selected_value()
-            .cloned()
-            .flatten();
+        let is_local_kind = forms.profile_kind == ProfileKind::Local;
+        let proxy_jump_profile_ids = if is_local_kind {
+            Vec::new()
+        } else {
+            self.read_proxy_jump_profile_ids(&profile_id)?
+        };
+        let entry_proxy_id = if is_local_kind {
+            None
+        } else {
+            forms
+                .entry_proxy_select
+                .read(cx)
+                .selected_value()
+                .cloned()
+                .flatten()
+        };
         if let Some(entry_proxy_id) = entry_proxy_id.as_deref()
             && !self
                 .proxies
@@ -2911,6 +3053,85 @@ impl SessionController {
                 &[("id", entry_proxy_id)],
             ))
             .into());
+        }
+
+        if is_local_kind {
+            let local_shell = forms.local_shell_input.read(cx).value().trim().to_string();
+            let local_shell_args = forms
+                .local_shell_args_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string();
+            let local_working_directory = forms
+                .local_working_directory_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string();
+            if local_shell.is_empty() {
+                return Err(ValidationFailure::required(i18n::string(
+                    "errors.profile.validation.local_shell_required",
+                ))
+                .into());
+            }
+            if !local_session::local_shell_is_available(&local_shell) {
+                return Err(ValidationFailure::invalid(i18n::string_args(
+                    "errors.profile.validation.local_shell_not_found",
+                    &[("path", &local_shell)],
+                ))
+                .into());
+            }
+            if !local_session::local_working_directory_is_available(&local_working_directory) {
+                return Err(ValidationFailure::invalid(i18n::string_args(
+                    "errors.profile.validation.local_working_directory_not_found",
+                    &[("path", &local_working_directory)],
+                ))
+                .into());
+            }
+            let profiles = self.profiles.borrow();
+            let existing = profiles.iter().find(|profile| profile.id == profile_id);
+            let name = if name.is_empty() {
+                local_session::local_terminal_label(&local_shell)
+            } else {
+                name
+            };
+            return Ok(SessionProfile {
+                id: profile_id,
+                name,
+                group: String::new(),
+                tags,
+                kind: ProfileKind::Local,
+                host: String::new(),
+                port: 22,
+                username: String::new(),
+                password: String::new(),
+                auth_method: None,
+                private_key_path: String::new(),
+                managed_key_id: String::new(),
+                agent_identity: String::new(),
+                agent_identity_label: String::new(),
+                certificate_path: String::new(),
+                passphrase: String::new(),
+                agent_forwarding: false,
+                startup_command,
+                charset,
+                environment_variables,
+                shell_type: ShellType::Posix,
+                proxy_jump_profile_ids: Vec::new(),
+                entry_proxy_id: None,
+                has_stored_password: false,
+                has_stored_passphrase: false,
+                port_forwarding_rules: existing
+                    .map(|profile| profile.port_forwarding_rules.clone())
+                    .unwrap_or_default(),
+                is_favorite: existing.is_some_and(|profile| profile.is_favorite),
+                remote_path_favorites: Vec::new(),
+                local_shell,
+                local_shell_args,
+                local_working_directory,
+                last_connected_at: existing.and_then(|profile| profile.last_connected_at),
+            });
         }
 
         if purpose.requires_name() && name.is_empty() {
@@ -3003,12 +3224,47 @@ impl SessionController {
             .into());
         }
 
+        let form_local_shell = forms.local_shell_input.read(cx).value().trim().to_string();
+        let form_local_shell_args = forms
+            .local_shell_args_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let form_local_working_directory = forms
+            .local_working_directory_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let local_shell = if form_local_shell.is_empty() {
+            existing
+                .map(|profile| profile.local_shell.clone())
+                .unwrap_or_default()
+        } else {
+            form_local_shell
+        };
+        let local_shell_args = if form_local_shell_args.is_empty() {
+            existing
+                .map(|profile| profile.local_shell_args.clone())
+                .unwrap_or_default()
+        } else {
+            form_local_shell_args
+        };
+        let local_working_directory = if form_local_working_directory.is_empty() {
+            existing
+                .map(|profile| profile.local_working_directory.clone())
+                .unwrap_or_default()
+        } else {
+            form_local_working_directory
+        };
+
         Ok(SessionProfile {
             id: profile_id,
             name,
             group,
             tags,
-            kind: existing.map(|profile| profile.kind).unwrap_or_default(),
+            kind: Self::host_editor_profile_kind(forms.profile_kind),
             host,
             port,
             username,
@@ -3039,6 +3295,9 @@ impl SessionController {
             remote_path_favorites: existing
                 .map(|profile| profile.remote_path_favorites.clone())
                 .unwrap_or_default(),
+            local_shell,
+            local_shell_args,
+            local_working_directory,
             last_connected_at: existing.and_then(|profile| profile.last_connected_at),
         })
     }
@@ -3235,15 +3494,20 @@ impl SessionController {
         )
     }
 
+    pub(in crate::ui::shell) fn forward_profile_items(
+        profiles: &[SessionProfile],
+    ) -> Vec<ForwardProfileSelectItem> {
+        profiles
+            .iter()
+            .filter(|profile| !profile.is_local())
+            .map(ForwardProfileSelectItem::new)
+            .collect()
+    }
+
     pub(in crate::ui::shell) fn forward_profile_options(
         profiles: &[SessionProfile],
     ) -> SearchableVec<ForwardProfileSelectItem> {
-        SearchableVec::new(
-            profiles
-                .iter()
-                .map(ForwardProfileSelectItem::new)
-                .collect::<Vec<_>>(),
-        )
+        SearchableVec::new(Self::forward_profile_items(profiles))
     }
 
     pub(in crate::ui::shell) fn sync_port_forward_profile_select(
@@ -4744,6 +5008,7 @@ impl SessionController {
             port_forward_revision: 0,
             port_forward_log_len: 0,
             sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: false,
             owner_route: None,
         };
         (
@@ -4752,6 +5017,53 @@ impl SessionController {
                 title,
                 status,
                 TabKindTag::Session,
+                crate::ui::shell::workspace::TabPlacement::TopLevel,
+            ),
+            session,
+        )
+    }
+
+    pub(in crate::ui::shell) fn build_local_tab(
+        id: TabId,
+        profile: SessionProfile,
+        terminal: TerminalState,
+    ) -> (TabState, SessionTabState) {
+        let title = if profile.name.trim().is_empty() {
+            local_session::local_terminal_label(&profile.local_shell)
+        } else {
+            profile.name.clone()
+        };
+        let profile_id = profile.id.clone();
+
+        let session = SessionTabState {
+            profile_id,
+            port_forward_rule_id: None,
+            terminal,
+            connection_state: SessionConnectionState::Connecting,
+            preserved_history_popup_hidden: false,
+            pending_profile: Some(profile),
+            commands: None,
+            bytes_in: 0,
+            bytes_out: 0,
+            pending_host_key: None,
+            pending_keyboard_interactive: None,
+            reconnect_task: None,
+            reconnect_attempt: 0,
+            has_activity: false,
+            monitoring: SessionMonitoringState::new(false),
+            purpose: SessionPurpose::Terminal,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: true,
+            owner_route: None,
+        };
+        (
+            TabState::new(
+                id,
+                title,
+                i18n::string("tabs.initial.local_terminal_starting"),
+                TabKindTag::LocalTerminal,
                 crate::ui::shell::workspace::TabPlacement::TopLevel,
             ),
             session,
@@ -4806,6 +5118,7 @@ impl SessionController {
             port_forward_revision: 0,
             port_forward_log_len: 0,
             sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: false,
             owner_route: None,
         };
         (
@@ -4850,6 +5163,7 @@ impl SessionController {
             port_forward_revision: 0,
             port_forward_log_len: 0,
             sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: false,
             owner_route: None,
         };
         (
@@ -6388,6 +6702,7 @@ mod tests {
             port_forward_revision: 0,
             port_forward_log_len: 0,
             sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: false,
             owner_route: None,
         }
     }
@@ -6686,5 +7001,99 @@ mod tests {
         assert!(old.tap.try_send(vec![2]).is_err());
         assert!(new.tap.try_send(vec![3]).is_ok());
         assert!(!terminal.forward_output(TabId::new(99), vec![4]));
+    }
+    fn local_profile(id: &str, name: &str) -> SessionProfile {
+        let mut profile = SessionProfile::blank_local(id, 1);
+        profile.name = name.to_string();
+        profile
+    }
+
+    #[test]
+    fn local_terminal_tab_uses_profile_name_and_local_kind() {
+        let (tab, session) = SessionController::build_local_tab(
+            TabId::new(11),
+            local_profile("local-a", "Dev box"),
+            TerminalState::default(),
+        );
+
+        assert_eq!(tab.title, "Dev box");
+        assert_eq!(
+            tab.status,
+            i18n::string("tabs.initial.local_terminal_starting")
+        );
+        assert_eq!(tab.kind, TabKindTag::LocalTerminal);
+        assert!(tab.is_local_terminal());
+        assert!(session.local_terminal);
+        assert!(!session.monitoring.auto_collect_enabled);
+    }
+
+    #[test]
+    fn local_terminal_tab_without_name_falls_back_to_the_configured_shell() {
+        let mut profile = SessionProfile::blank_local("local-a", 1);
+        profile.name = String::new();
+        profile.local_shell = "/bin/zsh".into();
+
+        let (tab, _) =
+            SessionController::build_local_tab(TabId::new(12), profile, TerminalState::default());
+
+        assert_eq!(tab.title, "zsh");
+    }
+
+    #[test]
+    fn local_terminal_tab_without_shell_uses_the_generic_title() {
+        let mut profile = SessionProfile::blank_local("local-a", 1);
+        profile.name = String::new();
+
+        let (tab, _) =
+            SessionController::build_local_tab(TabId::new(13), profile, TerminalState::default());
+
+        assert_eq!(tab.title, i18n::string("tabs.initial.local_terminal_title"));
+    }
+
+    #[test]
+    fn forward_profile_items_skip_local_terminal_profiles() {
+        let profiles = vec![profile("ssh-a", "A"), local_profile("local-a", "Local")];
+
+        let items = SessionController::forward_profile_items(&profiles);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "ssh-a");
+    }
+
+    #[test]
+    fn local_terminal_profile_never_requires_a_locked_vault() {
+        let controller = SessionController::new_for_test();
+        let mut local = local_profile("local-a", "Local");
+        local.auth_method = Some(AuthMethod::Password);
+        local.has_stored_password = true;
+
+        assert!(!controller.profile_requires_local_vault_unlock(&local));
+
+        let mut ssh = profile("ssh-a", "A");
+        ssh.auth_method = Some(AuthMethod::Password);
+        ssh.password = String::new();
+        ssh.has_stored_password = true;
+
+        assert!(controller.profile_requires_local_vault_unlock(&ssh));
+    }
+
+    #[test]
+    fn saved_profile_kind_matches_the_editor_selection() {
+        assert_eq!(
+            SessionController::host_editor_profile_kind(ProfileKind::Ssh),
+            ProfileKind::Ssh
+        );
+        assert_eq!(
+            SessionController::host_editor_profile_kind(ProfileKind::Local),
+            ProfileKind::Local
+        );
+        assert_eq!(
+            SessionController::host_editor_profile_kind(ProfileKind::Telnet),
+            ProfileKind::Ssh
+        );
+        assert_eq!(
+            SessionController::host_editor_profile_kind(ProfileKind::Rdp),
+            ProfileKind::Ssh
+        );
     }
 }

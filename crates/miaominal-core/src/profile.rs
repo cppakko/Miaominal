@@ -8,6 +8,7 @@ pub enum ProfileKind {
     Ssh,
     Telnet,
     Rdp,
+    Local,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -127,6 +128,12 @@ pub struct SessionProfile {
     pub is_favorite: bool,
     #[serde(default)]
     pub remote_path_favorites: Vec<String>,
+    #[serde(default)]
+    pub local_shell: String,
+    #[serde(default)]
+    pub local_shell_args: String,
+    #[serde(default)]
+    pub local_working_directory: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected_at: Option<u64>,
 }
@@ -162,11 +169,34 @@ impl SessionProfile {
             port_forwarding_rules: Vec::new(),
             is_favorite: false,
             remote_path_favorites: Vec::new(),
+            local_shell: String::new(),
+            local_shell_args: String::new(),
+            local_working_directory: String::new(),
             last_connected_at: None,
         }
     }
 
+    pub fn blank_local(id: impl Into<String>, ordinal: usize) -> Self {
+        let mut profile = Self::blank(id, ordinal);
+        profile.kind = ProfileKind::Local;
+        profile.auth_method = None;
+        profile.name = format!("Local {}", ordinal);
+        profile
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.kind == ProfileKind::Local
+    }
+
     pub fn summary(&self) -> String {
+        if self.is_local() {
+            let shell = self.local_shell.trim();
+            return if shell.is_empty() {
+                "localhost".to_string()
+            } else {
+                shell.to_string()
+            };
+        }
         format!("{}@{}:{}", self.username, self.host, self.port)
     }
 
@@ -506,5 +536,68 @@ mod tests {
             restored.remote_path_favorites,
             profile.remote_path_favorites
         );
+    }
+
+    #[test]
+    fn legacy_profile_without_kind_defaults_to_ssh() {
+        let profile = SessionProfile::blank("session-legacy", 1);
+        let mut value = serde_json::to_value(profile).expect("profile should serialize");
+        value
+            .as_object_mut()
+            .expect("profile should be an object")
+            .remove("kind");
+
+        let profile: SessionProfile =
+            serde_json::from_value(value).expect("legacy profile should deserialize");
+        assert_eq!(profile.kind, ProfileKind::Ssh);
+        assert!(!profile.is_local());
+    }
+
+    #[test]
+    fn legacy_profile_without_local_fields_defaults_to_empty() {
+        let profile = SessionProfile::blank("session-legacy", 1);
+        let mut value = serde_json::to_value(profile).expect("profile should serialize");
+        let object = value.as_object_mut().expect("profile should be an object");
+        object.remove("local_shell");
+        object.remove("local_shell_args");
+        object.remove("local_working_directory");
+
+        let profile: SessionProfile =
+            serde_json::from_value(value).expect("legacy profile should deserialize");
+        assert!(profile.local_shell.is_empty());
+        assert!(profile.local_shell_args.is_empty());
+        assert!(profile.local_working_directory.is_empty());
+    }
+
+    #[test]
+    fn local_profile_round_trips() {
+        let mut profile = SessionProfile::blank_local("session-local", 2);
+        profile.name = "本机 PowerShell".into();
+        profile.local_shell = "C:/Program Files/PowerShell/7/pwsh.exe".into();
+        profile.local_shell_args = "-NoLogo".into();
+        profile.local_working_directory = "C:/workspace".into();
+
+        let json = serde_json::to_string(&profile).expect("profile should serialize");
+        let restored: SessionProfile =
+            serde_json::from_str(&json).expect("profile should deserialize");
+
+        assert_eq!(restored.kind, ProfileKind::Local);
+        assert!(restored.is_local());
+        assert_eq!(restored.local_shell, profile.local_shell);
+        assert_eq!(restored.local_shell_args, profile.local_shell_args);
+        assert_eq!(
+            restored.local_working_directory,
+            profile.local_working_directory
+        );
+    }
+
+    #[test]
+    fn local_profile_summary_reports_shell_or_localhost() {
+        let mut profile = SessionProfile::blank_local("session-local", 1);
+        assert_eq!(profile.summary(), "localhost");
+
+        profile.local_shell = "/bin/zsh".into();
+        assert_eq!(profile.summary(), "/bin/zsh");
+        assert_eq!(profile.connection_label(), "Local 1");
     }
 }

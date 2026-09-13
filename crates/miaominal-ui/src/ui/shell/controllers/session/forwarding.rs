@@ -36,7 +36,7 @@ impl SessionController {
         &self,
         profile: &SessionProfile,
     ) -> bool {
-        if self.services.local_vault_status != LocalVaultStatus::Locked {
+        if profile.is_local() || self.services.local_vault_status != LocalVaultStatus::Locked {
             return false;
         }
 

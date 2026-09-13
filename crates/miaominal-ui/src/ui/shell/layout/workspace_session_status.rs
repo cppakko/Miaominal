@@ -24,10 +24,16 @@ pub(in crate::ui::shell::layout) fn session_summary(
         .iter()
         .find(|profile| profile.id == session.profile_id)
     {
+        if profile.is_local() {
+            return tab.title.clone();
+        }
         return format!("{}@{}:{}", profile.username, profile.host, profile.port);
     }
 
     if let Some(profile) = session.pending_profile.as_ref() {
+        if profile.is_local() {
+            return tab.title.clone();
+        }
         return format!("{}@{}:{}", profile.username, profile.host, profile.port);
     }
 
@@ -131,6 +137,7 @@ impl SessionController {
                 ))
             }
             SessionConnectionState::Ready => None,
+            SessionConnectionState::Exited { .. } => None,
             SessionConnectionState::Disconnected => Some(self.render_session_disconnected_surface(
                 summary, profile_id, purpose, tab.id, rounded, cx,
             )),
@@ -173,11 +180,15 @@ impl SessionController {
                     cx,
                 )
             }),
-            SessionConnectionState::Disconnected => Some(if popup_hidden {
-                self.render_session_reconnect_fab(profile_id, false, tab.id, cx)
-            } else {
-                self.render_session_disconnected_banner(summary, profile_id, purpose, tab.id, cx)
-            }),
+            SessionConnectionState::Exited { .. } | SessionConnectionState::Disconnected => {
+                Some(if popup_hidden {
+                    self.render_session_reconnect_fab(profile_id, false, tab.id, cx)
+                } else {
+                    self.render_session_disconnected_banner(
+                        summary, profile_id, purpose, tab.id, cx,
+                    )
+                })
+            }
             SessionConnectionState::Connecting
             | SessionConnectionState::Ready
             | SessionConnectionState::Reconnecting { .. } => None,

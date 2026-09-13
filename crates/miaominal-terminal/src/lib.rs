@@ -31,10 +31,13 @@ pub const MAX_SEARCH_MATCHES: usize = 1000;
 
 /// Subset of alacritty events that the UI cares about. The PTY worker thread
 /// produces these via [`MiaominalListener`]; the AppView drains them on the
-/// foreground thread and reacts (OSC 52 clipboard writes, bell).
+/// foreground thread and reacts (OSC 52 clipboard writes, PTY write-backs, bell).
 #[derive(Clone, Debug)]
 pub enum TerminalEvent {
     ClipboardStore(String),
+    /// Escape sequence that must be written back to the PTY, such as the cursor
+    /// position report Windows ConPTY waits for before it renders any output.
+    PtyWrite(String),
     Bell,
 }
 
@@ -53,6 +56,7 @@ impl EventListener for MiaominalListener {
     fn send_event(&self, event: Event) {
         let mapped = match event {
             Event::ClipboardStore(_, content) => Some(TerminalEvent::ClipboardStore(content)),
+            Event::PtyWrite(text) => Some(TerminalEvent::PtyWrite(text)),
             Event::Bell => Some(TerminalEvent::Bell),
             _ => None,
         };
@@ -2453,6 +2457,22 @@ mod tests {
     use std::fmt::Write as _;
 
     const RESIZE_REFLOW_TEXT: &str = "Linux localhost 7.0.10-x64v3-xanmod1 #0~20260523.ga55d99c SMP PREEMPT_DYNAMIC Sat May 23 18:51:58 UTC x86_64";
+
+    #[test]
+    fn conpty_cursor_query_is_surfaced_as_a_pty_write() {
+        let terminal = TerminalState::new(80, 24);
+        terminal.push_text("hello");
+        wait_for_parser(&terminal);
+
+        terminal.push_bytes(b"\x1b[6n");
+        wait_for_parser(&terminal);
+
+        match terminal.try_recv_event() {
+            Some(TerminalEvent::PtyWrite(sequence)) => assert_eq!(sequence, "\x1b[1;6R"),
+            other => panic!("expected a cursor position report, got {other:?}"),
+        }
+        assert!(terminal.try_recv_event().is_none());
+    }
 
     #[test]
     fn detect_visible_urls_stops_before_trailing_punctuation() {

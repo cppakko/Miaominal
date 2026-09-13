@@ -22,7 +22,7 @@ description = "自定义工作区导航和终端操作的快捷键。点击修�
 
 [settings.pages.sync]
 title = "同步"
-description = "通过 GitHub Gist 或 WebDAV 在设备之间同步主机配置、脚本片段、托管密钥、快捷键和连接偏好。密码与私钥会在上传前使用你的口令加密。"
+description = "通过 GitHub Gist 或 WebDAV 在设备之间同步远端主机配置、脚本片段、托管密钥、快捷键和连接偏好。本地终端配置只保存在本机，不参与同步。密码与私钥会在上传前使用你的口令加密。"
 
 [settings.pages.vault]
 title = "本地机密库"
@@ -527,6 +527,10 @@ profile_name = "配置名称"
 new_group_name = "新分组名称"
 tags = "标签-a, 标签-b"
 host = "主机"
+local_shell_windows = "例如 C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+local_shell_posix = "例如 /bin/zsh"
+local_shell_args = "可选参数"
+local_working_directory = "用户主目录"
 username = "用户名"
 password = "密码"
 private_key_path = "私钥路径"
@@ -649,6 +653,9 @@ verify_host_key = "请先验证主机密钥后继续"
 connection_closed_before_ready = "终端尚未就绪时连接已关闭。"
 test_succeeded = "测试成功：{connection}"
 connected = "已连接：{connection}"
+local_running = "本地 Shell 运行中"
+local_exited = "已退出（代码 {code}）"
+local_exited_signal = "已退出（{signal}）"
 disconnected = "已断开"
 error = "错误"
 closed = "已关闭"
@@ -988,6 +995,7 @@ connection_succeeded_title = "连接成功"
 test_connection_failed_title = "测试连接失败"
 session_error_title = "会话错误"
 connection_failed_title = "连接失败"
+local_exited_title = "本地 Shell 已退出"
 
 [session.messages]
 testing_connection_to = "正在测试连接到 {profile}"
@@ -1019,6 +1027,8 @@ remove_host_key_failed = "移除主机密钥失败：{error}"
 forward_prefix = "[转发]"
 host_key_prefix = "[主机密钥]"
 closed_marker = "[会话已关闭]"
+exited_marker = "[进程已退出，代码 {code}]"
+exited_signal_marker = "[进程已退出：{signal}]"
 reconnecting_marker = "[正在重连……]"
 reconnecting_attempt_marker = "[正在重连（第 {attempt} 次尝试）……]\r\n"
 error_line = "[错误] {error}\r\n"
@@ -1222,11 +1232,15 @@ open_sftp = "打开 SFTP"
 duplicate_profile = "复制配置"
 delete_profile = "删除配置"
 
+[hosts.local_only]
+hint = "本地终端配置只保存在本机，不参与云同步。"
+
 [hosts.page]
 groups = "分组"
 recent_connections = "最近连接"
 favorites = "收藏"
 active_connections = "活动连接"
+local_terminals = "本地终端"
 
 [hosts.empty]
 no_profiles = "还没有主机配置。点击添加按钮创建第一个配置。"
@@ -1293,11 +1307,18 @@ refreshed = "known_hosts 已刷新"
 [hosts.editor.titles]
 add = "添加主机"
 edit = "编辑主机"
+add_local = "添加本地终端"
+edit_local = "编辑本地终端"
 
 [hosts.editor.sections]
 general = "常规"
 credentials = "凭据"
 advanced = "高级"
+terminal = "终端"
+
+[hosts.editor.profile_kinds]
+ssh = "SSH"
+local = "本地终端"
 
 [hosts.editor.auth_methods]
 password = "密码"
@@ -1310,6 +1331,10 @@ posix = "POSIX"
 fish = "Fish"
 powershell = "PowerShell"
 cmd = "CMD"
+
+[hosts.editor.local_shell]
+select_executable = "选择 Shell 可执行文件"
+select_working_directory = "选择工作目录"
 
 [hosts.editor.fields]
 address = "地址"
@@ -1328,6 +1353,9 @@ agent_forwarding = "SSH Agent 转发"
 startup_command = "启动命令"
 host_chaining = "跳板主机链"
 shell_type = "Shell 类型"
+local_shell = "Shell 程序"
+local_shell_args = "启动参数"
+working_directory = "工作目录"
 character_set = "字符集"
 search_character_set = "搜索字符集"
 
@@ -1569,6 +1597,8 @@ editing_profile = "正在编辑 {name}"
 [tabs.initial]
 hosts_tab_title = "新标签页"
 session_connecting_to = "正在连接到 {connection}"
+local_terminal_title = "本地终端"
+local_terminal_starting = "正在启动本地 Shell"
 port_forward_title = "转发 {kind} {listen_host}:{listen_port} → {target_host}:{target_port}"
 port_forward_named_title = "转发 {label}"
 port_forward_connecting_to = "正在连接转发到 {profile}"
@@ -1590,6 +1620,9 @@ password_requires_password = "密码认证需要提供密码。"
 managed_key_requires_id = "托管密钥认证需要提供托管密钥 ID。"
 ssh_agent_requires_identity = "SSH Agent 认证需要选择一个身份。"
 certificate_requires_key_based_identity = "OpenSSH 证书需要基于密钥的身份。"
+local_shell_required = "本地终端必须指定 Shell 可执行文件路径。"
+local_shell_not_found = "找不到该 Shell 可执行文件：{path}"
+local_working_directory_not_found = "找不到该工作目录：{path}"
 
 entry_proxy_missing = "所选入口代理已不存在：{id}"
 
@@ -1737,6 +1770,8 @@ metadata = "读取 {path} 的元数据失败"
 
 [settings.sync]
 save_action = "保存"
+local_only_group_title = "本地终端"
+local_only_hint = "本地终端配置只保存在本机，不会上传到同步，也不会被远端内容覆盖。"
 
 [settings.sync.provider_group]
 title = "同步提供方"

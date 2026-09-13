@@ -28,37 +28,11 @@ impl AgentController {
     }
 
     pub(in crate::ui::shell) fn target_candidates(&self) -> Vec<SessionAgentTargetCandidate> {
-        match self.session_agent().exec_mode {
-            AgentExecMode::ExecChannel => self
-                .session_query
-                .profiles()
-                .into_iter()
-                .map(|profile| SessionAgentTargetCandidate {
-                    name: profile.name,
-                    detail: format!("{}@{}", profile.username, profile.host),
-                    resolved: true,
-                })
-                .collect(),
-            AgentExecMode::Pty => self
-                .session_terminal
-                .targets()
-                .into_iter()
-                .map(|target| {
-                    let detail = self
-                        .session_query
-                        .profile(&target.profile_id)
-                        .map(|profile| format!("{}@{}", profile.username, profile.host))
-                        .unwrap_or_else(|| {
-                            i18n::string("workspace.panel.agent.messages.terminal_session")
-                        });
-                    SessionAgentTargetCandidate {
-                        name: target.title,
-                        detail,
-                        resolved: target.command_available,
-                    }
-                })
-                .collect(),
-        }
+        agent_target_candidates(
+            self.session_agent().exec_mode,
+            &self.session_query.profiles(),
+            &self.session_terminal.targets(),
+        )
     }
 
     pub(in crate::ui::shell) fn capture_execution_context(
@@ -131,5 +105,99 @@ impl AgentController {
                     i18n::string("workspace.panel.agent.messages.pty_requires_active_session")
                 }
             })
+    }
+}
+
+pub(in crate::ui::shell) fn agent_target_candidates(
+    exec_mode: AgentExecMode,
+    profiles: &[SessionProfile],
+    terminal_targets: &[SessionTerminalTarget],
+) -> Vec<SessionAgentTargetCandidate> {
+    match exec_mode {
+        AgentExecMode::ExecChannel => profiles
+            .iter()
+            .filter(|profile| !profile.is_local())
+            .map(|profile| SessionAgentTargetCandidate {
+                name: profile.name.clone(),
+                detail: format!("{}@{}", profile.username, profile.host),
+                resolved: true,
+            })
+            .collect(),
+        AgentExecMode::Pty => terminal_targets
+            .iter()
+            .filter(|target| {
+                profiles
+                    .iter()
+                    .find(|profile| profile.id == target.profile_id)
+                    .is_none_or(|profile| !profile.is_local())
+            })
+            .map(|target| {
+                let detail = profiles
+                    .iter()
+                    .find(|profile| profile.id == target.profile_id)
+                    .map(|profile| format!("{}@{}", profile.username, profile.host))
+                    .unwrap_or_else(|| {
+                        i18n::string("workspace.panel.agent.messages.terminal_session")
+                    });
+                SessionAgentTargetCandidate {
+                    name: target.title.clone(),
+                    detail,
+                    resolved: target.command_available,
+                }
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ssh_profile(id: &str, name: &str) -> SessionProfile {
+        let mut profile = SessionProfile::blank(id, 1);
+        profile.name = name.to_string();
+        profile.host = "example.test".to_string();
+        profile.username = "user".to_string();
+        profile
+    }
+
+    fn local_profile(id: &str) -> SessionProfile {
+        SessionProfile::blank_local(id, 1)
+    }
+
+    fn terminal(tab_id: usize, profile_id: &str, title: &str) -> SessionTerminalTarget {
+        SessionTerminalTarget {
+            tab_id: TabId::new(tab_id),
+            title: title.to_string(),
+            profile_id: profile_id.to_string(),
+            profile: None,
+            command_available: true,
+        }
+    }
+
+    #[test]
+    fn exec_channel_candidates_skip_local_terminal_profiles() {
+        let profiles = vec![ssh_profile("ssh-a", "A"), local_profile("local-a")];
+
+        let candidates = agent_target_candidates(AgentExecMode::ExecChannel, &profiles, &[]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "A");
+        assert_eq!(candidates[0].detail, "user@example.test");
+    }
+
+    #[test]
+    fn pty_candidates_skip_local_terminal_sessions() {
+        let profiles = vec![ssh_profile("ssh-a", "A"), local_profile("local-a")];
+        let targets = vec![
+            terminal(7, "ssh-a", "A"),
+            terminal(9, "local-a", "Local terminal"),
+        ];
+
+        let candidates = agent_target_candidates(AgentExecMode::Pty, &profiles, &targets);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "A");
+        assert_eq!(candidates[0].detail, "user@example.test");
     }
 }

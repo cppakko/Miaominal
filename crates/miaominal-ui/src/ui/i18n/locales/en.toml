@@ -26,7 +26,7 @@ description = "Configure model providers for the AI assistant. API keys are stor
 
 [settings.pages.sync]
 title = "Sync"
-description = "Sync host profiles, snippets, managed keys, shortcuts, and connection preferences across devices via GitHub Gist or WebDAV. Passwords and private keys are encrypted with your passphrase before upload."
+description = "Sync remote host profiles, snippets, managed keys, shortcuts, and connection preferences across devices via GitHub Gist or WebDAV. Local terminal profiles stay on this device. Passwords and private keys are encrypted with your passphrase before upload."
 
 [settings.pages.vault]
 title = "Local Secrets Vault"
@@ -665,6 +665,10 @@ profile_name = "Profile name"
 new_group_name = "New group name"
 tags = "tag-a, tag-b"
 host = "Host"
+local_shell_windows = "e.g. C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+local_shell_posix = "e.g. /bin/zsh"
+local_shell_args = "Optional arguments"
+local_working_directory = "User home directory"
 username = "Username"
 password = "Password"
 private_key_path = "Private key path"
@@ -787,6 +791,9 @@ verify_host_key = "Verify host key to continue"
 connection_closed_before_ready = "Connection closed before the terminal became ready."
 test_succeeded = "Test succeeded: {connection}"
 connected = "Connected: {connection}"
+local_running = "Local shell running"
+local_exited = "Exited (code {code})"
+local_exited_signal = "Exited ({signal})"
 disconnected = "Disconnected"
 error = "Error"
 closed = "Closed"
@@ -1126,6 +1133,7 @@ connection_succeeded_title = "Connection succeeded"
 test_connection_failed_title = "Test connection failed"
 session_error_title = "Session error"
 connection_failed_title = "Connection failed"
+local_exited_title = "Local shell exited"
 
 [session.messages]
 testing_connection_to = "Testing connection to {profile}"
@@ -1157,6 +1165,8 @@ remove_host_key_failed = "Failed to remove host key: {error}"
 forward_prefix = "[Forward]"
 host_key_prefix = "[Host key]"
 closed_marker = "[Session closed]"
+exited_marker = "[Process exited with code {code}]"
+exited_signal_marker = "[Process exited: {signal}]"
 reconnecting_marker = "[Reconnecting...]"
 reconnecting_attempt_marker = "[Reconnecting (attempt {attempt})...]\r\n"
 error_line = "[Error] {error}\r\n"
@@ -1360,11 +1370,15 @@ open_sftp = "Open SFTP"
 duplicate_profile = "Duplicate profile"
 delete_profile = "Delete profile"
 
+[hosts.local_only]
+hint = "Local terminal profiles are stored on this device only and never join cloud sync."
+
 [hosts.page]
 groups = "Groups"
 recent_connections = "Recent Connections"
 favorites = "Favorites"
 active_connections = "Connections"
+local_terminals = "Local terminals"
 
 [hosts.empty]
 no_profiles = "No host profiles yet. Click the add button to create your first one."
@@ -1431,11 +1445,18 @@ refreshed = "Known hosts refreshed"
 [hosts.editor.titles]
 add = "Add Host"
 edit = "Edit Host"
+add_local = "Add Local Terminal"
+edit_local = "Edit Local Terminal"
 
 [hosts.editor.sections]
 general = "General"
 credentials = "Credentials"
 advanced = "Advanced"
+terminal = "Terminal"
+
+[hosts.editor.profile_kinds]
+ssh = "SSH"
+local = "Local terminal"
 
 [hosts.editor.auth_methods]
 password = "Password"
@@ -1448,6 +1469,10 @@ posix = "POSIX"
 fish = "Fish"
 powershell = "PowerShell"
 cmd = "CMD"
+
+[hosts.editor.local_shell]
+select_executable = "Select the shell executable"
+select_working_directory = "Select the working directory"
 
 [hosts.editor.fields]
 address = "Address"
@@ -1466,6 +1491,9 @@ agent_forwarding = "Agent forwarding"
 startup_command = "Startup command"
 host_chaining = "Host Chaining"
 shell_type = "Shell type"
+local_shell = "Shell program"
+local_shell_args = "Shell arguments"
+working_directory = "Working directory"
 character_set = "Character set"
 search_character_set = "Search character set"
 
@@ -1707,6 +1735,8 @@ editing_profile = "Editing {name}"
 [tabs.initial]
 hosts_tab_title = "New Tab"
 session_connecting_to = "Connecting to {connection}"
+local_terminal_title = "Local Terminal"
+local_terminal_starting = "Starting local shell"
 port_forward_title = "Forward {kind} {listen_host}:{listen_port} -> {target_host}:{target_port}"
 port_forward_named_title = "Forward {label}"
 port_forward_connecting_to = "Connecting forwarding to {profile}"
@@ -1747,6 +1777,9 @@ password_requires_password = "Password authentication requires a password."
 managed_key_requires_id = "Managed key authentication requires a managed key ID."
 ssh_agent_requires_identity = "SSH agent authentication requires an agent identity."
 certificate_requires_key_based_identity = "OpenSSH certificates require a key-based identity."
+local_shell_required = "Local terminals require a shell executable path."
+local_shell_not_found = "Shell executable not found: {path}"
+local_working_directory_not_found = "Working directory not found: {path}"
 entry_proxy_missing = "The selected entry proxy no longer exists: {id}"
 
 [forwarding.status]
@@ -1874,6 +1907,8 @@ metadata = "Failed to read metadata for {path}"
 
 [settings.sync]
 save_action = "Save"
+local_only_group_title = "Local terminal"
+local_only_hint = "Local terminal profiles are stored on this device only. They are never uploaded to sync and are not overwritten by remote content."
 
 [settings.sync.provider_group]
 title = "Provider"

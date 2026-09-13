@@ -189,6 +189,7 @@ mod tests {
             port_forward_revision: 0,
             port_forward_log_len: 0,
             sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: false,
             owner_route: None,
         }
     }
@@ -416,6 +417,21 @@ mod tests {
             SessionConnectionState::Failed {
                 error: "boom".to_string(),
                 status: Some(SessionFailureStatus::Closed),
+            },
+        );
+
+        assert!(session.preserves_terminal_history());
+        assert!(session.is_terminal_read_only());
+        assert!(!session.uses_blocking_placeholder());
+    }
+
+    #[test]
+    fn terminal_exited_preserves_history_and_is_read_only() {
+        let session = session_state(
+            SessionPurpose::Terminal,
+            SessionConnectionState::Exited {
+                exit_code: 0,
+                signal: None,
             },
         );
 

@@ -46,6 +46,7 @@ pub use profile_connector::{
 #[allow(unused_imports)]
 pub use session::SessionConnection;
 pub use session::{
-    SessionCommandSender, SessionEvent, SessionEventReceiver, connection, execute_profile_command,
-    execute_profile_pty_command, start_session,
+    SessionChannels, SessionCommand, SessionCommandSender, SessionEvent, SessionEventReceiver,
+    connection, execute_profile_command, execute_profile_pty_command, session_channels,
+    start_session,
 };

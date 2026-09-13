@@ -58,6 +58,7 @@ material-colors = "0.4.2"
 memsafe = "=1.0.2"
 notify = "8.2.0"
 open = "5.3.6"
+portable-pty = "0.9"
 rand = "0.10.1"
 reqwest = { version = "0.13.4", default-features = false, features = [
     "gzip",

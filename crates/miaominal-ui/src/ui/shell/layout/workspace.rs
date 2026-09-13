@@ -152,6 +152,9 @@ pub(in crate::ui::shell) fn render_workspace_surface(
 
     let session_index = app.active_terminal_session_index(cx);
     let session_tab_id = session_index.and_then(|index| app.workspace.tabs.id_at(index));
+    let is_local_terminal_tab = session_tab_id
+        .and_then(|tab_id| app.workspace.tabs.get(tab_id))
+        .is_some_and(|tab| tab.is_local_terminal());
 
     let session_panel = app.controllers.session.read(cx);
     let desired_side_panel_visible = session_panel.side_panel_open() && session_index.is_some();
@@ -169,7 +172,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         let agent_controller = app.controllers.agent.read(cx);
         let (visible, transition) = agent_controller.panel_transition_state();
         (
-            agent_controller.panel_open() && session_index.is_some(),
+            agent_controller.panel_open() && session_index.is_some() && !is_local_terminal_tab,
             visible,
             transition,
         )

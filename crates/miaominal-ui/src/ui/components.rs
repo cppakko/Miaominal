@@ -73,5 +73,6 @@ pub(crate) use segmented_switch::SegmentedSwitch;
 pub(crate) use setting_field_with_reset_action::setting_field_with_reset_action;
 pub(crate) use text_input::{
     SecretTextInputStackOptions, TextInputSurface, field_label, surface_secret_text_input_stack,
-    surface_text_editor, surface_text_editor_stack, surface_text_input, surface_text_input_stack,
+    surface_text_editor, surface_text_editor_stack, surface_text_input,
+    surface_text_input_action_stack, surface_text_input_stack,
 };

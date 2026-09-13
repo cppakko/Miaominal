@@ -61,7 +61,7 @@ impl AppView {
         cx: &App,
     ) {
         let tab_id = tab.id;
-        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        debug_assert!(tab.is_session());
         assert!(
             self.workspace.tabs.get(tab_id).is_none(),
             "duplicate session tab metadata for {tab_id}"
@@ -75,7 +75,7 @@ impl AppView {
 
     pub(in crate::ui::shell) fn register_session_tab_metadata(&mut self, tab: TabState, cx: &App) {
         let tab_id = tab.id;
-        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        debug_assert!(tab.is_session());
         assert!(
             self.workspace.tabs.get(tab_id).is_none(),
             "duplicate session tab metadata for {tab_id}"
@@ -106,7 +106,7 @@ impl AppView {
         session: SessionTabState,
         cx: &App,
     ) {
-        debug_assert_eq!(tab.kind, TabKindTag::Session);
+        debug_assert!(tab.is_session());
         let next_id = tab.id;
         let previous = self.workspace.tabs.replace(index, tab);
         self.workspace.parked_workspaces.remove(&previous.id);

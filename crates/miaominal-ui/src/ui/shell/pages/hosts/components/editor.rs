@@ -6,6 +6,7 @@ use crate::ui::{
 
 use super::super::super::super::*;
 use gpui_kit::component::Size;
+use rfd::AsyncFileDialog;
 
 #[path = "editor/fields.rs"]
 mod fields;
@@ -13,7 +14,7 @@ mod fields;
 mod sections;
 
 use fields::{editor_environment_variable_row, editor_static_field};
-use sections::proxy_jump_stepper_item;
+use sections::{HostEditorKindLayout, proxy_jump_stepper_item};
 
 impl SessionController {
     pub(in crate::ui::shell) fn render_hosts_editor_sidebar(
@@ -33,11 +34,9 @@ impl SessionController {
         let connection_test_in_progress = self.connection_test_in_progress();
         let scroll_handle = self.host_editor_scroll_handle();
 
-        let title = if host_editor_is_new {
-            i18n::string("hosts.editor.titles.add")
-        } else {
-            i18n::string("hosts.editor.titles.edit")
-        };
+        let kind_layout = HostEditorKindLayout::for_kind(host_editor.profile_kind);
+        let is_local_profile = kind_layout.is_local();
+        let title = i18n::string(kind_layout.title_key(host_editor_is_new));
         let show_delete = !host_editor_is_new && self.selected_profile().is_some();
 
         let current_profile_id = self.current_host_editor_profile_id().unwrap_or_default();
@@ -137,6 +136,30 @@ impl SessionController {
                 }
             });
 
+        let profile_kind_tabs = SegmentedSwitch::new("host-editor-profile-kind")
+            .selected_index(if is_local_profile { 1 } else { 0 })
+            .width(320.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("hosts.editor.profile_kinds.ssh"))
+            .item_with_tooltip(
+                i18n::string("hosts.editor.profile_kinds.local"),
+                i18n::string("hosts.local_only.hint"),
+            )
+            .on_click({
+                let controller = controller.clone();
+                move |index, _, cx| {
+                    let kind = match index {
+                        0 => ProfileKind::Ssh,
+                        1 => ProfileKind::Local,
+                        _ => return,
+                    };
+                    controller.update(cx, |controller, cx| {
+                        controller.set_host_editor_profile_kind(kind, cx);
+                    });
+                }
+            });
+
         let mut proxy_jump_items = Vec::new();
         for (index, profile) in proxy_jump_chain_profiles.iter().enumerate() {
             let profile_label = if profile.name.trim().is_empty() {
@@ -207,88 +230,99 @@ impl SessionController {
             i18n::string("hosts.editor.sections.general"),
             v_flex()
                 .gap_3()
-                .child(surface_text_input_stack(
-                    i18n::string("hosts.editor.fields.address"),
-                    host_editor.host_input.clone(),
-                    TextInputSurface::Low,
-                    false,
-                ))
-                .child(surface_text_input_stack(
-                    i18n::string("hosts.editor.fields.ssh_port"),
-                    host_editor.port_input.clone(),
-                    TextInputSurface::Low,
-                    false,
-                ))
+                .when(kind_layout.shows_address_fields(), |this| {
+                    this.child(surface_text_input_stack(
+                        i18n::string("hosts.editor.fields.address"),
+                        host_editor.host_input.clone(),
+                        TextInputSurface::Low,
+                        false,
+                    ))
+                    .child(surface_text_input_stack(
+                        i18n::string("hosts.editor.fields.ssh_port"),
+                        host_editor.port_input.clone(),
+                        TextInputSurface::Low,
+                        false,
+                    ))
+                })
                 .child(surface_text_input_stack(
                     i18n::string("hosts.editor.fields.label"),
                     host_editor.name_input.clone(),
                     TextInputSurface::Low,
                     false,
                 ))
-                .child(
-                    v_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(roles.on_surface_variant))
-                                .child(i18n::string("hosts.editor.fields.group")),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    md3_select(&host_editor.group_select)
-                                        .large()
-                                        .w_full()
-                                        .rounded(px(14.0))
-                                        .border_0()
-                                        .bg(rgb(roles.surface_container_low))
-                                        .cleanable(true)
-                                        .placeholder(if available_groups.is_empty() {
-                                            i18n::string("hosts.editor.group.no_existing_groups")
-                                        } else {
-                                            i18n::string("hosts.editor.group.select_existing")
-                                        })
-                                        .disabled(available_groups.is_empty()),
-                                )
-                                .child(icon_button(
-                                    AppIcon::Plus,
-                                    30.0,
-                                    99.0,
-                                    None,
-                                    None,
-                                    Some(roles.outline_variant),
-                                    {
-                                        let controller = controller.clone();
-                                        move |window, cx| {
-                                            controller.update(cx, |controller, cx| {
-                                                controller.begin_new_group(window, cx);
-                                            });
-                                        }
-                                    },
-                                )),
-                        )
-                        .when(host_editor.creating_new_group, |this| {
-                            this.child(
-                                surface_text_input(&host_editor.group_input, TextInputSurface::Low)
-                                    .large(),
+                .when(kind_layout.shows_group(), |this| {
+                    this.child(
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(i18n::string("hosts.editor.fields.group")),
                             )
-                        }),
-                )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        md3_select(&host_editor.group_select)
+                                            .large()
+                                            .w_full()
+                                            .rounded(px(14.0))
+                                            .border_0()
+                                            .bg(rgb(roles.surface_container_low))
+                                            .cleanable(true)
+                                            .placeholder(if available_groups.is_empty() {
+                                                i18n::string(
+                                                    "hosts.editor.group.no_existing_groups",
+                                                )
+                                            } else {
+                                                i18n::string("hosts.editor.group.select_existing")
+                                            })
+                                            .disabled(available_groups.is_empty()),
+                                    )
+                                    .child(icon_button(
+                                        AppIcon::Plus,
+                                        30.0,
+                                        99.0,
+                                        None,
+                                        None,
+                                        Some(roles.outline_variant),
+                                        {
+                                            let controller = controller.clone();
+                                            move |window, cx| {
+                                                controller.update(cx, |controller, cx| {
+                                                    controller.begin_new_group(window, cx);
+                                                });
+                                            }
+                                        },
+                                    )),
+                            )
+                            .when(host_editor.creating_new_group, |this| {
+                                this.child(
+                                    surface_text_input(
+                                        &host_editor.group_input,
+                                        TextInputSurface::Low,
+                                    )
+                                    .large(),
+                                )
+                            }),
+                    )
+                })
                 .child(surface_text_input_stack(
                     i18n::string("hosts.editor.fields.tags"),
                     host_editor.tags_input.clone(),
                     TextInputSurface::Low,
                     false,
                 ))
-                .child(editor_static_field(
-                    i18n::string("hosts.editor.fields.backspace"),
-                    i18n::string("hosts.editor.values.default"),
-                )),
+                .when(kind_layout.shows_address_fields(), |this| {
+                    this.child(editor_static_field(
+                        i18n::string("hosts.editor.fields.backspace"),
+                        i18n::string("hosts.editor.values.default"),
+                    ))
+                }),
         );
 
         let credentials_section = SectionCard::new(
@@ -379,7 +413,8 @@ impl SessionController {
             i18n::string("hosts.editor.sections.advanced"),
             v_flex()
                 .gap_3()
-                .child(
+                .when(kind_layout.shows_ssh_advanced_fields(), |this| {
+                    this.child(
                     v_flex()
                         .gap_2()
                         .child(
@@ -566,6 +601,7 @@ impl SessionController {
                                 ),
                         )
                 )
+                })
                 .child(
                     v_flex()
                         .w_full()
@@ -578,7 +614,8 @@ impl SessionController {
                         )
                         .child(environment_variables),
                 )
-                .child(
+                .when(kind_layout.shows_shell_type(), |this| {
+                    this.child(
                     v_flex()
                         .gap_2()
                         .child(
@@ -589,6 +626,7 @@ impl SessionController {
                         )
                         .child(shell_type_tabs),
                 )
+                })
                 .child(
                     v_flex()
                         .w_full()
@@ -613,15 +651,130 @@ impl SessionController {
                 ),
         );
 
-        let mut footer_actions = vec![
-            editor_button(
-                i18n::string("hosts.editor.buttons.test_connection"),
-                false,
-                true,
-                on_test_connection,
-            )
-            .into_any_element(),
-        ];
+        let kind_section = h_flex().w_full().justify_center().child(profile_kind_tabs);
+
+        let on_pick_local_shell = {
+            let controller = controller.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let dialog = AsyncFileDialog::new()
+                    .set_parent(window)
+                    .set_title(i18n::string("hosts.editor.local_shell.select_executable"));
+                let window_handle = window.window_handle();
+                let controller = controller.clone();
+                cx.spawn(async move |cx| {
+                    let Some(file) = dialog.pick_file().await else {
+                        return;
+                    };
+                    let path = file.path().to_path_buf();
+                    cx.update(move |cx| {
+                        if let Err(error) = window_handle.update(cx, move |_, window, cx| {
+                            controller.update(cx, |this, cx| {
+                                this.set_local_shell_path(path, window, cx);
+                            });
+                        }) {
+                            log::debug!("failed to apply the selected local shell: {error:?}");
+                        }
+                    });
+                })
+                .detach();
+            }
+        };
+
+        let on_pick_local_working_directory = {
+            let controller = controller.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let dialog = AsyncFileDialog::new()
+                    .set_parent(window)
+                    .set_title(i18n::string(
+                        "hosts.editor.local_shell.select_working_directory",
+                    ));
+                let window_handle = window.window_handle();
+                let controller = controller.clone();
+                cx.spawn(async move |cx| {
+                    let Some(directory) = dialog.pick_folder().await else {
+                        return;
+                    };
+                    let path = directory.path().to_path_buf();
+                    cx.update(move |cx| {
+                        if let Err(error) = window_handle.update(cx, move |_, window, cx| {
+                            controller.update(cx, |this, cx| {
+                                this.set_local_working_directory_path(path, window, cx);
+                            });
+                        }) {
+                            log::debug!(
+                                "failed to apply the selected local working directory: {error:?}"
+                            );
+                        }
+                    });
+                })
+                .detach();
+            }
+        };
+
+        let terminal_section = SectionCard::new(
+            AppIcon::Computer,
+            i18n::string("hosts.editor.sections.terminal"),
+            v_flex()
+                .gap_3()
+                .child(surface_text_input_action_stack(
+                    i18n::string("hosts.editor.fields.local_shell"),
+                    host_editor.local_shell_input.clone(),
+                    TextInputSurface::Low,
+                    false,
+                    icon_button(
+                        AppIcon::Folder,
+                        30.0,
+                        10.0,
+                        None,
+                        None,
+                        Some(roles.outline_variant),
+                        on_pick_local_shell,
+                    )
+                    .into_any_element(),
+                ))
+                .child(surface_text_input_stack(
+                    i18n::string("hosts.editor.fields.local_shell_args"),
+                    host_editor.local_shell_args_input.clone(),
+                    TextInputSurface::Low,
+                    false,
+                ))
+                .child(surface_text_input_action_stack(
+                    i18n::string("hosts.editor.fields.working_directory"),
+                    host_editor.local_working_directory_input.clone(),
+                    TextInputSurface::Low,
+                    false,
+                    icon_button(
+                        AppIcon::Folder,
+                        30.0,
+                        10.0,
+                        None,
+                        None,
+                        Some(roles.outline_variant),
+                        on_pick_local_working_directory,
+                    )
+                    .into_any_element(),
+                ))
+                .child(surface_text_editor_stack(
+                    i18n::string("hosts.editor.fields.startup_command"),
+                    host_editor.startup_command_input.clone(),
+                    116.0,
+                    TextInputSurface::Low,
+                    false,
+                )),
+        );
+
+        let mut footer_actions = Vec::new();
+        if kind_layout.shows_test_connection() {
+            footer_actions.push(
+                editor_button(
+                    i18n::string("hosts.editor.buttons.test_connection"),
+                    false,
+                    true,
+                    on_test_connection,
+                )
+                .into_any_element(),
+            );
+        }
         if show_delete {
             footer_actions.push(
                 icon_button(
@@ -741,8 +894,14 @@ impl SessionController {
                                             .px_4()
                                             .gap_3()
                                             .pb_4()
+                                            .child(kind_section)
                                             .child(general_section)
-                                            .child(credentials_section)
+                                            .when(kind_layout.shows_credentials(), |this| {
+                                                this.child(credentials_section)
+                                            })
+                                            .when(kind_layout.shows_terminal_section(), |this| {
+                                                this.child(terminal_section)
+                                            })
                                             .child(advanced_section),
                                     ),
                             )

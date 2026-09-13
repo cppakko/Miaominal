@@ -120,7 +120,11 @@ impl TabDescriptor {
     }
 
     pub(in crate::ui::shell) fn is_session(&self) -> bool {
-        self.kind == TabKindTag::Session
+        matches!(self.kind, TabKindTag::Session | TabKindTag::LocalTerminal)
+    }
+
+    pub(in crate::ui::shell) fn is_local_terminal(&self) -> bool {
+        self.kind == TabKindTag::LocalTerminal
     }
 
     pub(in crate::ui::shell) fn is_sftp(&self) -> bool {
@@ -535,6 +539,7 @@ pub(in crate::ui::shell) enum TabKindTag {
     Hosts,
     Session,
     Sftp,
+    LocalTerminal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

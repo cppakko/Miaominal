@@ -77,7 +77,14 @@ pub(super) fn build_plaintext_payload(
     settings: &SyncedSettings,
     secret_store: &SecretStore,
 ) -> Result<SyncPlaintextPayload> {
-    let mut payload_sessions = sessions.to_vec();
+    // Local terminal profiles stay on the device that created them: they are
+    // never uploaded, and the receiving device keeps its own local profiles
+    // when a payload is applied.
+    let mut payload_sessions: Vec<SessionProfile> = sessions
+        .iter()
+        .filter(|session| !session.is_local())
+        .cloned()
+        .collect();
     clear_session_local_state(&mut payload_sessions);
     // Normalize settings the same way apply_synced_settings does so that the
     // revision hash is stable: pull writes normalized data to disk, and the
@@ -90,7 +97,13 @@ pub(super) fn build_plaintext_payload(
     // normalization would produce secrets keyed to the old IDs while the
     // payload carries the new ones, silently dropping those API keys on
     // the receiving device.
-    let secrets = collect_secrets(sessions, proxies, managed_keys, &settings, secret_store)?;
+    let secrets = collect_secrets(
+        &payload_sessions,
+        proxies,
+        managed_keys,
+        &settings,
+        secret_store,
+    )?;
     Ok(SyncPlaintextPayload {
         sessions: payload_sessions,
         proxies: proxies.to_vec(),
@@ -142,6 +155,22 @@ fn merge_local_session_state(
         }
     }
     merged
+}
+
+/// Re-attaches local terminal profiles that exist on this device but can never
+/// appear in a remote payload. Remote content replaces ordinary profiles, while
+/// local terminal profiles survive a pull untouched.
+fn merge_local_only_sessions(merged: &mut Vec<SessionProfile>, local: &[SessionProfile]) {
+    let local_terminal_ids: HashSet<&str> = local
+        .iter()
+        .filter(|profile| profile.is_local())
+        .map(|profile| profile.id.as_str())
+        .collect();
+    // A synced SSH profile converted into a local terminal keeps its old ID, so
+    // the incoming copy of that ID is stale and must not overwrite the local
+    // terminal's shell, arguments, or working directory.
+    merged.retain(|profile| !local_terminal_ids.contains(profile.id.as_str()));
+    merged.extend(local.iter().filter(|profile| profile.is_local()).cloned());
 }
 
 pub fn parse_remote_payload(payload_json: &str) -> Result<SyncPayload> {
@@ -271,7 +300,8 @@ fn apply_payload_changes(
         )?;
     }
 
-    let sessions = merge_local_session_state(&payload.sessions, &old_sessions);
+    let mut sessions = merge_local_session_state(&payload.sessions, &old_sessions);
+    merge_local_only_sessions(&mut sessions, &old_sessions);
     proxy_store.save(&payload.proxies)?;
     session_store.save(&sessions)?;
     snippet_store.save(&payload.snippets)?;
@@ -1620,5 +1650,182 @@ mod tests {
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
+    }
+
+    fn test_secret_store(root: &std::path::Path, passphrase: &str) -> SecretStore {
+        set_vault_test_parameters();
+        let credentials = CredentialStore::with_backend(
+            APP_CREDENTIAL_SERVICE,
+            VaultCredentialBackend::new_with_path(
+                root.join("secret_vault.json"),
+                ProtectedPassphrase::try_from_string(passphrase.to_string())
+                    .expect("test passphrase should use protected memory"),
+            ),
+        );
+        credentials
+            .initialize()
+            .expect("test credential store should initialize");
+        SecretStore::with_credentials(credentials)
+    }
+
+    #[test]
+    fn build_payload_skips_local_terminal_profiles() {
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-local-profile-payload-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let secret_store = test_secret_store(&root, "local-profile-payload");
+
+        let mut local = SessionProfile::blank_local("local-1", 1);
+        local.local_shell = "C:/Program Files/PowerShell/7/pwsh.exe".into();
+        let mut ssh = SessionProfile::blank("session-1", 1);
+        ssh.host = "example.com".into();
+        ssh.username = "akko".into();
+        let settings = AppSettings::default().synced_settings();
+
+        let with_local = build_plaintext_payload(
+            &[ssh.clone(), local.clone()],
+            &[],
+            &[],
+            &[],
+            &settings,
+            &secret_store,
+        )
+        .expect("payload should build");
+        let without_local =
+            build_plaintext_payload(&[ssh], &[], &[], &[], &settings, &secret_store)
+                .expect("payload should build");
+
+        assert_eq!(with_local.sessions.len(), 1);
+        assert_eq!(with_local.sessions[0].id, "session-1");
+        assert!(
+            with_local
+                .sessions
+                .iter()
+                .all(|profile| !profile.is_local())
+        );
+        assert_eq!(
+            local_data_revision(&with_local).expect("revision should build"),
+            local_data_revision(&without_local).expect("revision should build"),
+            "local terminal profiles must not change the synced revision"
+        );
+
+        drop(secret_store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_payload_preserves_local_terminal_profiles() {
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-local-profile-pull-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let session_store = SessionStore::with_path(root.join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(root.join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(root.join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(root.join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(root.join("settings.toml"))
+            .expect("settings store should load");
+        let secret_store = test_secret_store(&root, "local-profile-pull");
+
+        let mut local = SessionProfile::blank_local("local-1", 1);
+        local.local_shell = "/bin/zsh".into();
+        session_store
+            .save(std::slice::from_ref(&local))
+            .expect("local profile should save");
+
+        apply_plaintext_payload(
+            &sample_plaintext(),
+            &session_store,
+            &proxy_store,
+            &snippet_store,
+            &key_store,
+            &secret_store,
+            &mut settings_store,
+            || Ok(()),
+        )
+        .expect("pull should apply");
+
+        let sessions = session_store
+            .read_sessions_content()
+            .expect("sessions should read")
+            .map(|content| session_store.parse_sessions(&content))
+            .transpose()
+            .expect("sessions should parse")
+            .unwrap_or_default();
+
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|profile| profile.id == "session-1"));
+        let restored = sessions
+            .iter()
+            .find(|profile| profile.id == "local-1")
+            .expect("local terminal profile should survive a remote pull");
+        assert_eq!(restored.local_shell, "/bin/zsh");
+
+        drop(secret_store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_payload_keeps_a_local_terminal_with_a_synced_profile_id() {
+        let root = std::env::temp_dir().join(format!(
+            "miaominal-converted-local-profile-pull-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let session_store = SessionStore::with_path(root.join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(root.join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(root.join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(root.join("managed_keys.toml"));
+        let mut settings_store = SettingsStore::load_with_path(root.join("settings.toml"))
+            .expect("settings store should load");
+        let secret_store = test_secret_store(&root, "converted-local-profile-pull");
+
+        let mut converted = SessionProfile::blank_local("session-1", 1);
+        converted.local_shell = "/bin/fish".into();
+        converted.local_shell_args = "-l".into();
+        converted.local_working_directory = "/tmp/work".into();
+        session_store
+            .save(std::slice::from_ref(&converted))
+            .expect("converted local profile should save");
+
+        apply_plaintext_payload(
+            &sample_plaintext(),
+            &session_store,
+            &proxy_store,
+            &snippet_store,
+            &key_store,
+            &secret_store,
+            &mut settings_store,
+            || Ok(()),
+        )
+        .expect("pull should apply");
+
+        let sessions = session_store
+            .read_sessions_content()
+            .expect("sessions should read")
+            .map(|content| session_store.parse_sessions(&content))
+            .transpose()
+            .expect("sessions should parse")
+            .unwrap_or_default();
+
+        assert_eq!(
+            sessions
+                .iter()
+                .filter(|profile| profile.id == "session-1")
+                .count(),
+            1,
+            "the stale remote copy must not coexist with the local terminal"
+        );
+        let restored = sessions
+            .iter()
+            .find(|profile| profile.id == "session-1")
+            .expect("converted local terminal should survive a remote pull");
+        assert!(restored.is_local());
+        assert_eq!(restored.local_shell, "/bin/fish");
+        assert_eq!(restored.local_shell_args, "-l");
+        assert_eq!(restored.local_working_directory, "/tmp/work");
+
+        drop(secret_store);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

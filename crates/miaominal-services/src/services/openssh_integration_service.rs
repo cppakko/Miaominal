@@ -1052,6 +1052,25 @@ mod tests {
         assert!(parsed.contains("hostname example.com"));
         assert!(parsed.contains("proxyjump miaominal-jump-host"));
     }
+    #[test]
+    fn direct_projection_skips_local_terminal_profiles() {
+        let runtime = Runtime::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let ssh = tempfile::tempdir().unwrap();
+        let service = service(&runtime, root.path(), ssh.path());
+        let remote = profile("remote", "Remote Host");
+        let mut local = SessionProfile::blank_local("local", 1);
+        local.name = "Local Terminal".into();
+
+        let result = service
+            .sync(OpenSshIntegrationMode::Direct, vec![remote, local], vec![])
+            .unwrap();
+        let config = std::fs::read_to_string(&result.config_path).unwrap();
+
+        assert!(config.contains("Host miaominal-remote-host"));
+        assert!(!config.contains("Local Terminal"));
+        assert_eq!(result.exported_profile_count, 1);
+    }
 
     #[test]
     fn openssh_values_reject_control_characters_and_comments_replace_them() {

@@ -84,6 +84,30 @@ pub(crate) fn surface_text_input_stack(
     field_stack(label, required, surface_text_input(&input, surface).large())
 }
 
+pub(crate) fn surface_text_input_action_stack(
+    label: impl Into<SharedString>,
+    input: Entity<InputState>,
+    surface: TextInputSurface,
+    required: bool,
+    action: AnyElement,
+) -> impl IntoElement {
+    field_stack(
+        label,
+        required,
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(surface_text_input(&input, surface).large()),
+            )
+            .child(div().flex_shrink_0().child(action)),
+    )
+}
+
 fn render_secret_toggle_button(
     icon: AppIcon,
     disabled: bool,

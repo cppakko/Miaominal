@@ -3208,7 +3208,14 @@ fn sync_page(settings: Entity<SettingsController>) -> SettingPage {
             sync_auto_sync_group(settings.clone()),
             sync_encryption_group(settings.clone()),
             sync_provider_group(settings),
+            sync_local_only_group(),
         ])
+}
+
+fn sync_local_only_group() -> SettingGroup {
+    SettingGroup::new()
+        .title(i18n::string("settings.sync.local_only_group_title"))
+        .description(i18n::string("settings.sync.local_only_hint"))
 }
 
 fn vault_page(settings: Entity<SettingsController>) -> SettingPage {

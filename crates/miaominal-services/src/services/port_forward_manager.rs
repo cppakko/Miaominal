@@ -559,7 +559,8 @@ impl PortForwardManager {
             }
             SessionEvent::Output(_)
             | SessionEvent::MonitorUpdated(_)
-            | SessionEvent::MonitorFailed(_) => return,
+            | SessionEvent::MonitorFailed(_)
+            | SessionEvent::Exited { .. } => return,
         }
         let restart_requested = terminal && session.restart_requested;
         if terminal {

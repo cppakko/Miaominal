@@ -20,6 +20,7 @@ pub(in crate::ui::shell::pages::hosts) struct HostCardTags {
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell::pages::hosts) struct HostCardMetadata {
     pub group: Option<HostCardGroupBadge>,
+    pub local_terminal: bool,
     pub tags: HostCardTags,
 }
 
@@ -144,7 +145,12 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
     let roles = material.roles;
     let title = title.into();
     let badge_id_prefix = badge_id_prefix.into();
-    let HostCardMetadata { group, tags } = metadata;
+    let HostCardMetadata {
+        group,
+        local_terminal,
+        tags,
+    } = metadata;
+    let is_local = local_terminal;
     let has_metadata = group.is_some() || !tags.visible.is_empty() || tags.overflow.is_some();
     let group_badge = group.map(|group| {
         host_card_badge(
@@ -206,7 +212,11 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
                                     icon_tile(
                                         div()
                                             .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .child(">_"),
+                                            .child(if is_local {
+                                                Icon::from(AppIcon::Computer).into_any_element()
+                                            } else {
+                                                ">_".into_any_element()
+                                            }),
                                         34.0,
                                         10.0,
                                         IconTileTone::Muted,
@@ -273,6 +283,7 @@ pub(in crate::ui::shell::pages::hosts) fn host_list_row(
     subtitle: Option<SharedString>,
     _status_label: Option<SharedString>,
     _status_color: u32,
+    local_terminal: bool,
     action_icon: Option<AppIcon>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
     on_action_click: impl Fn(&mut Window, &mut App) + 'static,
@@ -288,7 +299,11 @@ pub(in crate::ui::shell::pages::hosts) fn host_list_row(
         icon_tile(
             div()
                 .text_size(miaominal_settings::FontSize::Body.scaled())
-                .child(">_"),
+                .child(if local_terminal {
+                    Icon::from(AppIcon::Computer).into_any_element()
+                } else {
+                    ">_".into_any_element()
+                }),
             30.0,
             10.0,
             IconTileTone::Muted,

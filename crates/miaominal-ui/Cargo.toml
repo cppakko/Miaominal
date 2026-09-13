@@ -41,6 +41,7 @@ miaominal-sync = { path = "../miaominal-sync" }
 miaominal-terminal = { path = "../miaominal-terminal" }
 notify.workspace = true
 open.workspace = true
+portable-pty.workspace = true
 rfd.workspace = true
 rust-embed.workspace = true
 serde_json.workspace = true

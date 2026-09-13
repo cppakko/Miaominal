@@ -24,7 +24,7 @@ use gpui_kit::{
 };
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::{
-    AuthMethod, PortForwardKind, PortForwardRule, SessionProfile, ShellType,
+    AuthMethod, PortForwardKind, PortForwardRule, ProfileKind, SessionProfile, ShellType,
 };
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_settings;
@@ -81,7 +81,7 @@ pub(crate) use crate::ui::components::{
     md3_select, page_muted_icon_tile, page_primary_icon_tile, page_section_title,
     page_view_mode_toolbar_item, pill_label, search_filter_input, setting_field_with_reset_action,
     surface_secret_text_input_stack, surface_text_editor, surface_text_editor_stack,
-    surface_text_input, surface_text_input_stack,
+    surface_text_input, surface_text_input_action_stack, surface_text_input_stack,
 };
 pub(crate) use crate::ui::utils::{
     format_byte_size, format_local_timestamp, truncate_with_ellipsis,
@@ -243,6 +243,7 @@ pub(in crate::ui::shell) enum TopbarTabVisualKind {
     Hosts,
     Session,
     Sftp,
+    LocalTerminal,
 }
 
 #[derive(Clone, Debug)]

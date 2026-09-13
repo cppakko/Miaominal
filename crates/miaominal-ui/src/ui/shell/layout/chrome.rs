@@ -39,6 +39,17 @@ fn footer_tooltip(
     move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
+/// File name shown for a local terminal target in the status footer.
+fn local_shell_file_name(shell: &str) -> String {
+    let shell = shell.trim();
+    std::path::Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(shell)
+        .to_string()
+}
+
 #[derive(Clone)]
 pub(in crate::ui::shell) struct VisibleTopbarTab {
     tab_index: usize,
@@ -88,22 +99,29 @@ fn topbar_tab_icon(kind: TopbarTabVisualKind) -> Option<AppIcon> {
         TopbarTabVisualKind::Hosts => None,
         TopbarTabVisualKind::Session => Some(AppIcon::LaptopMinimal),
         TopbarTabVisualKind::Sftp => Some(AppIcon::FolderSymlink),
+        TopbarTabVisualKind::LocalTerminal => Some(AppIcon::Computer),
+    }
+}
+
+fn connection_state_is_error(session: &SessionTabState) -> bool {
+    match &session.connection_state {
+        SessionConnectionState::Failed { .. } | SessionConnectionState::Disconnected => true,
+        SessionConnectionState::Exited { exit_code, signal } => *exit_code != 0 || signal.is_some(),
+        SessionConnectionState::Connecting
+        | SessionConnectionState::Ready
+        | SessionConnectionState::Reconnecting { .. } => false,
     }
 }
 
 fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabState>) -> bool {
     match tab.kind {
-        TabKindTag::Session => session.is_some_and(|session| {
-            matches!(
-                session.connection_state,
-                SessionConnectionState::Failed { .. } | SessionConnectionState::Disconnected
-            )
-        }),
+        TabKindTag::Session => session.is_some_and(connection_state_is_error),
         TabKindTag::Sftp => {
             let error = i18n::string("session.status.error");
             let closed = i18n::string("session.status.closed");
             tab.status == error || tab.status == closed
         }
+        TabKindTag::LocalTerminal => session.is_some_and(connection_state_is_error),
         TabKindTag::Hosts => false,
     }
 }
@@ -328,7 +346,7 @@ fn build_tab_context_menu<V: TopbarHost>(
     menu: PopupMenu,
     entity: Entity<V>,
     tab_id: TabId,
-    is_session: bool,
+    supports_sftp_tab: bool,
     can_open_in_new_window: bool,
 ) -> PopupMenu {
     let rename_entity = entity.clone();
@@ -349,7 +367,7 @@ fn build_tab_context_menu<V: TopbarHost>(
         ),
     );
 
-    let menu = if is_session {
+    let menu = if supports_sftp_tab {
         menu.item(
             PopupMenuItem::new(i18n::string("chrome.menu.duplicate_profile")).on_click(
                 move |_, window, cx| {
@@ -623,6 +641,7 @@ impl ChromeAppViewExt for AppView {
                     TabKindTag::Hosts => TopbarTabVisualKind::Hosts,
                     TabKindTag::Session => TopbarTabVisualKind::Session,
                     TabKindTag::Sftp => TopbarTabVisualKind::Sftp,
+                    TabKindTag::LocalTerminal => TopbarTabVisualKind::LocalTerminal,
                 };
 
                 VisibleTopbarTab {
@@ -959,7 +978,7 @@ impl ChromeAppViewExt for AppView {
                                                         current_active_tab_id,
                                                     );
                                                     let is_active = current_active_tab_id == Some(tab_id);
-                                                    let is_session = snapshot.kind == TopbarTabVisualKind::Session;
+                                                    let supports_sftp_tab = snapshot.kind == TopbarTabVisualKind::Session;
                                                     let can_open_in_new_window =
                                                         self.can_open_tab_in_new_window(tab_id, cx);
                                                     let tab_kind_icon = topbar_tab_icon(snapshot.kind);
@@ -1133,7 +1152,7 @@ impl ChromeAppViewExt for AppView {
                                                                 menu,
                                                                 menu_entity.clone(),
                                                                 tab_id,
-                                                                is_session,
+                                                                supports_sftp_tab,
                                                                 can_open_in_new_window,
                                                             )
                                                         })
@@ -1427,7 +1446,8 @@ impl ChromeAppViewExt for AppView {
             .and_then(|index| self.workspace.tabs.at(index));
         let active_session_tab_id = active_session_tab.map(|tab| tab.id);
         let active_session = active_session_tab.and_then(|tab| self.session_tab(tab.id, cx));
-        let panel_session = active_session.is_some();
+        let is_local_terminal_tab = active_session_tab.is_some_and(|tab| tab.is_local_terminal());
+        let panel_session = active_session.is_some() && !is_local_terminal_tab;
         let active_sftp = self
             .workspace
             .active_topbar_tab
@@ -1469,17 +1489,28 @@ impl ChromeAppViewExt for AppView {
             "session.footer.tooltips.connection_status",
             &[("status", &connection_label)],
         );
-        let connection_target = self
+        let (connection_target, connection_target_detail) = self
             .active_profile(cx)
             .map(|profile| {
+                if profile.is_local() {
+                    let detail = profile.summary();
+                    let shell = profile.local_shell.trim();
+                    let target = if shell.is_empty() {
+                        detail.clone()
+                    } else {
+                        local_shell_file_name(shell)
+                    };
+                    return (target, detail);
+                }
                 let username = if profile.username.trim().is_empty() {
                     self.active_username(cx)
                 } else {
                     profile.username.clone()
                 };
-                format!("{username}@{}", profile.host)
+                let target = format!("{username}@{}", profile.host);
+                (target.clone(), target)
             })
-            .unwrap_or_else(|| "--".into());
+            .unwrap_or_else(|| ("--".into(), "--".into()));
 
         let pty_label = active_session.as_deref().map(|session| {
             format!(
@@ -1488,15 +1519,18 @@ impl ChromeAppViewExt for AppView {
                 session.terminal.screen_lines()
             )
         });
-        let traffic_label = active_session.as_deref().map(|session| {
-            i18n::string_args(
-                "session.footer.traffic",
-                &[
-                    ("upload", &format_bytes(session.bytes_out)),
-                    ("download", &format_bytes(session.bytes_in)),
-                ],
-            )
-        });
+        let traffic_label = active_session
+            .as_deref()
+            .filter(|_| !is_local_terminal_tab)
+            .map(|session| {
+                i18n::string_args(
+                    "session.footer.traffic",
+                    &[
+                        ("upload", &format_bytes(session.bytes_out)),
+                        ("download", &format_bytes(session.bytes_in)),
+                    ],
+                )
+            });
         let status_message_tooltip = if self.shell.status_message.trim().is_empty() {
             i18n::string("session.footer.tooltips.status_message_empty")
         } else {
@@ -1582,25 +1616,27 @@ impl ChromeAppViewExt for AppView {
                             ),
                         )
                     })
-                    .child(
-                        h_flex()
-                            .id("status-footer-connection-status")
-                            .items_center()
-                            .gap_2()
-                            .tooltip(footer_tooltip(connection_tooltip))
-                            .child(
-                                div()
-                                    .size(px(6.0))
-                                    .rounded(px(999.0))
-                                    .bg(rgb(connection_color)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                                    .text_color(rgb(roles.on_surface_variant))
-                                    .child(connection_label),
-                            ),
-                    )
+                    .when(!is_local_terminal_tab, |this| {
+                        this.child(
+                            h_flex()
+                                .id("status-footer-connection-status")
+                                .items_center()
+                                .gap_2()
+                                .tooltip(footer_tooltip(connection_tooltip))
+                                .child(
+                                    div()
+                                        .size(px(6.0))
+                                        .rounded(px(999.0))
+                                        .bg(rgb(connection_color)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(miaominal_settings::FontSize::Body.scaled())
+                                        .text_color(rgb(roles.on_surface_variant))
+                                        .child(connection_label),
+                                ),
+                        )
+                    })
                     .when(panel_session, |this| {
                         this.child(
                             div().id("session-monitor-panel-toggle").child(
@@ -1764,7 +1800,7 @@ impl ChromeAppViewExt for AppView {
                             .text_color(rgb(roles.on_surface_variant))
                             .tooltip(footer_tooltip(i18n::string_args(
                                 "session.footer.tooltips.connection_target",
-                                &[("target", &connection_target)],
+                                &[("target", &connection_target_detail)],
                             )))
                             .child(connection_target),
                     ),
@@ -1785,6 +1821,21 @@ impl ChromeAppViewExt for AppView {
 mod tests {
     use super::*;
 
+    use gpui_kit::{Render, TestAppContext};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[test]
+    fn local_terminal_footer_targets_use_the_shell_file_name() {
+        assert_eq!(local_shell_file_name("/bin/zsh"), "zsh");
+        assert_eq!(local_shell_file_name("  /usr/local/bin/fish  "), "fish");
+        #[cfg(windows)]
+        assert_eq!(
+            local_shell_file_name(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            "pwsh.exe"
+        );
+    }
+
     #[test]
     fn delayed_topbar_action_resolves_reordered_tab_by_id() {
         let target = TabId::new(20);
@@ -1797,5 +1848,58 @@ mod tests {
         tabs.move_to(2, 0);
 
         assert_eq!(topbar_action_index(&tabs, target), Some(2));
+    }
+
+    struct AddButtonHost {
+        opens: Rc<Cell<usize>>,
+    }
+
+    impl Render for AddButtonHost {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().relative().child(
+                div()
+                    .absolute()
+                    .top(px(10.0))
+                    .left(px(10.0))
+                    .child(topbar_add_button(cx.entity(), ScrollHandle::new())),
+            )
+        }
+    }
+
+    impl TopbarHost for AddButtonHost {
+        fn handle_topbar_action(
+            &mut self,
+            action: TopbarAction,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
+            if matches!(action, TopbarAction::OpenHosts) {
+                self.opens.set(self.opens.get() + 1);
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_add_button_opens_a_new_connection(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let opens = Rc::new(Cell::new(0usize));
+        let opens_for_view = opens.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|_| AddButtonHost {
+                opens: opens_for_view,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_click(point(px(24.0), px(24.0)), Default::default());
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        assert_eq!(opens.get(), 1);
     }
 }

@@ -235,6 +235,10 @@ impl AppView {
 
         let tab_id = self.workspace.allocate_tab_id();
 
+        if profile.is_local() {
+            return SessionController::build_local_tab(tab_id, profile, terminal);
+        }
+
         SessionController::build_pending_tab(tab_id, profile, terminal, auto_collect_monitoring)
     }
 
@@ -410,7 +414,7 @@ impl AppView {
                     .cloned()?;
                 Some(ClosedTabBundle::Sftp { profile })
             }
-            TabKindTag::Session => {
+            TabKindTag::Session | TabKindTag::LocalTerminal => {
                 let mut removed = self.owned_tab_indices_for_topbar(index);
                 removed.sort_unstable();
                 removed.dedup();

@@ -47,7 +47,9 @@ fn derive_trusted_known_hosts(
         .map(|entry| {
             let linked_profiles = sessions
                 .iter()
-                .filter(|profile| profile.host == entry.host && profile.port == entry.port)
+                .filter(|profile| {
+                    !profile.is_local() && profile.host == entry.host && profile.port == entry.port
+                })
                 .map(|profile| LinkedTrustedProfile {
                     id: profile.id.clone(),
                     name: profile.connection_label(),
@@ -1047,5 +1049,18 @@ mod tests {
             )
             .is_some()
         );
+    }
+    #[test]
+    fn local_terminal_profiles_never_link_to_known_hosts() {
+        let entries = vec![known_host("example.com", 22, "ssh-ed25519", "SHA256:a")];
+        let mut local = SessionProfile::blank_local("local-a", 1);
+        local.host = "example.com".into();
+        local.port = 22;
+        let sessions = vec![local];
+
+        let views = derive_trusted_known_hosts(&entries, &sessions);
+
+        assert!(views[0].linked_profiles.is_empty());
+        assert!(views[0].is_orphaned());
     }
 }

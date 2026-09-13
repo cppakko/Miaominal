@@ -214,6 +214,10 @@ pub enum SessionEvent {
     PortForwardNotice(String),
     HostKeyPrompt(HostKeyPrompt),
     KeyboardInteractivePrompt(KbiChallenge),
+    Exited {
+        exit_code: u32,
+        signal: Option<String>,
+    },
     Closed,
 }
 
@@ -289,6 +293,44 @@ pub struct SessionConnection {
 impl SessionConnection {
     pub(super) fn new(commands: SessionCommandSender, events: SessionEventReceiver) -> Self {
         Self { commands, events }
+    }
+}
+
+/// Transport channels for a session backend implemented outside this crate.
+///
+/// The SSH backend owns its own threads and channel wiring. A desktop-side
+/// backend such as a local PTY uses this helper to speak the same session
+/// protocol without reaching into SSH internals: it drives `commands` and
+/// `events` on its own threads and hands `connection` to the UI, exactly like
+/// [`start_session`] does.
+pub struct SessionChannels {
+    pub connection: SessionConnection,
+    pub commands: UnboundedReceiver<SessionCommand>,
+    pub events: Sender<SessionEvent>,
+}
+
+impl SessionChannels {
+    pub fn new() -> Self {
+        session_channels()
+    }
+}
+
+impl Default for SessionChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn session_channels() -> SessionChannels {
+    let (event_sender, event_receiver) = session_event_channel();
+    let (command_sender, command_receiver) = unbounded_channel();
+    SessionChannels {
+        connection: SessionConnection::new(
+            SessionCommandSender::new(command_sender),
+            event_receiver,
+        ),
+        commands: command_receiver,
+        events: event_sender,
     }
 }
 

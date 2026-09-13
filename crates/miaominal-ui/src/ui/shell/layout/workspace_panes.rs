@@ -734,11 +734,20 @@ impl WorkspacePanesAppViewExt for AppView {
                             .and_then(|tab_id| view.session_tab(tab_id, cx))
                             .is_some_and(|session| session.terminal.has_selection());
                         let command_source = view.controllers.session.clone();
+                        let active_tab_is_local = view
+                            .workspace
+                            .workspace
+                            .parked_panes
+                            .get(&pane_id)
+                            .and_then(|parked| parked.active_tab)
+                            .and_then(|tab_id| view.workspace.tabs.get(tab_id))
+                            .is_some_and(|tab| tab.is_local_terminal());
 
                         build_terminal_context_menu(
                             menu,
                             command_source,
                             has_selection,
+                            !active_tab_is_local,
                             Some(pane_id),
                             window,
                             cx,
@@ -990,11 +999,18 @@ impl WorkspacePanesAppViewExt for AppView {
                             .and_then(|tab_id| view.session_tab(tab_id, cx))
                             .is_some_and(|session| session.terminal.has_selection());
                         let command_source = view.controllers.session.clone();
+                        let active_tab_is_local = view
+                            .workspace
+                            .workspace
+                            .active_tab
+                            .and_then(|tab_id| view.workspace.tabs.get(tab_id))
+                            .is_some_and(|tab| tab.is_local_terminal());
 
                         build_terminal_context_menu(
                             menu,
                             command_source,
                             has_selection,
+                            !active_tab_is_local,
                             None,
                             window,
                             cx,

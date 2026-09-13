@@ -148,7 +148,16 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
     cx: &App,
 ) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
-    let side_panel_view = app.controllers.session.read(cx).side_panel_view();
+    let is_local_terminal = app
+        .workspace
+        .tabs
+        .get(session_tab_id)
+        .is_some_and(|tab| tab.is_local_terminal());
+    let side_panel_view = if is_local_terminal {
+        SessionSidePanelView::Snippets
+    } else {
+        app.controllers.session.read(cx).side_panel_view()
+    };
     let selected_index = match side_panel_view {
         SessionSidePanelView::Monitor => 0,
         SessionSidePanelView::Snippets => 1,
@@ -224,7 +233,7 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
                         .items_center()
                         .justify_center()
                         .px_3()
-                        .child(switch),
+                        .when(!is_local_terminal, |this| this.child(switch)),
                 ),
         )
         .into_any_element()
