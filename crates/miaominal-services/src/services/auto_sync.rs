@@ -370,6 +370,7 @@ impl<S: SyncOps> AutoSyncTask<S> {
     fn capability_blocks(&self) -> bool {
         self.engine.config_store.config.provider == SyncProvider::WebDav
             && self.capability.state != CapabilityState::Supported
+            && !self.legacy_probe_exempt()
             // User-confirmed last-write-wins consent replaces the HTTP write
             // preconditions the probe failed on, so those failures stop gating
             // automatic sync. Every other failure still blocks it.
@@ -378,17 +379,28 @@ impl<S: SyncOps> AutoSyncTask<S> {
                 .permits_unpreconditioned_write(self.unsafe_write_consent())
     }
 
+    /// Whether this configuration already had automatic WebDAV sync enabled
+    /// before capability probing became mandatory.
+    ///
+    /// The store grants this once, and disabling automatic sync withdraws it,
+    /// so the exemption is only ever carried forward by an uninterrupted
+    /// pre-probe configuration.
+    fn legacy_probe_exempt(&self) -> bool {
+        self.engine.config_store.config.legacy_auto_sync_compat
+    }
+
     /// Whether the user has accepted unpreconditioned WebDAV uploads.
     fn unsafe_write_consent(&self) -> bool {
         self.engine.config_store.config.webdav_unsafe_write_consent
     }
 
-    /// Turning automatic sync off withdraws the unsafe-write consent, so the
-    /// next enable runs the strict capability check and prompts again. This
-    /// covers a preference persisted anywhere — the settings path already
-    /// clears it, and an already-cleared flag needs no write.
+    /// Turning automatic sync off withdraws the unsafe-write consent and the
+    /// pre-probe compatibility exemption, so the next enable runs the strict
+    /// capability check and prompts again. This covers a preference persisted
+    /// anywhere — the settings path already clears them, and an already-cleared
+    /// flag needs no write.
     fn clear_consent_when_disabled(&mut self) {
-        if self.enabled || !self.unsafe_write_consent() {
+        if self.enabled || (!self.unsafe_write_consent() && !self.legacy_probe_exempt()) {
             return;
         }
         let revision = self.engine.config_store.config.config_revision;
@@ -396,10 +408,11 @@ impl<S: SyncOps> AutoSyncTask<S> {
             .engine
             .config_store
             .update_if_revision(revision, |config| {
-                config.webdav_unsafe_write_consent = false
+                config.webdav_unsafe_write_consent = false;
+                config.legacy_auto_sync_compat = false;
             })
         {
-            log::warn!("failed to withdraw unsafe-write consent: {error:?}");
+            log::warn!("failed to withdraw capability overrides: {error:?}");
         }
         self.capability_notice_id = None;
     }
@@ -1767,6 +1780,75 @@ mod tests {
         assert_eq!(task.capability_notice_id, notice);
         assert_eq!(*mock.capability_calls.lock().unwrap(), 1);
         assert_eq!(*mock.remote_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn legacy_config_syncs_without_a_capability_probe() {
+        let dir = temp_config_dir("capability-legacy");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::VersionUnavailable,
+            "poll",
+            Some(200),
+            EtagKind::Weak,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.legacy_auto_sync_compat = true;
+
+        task.on_tick().await;
+
+        assert_eq!(
+            *mock.capability_calls.lock().unwrap(),
+            0,
+            "a carried-forward configuration must not wait for a probe"
+        );
+        assert_eq!(
+            *mock.remote_calls.lock().unwrap(),
+            1,
+            "the poll must run as it did before the probe existed"
+        );
+        assert_eq!(task.phase, AutoSyncPhase::Watching);
+    }
+
+    #[tokio::test]
+    async fn legacy_exemption_is_withdrawn_when_auto_sync_is_disabled() {
+        let dir = temp_config_dir("capability-legacy-revoked");
+        let mock = Arc::new(MockSyncOps::new());
+        *mock.capability_result.lock().unwrap() = CapabilityReport::issue(
+            CapabilityReason::VersionUnavailable,
+            "poll",
+            Some(200),
+            EtagKind::Weak,
+        );
+        let mut task = test_task(mock.clone(), &dir);
+        task.engine.config_store.config.provider = SyncProvider::WebDav;
+        task.engine.config_store.config.legacy_auto_sync_compat = true;
+        task.engine
+            .config_store
+            .update(|config| config.auto_sync_enabled = false)
+            .unwrap();
+        task.apply_engine(task.engine.clone()).await;
+
+        assert!(
+            !task.engine.config_store.config.legacy_auto_sync_compat,
+            "disabling automatic sync must withdraw the exemption"
+        );
+        assert_eq!(task.phase, AutoSyncPhase::Disabled);
+
+        task.engine
+            .config_store
+            .update(|config| config.auto_sync_enabled = true)
+            .unwrap();
+        task.enabled = true;
+        task.on_tick().await;
+
+        assert_eq!(
+            *mock.capability_calls.lock().unwrap(),
+            1,
+            "a later enable must run the strict capability check again"
+        );
+        assert_eq!(task.phase, AutoSyncPhase::PausedCapability);
     }
 
     #[tokio::test]

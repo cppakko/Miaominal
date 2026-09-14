@@ -44,6 +44,23 @@ pub struct SyncConfig {
     pub device_id: String,
     #[serde(default)]
     pub auto_sync_enabled: bool,
+    /// Carried-forward behaviour for a configuration that already had automatic
+    /// WebDAV sync enabled before capability probing became mandatory.
+    ///
+    /// Such a configuration keeps syncing without waiting for a probe, exactly
+    /// as it did before the probe existed. The exemption is granted once by
+    /// [`crate::SyncConfigStore`] migration and withdrawn when automatic sync
+    /// is turned off, so every later enable runs the strict capability check.
+    #[serde(default)]
+    pub legacy_auto_sync_compat: bool,
+    /// One-shot migration marker for [`Self::legacy_auto_sync_compat`].
+    ///
+    /// A configuration that predates capability probing is recognised by the
+    /// absence of this marker. Without it, an enable that happens after the
+    /// migration could not be told apart from an earlier one and would inherit
+    /// the exemption it never earned.
+    #[serde(default)]
+    pub capability_probe_migrated: bool,
     /// Explicit, revocable user consent for last-write-wins automatic uploads.
     ///
     /// A WebDAV server that offers no usable HTTP write precondition (missing or
@@ -80,6 +97,8 @@ impl Default for SyncConfig {
             last_sync_at: 0,
             device_id: String::new(),
             auto_sync_enabled: false,
+            legacy_auto_sync_compat: false,
+            capability_probe_migrated: false,
             webdav_unsafe_write_consent: false,
             remote_etag: None,
             remote_payload_id: None,

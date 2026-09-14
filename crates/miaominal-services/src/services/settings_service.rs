@@ -185,10 +185,11 @@ impl SettingsService {
         sync_engine.config_store.update(|config| {
             config.auto_sync_enabled = enabled;
             // Disabling automatic sync is also how the user revokes consent for
-            // unpreconditioned WebDAV uploads, so it never outlives the feature
-            // it was granted for.
+            // unpreconditioned WebDAV uploads and the pre-probe compatibility
+            // exemption, so neither outlives the feature it was granted for.
             if !enabled {
                 config.webdav_unsafe_write_consent = false;
+                config.legacy_auto_sync_compat = false;
             }
         })
     }
@@ -865,6 +866,33 @@ mod tests {
         assert_eq!(engine.config_store.config.remote_etag, None);
         assert_eq!(engine.config_store.config.remote_payload_id, None);
         assert_eq!(engine.config_store.config.last_synced_local_revision, None);
+        cleanup_test_vault(&vault_path);
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn disabling_auto_sync_withdraws_consent_and_the_legacy_probe_exemption() {
+        let (mut engine, vault_path, config_path) =
+            test_vault_sync_engine("disable-withdrawals", "vault-passphrase");
+        engine
+            .config_store
+            .update(|config| {
+                config.provider = SyncProvider::WebDav;
+                config.auto_sync_enabled = true;
+                config.webdav_unsafe_write_consent = true;
+                config.legacy_auto_sync_compat = true;
+            })
+            .unwrap();
+
+        SettingsService::set_auto_sync_enabled(&mut engine, false).unwrap();
+
+        assert!(!engine.config_store.config.auto_sync_enabled);
+        assert!(!engine.config_store.config.webdav_unsafe_write_consent);
+        assert!(!engine.config_store.config.legacy_auto_sync_compat);
+
+        let persisted = fs::read_to_string(&config_path).expect("sync config should persist");
+        let persisted: SyncConfig = toml::from_str(&persisted).expect("sync config should parse");
+        assert!(!persisted.legacy_auto_sync_compat);
         cleanup_test_vault(&vault_path);
         let _ = fs::remove_file(config_path);
     }

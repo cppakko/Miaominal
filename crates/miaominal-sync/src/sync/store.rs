@@ -1,4 +1,4 @@
-use crate::SyncConfig;
+use crate::{SyncConfig, SyncProvider};
 use anyhow::{Context, Result};
 use miaominal_paths::{self as paths, atomic_write};
 use miaominal_secrets::{
@@ -59,7 +59,10 @@ impl SyncConfigStore {
 
     pub fn load_with_credentials(credentials: CredentialStore) -> Result<Self> {
         let config_file = paths::config_file("sync_config.toml")?;
+        Self::load_from(config_file, credentials)
+    }
 
+    fn load_from(config_file: PathBuf, credentials: CredentialStore) -> Result<Self> {
         let mut config = if config_file.exists() {
             let content = fs::read_to_string(&config_file)
                 .with_context(|| format!("failed to read {}", config_file.display()))?;
@@ -83,8 +86,10 @@ impl SyncConfigStore {
         store.loaded_config = loaded_config;
         // Re-read under the process-wide write lock before normalizing and
         // persisting. Another store may have updated the file between the
-        // initial read above and this point.
-        store.update(|_| {})?;
+        // initial read above and this point. The same pass grants the one-shot
+        // pre-capability-probe exemption to configurations that already had
+        // automatic WebDAV sync enabled.
+        store.update(migrate_legacy_auto_sync)?;
         Ok(store)
     }
 
@@ -307,6 +312,22 @@ impl SyncConfigStore {
     }
 }
 
+/// Grant the pre-capability-probe exemption exactly once.
+///
+/// A persisted configuration that already had automatic WebDAV sync enabled
+/// when this version first ran predates the probe, so it keeps its previous
+/// behaviour. The marker makes the grant one-shot: automatic sync enabled after
+/// the migration is only written together with a successful capability check
+/// and must not inherit an exemption it never earned.
+fn migrate_legacy_auto_sync(config: &mut SyncConfig) {
+    if config.capability_probe_migrated {
+        return;
+    }
+    config.capability_probe_migrated = true;
+    config.legacy_auto_sync_compat =
+        config.auto_sync_enabled && config.provider == SyncProvider::WebDav;
+}
+
 /// Preserve direct in-memory edits made by existing callers while still
 /// starting from the latest persisted config. Fields unchanged since this
 /// store was loaded are taken from disk; locally changed fields win and are
@@ -343,6 +364,8 @@ fn merge_external_config_changes(
     merge_field!(last_sync_at);
     merge_field!(device_id);
     merge_field!(auto_sync_enabled);
+    merge_field!(legacy_auto_sync_compat);
+    merge_field!(capability_probe_migrated);
     merge_field!(webdav_unsafe_write_consent);
     merge_field!(remote_etag);
     merge_field!(remote_payload_id);
@@ -457,6 +480,14 @@ mod tests {
     fn sync_config_new_fields_default_off_and_roundtrip() {
         let config = SyncConfig::default();
         assert!(!config.auto_sync_enabled);
+        assert!(
+            !config.legacy_auto_sync_compat,
+            "the probe exemption is never the default"
+        );
+        assert!(
+            !config.capability_probe_migrated,
+            "the migration marker starts unset so pre-probe configs are recognised"
+        );
         assert_eq!(config.remote_etag, None);
         assert!(
             !config.webdav_unsafe_write_consent,
@@ -485,8 +516,81 @@ mod tests {
         assert!(loaded.auto_sync_enabled);
         assert_eq!(loaded.remote_etag.as_deref(), Some("\"etag-v1\""));
         assert!(!loaded.webdav_unsafe_write_consent);
+        assert!(!loaded.legacy_auto_sync_compat);
+        assert!(!loaded.capability_probe_migrated);
 
         let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn pre_probe_webdav_config_gets_the_legacy_exemption_once() {
+        let config_path = temp_sync_config_path();
+        // A file written before capability probing has neither new field, so
+        // the loader has to recognise it as pre-probe by their absence.
+        fs::write(
+            &config_path,
+            "provider = \"web_dav\"\nauto_sync_enabled = true\ndevice_id = \"device\"\n",
+        )
+        .expect("pre-probe config should be writable");
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+
+        let store = SyncConfigStore::load_from(config_path.clone(), credentials.clone())
+            .expect("pre-probe config should load");
+        assert!(store.config.legacy_auto_sync_compat);
+        assert!(store.config.capability_probe_migrated);
+        let persisted: SyncConfig =
+            toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(persisted.legacy_auto_sync_compat);
+        assert!(persisted.capability_probe_migrated);
+        // An enable that is written after the migration — only ever together
+        // with a successful check — must not inherit the exemption. Disabling
+        // withdraws it first, exactly like the settings path.
+        let mut store = SyncConfigStore::load_from(config_path.clone(), credentials).unwrap();
+        store
+            .update(|config| {
+                config.auto_sync_enabled = false;
+                config.legacy_auto_sync_compat = false;
+            })
+            .unwrap();
+        store
+            .update(|config| config.auto_sync_enabled = true)
+            .unwrap();
+        store.update(migrate_legacy_auto_sync).unwrap();
+        assert!(!store.config.legacy_auto_sync_compat);
+        assert!(store.config.capability_probe_migrated);
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn pre_probe_migration_spares_disabled_and_other_providers() {
+        let credentials =
+            CredentialStore::with_backend(APP_CREDENTIAL_SERVICE, LockedCredentialBackend);
+        for (label, provider, enabled) in [
+            ("disabled-webdav", "web_dav", false),
+            ("enabled-gist", "github_gist", true),
+        ] {
+            let config_path = temp_sync_config_path();
+            fs::write(
+                &config_path,
+                format!(
+                    "provider = \"{provider}\"\nauto_sync_enabled = {enabled}\ndevice_id = \"device\"\n"
+                ),
+            )
+            .expect("pre-probe config should be writable");
+
+            let store = SyncConfigStore::load_from(config_path.clone(), credentials.clone())
+                .expect("pre-probe config should load");
+            assert!(!store.config.legacy_auto_sync_compat, "{label}");
+            assert!(store.config.capability_probe_migrated, "{label}");
+            let persisted: SyncConfig =
+                toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+            assert!(!persisted.legacy_auto_sync_compat, "{label}");
+            assert!(persisted.capability_probe_migrated, "{label}");
+
+            let _ = fs::remove_file(config_path);
+        }
     }
 
     #[test]
