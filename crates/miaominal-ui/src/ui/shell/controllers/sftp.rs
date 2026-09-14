@@ -20,6 +20,7 @@ use gpui_kit::{
 };
 use miaominal_core::profile::SessionProfile;
 use miaominal_services::{PlannedSftpDownload, SftpService};
+use miaominal_ssh::{HostKeyDecision, HostKeyPrompt};
 
 use super::AppCommand;
 use crate::ui::{
@@ -831,6 +832,9 @@ pub(in crate::ui::shell) enum SftpPromptKind {
     },
     ConfirmRemoveRemoteFavorite {
         path: String,
+    },
+    ConfirmHostKey {
+        prompt: HostKeyPrompt,
     },
 }
 
@@ -3941,12 +3945,23 @@ impl SftpController {
         let mut remote_table_loading_finished = false;
         let mut clear_remote_table_loading = false;
         let mut failed_remote_expand_path = None;
+        let mut pending_host_key_prompt: Option<HostKeyPrompt> = None;
+        let mut clear_host_key_prompt = false;
 
         match event {
             SftpEvent::Status(message) => {
                 tab_status = Some(message.clone());
                 tab.last_status = message;
                 tab.last_error = None;
+            }
+            SftpEvent::HostKeyPrompt(prompt) => {
+                tab_status = Some(if prompt.previous_fingerprint.is_some() {
+                    i18n::string("session.status.host_key_mismatch")
+                } else {
+                    i18n::string("session.status.verify_host_key")
+                });
+                tab.last_status = tab_status.clone().unwrap_or_default();
+                pending_host_key_prompt = Some(prompt);
             }
             SftpEvent::DirectoryListing {
                 request_id,
@@ -4194,6 +4209,7 @@ impl SftpController {
                 if context == "list_directory" && tab.remote_directory_request_id.is_some() {
                     return;
                 }
+                clear_host_key_prompt = true;
                 tab_status = Some(i18n::string("session.status.error"));
                 if context == "list_directory" {
                     tab.loading_remote = false;
@@ -4214,6 +4230,7 @@ impl SftpController {
                 }
             }
             SftpEvent::Closed => {
+                clear_host_key_prompt = true;
                 tab_status = Some(i18n::string("session.status.closed"));
                 tab.commands = None;
                 tab.loading_remote = false;
@@ -4244,6 +4261,17 @@ impl SftpController {
             }
         }
         drop(tab);
+
+        if let Some(prompt) = pending_host_key_prompt {
+            self.set_prompt(
+                tab_id,
+                Some(SftpPromptState {
+                    kind: SftpPromptKind::ConfirmHostKey { prompt },
+                }),
+            );
+        } else if clear_host_key_prompt {
+            self.clear_host_key_prompt(tab_id, cx);
+        }
 
         if let Some(status) = tab_status {
             cx.emit(AppCommand::TabStatusChanged { tab_id, status });
@@ -4952,6 +4980,70 @@ impl SftpController {
         }
     }
 
+    pub(in crate::ui::shell) fn resolve_host_key_prompt(
+        &mut self,
+        tab_id: TabId,
+        decision: HostKeyDecision,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(prompt_state) = self.take_prompt(tab_id) else {
+            return;
+        };
+        let SftpPromptKind::ConfirmHostKey { prompt } = &prompt_state.kind else {
+            self.set_prompt(tab_id, Some(prompt_state));
+            return;
+        };
+        let prompt = prompt.clone();
+        let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
+            return;
+        };
+
+        cx.emit(AppCommand::OverlayDismissed(
+            DialogOverlaySnapshot::SftpPrompt {
+                tab_id,
+                prompt: SftpPromptState {
+                    kind: SftpPromptKind::ConfirmHostKey {
+                        prompt: prompt.clone(),
+                    },
+                },
+            },
+        ));
+        if let Err(error) = commands.respond_host_key(decision) {
+            log::warn!("failed to deliver SFTP host key decision: {error:?}");
+        }
+
+        let message = match decision {
+            HostKeyDecision::AcceptOnce => i18n::string_args(
+                "session.messages.accepted_host_key_session_only",
+                &[("host", &prompt.host)],
+            ),
+            HostKeyDecision::AcceptAndSave => {
+                cx.emit(AppCommand::KnownHostsChanged);
+                i18n::string_args(
+                    "session.messages.trusting_host_key",
+                    &[("host", &prompt.host)],
+                )
+            }
+            HostKeyDecision::Reject => i18n::string_args(
+                "session.messages.rejected_host_key",
+                &[("host", &prompt.host)],
+            ),
+        };
+        cx.emit(AppCommand::Feedback(message));
+        cx.notify();
+    }
+
+    fn clear_host_key_prompt(&self, tab_id: TabId, cx: &mut Context<Self>) {
+        let is_host_key_prompt = self
+            .prompt(tab_id)
+            .is_some_and(|prompt| matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. }));
+        if is_host_key_prompt && let Some(prompt) = self.take_prompt(tab_id) {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::SftpPrompt { tab_id, prompt },
+            ));
+        }
+    }
+
     pub(in crate::ui::shell) fn skip_overwrite_prompt(
         &mut self,
         tab_id: TabId,
@@ -5157,6 +5249,7 @@ impl SftpController {
             | SftpPromptKind::ConfirmDelete { .. }
             | SftpPromptKind::ConfirmDeleteLocal { .. }
             | SftpPromptKind::ConfirmRemoveRemoteFavorite { .. }
+            | SftpPromptKind::ConfirmHostKey { .. }
             | SftpPromptKind::CreateLocalDirectory { .. } => {
                 unreachable!()
             }
@@ -5181,6 +5274,13 @@ impl SftpController {
     }
 
     pub(in crate::ui::shell) fn cancel_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        if self
+            .prompt(tab_id)
+            .is_some_and(|prompt| matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. }))
+        {
+            self.resolve_host_key_prompt(tab_id, HostKeyDecision::Reject, cx);
+            return;
+        }
         let Some(prompt) = self.take_prompt(tab_id) else {
             return;
         };
@@ -5500,8 +5600,18 @@ impl SftpController {
     }
 
     pub(in crate::ui::shell) fn remove_tab_state(&self, tab_id: TabId) -> Option<SftpTabState> {
-        self.interactions.borrow_mut().remove(&tab_id);
-        self.tabs.borrow_mut().remove(tab_id)
+        let interaction = self.interactions.borrow_mut().remove(&tab_id);
+        let tab = self.tabs.borrow_mut().remove(tab_id);
+        let has_pending_host_key = interaction
+            .as_ref()
+            .and_then(|state| state.prompt.as_ref())
+            .is_some_and(|prompt| matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. }));
+        if has_pending_host_key
+            && let Some(commands) = tab.as_ref().and_then(|tab| tab.commands.as_ref())
+        {
+            let _ = commands.respond_host_key(HostKeyDecision::Reject);
+        }
+        tab
     }
 
     pub(in crate::ui::shell) fn take_tab_for_transfer(

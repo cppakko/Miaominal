@@ -930,6 +930,11 @@ impl AppView {
     fn handle_app_command(&mut self, command: &AppCommand, cx: &mut Context<Self>) {
         match command {
             AppCommand::Feedback(message) => self.shell.status_message = message.clone(),
+            AppCommand::KnownHostsChanged => {
+                self.controllers.session.update(cx, |controller, cx| {
+                    controller.refresh_known_hosts(cx);
+                });
+            }
             AppCommand::TabStatusChanged { tab_id, status } => {
                 if let Some(mut tab) = self.workspace.tabs.get_mut(*tab_id) {
                     tab.status = status.clone();

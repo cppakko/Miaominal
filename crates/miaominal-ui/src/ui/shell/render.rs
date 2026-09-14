@@ -502,6 +502,7 @@ impl Render for AppView {
                     tab_id,
                     &prompt,
                     None,
+                    bottom_popup_viewport_height,
                 ))
             })
             .children(exiting_dialogs.into_iter().map(|(snapshot, progress)| {
@@ -4071,6 +4072,7 @@ impl AppView {
                     tab_id,
                     &prompt,
                     Some(exit_progress),
+                    bottom_popup_viewport_height,
                 )
             }
         }

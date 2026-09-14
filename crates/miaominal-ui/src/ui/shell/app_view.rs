@@ -1231,19 +1231,32 @@ impl AppView {
                     .map(|prompt| (tab.id, prompt))
             });
 
-        active_prompt.or_else(|| {
-            self.session_side_panel_sftp_tab_id(cx).and_then(|tab_id| {
-                self.workspace
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.id == tab_id)
-                    .filter(|tab| tab.is_sftp())
-                    .and_then(|tab| {
-                        self.sftp_prompt_state(tab.id, cx)
-                            .map(|prompt| (tab.id, prompt))
-                    })
+        active_prompt
+            .or_else(|| {
+                self.session_side_panel_sftp_tab_id(cx).and_then(|tab_id| {
+                    self.workspace
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id)
+                        .filter(|tab| tab.is_sftp())
+                        .and_then(|tab| {
+                            self.sftp_prompt_state(tab.id, cx)
+                                .map(|prompt| (tab.id, prompt))
+                        })
+                })
             })
-        })
+            .or_else(|| {
+                self.workspace.tabs.iter().find_map(|tab| {
+                    if !tab.is_sftp() {
+                        return None;
+                    }
+                    self.sftp_prompt_state(tab.id, cx)
+                        .filter(|prompt| {
+                            matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. })
+                        })
+                        .map(|prompt| (tab.id, prompt))
+                })
+            })
     }
 
     pub(in crate::ui::shell) fn start_dialog_exit(

@@ -90,6 +90,7 @@ pub(in crate::ui::shell) enum AppCommand {
     SaveSnippetRequested(Box<miaominal_core::snippet::SnippetRecord>),
     ImportProfilesRequested(miaominal_core::profile::ImportSourceKind),
     Feedback(String),
+    KnownHostsChanged,
     OverlayDismissed(DialogOverlaySnapshot),
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,

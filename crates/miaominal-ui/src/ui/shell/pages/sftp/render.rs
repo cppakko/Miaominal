@@ -3562,7 +3562,23 @@ impl SftpController {
         tab_id: TabId,
         prompt: &SftpPromptState,
         exit_progress: Option<f32>,
+        bottom_popup_viewport_height: f32,
     ) -> gpui_kit::AnyElement {
+        if let SftpPromptKind::ConfirmHostKey { prompt } = &prompt.kind {
+            let controller = entity;
+            return super::super::trusted::render_host_key_prompt(
+                move |decision, cx| {
+                    controller.update(cx, |controller, cx| {
+                        controller.resolve_host_key_prompt(tab_id, decision, cx);
+                    });
+                },
+                prompt,
+                exit_progress,
+                bottom_popup_viewport_height,
+                format!("sftp-host-key-{tab_id}"),
+            );
+        }
+
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let extended = material.extended;
@@ -3681,6 +3697,9 @@ impl SftpController {
                 false,
                 true,
             ),
+            SftpPromptKind::ConfirmHostKey { .. } => {
+                unreachable!("host key prompts render through the trusted host key panel")
+            }
         };
 
         let body = match &prompt.kind {
@@ -3696,6 +3715,9 @@ impl SftpController {
             | SftpPromptKind::ConfirmDelete { .. }
             | SftpPromptKind::ConfirmDeleteLocal { .. } => None,
             SftpPromptKind::ConfirmRemoveRemoteFavorite { .. } => None,
+            SftpPromptKind::ConfirmHostKey { .. } => {
+                unreachable!("host key prompts render through the trusted host key panel")
+            }
         };
 
         let cancel_button = basic_dialog_action_button(

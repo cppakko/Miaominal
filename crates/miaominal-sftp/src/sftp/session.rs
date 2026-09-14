@@ -12,6 +12,7 @@ use futures::SinkExt as _;
 use futures::channel::mpsc::{
     Receiver as FuturesReceiver, Sender as FuturesSender, channel as futures_channel,
 };
+use miaominal_core::forwarding::{HostKeyDecision, HostKeyPrompt};
 use miaominal_core::known_host::HostKeyCheck;
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::proxy::ProxyProfile;
@@ -19,6 +20,7 @@ use miaominal_core::sftp::{SftpEntry, TransferDirection, TransferId};
 use miaominal_secrets::SecretStore;
 use miaominal_ssh as ssh;
 use miaominal_storage::KnownHostsStore;
+use russh::keys::{HashAlg, PublicKey};
 use russh::{Disconnect, client};
 use russh_sftp::{
     client::{SftpSession, error::Error as SftpClientError},
@@ -121,6 +123,7 @@ pub struct SftpTransferProgress {
 #[derive(Debug, Clone)]
 pub enum SftpEvent {
     Status(String),
+    HostKeyPrompt(HostKeyPrompt),
     DirectoryListing {
         request_id: Option<SftpDirectoryRequestId>,
         path: String,
@@ -269,9 +272,16 @@ impl SftpProgressReceiver {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct SftpHostKeyPrompts {
+    event_sender: SftpEventSender,
+    decisions: Arc<Mutex<UnboundedReceiver<HostKeyDecision>>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct SftpCommandSender {
     sender: UnboundedSender<SftpCommand>,
+    host_key_decisions: UnboundedSender<HostKeyDecision>,
     next_transfer_id: Arc<AtomicU64>,
     next_directory_request_id: Arc<AtomicU64>,
 }
@@ -352,6 +362,12 @@ impl SftpCommandSender {
         self.send_command(SftpCommand::ResumeTransfer { transfer_id })
     }
 
+    pub fn respond_host_key(&self, decision: HostKeyDecision) -> Result<()> {
+        self.host_key_decisions
+            .send(decision)
+            .map_err(|_| anyhow!("SFTP session is no longer available"))
+    }
+
     pub fn close(&self) -> Result<()> {
         self.send_command(SftpCommand::Close)
     }
@@ -396,6 +412,7 @@ pub async fn resolve_profile_paths(
         all_proxies,
         secrets,
         known_hosts,
+        None,
         &event_sender,
     )
     .await?;
@@ -445,6 +462,11 @@ pub fn start_session(
     let (event_sender, event_receiver) = sftp_event_channel();
     let (progress_sender, progress_receiver) = sftp_progress_channel();
     let (command_sender, command_receiver) = unbounded_channel();
+    let (host_key_decision_sender, host_key_decision_receiver) = unbounded_channel();
+    let host_key_prompts = SftpHostKeyPrompts {
+        event_sender: event_sender.clone(),
+        decisions: Arc::new(Mutex::new(host_key_decision_receiver)),
+    };
     let runtime = runtime.clone();
     let next_transfer_id = Arc::new(AtomicU64::new(1));
     let next_directory_request_id = Arc::new(AtomicU64::new(1));
@@ -458,6 +480,7 @@ pub fn start_session(
                 all_proxies,
                 secrets,
                 known_hosts,
+                host_key_prompts,
                 command_receiver,
                 event_sender.clone(),
                 progress_sender,
@@ -482,6 +505,7 @@ pub fn start_session(
     SftpConnection {
         commands: SftpCommandSender {
             sender: command_sender,
+            host_key_decisions: host_key_decision_sender,
             next_transfer_id,
             next_directory_request_id,
         },
@@ -497,6 +521,7 @@ async fn run_session(
     all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
+    host_key_prompts: SftpHostKeyPrompts,
     mut command_receiver: UnboundedReceiver<SftpCommand>,
     event_sender: SftpEventSender,
     progress_sender: SftpProgressSender,
@@ -508,6 +533,7 @@ async fn run_session(
         all_proxies,
         secrets,
         known_hosts,
+        Some(host_key_prompts),
         &event_sender,
     )
     .await?;
@@ -877,6 +903,15 @@ struct SftpClientHandler {
     known_hosts: KnownHostsStore,
     host: String,
     port: u16,
+    host_key_prompts: Option<SftpHostKeyPrompts>,
+}
+
+fn fingerprint_of(key: &PublicKey) -> String {
+    key.fingerprint(HashAlg::Sha256).to_string()
+}
+
+fn algorithm_of(key: &PublicKey) -> String {
+    key.algorithm().to_string()
 }
 
 impl client::Handler for SftpClientHandler {
@@ -886,21 +921,92 @@ impl client::Handler for SftpClientHandler {
         &mut self,
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        match self
+        let check = self
             .known_hosts
-            .check(&self.host, self.port, server_public_key)?
+            .check(&self.host, self.port, server_public_key)?;
+
+        let Some(host_key_prompts) = self.host_key_prompts.clone() else {
+            return match check {
+                HostKeyCheck::Match => Ok(true),
+                HostKeyCheck::Unknown => bail!(
+                    "SFTP requires a saved host key for {}:{}. Connect once via SSH and choose accept-and-save before opening SFTP.",
+                    self.host,
+                    self.port
+                ),
+                HostKeyCheck::Mismatch { .. } => bail!(
+                    "SFTP refused to connect because the saved host key for {}:{} does not match.",
+                    self.host,
+                    self.port
+                ),
+            };
+        };
+
+        let prompt = match check {
+            HostKeyCheck::Match => return Ok(true),
+            HostKeyCheck::Unknown => HostKeyPrompt {
+                host: self.host.clone(),
+                port: self.port,
+                algorithm: algorithm_of(server_public_key),
+                fingerprint: fingerprint_of(server_public_key),
+                previous_fingerprint: None,
+            },
+            HostKeyCheck::Mismatch { line } => {
+                let previous = self.known_hosts.list().ok().and_then(|entries| {
+                    entries
+                        .into_iter()
+                        .find(|entry| entry.host == self.host && entry.port == self.port)
+                        .map(|entry| entry.fingerprint)
+                });
+                log::warn!(
+                    "host key mismatch for {}:{} at known_hosts line {line}",
+                    self.host,
+                    self.port
+                );
+                HostKeyPrompt {
+                    host: self.host.clone(),
+                    port: self.port,
+                    algorithm: algorithm_of(server_public_key),
+                    fingerprint: fingerprint_of(server_public_key),
+                    previous_fingerprint: previous,
+                }
+            }
+        };
+
+        if send_event(
+            &host_key_prompts.event_sender,
+            SftpEvent::HostKeyPrompt(prompt),
+        )
+        .await
+        .is_err()
         {
-            HostKeyCheck::Match => Ok(true),
-            HostKeyCheck::Unknown => bail!(
-                "SFTP requires a saved host key for {}:{}. Connect once via SSH and choose accept-and-save before opening SFTP.",
-                self.host,
-                self.port
-            ),
-            HostKeyCheck::Mismatch { .. } => bail!(
-                "SFTP refused to connect because the saved host key for {}:{} does not match.",
-                self.host,
-                self.port
-            ),
+            return Ok(false);
+        }
+
+        let decision = {
+            let mut decisions = host_key_prompts.decisions.lock().await;
+            decisions
+                .recv()
+                .await
+                .ok_or_else(|| anyhow!("host key decision channel closed"))?
+        };
+
+        match decision {
+            HostKeyDecision::AcceptOnce => Ok(true),
+            HostKeyDecision::AcceptAndSave => {
+                if let Err(error) = self
+                    .known_hosts
+                    .learn(&self.host, self.port, server_public_key)
+                {
+                    log::warn!("failed to record host key: {error:?}");
+                    let _ = send_event(
+                        &host_key_prompts.event_sender,
+                        SftpEvent::Status(format!("Could not save host key: {error}")),
+                    )
+                    .await;
+                }
+                Ok(true)
+            }
+            HostKeyDecision::Reject => Ok(false),
         }
     }
 }
@@ -911,6 +1017,7 @@ async fn connect_authenticated_session(
     all_proxies: Vec<ProxyProfile>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
+    host_key_prompts: Option<SftpHostKeyPrompts>,
     event_sender: &SftpEventSender,
 ) -> Result<SftpConnectedSession> {
     let profile = ssh::hydrate_profile_from_secrets(profile, &secrets);
@@ -943,6 +1050,7 @@ async fn connect_authenticated_session(
             &secrets,
             config.clone(),
             known_hosts.clone(),
+            host_key_prompts.clone(),
         )
         .await?;
         emit_status(
@@ -998,6 +1106,7 @@ async fn connect_authenticated_session(
                 transport,
                 config.clone(),
                 known_hosts.clone(),
+                host_key_prompts.clone(),
             )
             .await?;
             emit_status(
@@ -1024,6 +1133,7 @@ async fn connect_authenticated_session(
             &secrets,
             config,
             known_hosts,
+            host_key_prompts,
         )
         .await?;
         emit_status(event_sender, format!("Authenticating SFTP to {remote}")).await?;
@@ -1041,11 +1151,13 @@ async fn connect_profile_session(
     profile: &SessionProfile,
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
+    host_key_prompts: Option<SftpHostKeyPrompts>,
 ) -> Result<client::Handle<SftpClientHandler>> {
     let handler = SftpClientHandler {
         known_hosts,
         host: profile.host.clone(),
         port: profile.port,
+        host_key_prompts,
     };
     ssh::connection::connect_profile_session(profile, config, handler).await
 }
@@ -1056,13 +1168,14 @@ async fn connect_profile_with_optional_proxy(
     secrets: &SecretStore,
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
+    host_key_prompts: Option<SftpHostKeyPrompts>,
 ) -> Result<client::Handle<SftpClientHandler>> {
     let Some(proxy) = proxy else {
-        return connect_profile_session(profile, config, known_hosts).await;
+        return connect_profile_session(profile, config, known_hosts, host_key_prompts).await;
     };
     let transport =
         ssh::transport::connect_via_proxy(proxy, &profile.host, profile.port, secrets).await?;
-    connect_profile_stream(profile, transport, config, known_hosts).await
+    connect_profile_stream(profile, transport, config, known_hosts, host_key_prompts).await
 }
 
 async fn connect_profile_stream<R>(
@@ -1070,6 +1183,7 @@ async fn connect_profile_stream<R>(
     transport: R,
     config: Arc<client::Config>,
     known_hosts: KnownHostsStore,
+    host_key_prompts: Option<SftpHostKeyPrompts>,
 ) -> Result<client::Handle<SftpClientHandler>>
 where
     R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -1078,6 +1192,7 @@ where
         known_hosts,
         host: profile.host.clone(),
         port: profile.port,
+        host_key_prompts,
     };
     ssh::connection::connect_profile_stream(profile, transport, config, handler).await
 }
@@ -1090,8 +1205,31 @@ async fn emit_status(event_sender: &SftpEventSender, message: String) -> Result<
 mod tests {
     use super::*;
     use futures::StreamExt;
+    use russh::client::Handler as _;
     use russh_sftp::protocol::Status;
     use std::time::Duration;
+
+    const TEST_PUBLIC_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn test_command_sender() -> (
+        SftpCommandSender,
+        UnboundedReceiver<SftpCommand>,
+        UnboundedReceiver<HostKeyDecision>,
+    ) {
+        let (sender, command_receiver) = unbounded_channel();
+        let (decision_sender, decision_receiver) = unbounded_channel();
+        (
+            SftpCommandSender {
+                sender,
+                host_key_decisions: decision_sender,
+                next_transfer_id: Arc::new(AtomicU64::new(1)),
+                next_directory_request_id: Arc::new(AtomicU64::new(1)),
+            },
+            command_receiver,
+            decision_receiver,
+        )
+    }
 
     fn status_error(status_code: StatusCode, message: &str) -> anyhow::Error {
         SftpClientError::Status(Status {
@@ -1132,12 +1270,7 @@ mod tests {
 
     #[test]
     fn directory_commands_receive_monotonic_request_ids() {
-        let (sender, mut receiver) = unbounded_channel();
-        let commands = SftpCommandSender {
-            sender,
-            next_transfer_id: Arc::new(AtomicU64::new(1)),
-            next_directory_request_id: Arc::new(AtomicU64::new(1)),
-        };
+        let (commands, mut receiver, _decisions) = test_command_sender();
 
         assert_eq!(
             commands.list_directory("/first").expect("queue first"),
@@ -1165,12 +1298,7 @@ mod tests {
 
     #[test]
     fn remove_directory_queues_recursive_directory_deletion() {
-        let (sender, mut receiver) = unbounded_channel();
-        let commands = SftpCommandSender {
-            sender,
-            next_transfer_id: Arc::new(AtomicU64::new(1)),
-            next_directory_request_id: Arc::new(AtomicU64::new(1)),
-        };
+        let (commands, mut receiver, _decisions) = test_command_sender();
 
         commands
             .remove_directory("/remote/tree")
@@ -1180,6 +1308,135 @@ mod tests {
             receiver.try_recv(),
             Ok(SftpCommand::RemoveDirectoryRecursive { path }) if path == "/remote/tree"
         ));
+    }
+
+    #[test]
+    fn host_key_decisions_are_delivered_to_the_session() {
+        let (commands, _receiver, mut decisions) = test_command_sender();
+
+        commands
+            .respond_host_key(HostKeyDecision::AcceptAndSave)
+            .expect("deliver host key decision");
+
+        assert!(matches!(
+            decisions.try_recv(),
+            Ok(HostKeyDecision::AcceptAndSave)
+        ));
+    }
+
+    #[test]
+    fn interactive_handler_prompts_when_the_host_key_is_unknown() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build runtime");
+        let temp = tempfile::tempdir().expect("create temporary directory");
+        let known_hosts_path = temp.path().join("known_hosts");
+        let known_hosts = KnownHostsStore::with_path(known_hosts_path);
+        let (event_sender, mut event_receiver) = sftp_event_channel();
+        let (decision_sender, decision_receiver) = unbounded_channel();
+        let mut handler = SftpClientHandler {
+            known_hosts: known_hosts.clone(),
+            host: "example.test".into(),
+            port: 22,
+            host_key_prompts: Some(SftpHostKeyPrompts {
+                event_sender,
+                decisions: Arc::new(Mutex::new(decision_receiver)),
+            }),
+        };
+        let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
+
+        runtime.block_on(async {
+            let check = handler.check_server_key(&key);
+            let respond = async {
+                match event_receiver.next().await {
+                    Some(SftpEvent::HostKeyPrompt(prompt)) => {
+                        assert_eq!(prompt.host, "example.test");
+                        assert_eq!(prompt.port, 22);
+                        assert!(prompt.previous_fingerprint.is_none());
+                        assert!(prompt.fingerprint.starts_with("SHA256:"));
+                    }
+                    other => panic!("expected host key prompt, got {other:?}"),
+                }
+                decision_sender
+                    .send(HostKeyDecision::AcceptAndSave)
+                    .expect("deliver host key decision");
+            };
+            let (trusted, ()) = tokio::join!(check, respond);
+            assert!(trusted.expect("accept the prompted host key"));
+        });
+
+        assert!(matches!(
+            known_hosts
+                .check("example.test", 22, &key)
+                .expect("check learned host key"),
+            HostKeyCheck::Match
+        ));
+    }
+
+    #[test]
+    fn interactive_handler_rejects_on_user_decision() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build runtime");
+        let temp = tempfile::tempdir().expect("create temporary directory");
+        let known_hosts = KnownHostsStore::with_path(temp.path().join("known_hosts"));
+        let (event_sender, mut event_receiver) = sftp_event_channel();
+        let (decision_sender, decision_receiver) = unbounded_channel();
+        let mut handler = SftpClientHandler {
+            known_hosts,
+            host: "example.test".into(),
+            port: 22,
+            host_key_prompts: Some(SftpHostKeyPrompts {
+                event_sender,
+                decisions: Arc::new(Mutex::new(decision_receiver)),
+            }),
+        };
+        let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
+
+        runtime.block_on(async {
+            let check = handler.check_server_key(&key);
+            let respond = async {
+                assert!(matches!(
+                    event_receiver.next().await,
+                    Some(SftpEvent::HostKeyPrompt(_))
+                ));
+                decision_sender
+                    .send(HostKeyDecision::Reject)
+                    .expect("deliver host key decision");
+            };
+            let (trusted, ()) = tokio::join!(check, respond);
+            assert!(
+                !trusted.expect("rejection is reported as an untrusted key"),
+                "rejected host key must not be trusted"
+            );
+        });
+    }
+
+    #[test]
+    fn non_interactive_handler_fails_closed_without_prompting() {
+        let temp = tempfile::tempdir().expect("create temporary directory");
+        let known_hosts = KnownHostsStore::with_path(temp.path().join("known_hosts"));
+        let (event_sender, mut event_receiver) = sftp_event_channel();
+        let mut handler = SftpClientHandler {
+            known_hosts,
+            host: "example.test".into(),
+            port: 22,
+            host_key_prompts: None,
+        };
+        let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
+
+        let error = futures::executor::block_on(handler.check_server_key(&key))
+            .expect_err("strict handler must reject unknown host keys");
+        assert!(
+            error.to_string().contains("requires a saved host key"),
+            "unexpected error: {error}"
+        );
+
+        drop(event_sender);
+        assert!(
+            futures::executor::block_on(event_receiver.next()).is_none(),
+            "strict handler must not emit a host key prompt"
+        );
     }
 
     #[test]
