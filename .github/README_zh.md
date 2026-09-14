@@ -40,7 +40,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/cppakko/miaominal/releases/latest) 选择对应系统和处理器架构的发行包。文件名中的 `<版本>` 是版本号（例如 `0.2.3`），请以下载页面的完整文件名为准。
+从 [Releases](https://github.com/cppakko/miaominal/releases/latest) 选择对应系统和处理器架构的发行包。文件名中的 `<版本>` 是版本号（例如 `0.2.4`），请以下载页面的完整文件名为准。
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
@@ -70,11 +70,11 @@
 ### Linux
 
 1. 下载对应架构的 `.AppImage`，或使用发行版的包管理器安装 `.deb` / `.rpm`。
-2. 使用 AppImage 时，授予执行权限并运行。以下以 x86_64 的 `0.2.3` 版本为例，请替换为实际下载的文件名：
+2. 使用 AppImage 时，授予执行权限并运行。以下以 x86_64 的 `0.2.4` 版本为例，请替换为实际下载的文件名：
 
 ```bash
-chmod +x Miaominal-linux-x86_64-0.2.3.AppImage
-./Miaominal-linux-x86_64-0.2.3.AppImage
+chmod +x Miaominal-linux-x86_64-0.2.4.AppImage
+./Miaominal-linux-x86_64-0.2.4.AppImage
 ```
 
 ## 核心工作流

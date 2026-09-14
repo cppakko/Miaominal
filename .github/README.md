@@ -41,7 +41,7 @@
 
 ## Installation
 
-Choose the package for your operating system and processor architecture from [Releases](https://github.com/cppakko/miaominal/releases/latest). `<version>` below means the release version, such as `0.2.3`; use the complete filename shown on the release page.
+Choose the package for your operating system and processor architecture from [Releases](https://github.com/cppakko/miaominal/releases/latest). `<version>` below means the release version, such as `0.2.4`; use the complete filename shown on the release page.
 
 | Platform | Package | Notes |
 | --- | --- | --- |
@@ -71,11 +71,11 @@ A file ending in `-standalone.exe` runs without installation and still uses the 
 ### Linux
 
 1. Download the `.AppImage` for your architecture, or install a `.deb` / `.rpm` package with your distribution's package manager.
-2. For AppImage, make it executable and run it. This example uses x86_64 version `0.2.3`; replace the filename with the one you downloaded:
+2. For AppImage, make it executable and run it. This example uses x86_64 version `0.2.4`; replace the filename with the one you downloaded:
 
 ```bash
-chmod +x Miaominal-linux-x86_64-0.2.3.AppImage
-./Miaominal-linux-x86_64-0.2.3.AppImage
+chmod +x Miaominal-linux-x86_64-0.2.4.AppImage
+./Miaominal-linux-x86_64-0.2.4.AppImage
 ```
 
 ## Core Workflows
