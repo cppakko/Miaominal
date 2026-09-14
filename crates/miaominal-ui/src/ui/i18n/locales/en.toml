@@ -452,7 +452,7 @@ label = "Right-click"
 description = "Context Menu keeps pane actions available. Copy/Paste copies the current selection, or pastes the clipboard when nothing is selected."
 
 [settings.key_bindings.shift_right_click]
-label = "Shift + right-click menu"
+label = "Shift + right-click opens menu"
 description = "When enabled, Shift + right click forces the terminal pane context menu even if normal right click is set to Copy/Paste."
 
 [settings.key_bindings]

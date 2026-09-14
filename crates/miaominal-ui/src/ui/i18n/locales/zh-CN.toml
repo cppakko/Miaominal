@@ -448,7 +448,7 @@ label = "右键"
 description = "上下文菜单会保留窗格操作。“复制/粘贴”会复制当前选区；如果没有选区，则粘贴剪贴板内容。"
 
 [settings.key_bindings.shift_right_click]
-label = "Shift + 右键菜单"
+label = "Shift + 右键打开菜单"
 description = "启用后，即使普通右键设为“复制/粘贴”，按住 Shift 再右键也会强制打开终端窗格的上下文菜单。"
 
 [settings.key_bindings]
