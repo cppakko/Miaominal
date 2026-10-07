@@ -9,6 +9,8 @@ use super::providers::PushCondition;
 const GIST_FILENAME: &str = "miaominal_sync.json";
 const GITHUB_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const GITHUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Production GitHub API origin; integration tests may override it.
+const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 
 #[derive(Debug, Serialize)]
 struct GistFile {
@@ -51,13 +53,24 @@ pub struct GithubGistBackend {
     client: Client,
     token: String,
     pub gist_id: Option<String>,
+    api_base: String,
 }
 
 impl GithubGistBackend {
-    pub fn new(token: String, gist_id: Option<String>) -> Result<Self> {
+    /// Build a backend against an explicit API origin.
+    ///
+    /// `api_base` is `None` in production; integration tests point the backend
+    /// at a local HTTP server so the Gist protocol can be exercised without the
+    /// public network.
+    pub fn new_with_api_base(
+        token: String,
+        gist_id: Option<String>,
+        api_base: Option<String>,
+    ) -> Result<Self> {
         Self::new_with_timeouts(
             token,
             gist_id,
+            api_base,
             GITHUB_CONNECT_TIMEOUT,
             GITHUB_REQUEST_TIMEOUT,
         )
@@ -66,18 +79,26 @@ impl GithubGistBackend {
     fn new_with_timeouts(
         token: String,
         gist_id: Option<String>,
+        api_base: Option<String>,
         connect_timeout: Duration,
         request_timeout: Duration,
     ) -> Result<Self> {
         Ok(Self {
-            client: Client::builder()
-                .connect_timeout(connect_timeout)
-                .timeout(request_timeout)
-                .build()
-                .context("failed to build GitHub HTTP client")?,
+            client: crate::http_client::client(connect_timeout, request_timeout)?,
             token,
             gist_id,
+            api_base: api_base
+                .filter(|base| !base.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_GITHUB_API_BASE.to_string()),
         })
+    }
+
+    fn gist_url(&self, gist_id: &str) -> String {
+        format!("{}/gists/{gist_id}", self.api_base)
+    }
+
+    fn gists_url(&self) -> String {
+        format!("{}/gists", self.api_base)
     }
 
     /// Push `payload_json` to the Gist. Creates the Gist if no `gist_id` is set.
@@ -105,7 +126,7 @@ impl GithubGistBackend {
                 return Ok(GithubGistPushOutcome::Conflict);
             }
 
-            let url = format!("https://api.github.com/gists/{id}");
+            let url = self.gist_url(id);
             let body = serde_json::json!({ "files": files });
             let mut request = self
                 .client
@@ -144,7 +165,7 @@ impl GithubGistBackend {
             };
             let response = self
                 .client
-                .post("https://api.github.com/gists")
+                .post(self.gists_url())
                 .header("Authorization", format!("Bearer {}", self.token))
                 .header("User-Agent", "miaominal")
                 .json(&request)
@@ -189,7 +210,7 @@ impl GithubGistBackend {
             files: HashMap<String, GistFileContent>,
         }
 
-        let url = format!("https://api.github.com/gists/{id}");
+        let url = self.gist_url(id);
         let mut request = self
             .client
             .get(&url)
@@ -257,8 +278,9 @@ mod tests {
 
     #[tokio::test]
     async fn bound_gist_refuses_non_atomic_must_not_exist_patch() {
-        let mut backend = GithubGistBackend::new("unused".into(), Some("bound-gist".into()))
-            .expect("GitHub backend should build");
+        let mut backend =
+            GithubGistBackend::new_with_api_base("unused".into(), Some("bound-gist".into()), None)
+                .expect("GitHub backend should build");
 
         let outcome = backend
             .push("{}", &PushCondition::MustNotExist)
@@ -274,6 +296,7 @@ mod tests {
         let backend = GithubGistBackend::new_with_timeouts(
             "unused".into(),
             Some("bound-gist".into()),
+            None,
             Duration::from_millis(50),
             Duration::from_millis(50),
         )

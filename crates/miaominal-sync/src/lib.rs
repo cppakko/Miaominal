@@ -11,8 +11,9 @@ mod encryption;
 pub mod engine;
 #[path = "sync/github_gist.rs"]
 mod github_gist;
+mod http_client;
 #[path = "sync/payload.rs"]
-mod payload;
+pub mod payload;
 #[path = "sync/providers.rs"]
 mod providers;
 #[path = "sync/store.rs"]

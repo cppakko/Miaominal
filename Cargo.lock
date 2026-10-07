@@ -5586,6 +5586,7 @@ dependencies = [
  "miaominal-storage",
  "rand 0.10.1",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5593,6 +5594,7 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

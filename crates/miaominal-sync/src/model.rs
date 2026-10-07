@@ -79,6 +79,14 @@ pub struct SyncConfig {
     pub remote_payload_id: Option<String>,
     #[serde(default)]
     pub last_synced_local_revision: Option<String>,
+    /// Test-only override for the GitHub API origin.
+    ///
+    /// No UI writes this field; it exists so integration tests can point the
+    /// Gist backend at a local HTTP server. Desktop and mobile configurations
+    /// serialize it only when it is explicitly set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[doc(hidden)]
+    pub gist_api_base: Option<String>,
 }
 
 impl Default for SyncConfig {
@@ -103,6 +111,7 @@ impl Default for SyncConfig {
             remote_etag: None,
             remote_payload_id: None,
             last_synced_local_revision: None,
+            gist_api_base: None,
         }
     }
 }

@@ -572,12 +572,14 @@ async fn check_webdav_with_deadline(
                 EtagKind::Missing,
             ));
         }
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(crate::webdav::WEBDAV_CONNECT_TIMEOUT)
-            .timeout(crate::webdav::WEBDAV_REQUEST_TIMEOUT)
-            .build()
-            .map_err(|_| failure("client", 0))?;
+        let client = crate::http_client::client_builder(
+            crate::webdav::WEBDAV_CONNECT_TIMEOUT,
+            crate::webdav::WEBDAV_REQUEST_TIMEOUT,
+        )
+        .map_err(|_| failure("client", 0))?
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| failure("client", 0))?;
         if cancel.is_cancelled() {
             return Err(CapabilityReport::issue(
                 CapabilityReason::Cancelled,

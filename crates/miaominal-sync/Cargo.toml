@@ -22,12 +22,14 @@ miaominal-settings = { path = "../miaominal-settings", default-features = false 
 miaominal-storage = { path = "../miaominal-storage", default-features = false }
 rand.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 toml.workspace = true
 uuid.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

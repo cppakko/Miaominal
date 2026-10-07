@@ -73,6 +73,8 @@ rfd = "0.17.2"
 roxmltree = "0.21.1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 russh = "0.61.2"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+webpki-roots = "0.26"
 russh-sftp = "2.3.0"
 rust-embed = "8.11.0"
 serde = { version = "1", features = ["derive"] }

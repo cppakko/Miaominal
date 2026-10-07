@@ -52,12 +52,9 @@ impl WebDavBackend {
         request_timeout: Duration,
     ) -> Result<Self> {
         validate_webdav_url(&url)?;
+        let client = crate::http_client::client(connect_timeout, request_timeout)?;
         Ok(Self {
-            client: Client::builder()
-                .connect_timeout(connect_timeout)
-                .timeout(request_timeout)
-                .build()
-                .context("failed to build WebDAV HTTP client")?,
+            client,
             url,
             username,
             password,

@@ -373,6 +373,7 @@ fn merge_external_config_changes(
     merge_field!(remote_etag);
     merge_field!(remote_payload_id);
     merge_field!(last_synced_local_revision);
+    merge_field!(gist_api_base);
 }
 
 #[cfg(test)]

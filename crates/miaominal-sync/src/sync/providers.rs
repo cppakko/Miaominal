@@ -56,9 +56,10 @@ impl RemoteBackend {
                 let token = config_store
                     .get_github_token()?
                     .ok_or_else(|| anyhow!("GitHub token not configured"))?;
-                Ok(Some(Self::Gist(GithubGistBackend::new(
+                Ok(Some(Self::Gist(GithubGistBackend::new_with_api_base(
                     token,
                     config_store.config.gist_id.clone(),
+                    config_store.config.gist_api_base.clone(),
                 )?)))
             }
             SyncProvider::WebDav => {
