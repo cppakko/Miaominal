@@ -196,7 +196,9 @@ pub(in crate::ui::shell) struct SessionTabState {
     pub(in crate::ui::shell) bytes_in: u64,
     pub(in crate::ui::shell) bytes_out: u64,
     pub(in crate::ui::shell) pending_host_key: Option<HostKeyPrompt>,
+    pub(in crate::ui::shell) pending_host_key_request_id: u64,
     pub(in crate::ui::shell) pending_keyboard_interactive: Option<KbiChallenge>,
+    pub(in crate::ui::shell) pending_keyboard_interactive_request_id: u64,
     pub(in crate::ui::shell) reconnect_task: Option<gpui_kit::Task<()>>,
     pub(in crate::ui::shell) reconnect_attempt: u32,
     pub(in crate::ui::shell) has_activity: bool,
@@ -4999,7 +5001,9 @@ impl SessionController {
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
+            pending_host_key_request_id: 0,
             pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
             reconnect_task: None,
             reconnect_attempt: 0,
             has_activity: false,
@@ -5046,7 +5050,9 @@ impl SessionController {
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
+            pending_host_key_request_id: 0,
             pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
             reconnect_task: None,
             reconnect_attempt: 0,
             has_activity: false,
@@ -5109,7 +5115,9 @@ impl SessionController {
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
+            pending_host_key_request_id: 0,
             pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
             reconnect_task: None,
             reconnect_attempt: 0,
             has_activity: false,
@@ -5154,7 +5162,9 @@ impl SessionController {
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
+            pending_host_key_request_id: 0,
             pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
             reconnect_task: None,
             reconnect_attempt: 0,
             has_activity: false,
@@ -5604,9 +5614,11 @@ impl SessionController {
         decision: HostKeyDecision,
         cx: &mut Context<Self>,
     ) {
-        let Some((prompt, commands, port_forward_key)) =
+        let Some((prompt, request_id, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let prompt = session.pending_host_key.take()?;
+                let request_id = session.pending_host_key_request_id;
+                session.pending_host_key_request_id = 0;
                 let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
                     .then(|| {
                         session
@@ -5615,7 +5627,7 @@ impl SessionController {
                             .map(|rule_id| (session.profile_id.clone(), rule_id))
                     })
                     .flatten();
-                Some((prompt, session.commands.clone(), port_forward_key))
+                Some((prompt, request_id, session.commands.clone(), port_forward_key))
             })
         else {
             return;
@@ -5632,7 +5644,7 @@ impl SessionController {
         {
             manager.respond_host_key(&profile_id, &rule_id, decision)
         } else if let Some(commands) = commands {
-            commands.respond_host_key(decision)
+            commands.respond_host_key(request_id, decision)
         } else {
             return;
         };
@@ -5667,9 +5679,11 @@ impl SessionController {
         responses: Vec<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some((challenge, commands, port_forward_key)) =
+        let Some((challenge, request_id, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let challenge = session.pending_keyboard_interactive.take()?;
+                let request_id = session.pending_keyboard_interactive_request_id;
+                session.pending_keyboard_interactive_request_id = 0;
                 let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
                     .then(|| {
                         session
@@ -5678,7 +5692,7 @@ impl SessionController {
                             .map(|rule_id| (session.profile_id.clone(), rule_id))
                     })
                     .flatten();
-                Some((challenge, session.commands.clone(), port_forward_key))
+                Some((challenge, request_id, session.commands.clone(), port_forward_key))
             })
         else {
             return;
@@ -5689,7 +5703,7 @@ impl SessionController {
         {
             let _ = manager.respond_keyboard_interactive(&profile_id, &rule_id, responses);
         } else if let Some(commands) = commands {
-            let _ = commands.respond_keyboard_interactive(responses);
+            let _ = commands.respond_keyboard_interactive(request_id, responses);
         }
         cx.emit(AppCommand::OverlayDismissed(
             DialogOverlaySnapshot::KeyboardInteractive { tab_id, challenge },
@@ -5705,6 +5719,7 @@ impl SessionController {
         let Some((challenge, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let challenge = session.pending_keyboard_interactive.take()?;
+                session.pending_keyboard_interactive_request_id = 0;
                 let port_forward_key = (session.purpose == SessionPurpose::PortForwarding)
                     .then(|| {
                         session
@@ -6693,7 +6708,9 @@ mod tests {
             bytes_in: 0,
             bytes_out: 0,
             pending_host_key: None,
+            pending_host_key_request_id: 0,
             pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
             reconnect_task: None,
             reconnect_attempt: 0,
             has_activity: false,

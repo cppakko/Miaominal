@@ -4259,6 +4259,14 @@ impl SftpController {
                 }
                 subdirectory_listing = Some((parent_path, entries));
             }
+            // Typed interactive-session events only apply to the mobile
+            // client; the desktop SFTP flow uses the prompt-free legacy path
+            // (the legacy `Error` event still carries the same failure).
+            SftpEvent::Phase { .. }
+            | SftpEvent::HostKeyRequest { .. }
+            | SftpEvent::KeyboardInteractiveRequest { .. }
+            | SftpEvent::RequestExpired { .. }
+            | SftpEvent::OperationFailed { .. } => {}
         }
         drop(tab);
 

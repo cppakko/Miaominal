@@ -3,7 +3,7 @@ use miaominal_core::profile::{PortForwardRule, SessionProfile};
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::SecretStore;
 use miaominal_ssh::{
-    HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionEvent,
+    AuthenticationRequest, HostKeyDecision, HostKeyRequest, SessionCommandSender, SessionEvent,
     start_port_forward_session,
 };
 use miaominal_storage::known_hosts_store::KnownHostsStore;
@@ -57,8 +57,8 @@ impl PortForwardRuntimeState {
 
 #[derive(Clone, Debug)]
 pub enum PortForwardPrompt {
-    HostKey(HostKeyPrompt),
-    KeyboardInteractive(KbiChallenge),
+    HostKey(HostKeyRequest),
+    KeyboardInteractive(AuthenticationRequest),
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +68,9 @@ pub struct PortForwardRuntimeSnapshot {
     pub rule: PortForwardRule,
     pub state: PortForwardRuntimeState,
     pub status_message: String,
+    /// Actual bound port once the rule is active; `None` while starting or
+    /// failed. For remote forwards the server may assign a different port.
+    pub bound_port: Option<u16>,
     pub log: Vec<String>,
     pub prompt: Option<PortForwardPrompt>,
     pub revision: u64,
@@ -352,6 +355,7 @@ impl PortForwardManager {
             rule,
             state: PortForwardRuntimeState::Starting,
             status_message: "Connecting".to_string(),
+            bound_port: None,
             log: Vec::new(),
             prompt: None,
             revision: 1,
@@ -442,11 +446,15 @@ impl PortForwardManager {
         if !matches!(session.snapshot.prompt, Some(PortForwardPrompt::HostKey(_))) {
             return Err(anyhow!("host-key prompt is no longer active"));
         }
+        let request_id = match session.snapshot.prompt {
+            Some(PortForwardPrompt::HostKey(ref request)) => request.request_id,
+            _ => return Err(anyhow!("host-key prompt is no longer active")),
+        };
         let commands = session
             .commands
             .as_ref()
             .ok_or_else(|| anyhow!("port-forward session is not available"))?;
-        commands.respond_host_key(decision)?;
+        commands.respond_host_key(request_id, decision)?;
         session.snapshot.prompt = None;
         session.snapshot.revision = next_revision(session.snapshot.revision);
         self.publish_locked(&mut state);
@@ -475,11 +483,15 @@ impl PortForwardManager {
         ) {
             return Err(anyhow!("keyboard-interactive prompt is no longer active"));
         }
+        let request_id = match session.snapshot.prompt {
+            Some(PortForwardPrompt::KeyboardInteractive(ref request)) => request.request_id,
+            _ => return Err(anyhow!("keyboard-interactive prompt is no longer active")),
+        };
         let commands = session
             .commands
             .as_ref()
             .ok_or_else(|| anyhow!("port-forward session is not available"))?;
-        commands.respond_keyboard_interactive(responses)?;
+        commands.respond_keyboard_interactive(request_id, responses)?;
         session.snapshot.prompt = None;
         session.snapshot.revision = next_revision(session.snapshot.revision);
         self.publish_locked(&mut state);
@@ -521,6 +533,7 @@ impl PortForwardManager {
             } => {
                 session.snapshot.prompt = None;
                 session.snapshot.status_message = error.clone();
+                session.snapshot.bound_port = None;
                 session.snapshot.state = PortForwardRuntimeState::Reconnecting {
                     error: error.clone(),
                     attempt,
@@ -528,6 +541,25 @@ impl PortForwardManager {
                     retry_after_secs,
                 };
                 push_log(&mut session.snapshot.log, error);
+            }
+            SessionEvent::PortForwardActive(binding) => {
+                let message = format!(
+                    "{} forward {} is listening on {}:{}",
+                    match binding.kind {
+                        miaominal_core::profile::PortForwardKind::Local => "Local",
+                        miaominal_core::profile::PortForwardKind::Remote => "Remote",
+                    },
+                    binding.label,
+                    binding.listen_host,
+                    binding.bound_port
+                );
+                session.snapshot.bound_port = Some(binding.bound_port);
+                session.snapshot.status_message = message.clone();
+                push_log(&mut session.snapshot.log, message);
+            }
+            SessionEvent::PortForwardFailed(failure) => {
+                session.snapshot.status_message = failure.message.clone();
+                push_log(&mut session.snapshot.log, failure.message);
             }
             SessionEvent::Status(message) | SessionEvent::PortForwardNotice(message) => {
                 session.snapshot.status_message = message.clone();
@@ -537,15 +569,17 @@ impl PortForwardManager {
                 session.snapshot.state = PortForwardRuntimeState::Failed(error.clone());
                 session.snapshot.status_message = error.clone();
                 session.snapshot.prompt = None;
+                session.snapshot.bound_port = None;
                 push_log(&mut session.snapshot.log, error);
                 terminal = true;
             }
-            SessionEvent::HostKeyPrompt(prompt) => {
-                session.snapshot.prompt = Some(PortForwardPrompt::HostKey(prompt));
+            SessionEvent::HostKeyPrompt(request) => {
+                session.snapshot.prompt = Some(PortForwardPrompt::HostKey(request));
                 session.snapshot.status_message = "Host key verification required".to_string();
             }
-            SessionEvent::KeyboardInteractivePrompt(challenge) => {
-                session.snapshot.prompt = Some(PortForwardPrompt::KeyboardInteractive(challenge));
+            SessionEvent::KeyboardInteractivePrompt(request) => {
+                session.snapshot.prompt =
+                    Some(PortForwardPrompt::KeyboardInteractive(request));
                 session.snapshot.status_message = "Authentication response required".to_string();
             }
             SessionEvent::Closed => {
@@ -555,11 +589,14 @@ impl PortForwardManager {
                 }
                 session.commands = None;
                 session.snapshot.prompt = None;
+                session.snapshot.bound_port = None;
                 terminal = true;
             }
             SessionEvent::Output(_)
             | SessionEvent::MonitorUpdated(_)
             | SessionEvent::MonitorFailed(_)
+            | SessionEvent::Phase(_)
+            | SessionEvent::RequestExpired { .. }
             | SessionEvent::Exited { .. } => return,
         }
         let restart_requested = terminal && session.restart_requested;
@@ -711,6 +748,7 @@ mod tests {
             rule,
             state,
             status_message: String::new(),
+            bound_port: None,
             log: Vec::new(),
             prompt: None,
             revision: 1,
@@ -971,6 +1009,7 @@ mod tests {
                 },
                 state: PortForwardRuntimeState::Running,
                 status_message: String::new(),
+                bound_port: None,
                 log: Vec::new(),
                 prompt: None,
                 revision: 1,
@@ -1000,13 +1039,18 @@ mod tests {
             },
             state: PortForwardRuntimeState::Starting,
             status_message: String::new(),
+            bound_port: None,
             log: Vec::new(),
-            prompt: Some(PortForwardPrompt::HostKey(HostKeyPrompt {
-                host: "example.test".into(),
-                port: 22,
-                algorithm: "ssh-ed25519".into(),
-                fingerprint: "SHA256:test".into(),
-                previous_fingerprint: None,
+            prompt: Some(PortForwardPrompt::HostKey(HostKeyRequest {
+                request_id: 1,
+                hop: miaominal_ssh::SessionHop::new("example.test", 1, 1),
+                prompt: miaominal_ssh::HostKeyPrompt {
+                    host: "example.test".into(),
+                    port: 22,
+                    algorithm: "ssh-ed25519".into(),
+                    fingerprint: "SHA256:test".into(),
+                    previous_fingerprint: None,
+                },
             })),
             revision: 1,
         };
@@ -1047,10 +1091,14 @@ mod tests {
                 .get_mut(&key)
                 .expect("session")
                 .snapshot
-                .prompt = Some(PortForwardPrompt::KeyboardInteractive(KbiChallenge {
-                name: "Authentication".into(),
-                instructions: String::new(),
-                prompts: Vec::new(),
+                .prompt = Some(PortForwardPrompt::KeyboardInteractive(AuthenticationRequest {
+                request_id: 2,
+                hop: miaominal_ssh::SessionHop::new("example.test", 1, 1),
+                challenge: miaominal_ssh::KbiChallenge {
+                    name: "Authentication".into(),
+                    instructions: String::new(),
+                    prompts: Vec::new(),
+                },
             }));
             manager.publish_locked(&mut state);
         }

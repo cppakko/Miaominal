@@ -433,7 +433,9 @@ impl SessionController {
             let Some(runtime) = snapshot.session(&session.profile_id, rule_id) else {
                 session.commands = None;
                 session.pending_host_key = None;
+                session.pending_host_key_request_id = 0;
                 session.pending_keyboard_interactive = None;
+                session.pending_keyboard_interactive_request_id = 0;
                 session.set_connection_state(SessionConnectionState::Disconnected);
                 updates.push((*tab_id, i18n::string("session.status.disconnected"), None));
                 continue;
@@ -483,17 +485,23 @@ impl SessionController {
                 },
             });
             match runtime.prompt.as_ref().filter(|_| allow_prompt) {
-                Some(PortForwardPrompt::HostKey(prompt)) => {
-                    session.pending_host_key = Some(prompt.clone());
+                Some(PortForwardPrompt::HostKey(request)) => {
+                    session.pending_host_key_request_id = request.request_id;
+                    session.pending_host_key = Some(request.prompt.clone());
                     session.pending_keyboard_interactive = None;
+                    session.pending_keyboard_interactive_request_id = 0;
                 }
-                Some(PortForwardPrompt::KeyboardInteractive(challenge)) => {
+                Some(PortForwardPrompt::KeyboardInteractive(request)) => {
                     session.pending_host_key = None;
-                    session.pending_keyboard_interactive = Some(challenge.clone());
+                    session.pending_host_key_request_id = 0;
+                    session.pending_keyboard_interactive_request_id = request.request_id;
+                    session.pending_keyboard_interactive = Some(request.challenge.clone());
                 }
                 None => {
                     session.pending_host_key = None;
+                    session.pending_host_key_request_id = 0;
                     session.pending_keyboard_interactive = None;
+                    session.pending_keyboard_interactive_request_id = 0;
                 }
             }
             updates.push((

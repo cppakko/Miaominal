@@ -1,4 +1,7 @@
-use super::session::{ConnectionCancelled, SessionCommand, SessionEvent, SessionEventSender};
+use super::session::{
+    AuthenticationRequest, ConnectionCancelled, SessionCommand, SessionEvent, SessionEventSender,
+    SessionHop, emit_session_event, next_request_id,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use miaominal_core::forwarding::{AgentIdentitySummary, KbiChallenge, KbiPrompt};
 use miaominal_core::profile::{AuthMethod, SessionProfile};
@@ -243,14 +246,21 @@ pub(crate) async fn authenticate_full<H>(
     secrets: &SecretStore,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
+    hop: SessionHop,
 ) -> Result<()>
 where
     H: client::Handler<Error = anyhow::Error> + Send,
 {
     if profile.effective_auth_method() == AuthMethod::KeyboardInteractive {
         let username = profile.username.clone();
-        authenticate_keyboard_interactive_flow(session, &username, command_receiver, event_sender)
-            .await
+        authenticate_keyboard_interactive_flow(
+            session,
+            &username,
+            command_receiver,
+            event_sender,
+            hop,
+        )
+        .await
     } else {
         authenticate(session, profile, secrets).await
     }
@@ -336,6 +346,7 @@ async fn authenticate_keyboard_interactive_flow<H>(
     username: &str,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
+    hop: SessionHop,
 ) -> Result<()>
 where
     H: client::Handler<Error = anyhow::Error> + Send,
@@ -369,17 +380,37 @@ where
                         })
                         .collect(),
                 };
-                if event_sender
-                    .send(SessionEvent::KeyboardInteractivePrompt(challenge))
-                    .await
-                    .is_err()
-                {
-                    bail!("session event receiver is closed");
-                }
+                // Every prompt gets a fresh request id; answers for older ids
+                // are rejected without disturbing the current challenge.
+                let request_id = next_request_id();
+                emit_session_event(
+                    event_sender,
+                    SessionEvent::KeyboardInteractivePrompt(AuthenticationRequest {
+                        request_id,
+                        hop: hop.clone(),
+                        challenge,
+                    }),
+                )
+                .await?;
                 let answers = loop {
                     match command_receiver.recv().await {
-                        Some(SessionCommand::KeyboardInteractiveResponse(answers)) => {
+                        Some(SessionCommand::KeyboardInteractiveResponse {
+                            request_id: answered_id,
+                            answers,
+                        }) if answered_id == request_id => {
                             break answers;
+                        }
+                        Some(SessionCommand::KeyboardInteractiveResponse {
+                            request_id: answered_id,
+                            ..
+                        }) => {
+                            emit_session_event(
+                                event_sender,
+                                SessionEvent::RequestExpired {
+                                    request_id: answered_id,
+                                },
+                            )
+                            .await?;
                         }
                         Some(SessionCommand::Close) | None => {
                             return Err(ConnectionCancelled.into());

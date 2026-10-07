@@ -16,6 +16,35 @@ use tokio_socks::tcp::Socks5Stream;
 
 const MAX_HTTP_CONNECT_RESPONSE_BYTES: usize = 16 * 1024;
 const PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Bound DNS and TCP establishment, without timing out user trust/auth prompts.
+pub(crate) async fn connect_direct(host: &str, port: u16) -> Result<TcpStream> {
+    await_direct_connect(
+        TcpStream::connect((unbracket_host(host), port)),
+        host,
+        port,
+        DIRECT_CONNECT_TIMEOUT,
+    )
+    .await
+}
+
+async fn await_direct_connect<T>(
+    connect: impl std::future::Future<Output = std::io::Result<T>>,
+    host: &str,
+    port: u16,
+    limit: Duration,
+) -> Result<T> {
+    timeout(limit, connect)
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "TCP connection to {host}:{port} timed out after {} seconds",
+                limit.as_secs()
+            )
+        })?
+        .with_context(|| format!("failed to establish TCP connection to {host}:{port}"))
+}
 
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> Transport for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -375,6 +404,47 @@ impl AsyncWrite for PrefixedTcpStream {
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn direct_connection_preserves_immediate_network_failure() {
+        let result = await_direct_connect::<()>(
+            std::future::ready(Err(std::io::Error::new(
+                std::io::ErrorKind::NetworkUnreachable,
+                "IPv6 network is unreachable",
+            ))),
+            "2001:db8::1",
+            22,
+            Duration::from_secs(15),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert!(format!("{error:#}").contains("IPv6 network is unreachable"));
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NetworkUnreachable
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_direct_connection_has_a_deadline() {
+        let result = await_direct_connect::<()>(
+            std::future::pending(),
+            "2001:db8::1",
+            22,
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn direct_connection_reaches_a_local_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stream = connect_direct("127.0.0.1", listener.local_addr().unwrap().port())
+            .await
+            .unwrap();
+        assert_eq!(stream.peer_addr().unwrap(), listener.local_addr().unwrap());
+    }
 
     fn http_proxy(port: u16) -> ProxyProfile {
         ProxyProfile {

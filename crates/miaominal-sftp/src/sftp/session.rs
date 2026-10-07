@@ -38,10 +38,19 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::{Mutex, Semaphore};
 
 const SFTP_EVENT_CHANNEL_CAPACITY: usize = 256;
-const SFTP_TRANSFER_CONCURRENCY: usize = 6;
+/// Desktop default; Android starts with a lower bound (see `transfer_concurrency`).
+pub const DEFAULT_TRANSFER_CONCURRENCY: usize = 6;
 
 #[derive(Debug)]
 enum SftpCommand {
+    RespondHostKey {
+        request_id: u64,
+        decision: HostKeyDecision,
+    },
+    RespondKeyboardInteractive {
+        request_id: u64,
+        answers: Vec<String>,
+    },
     ListDirectory {
         request_id: SftpDirectoryRequestId,
         path: String,
@@ -62,15 +71,15 @@ enum SftpCommand {
         from: String,
         to: String,
     },
-    Upload {
+    UploadSource {
         transfer_id: TransferId,
-        local_path: PathBuf,
+        source: super::transfer::LocalTransferSource,
         remote_path: String,
     },
-    Download {
+    DownloadTo {
         transfer_id: TransferId,
         remote_path: String,
-        local_path: PathBuf,
+        destination: super::transfer::LocalTransferDestination,
     },
     PauseTransfer {
         transfer_id: TransferId,
@@ -120,10 +129,91 @@ pub struct SftpTransferProgress {
     pub child: Option<SftpTransferChildUpdate>,
 }
 
+/// Remote directory operation that can fail outside a transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpOperation {
+    CreateDirectory,
+    RemoveFile,
+    RemoveDirectory,
+    Rename,
+    ListDirectory,
+    ListSubdirectory,
+}
+
+impl SftpOperation {
+    fn context(self) -> &'static str {
+        match self {
+            Self::CreateDirectory => "create_directory",
+            Self::RemoveFile => "remove_file",
+            Self::RemoveDirectory => "remove_directory_recursive",
+            Self::Rename => "rename",
+            Self::ListDirectory => "list_directory",
+            Self::ListSubdirectory => "list_subdirectory",
+        }
+    }
+}
+
+/// Typed connection phase for a non-PTY SFTP session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpSessionPhase {
+    Connecting,
+    WaitingForTrust,
+    WaitingForAuthentication,
+    OpeningSubsystem,
+    Ready,
+    Closing,
+    Closed,
+    Failed,
+}
+
+fn phase_from_session_phase(phase: ssh::SessionPhase) -> SftpSessionPhase {
+    match phase {
+        ssh::SessionPhase::Connecting => SftpSessionPhase::Connecting,
+        ssh::SessionPhase::WaitingForTrust => SftpSessionPhase::WaitingForTrust,
+        ssh::SessionPhase::WaitingForAuthentication => SftpSessionPhase::WaitingForAuthentication,
+        ssh::SessionPhase::OpeningShell => SftpSessionPhase::OpeningSubsystem,
+        ssh::SessionPhase::Ready => SftpSessionPhase::Ready,
+        ssh::SessionPhase::Closing => SftpSessionPhase::Closing,
+        ssh::SessionPhase::Closed => SftpSessionPhase::Closed,
+        ssh::SessionPhase::Failed => SftpSessionPhase::Failed,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SftpEvent {
     Status(String),
+    /// Typed phase transition; interactive sessions emit these so hosts never
+    /// parse the English status strings.
+    Phase {
+        phase: SftpSessionPhase,
+        hop: Option<ssh::SessionHop>,
+    },
     HostKeyPrompt(HostKeyPrompt),
+    /// Interactive host-key prompt with the request id and hop it belongs to.
+    HostKeyRequest {
+        request_id: u64,
+        hop: ssh::SessionHop,
+        prompt: HostKeyPrompt,
+    },
+    /// Interactive keyboard-interactive challenge (SFTP may prompt on the
+    /// target host and on every jump node).
+    KeyboardInteractiveRequest {
+        request_id: u64,
+        hop: ssh::SessionHop,
+        challenge: miaominal_core::forwarding::KbiChallenge,
+    },
+    /// A queued authentication answer arrived after its request expired.
+    RequestExpired {
+        request_id: u64,
+    },
+    /// A directory operation the host initiated failed. Hosts that only queue
+    /// commands (like the mobile bridge) need this typed event to report the
+    /// failure to the user instead of losing it.
+    OperationFailed {
+        operation: SftpOperation,
+        path: Option<String>,
+        message: String,
+    },
     DirectoryListing {
         request_id: Option<SftpDirectoryRequestId>,
         path: String,
@@ -287,6 +377,29 @@ pub struct SftpCommandSender {
 }
 
 impl SftpCommandSender {
+    /// Answer a host-key prompt; the request id must match the pending prompt
+    /// (interactive sessions). The legacy prompt-free path uses
+    /// [`SftpCommandSender::respond_host_key`].
+    pub fn respond_host_key_request(
+        &self,
+        request_id: u64,
+        decision: HostKeyDecision,
+    ) -> Result<()> {
+        self.send_command(SftpCommand::RespondHostKey {
+            request_id,
+            decision,
+        })
+    }
+
+    /// Answer one keyboard-interactive challenge round.
+    pub fn respond_keyboard_interactive(
+        &self,
+        request_id: u64,
+        answers: Vec<String>,
+    ) -> Result<()> {
+        self.send_command(SftpCommand::RespondKeyboardInteractive { request_id, answers })
+    }
+
     pub fn list_directory(&self, path: impl Into<String>) -> Result<SftpDirectoryRequestId> {
         let request_id = SftpDirectoryRequestId(
             self.next_directory_request_id
@@ -327,10 +440,20 @@ impl SftpCommandSender {
         local_path: PathBuf,
         remote_path: impl Into<String>,
     ) -> Result<TransferId> {
+        let source = super::transfer::source_for_path(&local_path)?;
+        self.queue_upload_source(source, remote_path)
+    }
+
+    /// Queue an upload from an arbitrary local backend (Android SAF/FD).
+    pub fn queue_upload_source(
+        &self,
+        source: super::transfer::LocalTransferSource,
+        remote_path: impl Into<String>,
+    ) -> Result<TransferId> {
         let transfer_id = self.next_transfer_id();
-        self.send_command(SftpCommand::Upload {
+        self.send_command(SftpCommand::UploadSource {
             transfer_id,
-            local_path,
+            source,
             remote_path: remote_path.into(),
         })?;
         Ok(transfer_id)
@@ -341,11 +464,21 @@ impl SftpCommandSender {
         remote_path: impl Into<String>,
         local_path: PathBuf,
     ) -> Result<TransferId> {
+        let destination = super::transfer::destination_for_path(&local_path)?;
+        self.queue_download_to(remote_path, destination)
+    }
+
+    /// Queue a download into an arbitrary local backend (Android SAF/FD).
+    pub fn queue_download_to(
+        &self,
+        remote_path: impl Into<String>,
+        destination: super::transfer::LocalTransferDestination,
+    ) -> Result<TransferId> {
         let transfer_id = self.next_transfer_id();
-        self.send_command(SftpCommand::Download {
+        self.send_command(SftpCommand::DownloadTo {
             transfer_id,
             remote_path: remote_path.into(),
-            local_path,
+            destination,
         })?;
         Ok(transfer_id)
     }
@@ -387,6 +520,9 @@ pub struct SftpConnection {
     pub commands: SftpCommandSender,
     pub events: SftpEventReceiver,
     pub progress: SftpProgressReceiver,
+    /// Worker thread for native sessions; join it after `close()` to prove no
+    /// connection task is left behind. `None` for host-provided backends.
+    pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,6 +595,27 @@ pub fn start_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SftpConnection {
+    start_session_with_concurrency(
+        runtime,
+        profile,
+        all_profiles,
+        all_proxies,
+        secrets,
+        known_hosts,
+        DEFAULT_TRANSFER_CONCURRENCY,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn start_session_with_concurrency(
+    runtime: &TokioHandle,
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    transfer_concurrency: usize,
+) -> SftpConnection {
     let (event_sender, event_receiver) = sftp_event_channel();
     let (progress_sender, progress_receiver) = sftp_progress_channel();
     let (command_sender, command_receiver) = unbounded_channel();
@@ -470,8 +627,9 @@ pub fn start_session(
     let runtime = runtime.clone();
     let next_transfer_id = Arc::new(AtomicU64::new(1));
     let next_directory_request_id = Arc::new(AtomicU64::new(1));
+    let transfer_concurrency = transfer_concurrency.max(1);
 
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name(format!("sftp-session-{}", profile.id))
         .spawn(move || {
             let result = runtime.block_on(run_session(
@@ -484,6 +642,7 @@ pub fn start_session(
                 command_receiver,
                 event_sender.clone(),
                 progress_sender,
+                transfer_concurrency,
             ));
             runtime.block_on(async {
                 if let Err(error) = result {
@@ -511,6 +670,102 @@ pub fn start_session(
         },
         events: event_receiver,
         progress: progress_receiver,
+        thread: Some(thread),
+    }
+}
+
+/// Interactive SFTP session: host-key prompts and keyboard-interactive
+/// challenges are surfaced through [`SftpEvent`] with request ids and hop
+/// labels, and the whole connection (including jump nodes) is cancellable even
+/// while the handshake or authentication is still running.
+#[allow(clippy::too_many_arguments)]
+pub fn start_interactive_session(
+    runtime: &TokioHandle,
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    transfer_concurrency: usize,
+) -> SftpConnection {
+    let (event_sender, event_receiver) = sftp_event_channel();
+    let (progress_sender, progress_receiver) = sftp_progress_channel();
+    let (command_sender, command_receiver) = unbounded_channel();
+    let runtime = runtime.clone();
+    let next_transfer_id = Arc::new(AtomicU64::new(1));
+    let next_directory_request_id = Arc::new(AtomicU64::new(1));
+    let transfer_concurrency = transfer_concurrency.max(1);
+
+    let thread = std::thread::Builder::new()
+        .name(format!("sftp-interactive-{}", profile.id))
+        .spawn(move || {
+            let result = runtime.block_on(run_interactive_session(
+                profile,
+                all_profiles,
+                all_proxies,
+                secrets,
+                known_hosts,
+                command_receiver,
+                event_sender.clone(),
+                progress_sender,
+                transfer_concurrency,
+            ));
+            runtime.block_on(async {
+                match result {
+                    Ok(()) => {}
+                    Err(error) => {
+                        let _ = send_event(
+                            &event_sender,
+                            SftpEvent::Phase {
+                                phase: SftpSessionPhase::Closing,
+                                hop: None,
+                            },
+                        )
+                        .await;
+                        let _ = send_event(
+                            &event_sender,
+                            SftpEvent::Error {
+                                context: "sftp".into(),
+                                path: None,
+                                message: format!("{error:#}"),
+                            },
+                        )
+                        .await;
+                        let _ = send_event(
+                            &event_sender,
+                            SftpEvent::Phase {
+                                phase: SftpSessionPhase::Failed,
+                                hop: None,
+                            },
+                        )
+                        .await;
+                    }
+                }
+                let _ = send_event(
+                    &event_sender,
+                    SftpEvent::Phase {
+                        phase: SftpSessionPhase::Closed,
+                        hop: None,
+                    },
+                )
+                .await;
+                let _ = send_event(&event_sender, SftpEvent::Closed).await;
+            });
+        })
+        .expect("failed to spawn interactive SFTP session thread");
+
+    SftpConnection {
+        commands: SftpCommandSender {
+            // The legacy prompt-free decision channel is unused for
+            // interactive sessions; answers arrive as commands.
+            host_key_decisions: unbounded_channel().0,
+            sender: command_sender,
+            next_transfer_id,
+            next_directory_request_id,
+        },
+        events: event_receiver,
+        progress: progress_receiver,
+        thread: Some(thread),
     }
 }
 
@@ -522,9 +777,10 @@ async fn run_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     host_key_prompts: SftpHostKeyPrompts,
-    mut command_receiver: UnboundedReceiver<SftpCommand>,
+    command_receiver: UnboundedReceiver<SftpCommand>,
     event_sender: SftpEventSender,
     progress_sender: SftpProgressSender,
+    transfer_concurrency: usize,
 ) -> Result<()> {
     let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
     let connected_session = connect_authenticated_session(
@@ -538,15 +794,37 @@ async fn run_session(
     )
     .await?;
 
-    let session_result: Result<()> = async {
-        let sftp = Arc::new(open_sftp_session(&connected_session).await?);
+    let session_result = run_connected_session(
+        Arc::new(open_sftp_session(&connected_session).await?),
+        remote,
+        command_receiver,
+        event_sender,
+        progress_sender,
+        transfer_concurrency,
+    )
+    .await;
 
-        let mut transfer_controls = HashMap::new();
-        let mut transfer_tasks = HashMap::new();
-        let transfer_semaphore = Arc::new(Semaphore::new(SFTP_TRANSFER_CONCURRENCY));
-        let (transfer_completion_sender, mut transfer_completion_receiver) = unbounded_channel();
+    connected_session.disconnect().await;
 
-        let command_result: Result<()> = async {
+    session_result
+}
+
+/// Shared command loop for one connected SFTP session.
+#[allow(clippy::too_many_arguments)]
+async fn run_connected_session(
+    sftp: Arc<SftpSession>,
+    remote: String,
+    mut command_receiver: UnboundedReceiver<SftpCommand>,
+    event_sender: SftpEventSender,
+    progress_sender: SftpProgressSender,
+    transfer_concurrency: usize,
+) -> Result<()> {
+    let mut transfer_controls = HashMap::new();
+    let mut transfer_tasks = HashMap::new();
+    let transfer_semaphore = Arc::new(Semaphore::new(transfer_concurrency));
+    let (transfer_completion_sender, mut transfer_completion_receiver) = unbounded_channel();
+
+    let command_result: Result<()> = async {
             emit_status(&event_sender, format!("Connected SFTP session to {remote}")).await?;
 
             let initial_result: Result<_> = async {
@@ -558,7 +836,7 @@ async fn run_session(
             }
             .await;
             if let Some((initial_path, entries)) =
-                recover_operation_result(&event_sender, "list_directory", Some("."), initial_result)
+                recover_operation_result(&event_sender, SftpOperation::ListDirectory, Some("."), initial_result)
                     .await?
             {
                 emit_directory_listing(&event_sender, None, initial_path, entries).await?;
@@ -629,7 +907,7 @@ async fn run_session(
                         .await;
                         if let Some((canonical_path, entries)) = recover_operation_result(
                             &event_sender,
-                            "list_subdirectory",
+                            SftpOperation::ListSubdirectory,
                             Some(&path),
                             result,
                         )
@@ -644,7 +922,7 @@ async fn run_session(
                             .create_dir(path.clone())
                             .await
                             .with_context(|| format!("failed to create remote directory {path}"));
-                        if recover_operation_result(&event_sender, "create_directory", None, result)
+                        if recover_operation_result(&event_sender, SftpOperation::CreateDirectory, Some(&path), result)
                             .await?
                             .is_some()
                         {
@@ -657,7 +935,7 @@ async fn run_session(
                             .remove_file(path.clone())
                             .await
                             .with_context(|| format!("failed to remove remote file {path}"));
-                        if recover_operation_result(&event_sender, "remove_file", None, result)
+                        if recover_operation_result(&event_sender, SftpOperation::RemoveFile, Some(&path), result)
                             .await?
                             .is_some()
                         {
@@ -669,7 +947,7 @@ async fn run_session(
                         let result = remove_directory_recursive(&sftp, &path).await;
                         if recover_operation_result(
                             &event_sender,
-                            "remove_directory_recursive",
+                            SftpOperation::RemoveDirectory,
                             Some(&path),
                             result,
                         )
@@ -685,23 +963,35 @@ async fn run_session(
                             .rename(from.clone(), to.clone())
                             .await
                             .with_context(|| format!("failed to rename {from} to {to}"));
-                        if recover_operation_result(&event_sender, "rename", None, result)
+                        if recover_operation_result(&event_sender, SftpOperation::Rename, Some(&to), result)
                             .await?
                             .is_some()
                         {
                             emit_status(&event_sender, format!("Renamed {from} to {to}")).await?;
                         }
                     }
-                    SftpCommand::Upload {
+                    SftpCommand::RespondHostKey { .. }
+                    | SftpCommand::RespondKeyboardInteractive { .. } => {
+                        // Authentication answers only apply while connecting;
+                        // the interactive start path consumes them there.
+                        emit_error(
+                            &event_sender,
+                            "sftp_authentication",
+                            "no authentication request is pending".to_string(),
+                        )
+                        .await?;
+                    }
+                    SftpCommand::UploadSource {
                         transfer_id,
-                        local_path,
+                        source,
                         remote_path,
                     } => {
+                        let label = PathBuf::from(&source.label);
                         emit_transfer_queued(
                             &event_sender,
                             transfer_id,
                             TransferDirection::Upload,
-                            local_path.clone(),
+                            label,
                             remote_path.clone(),
                         )
                         .await?;
@@ -711,7 +1001,7 @@ async fn run_session(
                             sftp.clone(),
                             event_sender.clone(),
                             transfer_id,
-                            local_path,
+                            source,
                             remote_path,
                             control.clone(),
                             transfer_semaphore.clone(),
@@ -721,16 +1011,17 @@ async fn run_session(
                         transfer_controls.insert(transfer_id, control);
                         transfer_tasks.insert(transfer_id, task);
                     }
-                    SftpCommand::Download {
+                    SftpCommand::DownloadTo {
                         transfer_id,
                         remote_path,
-                        local_path,
+                        destination,
                     } => {
+                        let label = PathBuf::from(&destination.label);
                         emit_transfer_queued(
                             &event_sender,
                             transfer_id,
                             TransferDirection::Download,
-                            local_path.clone(),
+                            label,
                             remote_path.clone(),
                         )
                         .await?;
@@ -741,7 +1032,7 @@ async fn run_session(
                             event_sender.clone(),
                             transfer_id,
                             remote_path,
-                            local_path,
+                            destination,
                             control.clone(),
                             transfer_semaphore.clone(),
                             transfer_completion_sender.clone(),
@@ -795,37 +1086,234 @@ async fn run_session(
             }
 
             Ok(())
-        }
-        .await;
-
-        cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
-        if let Err(error) = sftp.close().await {
-            log::debug!("failed to close SFTP session cleanly: {error:?}");
-        }
-
-        command_result
     }
     .await;
 
-    connected_session.disconnect().await;
+    cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
+    if let Err(error) = sftp.close().await {
+        log::debug!("failed to close SFTP session cleanly: {error:?}");
+    }
 
-    session_result
+    command_result
+}
+
+/// Connect one SFTP session through the shared interactive SSH connector, so
+/// host trust and keyboard-interactive requests carry request ids and hop
+/// labels for the target and every jump node, and a cancel interrupts the
+/// connection even while it is still handshaking.
+#[allow(clippy::too_many_arguments)]
+async fn run_interactive_session(
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    command_receiver: UnboundedReceiver<SftpCommand>,
+    event_sender: SftpEventSender,
+    progress_sender: SftpProgressSender,
+    transfer_concurrency: usize,
+) -> Result<()> {
+    let remote = format!("{}@{}:{}", profile.username, profile.host, profile.port);
+    let ssh::SessionChannels {
+        connection: mut ssh_connection,
+        commands: mut ssh_commands,
+        events: ssh_event_sender,
+    } = ssh::session_channels();
+    let ssh_command_sender = ssh_connection.commands.clone();
+    let mut ssh_events = ssh_connection.take_events();
+    let forward_sender = event_sender.clone();
+    let forward = tokio::spawn(async move {
+        while let Some(event) = ssh_events.recv().await {
+            let mapped = match event {
+                ssh::SessionEvent::Phase(change) => Some(SftpEvent::Phase {
+                    phase: phase_from_session_phase(change.phase),
+                    hop: change.hop,
+                }),
+                ssh::SessionEvent::HostKeyPrompt(request) => Some(SftpEvent::HostKeyRequest {
+                    request_id: request.request_id,
+                    hop: request.hop,
+                    prompt: request.prompt,
+                }),
+                ssh::SessionEvent::KeyboardInteractivePrompt(request) => {
+                    Some(SftpEvent::KeyboardInteractiveRequest {
+                        request_id: request.request_id,
+                        hop: request.hop,
+                        challenge: request.challenge,
+                    })
+                }
+                ssh::SessionEvent::RequestExpired { request_id } => {
+                    Some(SftpEvent::RequestExpired { request_id })
+                }
+                ssh::SessionEvent::Status(message) => Some(SftpEvent::Status(message)),
+                _ => None,
+            };
+            if let Some(event) = mapped
+                && send_event(&forward_sender, event).await.is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    let mut command_receiver = command_receiver;
+    // `close()` cancels this signal and queues a Close command. Racing the
+    // signal against the connect and subsystem setup means a cancel also
+    // interrupts stages that never read the command channel (password
+    // authentication against a silent server, a hanging subsystem request).
+    let cancellation = ssh_command_sender.cancellation();
+    let connect = ssh::connect_interactive_route(
+        profile,
+        all_profiles,
+        all_proxies,
+        secrets,
+        known_hosts,
+        &mut ssh_commands,
+        &ssh_event_sender,
+    );
+    // The connect future borrows the command receiver; `tokio::pin!` lets the
+    // select loop poll it while still reading answers from the SFTP commands.
+    tokio::pin!(connect);
+
+    let route = 'connect: loop {
+        tokio::select! {
+            result = &mut connect => {
+                match result {
+                    Ok(connected) => break 'connect connected,
+                    Err(error) => {
+                        forward.abort();
+                        return Err(error);
+                    }
+                }
+            }
+            command = command_receiver.recv() => match command {
+                Some(SftpCommand::RespondHostKey { request_id, decision }) => {
+                    let _ = ssh_command_sender.respond_host_key(request_id, decision);
+                }
+                Some(SftpCommand::RespondKeyboardInteractive { request_id, answers }) => {
+                    let _ = ssh_command_sender.respond_keyboard_interactive(request_id, answers);
+                }
+                Some(SftpCommand::Close) | None => {
+                    // Cancel and drop the connect future immediately: waiting
+                    // for it could block forever on a server that never
+                    // answers authentication.
+                    let _ = ssh_command_sender.close();
+                    forward.abort();
+                    return Ok(());
+                }
+                Some(_) => {
+                    emit_error(
+                        &event_sender,
+                        "sftp",
+                        "the SFTP session is not ready yet".to_string(),
+                    )
+                    .await?;
+                }
+            },
+            () = cancellation.cancelled() => {
+                forward.abort();
+                return Ok(());
+            }
+        }
+    };
+
+    let result = async {
+        emit_phase(
+            &event_sender,
+            SftpSessionPhase::OpeningSubsystem,
+            Some(route.target_hop()),
+        )
+        .await?;
+        let setup = async {
+            let channel = route.open_session().await?;
+            channel
+                .request_subsystem(true, "sftp")
+                .await
+                .context("failed to start SFTP subsystem")?;
+            let sftp = SftpSession::new(channel.into_stream())
+                .await
+                .context("failed to initialize SFTP session")?;
+            Ok::<_, anyhow::Error>(sftp)
+        };
+        tokio::pin!(setup);
+        let sftp = loop {
+            tokio::select! {
+                result = &mut setup => break result?,
+                command = command_receiver.recv() => match command {
+                    Some(SftpCommand::Close) | None => {
+                        let _ = ssh_command_sender.close();
+                        return Ok(());
+                    }
+                    Some(_) => {
+                        emit_error(
+                            &event_sender,
+                            "sftp",
+                            "the SFTP session is not ready yet".to_string(),
+                        )
+                        .await?;
+                    }
+                },
+                () = cancellation.cancelled() => return Ok(()),
+            }
+        };
+        emit_phase(
+            &event_sender,
+            SftpSessionPhase::Ready,
+            Some(route.target_hop()),
+        )
+        .await?;
+
+        run_connected_session(
+            Arc::new(sftp),
+            remote,
+            command_receiver,
+            event_sender.clone(),
+            progress_sender,
+            transfer_concurrency,
+        )
+        .await
+    }
+    .await;
+
+    drop(ssh_connection);
+    drop(ssh_command_sender);
+    route.disconnect().await;
+    forward.abort();
+
+    result
+}
+
+async fn emit_phase(
+    event_sender: &SftpEventSender,
+    phase: SftpSessionPhase,
+    hop: Option<ssh::SessionHop>,
+) -> Result<()> {
+    send_event(event_sender, SftpEvent::Phase { phase, hop }).await
 }
 
 async fn recover_operation_result<T>(
     event_sender: &SftpEventSender,
-    context: &str,
+    operation: SftpOperation,
     path: Option<&str>,
     result: Result<T>,
 ) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(error) if is_recoverable_operation_error(&error) => {
+            let message = format!("{error:#}");
             emit_error_with_path(
                 event_sender,
-                context,
+                operation.context(),
                 path.map(str::to_owned),
-                format!("{error:#}"),
+                message.clone(),
+            )
+            .await?;
+            send_event(
+                event_sender,
+                SftpEvent::OperationFailed {
+                    operation,
+                    path: path.map(str::to_owned),
+                    message,
+                },
             )
             .await?;
             Ok(None)
@@ -1469,7 +1957,7 @@ mod tests {
 
         let recovered = futures::executor::block_on(recover_operation_result(
             &event_sender,
-            "list_subdirectory",
+            SftpOperation::ListSubdirectory,
             Some("/protected"),
             operation_result,
         ))
@@ -1478,6 +1966,8 @@ mod tests {
         assert!(recovered.is_none());
         let event = futures::executor::block_on(event_receiver.next())
             .expect("operation failure should emit an event");
+        let expected_message =
+            "failed to read remote directory /protected: Permission denied: permission denied";
         match event {
             SftpEvent::Error {
                 context,
@@ -1486,12 +1976,25 @@ mod tests {
             } => {
                 assert_eq!(context, "list_subdirectory");
                 assert_eq!(path.as_deref(), Some("/protected"));
-                assert_eq!(
-                    message,
-                    "failed to read remote directory /protected: Permission denied: permission denied"
-                );
+                assert_eq!(message, expected_message);
             }
             other => panic!("expected operation error event, got {other:?}"),
+        }
+        // Hosts that only queue commands need the typed event to report the
+        // failure (the legacy error event has no operation identity).
+        let typed = futures::executor::block_on(event_receiver.next())
+            .expect("operation failure should emit a typed event");
+        match typed {
+            SftpEvent::OperationFailed {
+                operation,
+                path,
+                message,
+            } => {
+                assert_eq!(operation, SftpOperation::ListSubdirectory);
+                assert_eq!(path.as_deref(), Some("/protected"));
+                assert_eq!(message, expected_message);
+            }
+            other => panic!("expected typed operation failure, got {other:?}"),
         }
     }
 
@@ -1502,7 +2005,7 @@ mod tests {
 
         let error = futures::executor::block_on(recover_operation_result::<()>(
             &event_sender,
-            "list_directory",
+            SftpOperation::ListDirectory,
             Some("/missing"),
             Err(status_error(StatusCode::NoSuchFile, "path does not exist")),
         ))
@@ -1517,7 +2020,7 @@ mod tests {
 
         let recovered = futures::executor::block_on(recover_operation_result::<()>(
             &event_sender,
-            "list_directory",
+            SftpOperation::ListDirectory,
             Some("/remote"),
             Err(SftpClientError::Limited("request limit exceeded".into()).into()),
         ))
@@ -1593,7 +2096,7 @@ mod tests {
             let (event_sender, mut event_receiver) = sftp_event_channel();
             let error = futures::executor::block_on(recover_operation_result::<()>(
                 &event_sender,
-                "list_directory",
+                SftpOperation::ListDirectory,
                 Some("/remote"),
                 Err(fatal_error.into()),
             ))

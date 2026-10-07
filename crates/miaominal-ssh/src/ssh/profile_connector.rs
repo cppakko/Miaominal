@@ -4,8 +4,8 @@ use super::auth::{
 };
 use super::forwarding::RemoteForwardTargets;
 use super::session::{
-    self, ClientHandler, ConnectedClient, SessionCommand, SessionEventSender,
-    build_strict_client_handler, connection,
+    self, ClientHandler, ConnectedClient, SessionCommand, SessionEventSender, SessionHop,
+    SessionPhase, build_strict_client_handler, connection,
 };
 use anyhow::{Context, Result};
 use miaominal_core::profile::{PortForwardRule, SessionProfile};
@@ -155,6 +155,8 @@ impl ProfileConnector {
                 .collect::<Vec<_>>();
         let config = connection::default_client_config();
         let mut jump_sessions = Vec::new();
+        let total_hops = proxy_jump_profiles.len() + 1;
+        let target_hop = SessionHop::new(remote_label.clone(), total_hops as u32, total_hops as u32);
 
         let (session, remote_forward_targets) = if let Some(first_hop) = proxy_jump_profiles.first()
         {
@@ -164,6 +166,11 @@ impl ProfileConnector {
                     proxy_jump_profiles.len(),
                     first_hop.connection_label()
                 ))
+                .await?;
+
+            let first_hop_info = SessionHop::new(first_hop.connection_label(), 1, total_hops as u32);
+            interaction
+                .phase(SessionPhase::Connecting, Some(first_hop_info.clone()))
                 .await?;
 
             let ConnectedClient {
@@ -176,6 +183,7 @@ impl ProfileConnector {
                     &self.secrets,
                     config.clone(),
                     self.known_hosts.clone(),
+                    first_hop_info.clone(),
                 )
                 .await?;
             interaction
@@ -185,7 +193,10 @@ impl ProfileConnector {
                 ))
                 .await?;
             interaction
-                .authenticate(&mut current_session, first_hop.clone(), &self.secrets)
+                .phase(SessionPhase::WaitingForAuthentication, Some(first_hop_info.clone()))
+                .await?;
+            interaction
+                .authenticate(&mut current_session, first_hop.clone(), &self.secrets, first_hop_info)
                 .await?;
             let mut current_session = Arc::new(current_session);
 
@@ -207,6 +218,13 @@ impl ProfileConnector {
                         )
                     })
                     .await?;
+
+                let hop = if is_target {
+                    target_hop.clone()
+                } else {
+                    SessionHop::new(next_profile.connection_label(), index as u32 + 2, total_hops as u32)
+                };
+                interaction.phase(SessionPhase::Connecting, Some(hop.clone())).await?;
 
                 let transport = current_session
                     .channel_open_direct_tcpip(
@@ -233,6 +251,7 @@ impl ProfileConnector {
                         transport,
                         config.clone(),
                         self.known_hosts.clone(),
+                        hop.clone(),
                     )
                     .await?;
                 interaction
@@ -243,7 +262,10 @@ impl ProfileConnector {
                     })
                     .await?;
                 interaction
-                    .authenticate(&mut next_session, next_profile, &self.secrets)
+                    .phase(SessionPhase::WaitingForAuthentication, Some(hop.clone()))
+                    .await?;
+                interaction
+                    .authenticate(&mut next_session, next_profile, &self.secrets, hop)
                     .await?;
 
                 jump_sessions.push(current_session);
@@ -256,6 +278,9 @@ impl ProfileConnector {
             interaction
                 .status(format!("Connecting to {remote_label}"))
                 .await?;
+            interaction
+                .phase(SessionPhase::Connecting, Some(target_hop.clone()))
+                .await?;
             let ConnectedClient {
                 handle: mut session,
                 remote_forward_targets,
@@ -266,13 +291,17 @@ impl ProfileConnector {
                     &self.secrets,
                     config,
                     self.known_hosts.clone(),
+                    target_hop.clone(),
                 )
                 .await?;
             interaction
                 .status(format!("Authenticating {remote_label}"))
                 .await?;
             interaction
-                .authenticate(&mut session, profile, &self.secrets)
+                .phase(SessionPhase::WaitingForAuthentication, Some(target_hop.clone()))
+                .await?;
+            interaction
+                .authenticate(&mut session, profile, &self.secrets, target_hop.clone())
                 .await?;
             (Arc::new(session), remote_forward_targets)
         };
@@ -282,6 +311,7 @@ impl ProfileConnector {
             Vec::new(),
             remote_forward_targets,
             jump_sessions,
+            target_hop,
         ))
     }
 }
@@ -312,18 +342,31 @@ impl ConnectorInteraction<'_> {
         }
     }
 
+    async fn phase(&self, phase: SessionPhase, hop: Option<SessionHop>) -> Result<()> {
+        match self {
+            Self::Interactive { event_sender, .. } => {
+                session::emit_phase(event_sender, phase, hop).await
+            }
+            Self::Bridge => Ok(()),
+        }
+    }
+
     async fn authenticate(
         &mut self,
         session: &mut client::Handle<ClientHandler>,
         profile: SessionProfile,
         secrets: &SecretStore,
+        hop: SessionHop,
     ) -> Result<()> {
         match self {
             Self::Interactive {
                 command_receiver,
                 event_sender,
                 ..
-            } => authenticate_full(session, profile, secrets, command_receiver, event_sender).await,
+            } => {
+                authenticate_full(session, profile, secrets, command_receiver, event_sender, hop)
+                    .await
+            }
             Self::Bridge => authenticate_bridge(session, profile, secrets).await,
         }
     }
@@ -335,6 +378,7 @@ impl ConnectorInteraction<'_> {
         secrets: &SecretStore,
         config: Arc<client::Config>,
         known_hosts: KnownHostsStore,
+        hop: SessionHop,
     ) -> Result<ConnectedClient> {
         match self {
             Self::Interactive {
@@ -351,6 +395,7 @@ impl ConnectorInteraction<'_> {
                     command_receiver,
                     event_sender,
                     configured_port_forward_rules,
+                    hop,
                 )
                 .await
             }
@@ -383,6 +428,7 @@ impl ConnectorInteraction<'_> {
         transport: R,
         config: Arc<client::Config>,
         known_hosts: KnownHostsStore,
+        hop: SessionHop,
     ) -> Result<ConnectedClient>
     where
         R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -401,6 +447,7 @@ impl ConnectorInteraction<'_> {
                     command_receiver,
                     event_sender,
                     configured_port_forward_rules,
+                    hop,
                 )
                 .await
             }
@@ -425,6 +472,7 @@ pub struct ConnectedSshRoute {
     pub(super) configured_port_forward_rules: Vec<PortForwardRule>,
     pub(super) remote_forward_targets: RemoteForwardTargets,
     pub(super) jump_sessions: Vec<Arc<client::Handle<ClientHandler>>>,
+    pub(super) target_hop: SessionHop,
     pub(super) cleanup: RouteCleanup,
 }
 
@@ -434,6 +482,7 @@ impl ConnectedSshRoute {
         configured_port_forward_rules: Vec<PortForwardRule>,
         remote_forward_targets: RemoteForwardTargets,
         jump_sessions: Vec<Arc<client::Handle<ClientHandler>>>,
+        target_hop: SessionHop,
     ) -> Self {
         let cleanup = RouteCleanup::new(session.clone(), jump_sessions.clone());
         Self {
@@ -441,6 +490,7 @@ impl ConnectedSshRoute {
             configured_port_forward_rules,
             remote_forward_targets,
             jump_sessions,
+            target_hop,
             cleanup,
         }
     }
@@ -467,6 +517,11 @@ impl ConnectedSshRoute {
 
     pub fn jump_count(&self) -> usize {
         self.jump_sessions.len()
+    }
+
+    /// Hop descriptor of the authenticated target (the last hop of the route).
+    pub fn target_hop(&self) -> SessionHop {
+        self.target_hop.clone()
     }
 
     pub async fn disconnect(&self) {

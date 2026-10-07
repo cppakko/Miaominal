@@ -1,6 +1,7 @@
 use super::auth::connect_local_agent_stream;
 use super::forwarding::{
-    ActiveLocalForward, ActiveRemoteForward, RemoteForwardTargets, emit_port_forward_notice,
+    ActiveLocalForward, ActiveRemoteForward, PortForwardFailure, PortForwardFailureKind,
+    RemoteForwardTargets, emit_port_forward_failure, emit_port_forward_notice,
     sync_port_forward_rules,
 };
 use super::monitor::{run_exec_command, run_exec_pty_command, run_monitor_loop};
@@ -48,6 +49,75 @@ impl std::error::Error for ConnectionCancelled {}
 pub const SESSION_EVENT_QUEUE_CAPACITY: usize = 64;
 const SSH_CHANNEL_BUFFER_SIZE: usize = 64;
 const SSH_MAXIMUM_PACKET_SIZE: u32 = 32 * 1024;
+/// Upper bound for a server reply to a channel request. OpenSSH always answers
+/// `want_reply` requests; a server that stays silent must not hang the session.
+const CHANNEL_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Ordered connection phases for an interactive session.
+///
+/// A session can fail or be cancelled from any phase; `Failed` and `Closed`
+/// are terminal. Only a successful PTY and shell request move it to `Ready`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPhase {
+    Connecting,
+    WaitingForTrust,
+    WaitingForAuthentication,
+    OpeningShell,
+    Ready,
+    Closing,
+    Closed,
+    Failed,
+}
+
+/// Identifies which hop of a route a request belongs to (jump hosts included).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHop {
+    /// Human-readable hop label; the target uses the profile connection label.
+    pub label: String,
+    /// One-based hop index; the target is the last hop.
+    pub index: u32,
+    pub total: u32,
+}
+
+impl SessionHop {
+    pub fn new(label: impl Into<String>, index: u32, total: u32) -> Self {
+        Self {
+            label: label.into(),
+            index,
+            total: total.max(1),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionPhaseChange {
+    pub phase: SessionPhase,
+    /// Hop the phase refers to; `None` before the route is resolved.
+    pub hop: Option<SessionHop>,
+}
+
+/// A pending host-key decision, bound to one connection attempt and request id.
+#[derive(Debug, Clone)]
+pub struct HostKeyRequest {
+    pub request_id: u64,
+    pub hop: SessionHop,
+    pub prompt: HostKeyPrompt,
+}
+
+/// A pending keyboard-interactive challenge, bound to one request id.
+#[derive(Debug, Clone)]
+pub struct AuthenticationRequest {
+    pub request_id: u64,
+    pub hop: SessionHop,
+    pub challenge: KbiChallenge,
+}
+
+/// Process-wide monotonic request id. Unique within a process is enough to make
+/// stale answers detectable per connection.
+pub(super) fn next_request_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
 
 struct AbortTaskOnDrop<T>(tokio::task::JoinHandle<T>);
 
@@ -106,6 +176,35 @@ impl futures::Stream for SessionEventReceiver {
 pub(super) fn session_event_channel() -> (SessionEventSender, SessionEventReceiver) {
     let (sender, receiver) = channel(SESSION_EVENT_QUEUE_CAPACITY);
     (sender, SessionEventReceiver::new(receiver))
+}
+
+/// Publish one typed event, reporting a closed receiver to the caller.
+pub(super) async fn emit_session_event(
+    event_sender: &SessionEventSender,
+    event: SessionEvent,
+) -> Result<()> {
+    if event_sender.send(event).await.is_err() {
+        bail!("session event receiver is closed");
+    }
+    Ok(())
+}
+
+pub(super) async fn emit_phase(
+    event_sender: &SessionEventSender,
+    phase: SessionPhase,
+    hop: Option<SessionHop>,
+) -> Result<()> {
+    emit_session_event(event_sender, SessionEvent::Phase(SessionPhaseChange { phase, hop })).await
+}
+
+pub(super) fn clear_pending_host_key(
+    pending: &Arc<Mutex<Option<PendingHostKeyDecision>>>,
+) -> Result<()> {
+    let mut guard = pending
+        .lock()
+        .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
+    *guard = None;
+    Ok(())
 }
 
 fn fingerprint_of(key: &PublicKey) -> String {
@@ -173,7 +272,8 @@ pub mod connection {
         let host = profile.host.clone();
         let port = profile.port;
 
-        client::connect(config, (host.clone(), port), handler)
+        let transport = crate::transport::connect_direct(&host, port).await?;
+        client::connect_stream(config, transport, handler)
             .await
             .with_context(|| format!("failed to connect to {}:{}", host, port))
     }
@@ -200,20 +300,32 @@ pub mod connection {
 #[derive(Debug)]
 pub enum SessionEvent {
     Connected(String),
+    /// Typed connection phase transition; the interactive flow emits these so
+    /// hosts never parse the English status strings.
+    Phase(SessionPhaseChange),
     PortForwardReconnecting {
         error: String,
         attempt: u32,
         max_attempts: u32,
         retry_after_secs: u64,
     },
+    /// A forwarding rule became active (local listener bound or remote port
+    /// accepted by the server).
+    PortForwardActive(super::forwarding::PortForwardBinding),
+    /// A forwarding rule failed, classified by kind so hosts do not parse logs.
+    PortForwardFailed(super::forwarding::PortForwardFailure),
     Output(Vec<u8>),
     Status(String),
     Error(String),
     MonitorUpdated(SessionMonitorSnapshot),
     MonitorFailed(String),
     PortForwardNotice(String),
-    HostKeyPrompt(HostKeyPrompt),
-    KeyboardInteractivePrompt(KbiChallenge),
+    HostKeyPrompt(HostKeyRequest),
+    KeyboardInteractivePrompt(AuthenticationRequest),
+    /// A queued answer arrived after its request was superseded or cancelled.
+    RequestExpired {
+        request_id: u64,
+    },
     Exited {
         exit_code: u32,
         signal: Option<String>,
@@ -224,22 +336,73 @@ pub enum SessionEvent {
 #[derive(Debug)]
 pub enum SessionCommand {
     Send(Vec<u8>),
-    Resize { columns: usize, lines: usize },
+    Resize {
+        columns: usize,
+        lines: usize,
+    },
     SetMonitoringEnabled(bool),
-    HostKeyDecision(HostKeyDecision),
-    KeyboardInteractiveResponse(Vec<String>),
+    HostKeyDecision {
+        request_id: u64,
+        decision: HostKeyDecision,
+    },
+    KeyboardInteractiveResponse {
+        request_id: u64,
+        answers: Vec<String>,
+    },
     SyncPortForwardRules(Vec<PortForwardRule>),
     Close,
+}
+
+/// Cancellation token shared by a session's command sender and its worker
+/// thread. `close()` must also interrupt a connection that is still inside a
+/// non-cancellable await (TCP connect, SSH handshake, password authentication),
+/// which the command channel alone cannot reach.
+#[derive(Clone, Debug, Default)]
+pub(super) struct CancelToken {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl CancelToken {
+    pub(super) fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_one();
+    }
+
+    pub(super) async fn cancelled(&self) {
+        loop {
+            if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            // `notify_one` stores a permit, so a cancel between the check and
+            // the await cannot be lost.
+            self.notify.notified().await;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct SessionCommandSender {
     sender: UnboundedSender<SessionCommand>,
+    cancel: CancelToken,
 }
 
 impl SessionCommandSender {
-    pub(super) fn new(sender: UnboundedSender<SessionCommand>) -> Self {
-        Self { sender }
+    pub(super) fn new(sender: UnboundedSender<SessionCommand>, cancel: CancelToken) -> Self {
+        Self { sender, cancel }
+    }
+
+    /// Cancellation signal shared with [`SessionCommandSender::close`].
+    ///
+    /// A host that drives a connect future directly (for example the SFTP
+    /// subsystem setup) can race this signal to interrupt stages that never
+    /// read the command channel, such as a server that does not answer
+    /// authentication or a subsystem request.
+    pub fn cancellation(&self) -> SessionCancellation {
+        SessionCancellation {
+            cancel: self.cancel.clone(),
+        }
     }
 
     pub fn send_bytes(&self, bytes: Vec<u8>) -> Result<()> {
@@ -260,15 +423,25 @@ impl SessionCommandSender {
             .map_err(|_| anyhow!("session is no longer available"))
     }
 
-    pub fn respond_host_key(&self, decision: HostKeyDecision) -> Result<()> {
+    pub fn respond_host_key(&self, request_id: u64, decision: HostKeyDecision) -> Result<()> {
         self.sender
-            .send(SessionCommand::HostKeyDecision(decision))
+            .send(SessionCommand::HostKeyDecision {
+                request_id,
+                decision,
+            })
             .map_err(|_| anyhow!("session is no longer available"))
     }
 
-    pub fn respond_keyboard_interactive(&self, responses: Vec<String>) -> Result<()> {
+    pub fn respond_keyboard_interactive(
+        &self,
+        request_id: u64,
+        responses: Vec<String>,
+    ) -> Result<()> {
         self.sender
-            .send(SessionCommand::KeyboardInteractiveResponse(responses))
+            .send(SessionCommand::KeyboardInteractiveResponse {
+                request_id,
+                answers: responses,
+            })
             .map_err(|_| anyhow!("session is no longer available"))
     }
 
@@ -278,21 +451,70 @@ impl SessionCommandSender {
             .map_err(|_| anyhow!("session is no longer available"))
     }
 
+    /// Explicit close: interrupts the connection worker even when it is stuck
+    /// in an await that does not poll the command channel, then asks the
+    /// running session loop to wind down.
     pub fn close(&self) -> Result<()> {
+        self.cancel.cancel();
         self.sender
             .send(SessionCommand::Close)
             .map_err(|_| anyhow!("session is no longer available"))
     }
 }
 
+/// Cloneable cancellation signal for one session connection.
+#[derive(Clone, Debug, Default)]
+pub struct SessionCancellation {
+    cancel: CancelToken,
+}
+
+impl SessionCancellation {
+    /// Resolve when the session is cancelled; returns immediately when it was
+    /// already cancelled.
+    pub async fn cancelled(&self) {
+        self.cancel.cancelled().await;
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel
+            .cancelled
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 pub struct SessionConnection {
     pub commands: SessionCommandSender,
     pub events: SessionEventReceiver,
+    /// Worker thread for SSH-backed sessions; `None` for host-provided
+    /// backends. Callers may join it after `commands.close()` to prove that no
+    /// connection task is left behind.
+    pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SessionConnection {
-    pub(super) fn new(commands: SessionCommandSender, events: SessionEventReceiver) -> Self {
-        Self { commands, events }
+    pub(super) fn new(
+        commands: SessionCommandSender,
+        events: SessionEventReceiver,
+        thread: Option<std::thread::JoinHandle<()>>,
+    ) -> Self {
+        Self {
+            commands,
+            events,
+            thread,
+        }
+    }
+
+    /// Take the worker thread handle (if any) so one waiter can join it.
+    pub fn take_thread(&mut self) -> Option<std::thread::JoinHandle<()>> {
+        self.thread.take()
+    }
+
+    /// Take the event receiver so a non-terminal consumer (for example an SFTP
+    /// subsystem driver) can forward typed session events itself. The original
+    /// field keeps a placeholder receiver that never yields events.
+    pub fn take_events(&mut self) -> SessionEventReceiver {
+        let placeholder = SessionEventReceiver::from(tokio::sync::mpsc::channel(1).1);
+        std::mem::replace(&mut self.events, placeholder)
     }
 }
 
@@ -326,8 +548,9 @@ pub fn session_channels() -> SessionChannels {
     let (command_sender, command_receiver) = unbounded_channel();
     SessionChannels {
         connection: SessionConnection::new(
-            SessionCommandSender::new(command_sender),
+            SessionCommandSender::new(command_sender, CancelToken::default()),
             event_receiver,
+            None,
         ),
         commands: command_receiver,
         events: event_sender,
@@ -356,43 +579,62 @@ pub fn start_session(
     let (event_sender, event_receiver) = session_event_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
+    let cancel = CancelToken::default();
+    let worker_cancel = cancel.clone();
 
     let columns = columns.max(MIN_TERMINAL_COLUMNS);
     let lines = lines.max(1);
 
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name(format!("ssh-session-{}", profile.id))
         .spawn(move || {
             runtime.block_on(async move {
-                if let Err(error) = run_session(
-                    profile,
-                    all_profiles,
-                    all_proxies,
-                    secrets,
-                    known_hosts,
-                    command_receiver,
-                    event_sender.clone(),
-                    columns,
-                    lines,
-                    monitoring_enabled,
-                )
-                .await
-                {
-                    if event_sender
-                        .send(SessionEvent::Error(error.to_string()))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
+                // Racing the whole session against the cancel token means a
+                // `close()` also interrupts TCP connect, the SSH handshake and
+                // authentication, which never poll the command channel.
+                let result = tokio::select! {
+                    result = run_session(
+                        profile,
+                        all_profiles,
+                        all_proxies,
+                        secrets,
+                        known_hosts,
+                        command_receiver,
+                        event_sender.clone(),
+                        columns,
+                        lines,
+                        monitoring_enabled,
+                    ) => result,
+                    () = worker_cancel.cancelled() => Err(ConnectionCancelled.into()),
+                };
 
-                    let _ = event_sender.send(SessionEvent::Closed).await;
+                match result {
+                    Ok(()) => {}
+                    Err(error) if error.downcast_ref::<ConnectionCancelled>().is_some() => {
+                        // An explicit close is orderly: report Closed, not Error.
+                        let _ = event_sender.send(SessionEvent::Closed).await;
+                    }
+                    Err(error) => {
+                        if event_sender
+                            .send(SessionEvent::Error(format!("{error:#}")))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        let _ = event_sender.send(SessionEvent::Closed).await;
+                    }
                 }
             });
         })
         .expect("failed to spawn SSH session thread");
 
-    SessionConnection::new(SessionCommandSender::new(command_sender), event_receiver)
+    SessionConnection::new(
+        SessionCommandSender::new(command_sender, cancel),
+        event_receiver,
+        Some(thread),
+    )
 }
 
 pub async fn execute_profile_command(
@@ -418,7 +660,8 @@ pub async fn execute_profile_command(
     let event_task = AbortTaskOnDrop::new(tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
             match event {
-                SessionEvent::HostKeyPrompt(prompt) => {
+                SessionEvent::HostKeyPrompt(request) => {
+                    let prompt = &request.prompt;
                     let message = if prompt.previous_fingerprint.is_some() {
                         format!(
                             "host key for {}:{} has changed ({}); connect or test this profile manually before deploying the key",
@@ -433,8 +676,10 @@ pub async fn execute_profile_command(
                     if let Ok(mut guard) = non_interactive_error_for_events.lock() {
                         *guard = Some(message);
                     }
-                    let _ = event_command_sender
-                        .send(SessionCommand::HostKeyDecision(HostKeyDecision::Reject));
+                    let _ = event_command_sender.send(SessionCommand::HostKeyDecision {
+                        request_id: request.request_id,
+                        decision: HostKeyDecision::Reject,
+                    });
                 }
                 SessionEvent::KeyboardInteractivePrompt(_) => {
                     if let Ok(mut guard) = non_interactive_error_for_events.lock() {
@@ -535,7 +780,8 @@ pub async fn execute_profile_pty_command(
     let event_task = AbortTaskOnDrop::new(tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
             match event {
-                SessionEvent::HostKeyPrompt(prompt) => {
+                SessionEvent::HostKeyPrompt(request) => {
+                    let prompt = &request.prompt;
                     let message = if prompt.previous_fingerprint.is_some() {
                         format!(
                             "host key for {}:{} has changed ({}); connect or test this profile manually before using the agent",
@@ -550,8 +796,10 @@ pub async fn execute_profile_pty_command(
                     if let Ok(mut guard) = non_interactive_error_for_events.lock() {
                         *guard = Some(message);
                     }
-                    let _ = event_command_sender
-                        .send(SessionCommand::HostKeyDecision(HostKeyDecision::Reject));
+                    let _ = event_command_sender.send(SessionCommand::HostKeyDecision {
+                        request_id: request.request_id,
+                        decision: HostKeyDecision::Reject,
+                    });
                 }
                 SessionEvent::KeyboardInteractivePrompt(_) => {
                     if let Ok(mut guard) = non_interactive_error_for_events.lock() {
@@ -622,12 +870,18 @@ pub async fn execute_profile_pty_command(
     }
 }
 
+pub(super) struct PendingHostKeyDecision {
+    pub(super) request_id: u64,
+    pub(super) decision: oneshot::Sender<HostKeyDecision>,
+}
+
 pub(super) struct ClientHandler {
     pub(super) known_hosts: KnownHostsStore,
     pub(super) host: String,
     pub(super) port: u16,
     pub(super) event_sender: SessionEventSender,
-    pub(super) decision_inbox: Arc<Mutex<Option<oneshot::Receiver<HostKeyDecision>>>>,
+    pub(super) pending_host_key: Arc<Mutex<Option<PendingHostKeyDecision>>>,
+    pub(super) hop: SessionHop,
     pub(super) remote_forward_targets: RemoteForwardTargets,
     pub(super) agent_forwarding_allowed: bool,
     pub(super) strict_host_keys: bool,
@@ -715,31 +969,55 @@ impl client::Handler for ClientHandler {
             }
         };
 
+        let request_id = next_request_id();
+        let (decision_sender, decision_receiver) = oneshot::channel();
+        {
+            let mut guard = self
+                .pending_host_key
+                .lock()
+                .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
+            *guard = Some(PendingHostKeyDecision {
+                request_id,
+                decision: decision_sender,
+            });
+        }
+
+        let _ = emit_phase(
+            &self.event_sender,
+            SessionPhase::WaitingForTrust,
+            Some(self.hop.clone()),
+        )
+        .await;
         if self
             .event_sender
-            .send(SessionEvent::HostKeyPrompt(prompt))
+            .send(SessionEvent::HostKeyPrompt(HostKeyRequest {
+                request_id,
+                hop: self.hop.clone(),
+                prompt,
+            }))
             .await
             .is_err()
         {
+            clear_pending_host_key(&self.pending_host_key)?;
             return Ok(false);
         }
 
-        let receiver = {
-            let mut guard = self
-                .decision_inbox
-                .lock()
-                .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
-            guard
-                .take()
-                .ok_or_else(|| anyhow!("host key decision channel already consumed"))?
+        let decision = match decision_receiver.await {
+            Ok(decision) => decision,
+            // The session was cancelled or the router rejected the request.
+            Err(_) => return Ok(false),
         };
 
-        let decision = receiver
-            .await
-            .map_err(|_| anyhow!("host key decision channel closed"))?;
-
         match decision {
-            HostKeyDecision::AcceptOnce => Ok(true),
+            HostKeyDecision::AcceptOnce => {
+                let _ = emit_phase(
+                    &self.event_sender,
+                    SessionPhase::Connecting,
+                    Some(self.hop.clone()),
+                )
+                .await;
+                Ok(true)
+            }
             HostKeyDecision::AcceptAndSave => {
                 if let Err(error) = self
                     .known_hosts
@@ -753,6 +1031,12 @@ impl client::Handler for ClientHandler {
                         )))
                         .await;
                 }
+                let _ = emit_phase(
+                    &self.event_sender,
+                    SessionPhase::Connecting,
+                    Some(self.hop.clone()),
+                )
+                .await;
                 Ok(true)
             }
             HostKeyDecision::Reject => Ok(false),
@@ -873,25 +1157,39 @@ impl client::Handler for ClientHandler {
                 Ok(mut stream) => {
                     let mut forwarded = channel.into_stream();
                     if let Err(error) = copy_bidirectional(&mut forwarded, &mut stream).await {
-                        emit_port_forward_notice(
+                        let message = format!(
+                            "Remote forward {} relay failed from {}:{}: {}",
+                            target.label, originator_address, originator_port, error
+                        );
+                        emit_port_forward_failure(
                             &event_sender,
-                            format!(
-                                "Remote forward {} relay failed from {}:{}: {}",
-                                target.label, originator_address, originator_port, error
-                            ),
+                            PortForwardFailure {
+                                rule_id: target.rule_id.clone(),
+                                label: target.label.clone(),
+                                kind: PortForwardFailureKind::TargetUnreachable,
+                                message: message.clone(),
+                            },
                         )
                         .await;
+                        emit_port_forward_notice(&event_sender, message).await;
                     }
                 }
                 Err(error) => {
-                    emit_port_forward_notice(
+                    let message = format!(
+                        "Remote forward {} could not reach local target {}: {}",
+                        target.label, local_target, error
+                    );
+                    emit_port_forward_failure(
                         &event_sender,
-                        format!(
-                            "Remote forward {} could not reach local target {}: {}",
-                            target.label, local_target, error
-                        ),
+                        PortForwardFailure {
+                            rule_id: target.rule_id.clone(),
+                            label: target.label.clone(),
+                            kind: PortForwardFailureKind::TargetUnreachable,
+                            message: message.clone(),
+                        },
                     )
                     .await;
+                    emit_port_forward_notice(&event_sender, message).await;
                     if let Err(close_error) = channel.close().await {
                         log::debug!(
                             "failed to close forwarded tcpip channel after connect error: {close_error:?}"
@@ -926,6 +1224,7 @@ async fn run_session(
         mut configured_port_forward_rules,
         remote_forward_targets,
         jump_sessions,
+        target_hop,
         cleanup: _route_cleanup,
     } = connect_authenticated_session_internal(
         profile.clone(),
@@ -952,6 +1251,11 @@ async fn run_session(
     )
     .await;
 
+    // Only a confirmed PTY and shell request may report the session as usable:
+    // russh's request methods only send the request, the server's reply arrives
+    // later as `Success`/`Failure` on the channel.
+    emit_phase(&event_sender, SessionPhase::OpeningShell, Some(target_hop.clone())).await?;
+
     let mut channel = session
         .channel_open_session()
         .await
@@ -962,9 +1266,20 @@ async fn run_session(
             .agent_forward(true)
             .await
             .context("failed to enable SSH agent forwarding")?;
-        let _ = event_sender
-            .send(SessionEvent::Status("SSH agent forwarding enabled".into()))
-            .await;
+        // The agent-forwarding request also asks for a reply; it must be
+        // consumed before the PTY/shell replies or the whole sequence shifts.
+        // A refusal is a warning: the shell itself can still work.
+        if await_channel_reply(&mut channel, "agent forwarding", &event_sender).await? {
+            let _ = event_sender
+                .send(SessionEvent::Status("SSH agent forwarding enabled".into()))
+                .await;
+        } else {
+            let _ = event_sender
+                .send(SessionEvent::Status(
+                    "SSH agent forwarding was refused by the server".into(),
+                ))
+                .await;
+        }
     }
 
     channel
@@ -979,6 +1294,9 @@ async fn run_session(
         )
         .await
         .context("failed to request PTY")?;
+    if !await_channel_reply(&mut channel, "PTY", &event_sender).await? {
+        bail!("server rejected the PTY request");
+    }
 
     for variable in &environment_variables {
         // SSH protocol-level env request (RFC 4254 §6.4). The server may silently
@@ -992,6 +1310,9 @@ async fn run_session(
         .request_shell(true)
         .await
         .context("failed to request interactive shell")?;
+    if !await_channel_reply(&mut channel, "interactive shell", &event_sender).await? {
+        bail!("server rejected the interactive shell request");
+    }
 
     if let Some(bootstrap_commands) =
         shell_bootstrap_commands(&environment_variables, shell_type, startup_command.trim())
@@ -1002,6 +1323,7 @@ async fn run_session(
             .context("failed to send startup commands to the remote shell")?;
     }
 
+    let _ = emit_phase(&event_sender, SessionPhase::Ready, Some(target_hop.clone())).await;
     if event_sender
         .send(SessionEvent::Connected(remote_label))
         .await
@@ -1039,8 +1361,8 @@ async fn run_session(
                     Some(SessionCommand::SetMonitoringEnabled(enabled)) => {
                         let _ = monitoring_sender.send(enabled);
                     }
-                    Some(SessionCommand::HostKeyDecision(_)) => {}
-                    Some(SessionCommand::KeyboardInteractiveResponse(_)) => {}
+                    Some(SessionCommand::HostKeyDecision { .. }) => {}
+                    Some(SessionCommand::KeyboardInteractiveResponse { .. }) => {}
                     Some(SessionCommand::SyncPortForwardRules(rules)) => {
                         configured_port_forward_rules = rules;
                         sync_port_forward_rules(
@@ -1054,6 +1376,12 @@ async fn run_session(
                         .await;
                     }
                     Some(SessionCommand::Close) | None => {
+                        let _ = emit_phase(
+                            &event_sender,
+                            SessionPhase::Closing,
+                            Some(target_hop.clone()),
+                        )
+                        .await;
                         drop(monitoring_sender);
                         monitor_task.abort();
                         if let Err(error) = channel.eof().await {
@@ -1142,18 +1470,53 @@ async fn flush_pending_resize(
         .context("failed to resize remote PTY")
 }
 
+/// Wait for the server's reply to a channel request.
+///
+/// Returns `true` for `Success` and `false` for `Failure`. Data that arrives
+/// while waiting is forwarded to the session event stream so an early banner
+/// is not lost. Replies must be consumed in request order: an unconsumed reply
+/// would be misread as the answer to the next request.
+async fn await_channel_reply(
+    channel: &mut Channel<client::Msg>,
+    request: &str,
+    event_sender: &SessionEventSender,
+) -> Result<bool> {
+    match tokio::time::timeout(
+        CHANNEL_REPLY_TIMEOUT,
+        wait_channel_reply(channel, request, event_sender),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => bail!("server did not answer the {request} request in time"),
+    }
+}
+
+async fn wait_channel_reply(
+    channel: &mut Channel<client::Msg>,
+    request: &str,
+    event_sender: &SessionEventSender,
+) -> Result<bool> {
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Success) => return Ok(true),
+            Some(ChannelMsg::Failure) => return Ok(false),
+            Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                emit_session_event(event_sender, SessionEvent::Output(data.to_vec())).await?;
+            }
+            Some(_) => {}
+            None => bail!("channel closed while waiting for the {request} reply"),
+        }
+    }
+}
+
 fn build_client_handler(
     profile: &SessionProfile,
     known_hosts: KnownHostsStore,
     event_sender: &SessionEventSender,
-) -> (
-    ClientHandler,
-    Arc<Mutex<Option<oneshot::Sender<HostKeyDecision>>>>,
-    RemoteForwardTargets,
-) {
-    let (decision_sender, decision_receiver) = oneshot::channel();
-    let decision_inbox = Arc::new(Mutex::new(Some(decision_receiver)));
-    let pending_decision = Arc::new(Mutex::new(Some(decision_sender)));
+    hop: SessionHop,
+) -> (ClientHandler, Arc<Mutex<Option<PendingHostKeyDecision>>>, RemoteForwardTargets) {
+    let pending_host_key = Arc::new(Mutex::new(None));
     let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
 
     (
@@ -1162,12 +1525,13 @@ fn build_client_handler(
             host: profile.host.clone(),
             port: profile.port,
             event_sender: event_sender.clone(),
-            decision_inbox,
+            pending_host_key: pending_host_key.clone(),
+            hop,
             remote_forward_targets: remote_forward_targets.clone(),
             agent_forwarding_allowed: profile.agent_forwarding,
             strict_host_keys: false,
         },
-        pending_decision,
+        pending_host_key,
         remote_forward_targets,
     )
 }
@@ -1176,7 +1540,6 @@ pub(super) fn build_strict_client_handler(
     profile: &SessionProfile,
     known_hosts: KnownHostsStore,
 ) -> (ClientHandler, RemoteForwardTargets) {
-    let (_decision_sender, decision_receiver) = oneshot::channel();
     let (event_sender, event_receiver) = channel(1);
     drop(event_receiver);
     let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
@@ -1187,7 +1550,8 @@ pub(super) fn build_strict_client_handler(
             host: profile.host.clone(),
             port: profile.port,
             event_sender,
-            decision_inbox: Arc::new(Mutex::new(Some(decision_receiver))),
+            pending_host_key: Arc::new(Mutex::new(None)),
+            hop: SessionHop::new(profile.connection_label(), 1, 1),
             remote_forward_targets: remote_forward_targets.clone(),
             agent_forwarding_allowed: false,
             strict_host_keys: true,
@@ -1199,7 +1563,8 @@ pub(super) fn build_strict_client_handler(
 async fn await_session_connect<F>(
     connect_future: F,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
-    pending_decision: Arc<Mutex<Option<oneshot::Sender<HostKeyDecision>>>>,
+    pending_host_key: Arc<Mutex<Option<PendingHostKeyDecision>>>,
+    event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
 ) -> Result<client::Handle<ClientHandler>>
 where
@@ -1214,23 +1579,46 @@ where
             }
             command = command_receiver.recv() => {
                 match command {
-                    Some(SessionCommand::HostKeyDecision(decision)) => {
-                        let mut guard = pending_decision
-                            .lock()
-                            .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
-                        if let Some(sender) = guard.take() {
-                            let _ = sender.send(decision);
+                    Some(SessionCommand::HostKeyDecision { request_id, decision }) => {
+                        let accepted = {
+                            let mut guard = pending_host_key
+                                .lock()
+                                .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
+                            match guard.as_ref().map(|pending| pending.request_id) {
+                                Some(pending_id) if pending_id == request_id => {
+                                    if let Some(pending) = guard.take() {
+                                        let _ = pending.decision.send(decision);
+                                    }
+                                    true
+                                }
+                                // A late answer for an old request: reject it.
+                                _ => false,
+                            }
+                        };
+                        if !accepted {
+                            let _ = emit_session_event(
+                                event_sender,
+                                SessionEvent::RequestExpired { request_id },
+                            )
+                            .await;
                         }
+                    }
+                    Some(SessionCommand::KeyboardInteractiveResponse { request_id, .. }) => {
+                        let _ = emit_session_event(
+                            event_sender,
+                            SessionEvent::RequestExpired { request_id },
+                        )
+                        .await;
                     }
                     Some(SessionCommand::SyncPortForwardRules(rules)) => {
                         *configured_port_forward_rules = rules;
                     }
                     Some(SessionCommand::Close) | None => {
-                        let mut guard = pending_decision
+                        let mut guard = pending_host_key
                             .lock()
                             .map_err(|_| anyhow!("host key decision mutex poisoned"))?;
-                        if let Some(sender) = guard.take() {
-                            let _ = sender.send(HostKeyDecision::Reject);
+                        if let Some(pending) = guard.take() {
+                            let _ = pending.decision.send(HostKeyDecision::Reject);
                         }
                         return Err(ConnectionCancelled.into());
                     }
@@ -1255,6 +1643,34 @@ pub(super) async fn connect_authenticated_session_internal(
         .await
 }
 
+/// Connect one authenticated interactive SSH route for a non-PTY subsystem.
+///
+/// Host-key prompts and keyboard-interactive challenges are delivered through
+/// `event_sender` with request ids and hop labels; answers arrive on
+/// `command_receiver`, exactly like an interactive terminal session. The
+/// returned route stays usable until it is dropped or [`ConnectedSshRoute::disconnect`]
+/// is called, so callers can open subsystem channels (SFTP) on it.
+pub async fn connect_interactive_route(
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    command_receiver: &mut UnboundedReceiver<SessionCommand>,
+    event_sender: &Sender<SessionEvent>,
+) -> Result<ConnectedSshRoute> {
+    connect_authenticated_session_internal(
+        profile,
+        all_profiles,
+        all_proxies,
+        secrets,
+        known_hosts,
+        command_receiver,
+        event_sender,
+    )
+    .await
+}
+
 pub(super) async fn connect_profile_session(
     profile: &SessionProfile,
     config: Arc<client::Config>,
@@ -1262,13 +1678,15 @@ pub(super) async fn connect_profile_session(
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
+    hop: SessionHop,
 ) -> Result<ConnectedClient> {
-    let (handler, pending_decision, remote_forward_targets) =
-        build_client_handler(profile, known_hosts, event_sender);
+    let (handler, pending_host_key, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender, hop);
     let host = profile.host.clone();
     let port = profile.port;
     let connect_future = async move {
-        client::connect(config, (host.clone(), port), handler)
+        let transport = crate::transport::connect_direct(&host, port).await?;
+        client::connect_stream(config, transport, handler)
             .await
             .with_context(|| format!("failed to connect to {}:{}", host, port))
     };
@@ -1276,7 +1694,8 @@ pub(super) async fn connect_profile_session(
     let handle = await_session_connect(
         connect_future,
         command_receiver,
-        pending_decision,
+        pending_host_key,
+        event_sender,
         configured_port_forward_rules,
     )
     .await?;
@@ -1297,6 +1716,7 @@ pub(super) async fn connect_profile_with_optional_proxy(
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
+    hop: SessionHop,
 ) -> Result<ConnectedClient> {
     let Some(proxy) = proxy else {
         return connect_profile_session(
@@ -1306,12 +1726,13 @@ pub(super) async fn connect_profile_with_optional_proxy(
             command_receiver,
             event_sender,
             configured_port_forward_rules,
+            hop,
         )
         .await;
     };
 
-    let (handler, pending_decision, remote_forward_targets) =
-        build_client_handler(profile, known_hosts, event_sender);
+    let (handler, pending_host_key, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender, hop);
     let host = profile.host.clone();
     let port = profile.port;
     let proxy = proxy.clone();
@@ -1333,7 +1754,8 @@ pub(super) async fn connect_profile_with_optional_proxy(
     let handle = await_session_connect(
         connect_future,
         command_receiver,
-        pending_decision,
+        pending_host_key,
+        event_sender,
         configured_port_forward_rules,
     )
     .await?;
@@ -1353,12 +1775,13 @@ pub(super) async fn connect_profile_stream<R>(
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
     configured_port_forward_rules: &mut Vec<PortForwardRule>,
+    hop: SessionHop,
 ) -> Result<ConnectedClient>
 where
     R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let (handler, pending_decision, remote_forward_targets) =
-        build_client_handler(profile, known_hosts, event_sender);
+    let (handler, pending_host_key, remote_forward_targets) =
+        build_client_handler(profile, known_hosts, event_sender, hop);
     let host = profile.host.clone();
     let port = profile.port;
     let connect_future = async move {
@@ -1370,7 +1793,8 @@ where
     let handle = await_session_connect(
         connect_future,
         command_receiver,
-        pending_decision,
+        pending_host_key,
+        event_sender,
         configured_port_forward_rules,
     )
     .await?;
@@ -1449,7 +1873,6 @@ fn shell_bootstrap_commands(
 fn shell_quote_posix(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
-
 fn shell_quote_fish(value: &str) -> String {
     // Fish uses double-quoted strings; escape backslashes and double-quotes.
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
@@ -1645,8 +2068,12 @@ mod tests {
                 std::env::temp_dir().join("miaominal-agent-forwarding-known-hosts"),
             );
 
-            let (handler, _pending_decision, _remote_forward_targets) =
-                build_client_handler(&profile, known_hosts, &event_sender);
+            let (handler, _pending_decision, _remote_forward_targets) = build_client_handler(
+                &profile,
+                known_hosts,
+                &event_sender,
+                SessionHop::new(profile.connection_label(), 1, 1),
+            );
 
             assert_eq!(handler.agent_forwarding_allowed, agent_forwarding_allowed);
         }
@@ -1664,11 +2091,13 @@ mod tests {
             &jump_profile,
             KnownHostsStore::with_path(known_hosts_path.clone()),
             &event_sender,
+            SessionHop::new(jump_profile.connection_label(), 1, 2),
         );
         let (target_handler, _target_pending_decision, target_targets) = build_client_handler(
             &target_profile,
             KnownHostsStore::with_path(known_hosts_path),
             &event_sender,
+            SessionHop::new(target_profile.connection_label(), 2, 2),
         );
 
         assert!(Arc::ptr_eq(
@@ -1685,6 +2114,7 @@ mod tests {
         target_targets.lock().expect("target registry lock").insert(
             key.clone(),
             RemoteForwardTarget {
+                rule_id: "rule-1".into(),
                 label: "database".into(),
                 target_host: "127.0.0.1".into(),
                 target_port: 5432,

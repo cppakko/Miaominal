@@ -7,6 +7,9 @@ mod auth;
 #[path = "ssh/forwarding.rs"]
 mod forwarding;
 
+#[path = "ssh/channel_session.rs"]
+mod channel_session;
+
 #[path = "ssh/monitor.rs"]
 mod monitor;
 
@@ -36,7 +39,13 @@ pub use bridge_ipc::{
 pub use bridge_server::{
     SshBridgeServerIdentity, run_ssh_bridge_server, run_ssh_bridge_server_with_shutdown,
 };
-pub use forwarding::start_port_forward_session;
+pub use forwarding::{
+    PortForwardBinding, PortForwardFailure, PortForwardFailureKind, start_port_forward_session,
+};
+pub use channel_session::{
+    ChannelCommand, ChannelCommandSender, ChannelConnection, ChannelEvent, ChannelEventReceiver,
+    ChannelKind, build_cwd_command, parse_signal, shell_escape_path, start_channel_session,
+};
 pub use miaominal_core::forwarding::{
     AgentIdentitySummary, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot,
 };
@@ -46,7 +55,8 @@ pub use profile_connector::{
 #[allow(unused_imports)]
 pub use session::SessionConnection;
 pub use session::{
-    SessionChannels, SessionCommand, SessionCommandSender, SessionEvent, SessionEventReceiver,
-    connection, execute_profile_command, execute_profile_pty_command, session_channels,
-    start_session,
+    AuthenticationRequest, HostKeyRequest, SessionCancellation, SessionChannels, SessionCommand,
+    SessionCommandSender, SessionEvent, SessionEventReceiver, SessionHop, SessionPhase,
+    SessionPhaseChange, connection, connect_interactive_route, execute_profile_command,
+    execute_profile_pty_command, session_channels, start_session,
 };

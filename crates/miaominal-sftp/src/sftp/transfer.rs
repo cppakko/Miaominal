@@ -1,3 +1,4 @@
+use super::local::{LocalEntryKind, LocalFileSystem, LocalWriteSession, validate_transfer_name};
 use super::paths::join_remote_path;
 use super::session::{
     SftpEvent, SftpEventSender, SftpProgressSender, SftpTransferChild, SftpTransferChildState,
@@ -11,15 +12,13 @@ use russh_sftp::{
 };
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Duration;
-use tempfile::{Builder as TempFileBuilder, TempPath};
-use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -31,6 +30,45 @@ const TRANSFER_TEMP_PREFIX: &str = ".miaominal-transfer-";
 const TRANSFER_TEMP_SUFFIX: &str = ".part";
 const TRANSFER_BACKUP_PREFIX: &str = ".miaominal-backup-";
 const TRANSFER_BACKUP_SUFFIX: &str = ".bak";
+
+/// Local source of one upload: a backend plus a path relative to its root.
+#[derive(Clone)]
+pub struct LocalTransferSource {
+    pub fs: Arc<dyn LocalFileSystem>,
+    pub path: String,
+    pub label: String,
+}
+
+impl std::fmt::Debug for LocalTransferSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalTransferSource")
+            .field("root", &self.fs.display_root())
+            .field("path", &self.path)
+            .field("label", &self.label)
+            .finish()
+    }
+}
+
+/// Local destination of one download: a backend plus a path relative to its
+/// root. The path is created (or replaced) by the local file system itself.
+#[derive(Clone)]
+pub struct LocalTransferDestination {
+    pub fs: Arc<dyn LocalFileSystem>,
+    pub path: String,
+    pub label: String,
+}
+
+impl std::fmt::Debug for LocalTransferDestination {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalTransferDestination")
+            .field("root", &self.fs.display_root())
+            .field("path", &self.path)
+            .field("label", &self.label)
+            .finish()
+    }
+}
 static TRANSFER_SIDECAR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 type RemoteOperation<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -87,13 +125,6 @@ impl RemoteReplaceOps for SftpSession {
                 .map_err(anyhow::Error::from)
         })
     }
-}
-
-struct LocalTemporaryFile {
-    // Struct fields are dropped in declaration order, so the open handle is
-    // always closed before TempPath attempts to remove the temporary file.
-    file: TokioFile,
-    path: TempPath,
 }
 
 pub(super) struct TransferControl {
@@ -294,7 +325,7 @@ pub(super) fn spawn_upload_task(
     sftp: Arc<SftpSession>,
     event_sender: SftpEventSender,
     transfer_id: TransferId,
-    local_path: PathBuf,
+    source: LocalTransferSource,
     remote_path: String,
     control: Arc<TransferControl>,
     semaphore: Arc<Semaphore>,
@@ -312,7 +343,7 @@ pub(super) fn spawn_upload_task(
                 upload_path(
                     &sftp,
                     transfer_id,
-                    &local_path,
+                    &source,
                     &remote_path,
                     &control,
                     &mut active_permit,
@@ -338,7 +369,7 @@ pub(super) fn spawn_download_task(
     event_sender: SftpEventSender,
     transfer_id: TransferId,
     remote_path: String,
-    local_path: PathBuf,
+    destination: LocalTransferDestination,
     control: Arc<TransferControl>,
     semaphore: Arc<Semaphore>,
     completion_sender: UnboundedSender<TransferId>,
@@ -356,7 +387,7 @@ pub(super) fn spawn_download_task(
                     &sftp,
                     transfer_id,
                     &remote_path,
-                    &local_path,
+                    &destination,
                     &control,
                     &mut active_permit,
                     &event_sender,
@@ -465,15 +496,15 @@ impl TransferProgress<'_> {
 async fn upload_path(
     sftp: &SftpSession,
     transfer_id: TransferId,
-    local_path: &Path,
+    source: &LocalTransferSource,
     remote_path: &str,
     control: &TransferControl,
     active_permit: &mut ActiveTransferPermit,
     event_sender: &SftpEventSender,
     progress_sender: &SftpProgressSender,
 ) -> Result<TransferOutcome> {
-    let source = inspect_local_upload_source(local_path).await?;
-    match source {
+    let inspected = inspect_local_upload_source(source).await?;
+    match inspected {
         LocalUploadSource::Directory => {
             let mut progress = TransferProgress {
                 event_sender,
@@ -487,7 +518,7 @@ async fn upload_path(
             progress.emit(None).await?;
             upload_directory(
                 sftp,
-                local_path,
+                source,
                 remote_path,
                 String::new(),
                 control,
@@ -509,7 +540,7 @@ async fn upload_path(
             progress.emit(None).await?;
             upload_regular_file(
                 sftp,
-                local_path,
+                source,
                 remote_path,
                 control,
                 active_permit,
@@ -526,50 +557,122 @@ enum LocalUploadSource {
     File { len: u64 },
 }
 
-async fn inspect_local_upload_source(local_path: &Path) -> Result<LocalUploadSource> {
-    let metadata = tokio::fs::symlink_metadata(local_path)
+fn join_local_label(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+fn child_source(parent: &LocalTransferSource, name: &str) -> LocalTransferSource {
+    LocalTransferSource {
+        fs: Arc::clone(&parent.fs),
+        path: super::local::join_local_path(&parent.path, name),
+        label: join_local_label(&parent.label, name),
+    }
+}
+
+fn child_destination(parent: &LocalTransferDestination, name: &str) -> LocalTransferDestination {
+    LocalTransferDestination {
+        fs: Arc::clone(&parent.fs),
+        path: super::local::join_local_path(&parent.path, name),
+        label: join_local_label(&parent.label, name),
+    }
+}
+
+/// Build an upload source for an ordinary local path. The parent directory is
+/// the transfer root so recursion stays inside it.
+pub fn source_for_path(local_path: &std::path::Path) -> Result<LocalTransferSource> {
+    let parent = local_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let name = local_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| anyhow!("local upload path {} has no file name", local_path.display()))?;
+    Ok(LocalTransferSource {
+        fs: Arc::new(super::local::PathLocalFileSystem::new(parent)),
+        path: name,
+        label: local_path.display().to_string(),
+    })
+}
+
+/// Build a download destination for an ordinary local path.
+pub fn destination_for_path(local_path: &std::path::Path) -> Result<LocalTransferDestination> {
+    let parent = local_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let name = local_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "local download path {} has no file name",
+                local_path.display()
+            )
+        })?;
+    Ok(LocalTransferDestination {
+        fs: Arc::new(super::local::PathLocalFileSystem::new(parent)),
+        path: name,
+        label: local_path.display().to_string(),
+    })
+}
+
+async fn inspect_local_upload_source(source: &LocalTransferSource) -> Result<LocalUploadSource> {
+    let entry = source
+        .fs
+        .inspect(&source.path)
         .await
-        .with_context(|| format!("failed to read metadata for {}", local_path.display()))?;
-    let file_type = metadata.file_type();
+        .with_context(|| format!("failed to inspect local path {}", source.label))?;
 
-    if file_type.is_symlink() {
-        return Err(anyhow!(
+    match entry.kind {
+        LocalEntryKind::Symlink => Err(anyhow!(
             "refusing to upload symbolic link {}",
-            local_path.display()
-        ));
+            source.label
+        )),
+        LocalEntryKind::Directory => Ok(LocalUploadSource::Directory),
+        LocalEntryKind::File => Ok(LocalUploadSource::File {
+            len: entry.size.unwrap_or(0),
+        }),
+        LocalEntryKind::Other => Err(anyhow!(
+            "refusing to upload unsupported file type {}",
+            source.label
+        )),
     }
-    if file_type.is_dir() {
-        return Ok(LocalUploadSource::Directory);
-    }
-    if file_type.is_file() {
-        return Ok(LocalUploadSource::File {
-            len: metadata.len(),
-        });
-    }
-
-    Err(anyhow!(
-        "refusing to upload unsupported file type {}",
-        local_path.display()
-    ))
 }
 
 #[cfg(test)]
-async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
+async fn compute_local_directory_size(local_root: &std::path::Path) -> Result<u64> {
+    let fs = super::local::PathLocalFileSystem::new(local_root);
     let mut total = 0_u64;
-    let mut stack = vec![local_root.to_path_buf()];
+    let mut stack = vec![String::new()];
     while let Some(local_dir) = stack.pop() {
-        let mut entries = tokio::fs::read_dir(&local_dir)
-            .await
-            .with_context(|| format!("failed to read {}", local_dir.display()))?;
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .with_context(|| format!("failed to iterate {}", local_dir.display()))?
-        {
-            let local_child = entry.path();
-            match inspect_local_upload_source(&local_child).await? {
-                LocalUploadSource::Directory => stack.push(local_child),
-                LocalUploadSource::File { len } => total = total.saturating_add(len),
+        for entry in fs.list(&local_dir).await? {
+            validate_transfer_name(&entry.name)?;
+            let child = if local_dir.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{local_dir}/{}", entry.name)
+            };
+            match entry.kind {
+                LocalEntryKind::Directory => stack.push(child),
+                LocalEntryKind::File => total = total.saturating_add(entry.size.unwrap_or(0)),
+                LocalEntryKind::Symlink => {
+                    return Err(anyhow!("refusing to upload symbolic link {}", entry.name));
+                }
+                LocalEntryKind::Other => {
+                    return Err(anyhow!(
+                        "refusing to upload unsupported file type {}",
+                        entry.name
+                    ));
+                }
             }
         }
     }
@@ -578,7 +681,7 @@ async fn compute_local_directory_size(local_root: &Path) -> Result<u64> {
 
 fn upload_directory<'a, 'event>(
     sftp: &'a SftpSession,
-    local_dir: &'a Path,
+    source: &'a LocalTransferSource,
     remote_dir: &'a str,
     relative_dir: String,
     control: &'a TransferControl,
@@ -596,24 +699,20 @@ where
             return Ok(TransferOutcome::Cancelled);
         }
         if !matches!(
-            inspect_local_upload_source(local_dir).await?,
+            inspect_local_upload_source(source).await?,
             LocalUploadSource::Directory
         ) {
-            return Err(anyhow!(
-                "expected local upload directory {}",
-                local_dir.display()
-            ));
+            return Err(anyhow!("expected local upload directory {}", source.label));
         }
         let _ = sftp.create_dir(remote_dir.to_string()).await;
 
-        let mut entries = tokio::fs::read_dir(local_dir)
+        for entry in source
+            .fs
+            .list(&source.path)
             .await
-            .with_context(|| format!("failed to read {}", local_dir.display()))?;
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .with_context(|| format!("failed to iterate {}", local_dir.display()))?
+            .with_context(|| format!("failed to read {}", source.label))?
         {
+            validate_transfer_name(&entry.name)?;
             if matches!(
                 active_permit.wait_until_active(control).await?,
                 TransferControlState::Cancelled
@@ -621,12 +720,12 @@ where
                 return Ok(TransferOutcome::Cancelled);
             }
 
-            let local_child = entry.path();
-            let filename = entry.file_name().to_string_lossy().into_owned();
+            let filename = entry.name.clone();
+            let local_child = child_source(source, &filename);
             let remote_child = join_remote_path(remote_dir, &filename);
             let relative_child = join_remote_path(&relative_dir, &filename);
-            match inspect_local_upload_source(&local_child).await? {
-                LocalUploadSource::Directory => {
+            match entry.kind {
+                LocalEntryKind::Directory => {
                     if matches!(
                         upload_directory(
                             sftp,
@@ -643,8 +742,10 @@ where
                         return Ok(TransferOutcome::Cancelled);
                     }
                 }
-                LocalUploadSource::File { len } => {
-                    progress.begin_child(relative_child, Some(len)).await?;
+                LocalEntryKind::File => {
+                    progress
+                        .begin_child(relative_child, entry.size)
+                        .await?;
                     match upload_regular_file(
                         sftp,
                         &local_child,
@@ -666,11 +767,19 @@ where
                         }
                         Err(error) => {
                             let _ = progress
-                                .finish_child(SftpTransferChildState::Failed(error.to_string()))
+                                .finish_child(SftpTransferChildState::Failed(format!("{error:#}")))
                                 .await;
                             return Err(error);
                         }
                     }
+                }
+                LocalEntryKind::Symlink => {
+                    return Err(anyhow!("refusing to upload symbolic link {filename}"));
+                }
+                LocalEntryKind::Other => {
+                    return Err(anyhow!(
+                        "refusing to upload unsupported file type {filename}"
+                    ));
                 }
             }
         }
@@ -681,25 +790,24 @@ where
 
 async fn upload_regular_file(
     sftp: &SftpSession,
-    local_path: &Path,
+    source: &LocalTransferSource,
     remote_path: &str,
     control: &TransferControl,
     active_permit: &mut ActiveTransferPermit,
     progress: &mut TransferProgress<'_>,
 ) -> Result<TransferOutcome> {
     if !matches!(
-        inspect_local_upload_source(local_path).await?,
+        inspect_local_upload_source(source).await?,
         LocalUploadSource::File { .. }
     ) {
-        return Err(anyhow!(
-            "expected regular file for upload {}",
-            local_path.display()
-        ));
+        return Err(anyhow!("expected regular file for upload {}", source.label));
     }
 
-    let mut local_file = TokioFile::open(local_path)
+    let mut local_file = source
+        .fs
+        .open_read(&source.path)
         .await
-        .with_context(|| format!("failed to open {} for upload", local_path.display()))?;
+        .with_context(|| format!("failed to open {} for upload", source.label))?;
     let temporary_path = remote_temporary_path(remote_path, progress.transfer_id);
     let mut remote_file = sftp
         .open_with_flags(
@@ -722,7 +830,7 @@ async fn upload_regular_file(
             }
 
             let read = local_file.read(&mut buffer).await.with_context(|| {
-                format!("failed to read {} while uploading", local_path.display())
+                format!("failed to read {} while uploading", source.label)
             })?;
             if read == 0 {
                 break;
@@ -905,7 +1013,7 @@ async fn download_path(
     sftp: &SftpSession,
     transfer_id: TransferId,
     remote_path: &str,
-    local_path: &Path,
+    destination: &LocalTransferDestination,
     control: &TransferControl,
     active_permit: &mut ActiveTransferPermit,
     event_sender: &SftpEventSender,
@@ -929,7 +1037,7 @@ async fn download_path(
         download_directory(
             sftp,
             remote_path,
-            local_path,
+            destination,
             String::new(),
             control,
             active_permit,
@@ -950,7 +1058,7 @@ async fn download_path(
         download_regular_file(
             sftp,
             remote_path,
-            local_path,
+            destination,
             control,
             active_permit,
             &mut progress,
@@ -962,7 +1070,7 @@ async fn download_path(
 fn download_directory<'a, 'event>(
     sftp: &'a SftpSession,
     remote_dir: &'a str,
-    local_dir: &'a Path,
+    destination: &'a LocalTransferDestination,
     relative_dir: String,
     control: &'a TransferControl,
     active_permit: &'a mut ActiveTransferPermit,
@@ -978,9 +1086,11 @@ where
         ) {
             return Ok(TransferOutcome::Cancelled);
         }
-        tokio::fs::create_dir_all(local_dir)
+        destination
+            .fs
+            .create_dir_all(&destination.path)
             .await
-            .with_context(|| format!("failed to create {}", local_dir.display()))?;
+            .with_context(|| format!("failed to create {}", destination.label))?;
 
         for entry in sftp
             .read_dir(remote_dir)
@@ -996,8 +1106,9 @@ where
 
             let metadata = entry.metadata();
             let filename = entry.file_name();
+            validate_transfer_name(&filename)?;
             let remote_child = join_remote_path(remote_dir, &filename);
-            let local_child = local_dir.join(&filename);
+            let local_child = child_destination(destination, &filename);
             let relative_child = join_remote_path(&relative_dir, &filename);
             if metadata.is_dir() {
                 if matches!(
@@ -1040,7 +1151,7 @@ where
                 }
                 Err(error) => {
                     let _ = progress
-                        .finish_child(SftpTransferChildState::Failed(error.to_string()))
+                        .finish_child(SftpTransferChildState::Failed(format!("{error:#}")))
                         .await;
                     return Err(error);
                 }
@@ -1054,82 +1165,81 @@ where
 async fn download_regular_file(
     sftp: &SftpSession,
     remote_path: &str,
-    local_path: &Path,
+    destination: &LocalTransferDestination,
     control: &TransferControl,
     active_permit: &mut ActiveTransferPermit,
     progress: &mut TransferProgress<'_>,
 ) -> Result<TransferOutcome> {
-    if let Some(parent) = local_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
     let mut remote_file = sftp
         .open(remote_path.to_string())
         .await
         .with_context(|| format!("failed to open remote file {remote_path} for download"))?;
     let transfer_result = async {
-        let mut temporary_file = create_local_temporary_file(local_path)?;
+        let mut session: LocalWriteSession = destination
+            .fs
+            .begin_write(&destination.path)
+            .await
+            .with_context(|| format!("failed to open {} for download", destination.label))?;
         let mut buffer = vec![0; TRANSFER_CHUNK_SIZE];
-        loop {
+        // Every early exit below discards the incomplete document; only a
+        // successful commit publishes the download as finished.
+        let outcome: Result<TransferOutcome> = loop {
             if matches!(
                 active_permit.wait_until_active(control).await?,
                 TransferControlState::Cancelled
             ) {
-                let _ = temporary_file.file.shutdown().await;
-                return Ok(TransferOutcome::Cancelled);
+                break Ok(TransferOutcome::Cancelled);
             }
 
-            let read = remote_file
-                .read(&mut buffer)
-                .await
-                .with_context(|| format!("failed to read remote file {remote_path}"))?;
+            let read = match remote_file.read(&mut buffer).await {
+                Ok(read) => read,
+                Err(error) => {
+                    break Err(anyhow::Error::from(error)
+                        .context(format!("failed to read remote file {remote_path}")));
+                }
+            };
             if read == 0 {
-                break;
+                break Ok(TransferOutcome::Done);
             }
 
-            temporary_file
-                .file
-                .write_all(&buffer[..read])
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to write temporary file for {} while downloading",
-                        local_path.display()
-                    )
+            if let Err(error) = session.writer.write_all(&buffer[..read]).await {
+                break Err(anyhow::Error::from(error).context(format!(
+                    "failed to write {} while downloading",
+                    destination.label
+                )));
+            }
+
+            if let Err(error) = progress.advance(read as u64).await {
+                break Err(error);
+            }
+        };
+
+        match outcome {
+            Ok(TransferOutcome::Done) => {
+                if matches!(
+                    active_permit.wait_until_active(control).await?,
+                    TransferControlState::Cancelled
+                ) {
+                    session.discard().await;
+                    return Ok(TransferOutcome::Cancelled);
+                }
+                // The local backend only replaces an existing document after
+                // this commit succeeds, so a failed commit never looks like a
+                // finished download.
+                session.commit().await.with_context(|| {
+                    format!("failed to finalize downloaded file {}", destination.label)
                 })?;
-
-            progress.advance(read as u64).await?;
+                Ok(TransferOutcome::Done)
+            }
+            Ok(TransferOutcome::Cancelled) => {
+                session.discard().await;
+                Ok(TransferOutcome::Cancelled)
+            }
+            Err(error) => {
+                session.discard().await;
+                Err(error)
+            }
         }
-
-        temporary_file.file.flush().await.with_context(|| {
-            format!(
-                "failed to flush temporary file for {} after download",
-                local_path.display()
-            )
-        })?;
-        temporary_file.file.sync_all().await.with_context(|| {
-            format!(
-                "failed to sync temporary file for {} after download",
-                local_path.display()
-            )
-        })?;
-
-        if matches!(
-            active_permit.wait_until_active(control).await?,
-            TransferControlState::Cancelled
-        ) {
-            let _ = temporary_file.file.shutdown().await;
-            return Ok(TransferOutcome::Cancelled);
-        }
-
-        let LocalTemporaryFile { file, path } = temporary_file;
-        drop(file);
-        persist_local_temporary_file(path, local_path)?;
-        Ok(TransferOutcome::Done)
     }
     .await;
 
@@ -1154,35 +1264,6 @@ async fn download_regular_file(
     }
 }
 
-fn create_local_temporary_file(local_path: &Path) -> Result<LocalTemporaryFile> {
-    let parent = local_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let temporary = TempFileBuilder::new()
-        .prefix(TRANSFER_TEMP_PREFIX)
-        .suffix(TRANSFER_TEMP_SUFFIX)
-        .tempfile_in(parent)
-        .with_context(|| {
-            format!(
-                "failed to create temporary download file in {}",
-                parent.display()
-            )
-        })?;
-    let (file, path) = temporary.into_parts();
-    Ok(LocalTemporaryFile {
-        file: TokioFile::from_std(file),
-        path,
-    })
-}
-
-fn persist_local_temporary_file(temporary_path: TempPath, local_path: &Path) -> Result<()> {
-    temporary_path
-        .persist(local_path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("failed to atomically replace {}", local_path.display()))
-}
-
 async fn finish_transfer_task(
     event_sender: &SftpEventSender,
     progress_sender: &SftpProgressSender,
@@ -1200,7 +1281,7 @@ async fn finish_transfer_task(
             let _ = emit_transfer_cancelled(event_sender, transfer_id).await;
         }
         Err(error) => {
-            let _ = emit_transfer_failed(event_sender, transfer_id, error.to_string()).await;
+            let _ = emit_transfer_failed(event_sender, transfer_id, format!("{error:#}")).await;
         }
     }
 }
@@ -1333,6 +1414,7 @@ pub(super) async fn emit_error_with_path(
 mod tests {
     use super::*;
     use futures::StreamExt as _;
+    use std::path::Path;
     use std::sync::Mutex;
     use std::time::Duration;
     use tokio::time::timeout;
@@ -1973,12 +2055,12 @@ mod tests {
                 return;
             }
 
-            let error = inspect_local_upload_source(&selected)
+            let source = source_for_path(&selected).expect("build upload source");
+            let error = inspect_local_upload_source(&source)
                 .await
                 .expect_err("top-level directory symlink must be rejected");
             let message = format!("{error:#}");
             assert!(message.contains("symbolic link"));
-            assert!(message.contains(selected.to_string_lossy().as_ref()));
         });
     }
 
@@ -2005,7 +2087,7 @@ mod tests {
             .expect_err("file symlink must be rejected");
             let message = format!("{error:#}");
             assert!(message.contains("symbolic link"));
-            assert!(message.contains(link.to_string_lossy().as_ref()));
+            assert!(message.contains("secret-link.txt"));
         });
     }
 
@@ -2031,7 +2113,7 @@ mod tests {
             .expect_err("parent symlink cycle must be rejected");
             let message = format!("{error:#}");
             assert!(message.contains("symbolic link"));
-            assert!(message.contains(back.to_string_lossy().as_ref()));
+            assert!(message.contains("back"));
         });
     }
 
@@ -2284,27 +2366,23 @@ mod tests {
             let destination = directory.path().join("download.txt");
             std::fs::write(&destination, b"original").expect("write original file");
 
-            let mut temporary_file =
-                create_local_temporary_file(&destination).expect("create temporary file");
-            temporary_file
-                .file
+            let fs = crate::local::PathLocalFileSystem::new(directory.path());
+            let mut session = fs
+                .begin_write("download.txt")
+                .await
+                .expect("create temporary file");
+            session
+                .writer
                 .write_all(b"replacement")
                 .await
                 .expect("write replacement");
-            temporary_file
-                .file
-                .sync_all()
-                .await
-                .expect("sync replacement");
 
             assert_eq!(
-                std::fs::read(&destination).expect("read original before persist"),
+                std::fs::read(&destination).expect("read original before commit"),
                 b"original"
             );
 
-            let LocalTemporaryFile { file, path } = temporary_file;
-            drop(file);
-            persist_local_temporary_file(path, &destination).expect("persist replacement");
+            session.commit().await.expect("commit replacement");
             assert_eq!(
                 std::fs::read(&destination).expect("read replacement"),
                 b"replacement"
@@ -2313,28 +2391,34 @@ mod tests {
     }
 
     #[test]
-    fn dropping_local_temporary_download_preserves_destination_and_cleans_up() {
+    fn discarding_local_temporary_download_preserves_destination_and_cleans_up() {
         rt().block_on(async {
             let directory = tempfile::tempdir().expect("create test directory");
             let destination = directory.path().join("download.txt");
             std::fs::write(&destination, b"original").expect("write original file");
 
-            let mut temporary_file =
-                create_local_temporary_file(&destination).expect("create temporary file");
-            let temporary_path_buf = temporary_file.path.to_path_buf();
-            temporary_file
-                .file
+            let fs = crate::local::PathLocalFileSystem::new(directory.path());
+            let mut session = fs
+                .begin_write("download.txt")
+                .await
+                .expect("create temporary file");
+            session
+                .writer
                 .write_all(b"partial")
                 .await
                 .expect("write partial download");
 
-            drop(temporary_file);
+            session.discard().await;
 
             assert_eq!(
                 std::fs::read(&destination).expect("read preserved original"),
                 b"original"
             );
-            assert!(!temporary_path_buf.exists());
+            let entries: Vec<_> = std::fs::read_dir(directory.path())
+                .expect("list directory")
+                .map(|entry| entry.expect("entry").file_name())
+                .collect();
+            assert_eq!(entries.len(), 1, "temporary file must be removed: {entries:?}");
         });
     }
 }

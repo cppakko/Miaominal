@@ -333,7 +333,23 @@ impl SessionController {
                     log::debug!("ignoring port-forward notice in terminal event loop: {message}");
                     outcome.should_notify = false;
                 }
-                SessionEvent::HostKeyPrompt(prompt) => {
+                SessionEvent::PortForwardActive(binding) => {
+                    log::debug!(
+                        "ignoring port-forward binding in terminal event loop: {}:{}",
+                        binding.listen_host,
+                        binding.bound_port
+                    );
+                    outcome.should_notify = false;
+                }
+                SessionEvent::PortForwardFailed(failure) => {
+                    log::debug!(
+                        "ignoring port-forward failure in terminal event loop: {}",
+                        failure.message
+                    );
+                    outcome.should_notify = false;
+                }
+                SessionEvent::HostKeyPrompt(request) => {
+                    let prompt = request.prompt;
                     outcome.tab_status = Some(if prompt.previous_fingerprint.is_some() {
                         i18n::string("session.status.host_key_mismatch")
                     } else {
@@ -348,21 +364,36 @@ impl SessionController {
                             prompt.fingerprint
                         ));
                     }
+                    session.pending_host_key_request_id = request.request_id;
                     session.pending_host_key = Some(prompt);
                     if inactive_tab {
                         session.has_activity = true;
                     }
                 }
-                SessionEvent::KeyboardInteractivePrompt(challenge) => {
+                SessionEvent::KeyboardInteractivePrompt(request) => {
+                    let challenge = request.challenge;
                     outcome.tab_status = Some(if challenge.name.is_empty() {
                         i18n::string("prompts.authentication_challenge")
                     } else {
                         challenge.name.clone()
                     });
+                    session.pending_keyboard_interactive_request_id = request.request_id;
                     session.pending_keyboard_interactive = Some(challenge);
                     if inactive_tab {
                         session.has_activity = true;
                     }
+                }
+                SessionEvent::Phase(change) => {
+                    log::debug!(
+                        "session phase changed: {:?} ({:?})",
+                        change.phase,
+                        change.hop.as_ref().map(|hop| hop.label.as_str())
+                    );
+                    outcome.should_notify = false;
+                }
+                SessionEvent::RequestExpired { request_id } => {
+                    log::debug!("ignoring expired session answer for request {request_id}");
+                    outcome.should_notify = false;
                 }
                 SessionEvent::Exited { exit_code, signal } => {
                     terminal_port.close_session(tab_id);
@@ -567,7 +598,9 @@ mod tests {
                 bytes_in: 0,
                 bytes_out: 0,
                 pending_host_key: None,
+                pending_host_key_request_id: 0,
                 pending_keyboard_interactive: None,
+                pending_keyboard_interactive_request_id: 0,
                 reconnect_task: None,
                 reconnect_attempt: 0,
                 has_activity: false,
@@ -606,7 +639,9 @@ mod tests {
                 bytes_in: 0,
                 bytes_out: 0,
                 pending_host_key: None,
+                pending_host_key_request_id: 0,
                 pending_keyboard_interactive: None,
+                pending_keyboard_interactive_request_id: 0,
                 reconnect_task: None,
                 reconnect_attempt: 0,
                 has_activity: false,

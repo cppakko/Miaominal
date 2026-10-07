@@ -1226,6 +1226,7 @@ mod tests {
                     .remove(0),
                 state,
                 status_message: String::new(),
+                bound_port: None,
                 log: Vec::new(),
                 prompt: None,
                 revision: 1,
