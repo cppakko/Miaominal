@@ -1,0 +1,5 @@
+[bindings.kotlin]
+package_name = "dev.akko.miaominal.nativebridge"
+cdylib_name = "miaominal_android"
+android = true
+generate_immutable_records = true

@@ -1,0 +1,65 @@
+[package]
+name = "miaominal-android"
+version.workspace = true
+edition.workspace = true
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alacritty_terminal.workspace = true
+anyhow.workspace = true
+log.workspace = true
+miaominal-core = { path = "../miaominal-core" }
+miaominal-paths = { path = "../miaominal-paths" }
+miaominal-secrets = { path = "../miaominal-secrets", default-features = false, features = [
+    "mobile",
+] }
+miaominal-services = { path = "../miaominal-services", default-features = false, features = [
+    "mobile",
+] }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
+miaominal-ssh = { path = "../miaominal-ssh", default-features = false, features = [
+    "mobile",
+] }
+miaominal-storage = { path = "../miaominal-storage", default-features = false, features = [
+    "mobile",
+] }
+miaominal-sftp = { path = "../miaominal-sftp", default-features = false, features = [
+    "mobile",
+] }
+miaominal-sync = { path = "../miaominal-sync", default-features = false, features = [
+    "mobile",
+] }
+miaominal-terminal = { path = "../miaominal-terminal" }
+futures.workspace = true
+thiserror.workspace = true
+# Deliberately not inheriting the workspace feature set: the mobile runtime must
+# not pull in process spawning.
+tokio = { version = "1", features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+uniffi = { workspace = true, features = ["tokio"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The Windows branch of the descriptor helper only exists so the host test
+# suite can exercise the same ownership rules as Android.
+[target.'cfg(windows)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+rand.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

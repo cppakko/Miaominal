@@ -15,6 +15,7 @@ members = [
     ".",
     "crates/miaominal-core",
     "crates/miaominal-agent",
+    "crates/miaominal-android",
     "crates/miaominal-paths",
     "crates/miaominal-secrets",
     "crates/miaominal-services",
@@ -25,6 +26,7 @@ members = [
     "crates/miaominal-sync",
     "crates/miaominal-terminal",
     "crates/miaominal-ui",
+    "crates/miaominal-uniffi-bindgen",
 ]
 resolver = "3"
 
@@ -82,6 +84,7 @@ serde_json = "1"
 sha2 = "0.11"
 sys-locale = "0.3"
 tempfile = "3.27.0"
+thiserror = "2"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 tokio = { version = "1", features = [
     "fs",
@@ -95,6 +98,7 @@ tokio-socks = "0.5.2"
 toml = "1.1.2"
 tray-icon = { version = "0.24.2", default-features = false }
 unicode-segmentation = "1.13.3"
+uniffi = "0.32.1"
 uuid = { version = "1.23.4", features = ["v4"] }
 zeroize = "=1.8.2"
 winresource = "0.1"
@@ -219,3 +223,9 @@ libayatana-appindicator-gtk3 = "*"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+# Android release keeps line tables and symbol names so native crashes can be
+# symbolized (plan 4.3). Desktop release artifacts are unaffected.
+[profile.android-release]
+inherits = "release"
+debug = 1
