@@ -1,0 +1,35 @@
+# Miaominal release keep rules.
+#
+# UniFFI bindings talk to Rust through JNA:
+#   - `UniffiLib` is a com.sun.jna.Library proxy created by Native.load
+#   - PlatformHost callbacks are dispatched through com.sun.jna.Callback
+#   - DTOs/events extend com.sun.jna.Structure and are filled by field offsets,
+#     so their classes and fields must never be renamed or removed.
+-keep class dev.akko.miaominal.nativebridge.** { *; }
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.Structure { *; }
+-keepclassmembers class * implements com.sun.jna.Callback { *; }
+-keep class * implements dev.akko.miaominal.nativebridge.PlatformHost { *; }
+
+# JNA references desktop AWT/Swing types that do not exist on Android.
+-dontwarn java.awt.**
+-dontwarn javax.swing.**
+
+# WorkManager instantiates workers reflectively by class name.
+-keep class dev.akko.miaominal.data.SyncWorker { <init>(...); }
+
+# The release instrumentation smoke test resolves this by name when it runs
+# against the optimized APK.
+-keep class dev.akko.miaominal.data.AndroidPlatformHost { *; }
+
+# The minified androidTest APK shares library classes with the optimized app
+# but resolves them by the app's (unrenamed) names, so the runtime pieces the
+# test process needs must survive in the app APK as well.
+-keep class androidx.tracing.** { *; }
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+
+# Framework-instantiated manifest components.
+-keep class dev.akko.miaominal.MiaominalApplication { *; }
+-keep class dev.akko.miaominal.MainActivity { *; }
+-keep class dev.akko.miaominal.ConnectionService { *; }
