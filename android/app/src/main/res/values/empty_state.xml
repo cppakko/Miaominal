@@ -1,0 +1,4 @@
+<resources>
+    <string name="page_empty_title">暂无内容</string>
+    <string name="page_search_empty_hint">试试其他关键词，或清除搜索条件。</string>
+</resources>

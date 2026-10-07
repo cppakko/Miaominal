@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_change_password">Change master passphrase</string>
+    <string name="settings_current_password">Current master passphrase</string>
+    <string name="settings_new_password">New master passphrase</string>
+    <string name="settings_password_required">Enter a passphrase in this field</string>
+    <string name="settings_show_password">Show passphrases</string>
+    <string name="settings_discard_title">Discard unsubmitted changes?</string>
+    <string name="settings_discard">Discard changes</string>
+    <string name="settings_disable_vault_explanation">Credentials will move back to device secure storage and will no longer be protected by the vault master passphrase. Host configurations are kept.</string>
+    <string name="settings_import_steps">Choose source → Choose file → Review preview → Confirm import → Result</string>
+    <string name="settings_import_result">Imported %1$d hosts</string>
+    <string name="settings_done">Done</string>
+    <string name="settings_select_file">Choose configuration file</string>
+    <string name="settings_import_batch_hint">%1$d entries and %2$d warnings. Search filters the preview only.</string>
+    <string name="settings_preview_search">Find preview entries</string>
+    <string name="settings_confirm_batch">Import all %1$d hosts</string>
+    <string name="settings_preview_expired">This preview has expired. Read the file again and confirm the new preview.</string>
+    <string name="settings_reread_file">Read file again</string>
+    <string name="settings_import_all">All hosts in this preview will be imported, including entries hidden by search.</string>
+    <string name="settings_proxy_hint">Select an entry proxy in the host advanced configuration to use it for that host connection.</string>
+    <string name="settings_manage_proxies">Manage entry proxies</string>
+    <string name="settings_legacy_proxy">Legacy proxy address (retained data; unused by connections)</string>
+    <string name="settings_copy">Copy</string>
+    <string name="settings_notifications_allowed">Notifications allowed: background connection notifications are visible</string>
+    <string name="settings_notifications_denied">Notifications unavailable: the background service follows the current policy, but connection notifications may be hidden. Enable notifications in system settings.</string>
+    <string name="settings_system_settings">Open system notification settings</string>
+    <string name="settings_font_load_failed">Unable to read available fonts. Please retry.</string>
+    <string name="settings_retry">Retry</string>
+    <string name="settings_font_fallback">Font %1$s is unavailable. Display falls back to the system default; the saved choice is retained.</string>
+    <string name="settings_font_search">Search fonts</string>
+    <string name="settings_apply">Apply</string>
+    <string name="settings_undo">Undo</string>
+    <string name="settings_key_removed">Shortcut key removed</string>
+    <string name="settings_drag_keys">Long press and drag to reorder, or use the more menu</string>
+    <string name="settings_key_actions">More actions for %1$s</string>
+    <string name="settings_reset_keys">Restore default shortcut keys</string>
+    <string name="settings_reset_keys_hint">This will replace the current shortcut key list and order.</string>
+    <string name="settings_copy_versions">Copy version information</string>
+    <string name="settings_operation_complete">Operation completed</string>
+    <string name="settings_save_failed">Could not save. The previous selection has been restored. Please retry.</string>
+    <string name="settings_import_authorization">File authorization has expired. Choose the configuration file again.</string>
+    <string name="settings_import_read_error">Unable to read the configuration file. Choose a file again or retry.</string>
+    <string name="settings_import_credentials">Password included: %1$s; key passphrase included: %2$s; agent forwarding: %3$s</string>
+    <string name="settings_yes">Yes</string>
+    <string name="settings_no">No</string>
+</resources>

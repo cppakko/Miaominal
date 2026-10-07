@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="term_key_escape">Esc：取消输入法组合</string>
+    <string name="term_key_tab">Tab：补全命令</string>
+    <string name="term_key_interrupt">Ctrl+C：中断当前输入</string>
+    <string name="term_key_history_previous">上一条命令</string>
+    <string name="term_key_history_next">下一条命令</string>
+    <string name="term_key_left">光标左移</string>
+    <string name="term_key_right">光标右移</string>
+    <string name="term_key_home">光标移到开头</string>
+    <string name="term_key_end">光标移到结尾</string>
+    <string name="term_key_erase">Ctrl+U：删除光标前的输入</string>
+    <string name="term_key_clear">Ctrl+L：清空输出</string>
+    <string name="term_key_slash">输入斜杠</string>
+    <string name="term_key_pipe">输入管道符</string>
+    <string name="term_key_tilde">输入波浪号</string>
+    <string name="term_key_dash">输入连字符</string>
+    <string name="term_key_star">输入星号</string>
+    <string name="term_key_bang">输入感叹号</string>
+    <string name="term_key_page_up">PageUp：向上翻页</string>
+    <string name="term_key_page_down">PageDown：向下翻页</string>
+    <string name="term_font_smaller">缩小终端字号</string>
+    <string name="term_font_larger">放大终端字号</string>
+    <string name="term_keys_more">展开更多按键</string>
+    <string name="term_keys_less">收起更多按键</string>
+    <string name="term_scroll_bottom">回到底部</string>
+    <string name="setting_terminal_shortcuts">终端</string>
+    <string name="setting_terminal_shortcuts_desc">字体、排版和快捷键</string>
+    <string name="terminal_shortcuts_subtitle">自定义终端底部快捷栏。移出的按键仍可从“展开更多按键”中使用。</string>
+    <string name="terminal_shortcuts_preview">快捷栏预览</string>
+    <string name="terminal_shortcuts_preview_desc">终端中可左右滑动快捷栏，长按方向键可连续输入。</string>
+    <string name="terminal_shortcuts_quick_group">常驻按键与顺序</string>
+    <string name="terminal_shortcuts_more_group">更多按键</string>
+    <string name="terminal_shortcuts_more_desc">点按按键即可将它追加到常驻快捷栏末尾。</string>
+    <string name="terminal_shortcut_move_up">将 %1$s 向前移动</string>
+    <string name="terminal_shortcut_move_down">将 %1$s 向后移动</string>
+    <string name="terminal_shortcut_remove">从常驻快捷栏移除 %1$s</string>
+    <string name="terminal_shortcut_add">将 %1$s 添加到常驻快捷栏</string>
+    <string name="terminal_shortcuts_reset">恢复默认快捷栏</string>
+</resources>

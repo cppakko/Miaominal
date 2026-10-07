@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="explosion_loading">Splitting text…</string>
+    <string name="explosion_original">View original text</string>
+    <string name="explosion_all">Select all</string>
+    <string name="explosion_clear">Clear</string>
+    <string name="explosion_undo">Undo</string>
+    <string name="explosion_gesture_hint">Tap to select, hold and drag for multiple blocks</string>
+    <string name="explosion_selection_help">Selection help</string>
+    <string name="explosion_gesture_help">Tap a block to select or deselect it. Hold and drag across blocks to toggle their states: unselected blocks become selected, and selected blocks become unselected. Each block toggles only once per drag. Drag near a list edge to keep scrolling. One undo reverses an entire drag. Copied text keeps its original order and the formatting within consecutive selected blocks.</string>
+    <string name="explosion_no_tokens">No selectable text</string>
+    <string name="explosion_copy_return">Copy and return</string>
+    <string name="explosion_copy_keep">Copy and keep editing</string>
+    <string name="explosion_more">More text actions</string>
+    <string name="explosion_web_search">Search the web</string>
+    <string name="explosion_copy_failed">Could not copy. Try again.</string>
+    <string name="explosion_search_failed">Could not open search. Try again.</string>
+    <string name="explosion_share_failed">Could not open sharing. Try again.</string>
+</resources>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_change_password">更改主口令</string>
+    <string name="settings_current_password">当前主口令</string>
+    <string name="settings_new_password">新主口令</string>
+    <string name="settings_password_required">请填写此口令字段</string>
+    <string name="settings_show_password">显示口令</string>
+    <string name="settings_discard_title">放弃未提交的修改？</string>
+    <string name="settings_discard">放弃修改</string>
+    <string name="settings_disable_vault_explanation">凭据将迁回设备安全存储，不再由主口令保护机密库。主机配置会保留。</string>
+    <string name="settings_import_steps">选择来源 → 选择文件 → 检查完整预览 → 确认导入 → 结果</string>
+    <string name="settings_import_result">已导入 %1$d 个主机</string>
+    <string name="settings_done">完成</string>
+    <string name="settings_select_file">选择配置文件</string>
+    <string name="settings_import_batch_hint">共 %1$d 个条目、%2$d 条警告。搜索只筛选预览。</string>
+    <string name="settings_preview_search">查找预览条目</string>
+    <string name="settings_confirm_batch">导入全部 %1$d 个主机</string>
+    <string name="settings_preview_expired">此次预览已失效。请重新读取文件并再次确认。</string>
+    <string name="settings_reread_file">重新读取文件</string>
+    <string name="settings_import_all">将导入本次预览中的全部主机，包括搜索时隐藏的条目。</string>
+    <string name="settings_proxy_hint">入口代理需要在主机的高级配置中选用，才会用于该主机连接。</string>
+    <string name="settings_manage_proxies">管理入口代理</string>
+    <string name="settings_legacy_proxy">旧代理地址（仅保留数据，未用于连接）</string>
+    <string name="settings_copy">复制</string>
+    <string name="settings_notifications_allowed">通知已允许：后台连接通知可见</string>
+    <string name="settings_notifications_denied">通知未允许：后台服务继续按当前策略运行，但连接通知可能不可见。可在系统设置中开启通知。</string>
+    <string name="settings_system_settings">打开系统通知设置</string>
+    <string name="settings_font_load_failed">无法读取可用字体，请重试</string>
+    <string name="settings_retry">重试</string>
+    <string name="settings_font_fallback">字体 %1$s 当前不可用，实际显示回退到系统默认字体。已保留原配置。</string>
+    <string name="settings_font_search">搜索字体</string>
+    <string name="settings_apply">应用</string>
+    <string name="settings_undo">撤销</string>
+    <string name="settings_key_removed">已删除快捷键</string>
+    <string name="settings_drag_keys">长按拖动排序；更多菜单也可调整顺序</string>
+    <string name="settings_key_actions">%1$s 的更多操作</string>
+    <string name="settings_reset_keys">恢复默认快捷键</string>
+    <string name="settings_reset_keys_hint">将替换当前快捷键列表和顺序。</string>
+    <string name="settings_copy_versions">复制版本信息</string>
+    <string name="settings_operation_complete">操作完成</string>
+    <string name="settings_save_failed">保存失败，已恢复先前的选择。请重试。</string>
+    <string name="settings_import_authorization">文件授权已失效，请重新选择配置文件。</string>
+    <string name="settings_import_read_error">无法读取配置文件，请重新选择文件或重试。</string>
+    <string name="settings_import_credentials">含密码：%1$s；含密钥口令：%2$s；代理转发：%3$s</string>
+    <string name="settings_yes">是</string>
+    <string name="settings_no">否</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="keychain_managed_empty_title">No SSH keys yet</string>
+    <string name="keychain_agent_empty_title">No Agent identities</string>
+    <string name="keychain_search_empty_hint">Try a different name, algorithm or comment.</string>
+</resources>

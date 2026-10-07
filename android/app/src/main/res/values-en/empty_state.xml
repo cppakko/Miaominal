@@ -1,0 +1,4 @@
+<resources>
+    <string name="page_empty_title">Nothing here yet</string>
+    <string name="page_search_empty_hint">Try different keywords or clear your search.</string>
+</resources>

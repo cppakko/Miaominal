@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="term_key_escape">Esc: cancel input composition</string>
+    <string name="term_key_tab">Tab: complete command</string>
+    <string name="term_key_interrupt">Ctrl+C: interrupt current input</string>
+    <string name="term_key_history_previous">Previous command</string>
+    <string name="term_key_history_next">Next command</string>
+    <string name="term_key_left">Move cursor left</string>
+    <string name="term_key_right">Move cursor right</string>
+    <string name="term_key_home">Move cursor to start</string>
+    <string name="term_key_end">Move cursor to end</string>
+    <string name="term_key_erase">Ctrl+U: delete input before cursor</string>
+    <string name="term_key_clear">Ctrl+L: clear output</string>
+    <string name="term_key_slash">Insert slash</string>
+    <string name="term_key_pipe">Insert pipe</string>
+    <string name="term_key_tilde">Insert tilde</string>
+    <string name="term_key_dash">Insert hyphen</string>
+    <string name="term_key_star">Insert asterisk</string>
+    <string name="term_key_bang">Insert exclamation mark</string>
+    <string name="term_key_page_up">PageUp: scroll up</string>
+    <string name="term_key_page_down">PageDown: scroll down</string>
+    <string name="term_font_smaller">Decrease terminal font size</string>
+    <string name="term_font_larger">Increase terminal font size</string>
+    <string name="term_keys_more">Show more keys</string>
+    <string name="term_keys_less">Show fewer keys</string>
+    <string name="term_scroll_bottom">Scroll to bottom</string>
+    <string name="setting_terminal_shortcuts">Terminal</string>
+    <string name="setting_terminal_shortcuts_desc">Fonts, typography and shortcut keys</string>
+    <string name="terminal_shortcuts_subtitle">Customize the terminal shortcut bar. Removed keys remain available under “Show more keys.”</string>
+    <string name="terminal_shortcuts_preview">Shortcut bar preview</string>
+    <string name="terminal_shortcuts_preview_desc">Swipe the shortcut bar horizontally in a terminal. Hold arrow keys to repeat them.</string>
+    <string name="terminal_shortcuts_quick_group">Visible keys and order</string>
+    <string name="terminal_shortcuts_more_group">More keys</string>
+    <string name="terminal_shortcuts_more_desc">Tap a key to append it to the always-visible shortcut bar.</string>
+    <string name="terminal_shortcut_move_up">Move %1$s earlier</string>
+    <string name="terminal_shortcut_move_down">Move %1$s later</string>
+    <string name="terminal_shortcut_remove">Remove %1$s from the shortcut bar</string>
+    <string name="terminal_shortcut_add">Add %1$s to the shortcut bar</string>
+    <string name="terminal_shortcuts_reset">Restore default shortcut bar</string>
+</resources>

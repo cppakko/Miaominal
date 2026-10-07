@@ -1,0 +1,5 @@
+<resources>
+    <string name="keychain_managed_empty_title">还没有 SSH 密钥</string>
+    <string name="keychain_agent_empty_title">暂无 Agent 身份</string>
+    <string name="keychain_search_empty_hint">试试其他名称、算法或备注。</string>
+</resources>

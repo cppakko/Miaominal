@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Pure Material 3 theme (MDC-Android). DayNight handles system bar
+        appearance and window background in both modes; edge-to-edge in
+        MainActivity manages the insets themselves.
+    -->
+    <style name="Theme.Miaominal" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/miaominal_blue</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

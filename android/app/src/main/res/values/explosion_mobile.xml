@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="explosion_loading">正在拆分文本…</string>
+    <string name="explosion_original">查看原文</string>
+    <string name="explosion_all">全选</string>
+    <string name="explosion_clear">清空</string>
+    <string name="explosion_undo">撤销</string>
+    <string name="explosion_gesture_hint">点按选择，长按拖选</string>
+    <string name="explosion_selection_help">选择帮助</string>
+    <string name="explosion_gesture_help">点按文字块可选择或取消。长按拖过文字块会切换它的状态：未选中的会选中，已选中的会取消；同一次拖动中每块只切换一次。拖到列表边缘可继续滚动，一次拖选可一次撤销。复制时保留原文顺序和连续选中内容的格式。</string>
+    <string name="explosion_no_tokens">没有可选择的文字</string>
+    <string name="explosion_copy_return">复制并返回</string>
+    <string name="explosion_copy_keep">仅复制，保留页面</string>
+    <string name="explosion_more">更多文本操作</string>
+    <string name="explosion_web_search">网页搜索</string>
+    <string name="explosion_copy_failed">复制失败，请重试</string>
+    <string name="explosion_search_failed">无法打开搜索应用，请重试</string>
+    <string name="explosion_share_failed">无法打开分享面板，请重试</string>
+</resources>
