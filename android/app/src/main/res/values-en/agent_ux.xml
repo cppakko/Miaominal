@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agent_reconnecting">Reconnecting to this conversation…</string>
+    <string name="agent_reconnect_failed">Could not reconnect</string>
+    <string name="agent_leave_chat">Leave chat</string>
+    <string name="agent_end_title">End AI session?</string>
+    <string name="agent_end_detail">This ends the connection and clears the local chat cache, unsent draft, and file references. Remote history is kept.</string>
+    <string name="agent_other_host">Conversation on another host</string>
+    <string name="agent_history_failed">Could not load history</string>
+    <string name="agent_connected">Connected</string>
+    <string name="agent_disconnected">Disconnected</string>
+    <string name="agent_preferences">Model and reasoning</string>
+    <string name="agent_reference_count">Remote files %1$d/8</string>
+    <string name="agent_reference_help">References file paths on this host; does not upload phone files. Up to 8 files.</string>
+    <string name="agent_full_path">File path</string>
+    <string name="agent_copy">Copy</string>
+    <string name="agent_copied">Copied</string>
+    <string name="agent_details">View full content</string>
+    <string name="agent_collapse">Collapse</string>
+    <string name="agent_expand">Expand</string>
+    <string name="agent_tool_pending">Pending</string>
+    <string name="agent_tool_running">Running</string>
+    <string name="agent_tool_completed">Completed</string>
+    <string name="agent_tool_failed">Failed</string>
+    <string name="agent_tool_declined">Declined</string>
+    <string name="agent_submitting">Submitting…</string>
+    <string name="agent_submit_failed">Submission failed. Retry; your choices are preserved.</string>
+    <string name="agent_submit_retry">Retry submission</string>
+    <string name="agent_other_sessions">Choose another conversation</string>
+    <string name="agent_offline_draft">Offline — you can still edit your draft</string>
+    <string name="agent_search_models">Search models</string>
+    <string name="agent_current_selection">Selected</string>
+    <string name="agent_recent_history">Recent conversations</string>
+    <string name="agent_older_history">Older conversations</string>
+    <string name="agent_image_unavailable">Image preview is unavailable; copy the path to view it on the remote host.</string>
+    <string name="agent_events">Session events</string>
+    <string name="agent_changes_summary">%1$d lines added · %2$d lines removed</string>
+    <string name="agent_input_label">Message draft</string>
+    <string name="agent_reasoning_help">Higher reasoning usually takes longer. Available levels depend on the model.</string>
+    <string name="agent_today">Today</string>
+    <string name="agent_earlier">Earlier</string>
+    <string name="agent_no_required_answer">Choose or enter an answer first</string>
+    <string name="agent_allow_scope">Review the operation and permission scope before choosing.</string>
+    <string name="agent_close_detail">Close details</string>
+</resources>

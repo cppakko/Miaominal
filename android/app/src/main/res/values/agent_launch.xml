@@ -1,0 +1,7 @@
+<resources>
+    <string name="agent_launch_new">新建会话</string>
+    <string name="agent_launch_error_hint">暂时无法完成操作。请检查网络、主机连接及 AI 工具配置后重试。</string>
+    <string name="agent_launch_error_details">错误详情</string>
+    <string name="agent_launch_back_to_history">返回会话列表</string>
+    <string name="agent_launch_opening_history">正在打开会话…</string>
+</resources>

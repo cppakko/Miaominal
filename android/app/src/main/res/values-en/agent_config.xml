@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agent_config_title">AI configurations</string>
+    <string name="agent_config_description">Save endpoints, keys and models on your phone and supply them to the remote CLI. Stored locally, excluded from sync.</string>
+    <string name="agent_config_unavailable">AI configurations are unavailable</string>
+    <string name="agent_config_add">Add configuration</string>
+    <string name="agent_config_delete">Delete configuration</string>
+    <string name="agent_config_delete_detail">Delete “%1$s”? Existing sessions retain their startup configuration until closed.</string>
+    <string name="agent_config_cancel">Cancel</string>
+    <string name="agent_config_save">Save</string>
+    <string name="agent_config_retry">Retry</string>
+    <string name="agent_config_name">Configuration name</string>
+    <string name="agent_config_remote_url">Accessed by the remote machine; localhost refers to that machine. Include the provider’s required path, such as /v1.</string>
+    <string name="agent_config_key_keep">Leave blank to keep the saved key</string>
+    <string name="agent_config_key_hint">Encrypted on your phone and supplied to the remote machine when used</string>
+    <string name="agent_config_clear_key">Remove the saved key</string>
+    <string name="agent_config_missing_key">API key missing; cannot start yet</string>
+    <string name="agent_config_models">Models</string>
+    <string name="agent_config_model_id">Model ID</string>
+    <string name="agent_config_add_model">Add model</string>
+    <string name="agent_config_remove_model">Remove model</string>
+    <string name="agent_config_default_hint">The selected model is used for new and resumed sessions. Switch models in the chat.</string>
+    <string name="agent_config_next_connection">Changes apply to the next connection. Current sessions and reconnects retain their startup configuration.</string>
+    <string name="agent_config_remote">Use remote configuration</string>
+    <string name="agent_config_missing">Selected configuration no longer exists</string>
+    <string name="agent_config_manage">Manage</string>
+    <string name="agent_config_load_failed">Could not read AI configurations. Retry or check settings.</string>
+</resources>

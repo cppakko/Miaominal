@@ -1,0 +1,7 @@
+<resources>
+    <string name="agent_launch_new">New conversation</string>
+    <string name="agent_launch_error_hint">The operation could not be completed. Check your network, host connection and AI tool configuration, then try again.</string>
+    <string name="agent_launch_error_details">Error details</string>
+    <string name="agent_launch_back_to_history">Back to conversations</string>
+    <string name="agent_launch_opening_history">Opening conversation…</string>
+</resources>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agent_config_title">AI 配置</string>
+    <string name="agent_config_description">手机保存接口、密钥和模型，连接时提供给远端 CLI。仅保存在本机，不参与同步。</string>
+    <string name="agent_config_unavailable">AI 配置暂不可用</string>
+    <string name="agent_config_add">添加配置</string>
+    <string name="agent_config_delete">删除配置</string>
+    <string name="agent_config_delete_detail">删除“%1$s”？已有会话在关闭前继续使用启动时的配置。</string>
+    <string name="agent_config_cancel">取消</string>
+    <string name="agent_config_save">保存</string>
+    <string name="agent_config_retry">重试</string>
+    <string name="agent_config_name">配置名称</string>
+    <string name="agent_config_remote_url">此地址由目标机器访问，localhost 指目标机器。包含服务商要求的路径，例如 /v1。</string>
+    <string name="agent_config_key_keep">留空保留已保存的密钥</string>
+    <string name="agent_config_key_hint">密钥加密保存在手机，使用时会提供给目标机器</string>
+    <string name="agent_config_clear_key">删除已保存的密钥</string>
+    <string name="agent_config_missing_key">缺少 API Key，暂不能启动</string>
+    <string name="agent_config_models">模型列表</string>
+    <string name="agent_config_model_id">模型 ID</string>
+    <string name="agent_config_add_model">添加模型</string>
+    <string name="agent_config_remove_model">移除模型</string>
+    <string name="agent_config_default_hint">选中的模型用于新建和恢复会话，聊天时可切换。</string>
+    <string name="agent_config_next_connection">更改在下次建立连接时生效。当前会话及重连使用启动时的配置。</string>
+    <string name="agent_config_remote">使用远端配置</string>
+    <string name="agent_config_missing">所选配置已不存在</string>
+    <string name="agent_config_manage">管理配置</string>
+    <string name="agent_config_load_failed">无法读取 AI 配置，请重试或前往设置检查。</string>
+</resources>

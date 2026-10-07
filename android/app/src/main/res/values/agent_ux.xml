@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agent_reconnecting">正在重连当前会话…</string>
+    <string name="agent_reconnect_failed">重新连接失败</string>
+    <string name="agent_leave_chat">离开聊天</string>
+    <string name="agent_end_title">结束 AI 会话？</string>
+    <string name="agent_end_detail">将停止当前连接，并清除本地聊天缓存、未发送草稿及文件引用。远端历史不会删除。</string>
+    <string name="agent_other_host">另一台主机上的会话</string>
+    <string name="agent_history_failed">历史加载失败</string>
+    <string name="agent_connected">已连接</string>
+    <string name="agent_disconnected">已断联</string>
+    <string name="agent_preferences">模型与思考等级</string>
+    <string name="agent_reference_count">远端文件 %1$d/8</string>
+    <string name="agent_reference_help">仅引用当前主机上的文件路径，不上传手机文件。最多 8 个文件。</string>
+    <string name="agent_full_path">文件路径</string>
+    <string name="agent_copy">复制</string>
+    <string name="agent_copied">已复制</string>
+    <string name="agent_details">查看完整内容</string>
+    <string name="agent_collapse">收起</string>
+    <string name="agent_expand">展开</string>
+    <string name="agent_tool_pending">等待执行</string>
+    <string name="agent_tool_running">正在执行</string>
+    <string name="agent_tool_completed">已完成</string>
+    <string name="agent_tool_failed">执行失败</string>
+    <string name="agent_tool_declined">已拒绝</string>
+    <string name="agent_submitting">正在提交…</string>
+    <string name="agent_submit_failed">提交未成功，请重试；已保留你的选择。</string>
+    <string name="agent_submit_retry">重试提交</string>
+    <string name="agent_other_sessions">选择其他会话</string>
+    <string name="agent_offline_draft">连接已断开，仍可编辑草稿</string>
+    <string name="agent_search_models">搜索模型</string>
+    <string name="agent_current_selection">当前选择</string>
+    <string name="agent_recent_history">最近会话</string>
+    <string name="agent_older_history">较早会话</string>
+    <string name="agent_image_unavailable">图片预览暂不可用；可复制路径到远端查看。</string>
+    <string name="agent_events">会话事件</string>
+    <string name="agent_changes_summary">新增 %1$d 行 · 删除 %2$d 行</string>
+    <string name="agent_input_label">消息草稿</string>
+    <string name="agent_reasoning_help">较高的思考等级通常需要更长时间；可选等级由模型提供。</string>
+    <string name="agent_today">今天</string>
+    <string name="agent_earlier">更早</string>
+    <string name="agent_no_required_answer">请先填写或选择回答</string>
+    <string name="agent_allow_scope">请核对操作内容和授权范围后选择。</string>
+    <string name="agent_close_detail">关闭详情</string>
+</resources>
