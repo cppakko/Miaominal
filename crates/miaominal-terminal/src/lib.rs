@@ -10,7 +10,6 @@ use alacritty_terminal::term::{
     color::Colors,
 };
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
-use gpui_kit::{Font, FontFallbacks, Hsla, Rgba, font, rgb};
 pub use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +17,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+mod color;
 mod input;
 
+pub use color::TerminalColor;
 pub use input::{
-    SearchMatchKind, TerminalInputModes, TerminalKeyEvent, TerminalKeyPhase, TerminalNamedKey,
-    encode_terminal_input, encode_terminal_named_key, sanitize_paste,
+    SearchMatchKind, TerminalInputModes, TerminalKeyEvent, TerminalKeyPhase, TerminalKeyStroke,
+    TerminalModifiers, TerminalNamedKey, encode_terminal_input, encode_terminal_named_key,
+    sanitize_paste,
 };
 use miaominal_settings as settings;
 
@@ -73,25 +75,61 @@ pub const SCROLLBACK_LINES: usize = 10_000;
 const MIN_TERMINAL_TEXT_CONTRAST: f32 = 4.5;
 const CONTRAST_MIX_STEPS: usize = 8;
 
-pub fn terminal_font() -> Font {
-    let mut f = font(settings::terminal_font_family());
-    let fallbacks = settings::font_fallbacks();
-    if !fallbacks.is_empty() {
-        f.fallbacks = Some(FontFallbacks::from_fonts(fallbacks));
-    }
-    f
-}
-
-pub fn terminal_font_size() -> f32 {
-    settings::terminal_font_size()
-}
-
 pub fn terminal_line_height_default() -> f32 {
     settings::line_height_default()
 }
 
 pub fn terminal_cell_width_default() -> f32 {
     settings::cell_width_default()
+}
+
+/// Platform-neutral terminal palette.
+///
+/// The desktop UI keeps using the global settings theme by default; an embedded
+/// host (Android) installs a fixed theme from its own settings snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalTheme {
+    pub default_fg: u32,
+    pub default_bg: u32,
+    pub cursor: u32,
+    pub selection: u32,
+    pub ansi: [u32; 16],
+}
+
+impl TerminalTheme {
+    pub fn from_settings() -> Self {
+        let palette = settings::current_theme().terminal;
+        Self {
+            default_fg: palette.default_fg,
+            default_bg: palette.default_bg,
+            cursor: palette.cursor,
+            selection: palette.selection,
+            ansi: palette.ansi,
+        }
+    }
+}
+
+impl Default for TerminalTheme {
+    fn default() -> Self {
+        Self::from_settings()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThemeSource {
+    /// Follow the process-wide settings theme; the desktop behavior.
+    Settings,
+    /// A host-installed theme that does not depend on desktop settings.
+    Fixed(TerminalTheme),
+}
+
+impl ThemeSource {
+    fn resolve(self) -> TerminalTheme {
+        match self {
+            Self::Settings => TerminalTheme::from_settings(),
+            Self::Fixed(theme) => theme,
+        }
+    }
 }
 
 struct TerminalDimensions {
@@ -117,8 +155,8 @@ impl Dimensions for TerminalDimensions {
 pub struct TerminalCell {
     pub character: char,
     pub zero_width: Vec<char>,
-    pub fg: Hsla,
-    pub bg: Hsla,
+    pub fg: TerminalColor,
+    pub bg: TerminalColor,
     pub bold: bool,
     pub italic: bool,
     pub dim: bool,
@@ -132,7 +170,7 @@ pub struct TerminalCell {
 }
 
 impl TerminalCell {
-    pub fn blank(fg: Hsla, bg: Hsla) -> Self {
+    pub fn blank(fg: TerminalColor, bg: TerminalColor) -> Self {
         Self {
             character: ' ',
             zero_width: Vec::new(),
@@ -161,8 +199,8 @@ pub struct TerminalSnapshot {
     pub history_size: usize,
     pub cursor: TerminalCursorPosition,
     #[allow(dead_code)]
-    pub default_fg: Hsla,
-    pub default_bg: Hsla,
+    pub default_fg: TerminalColor,
+    pub default_bg: TerminalColor,
     pub focused_cursor: bool,
     #[allow(dead_code)]
     pub search_total: usize,
@@ -208,6 +246,16 @@ impl TerminalSelectionKind {
 pub enum TerminalSelectionPurpose {
     Copy,
     FreeType,
+}
+
+/// Selection range in viewport coordinates (`0` is the first visible row).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalSelectionViewport {
+    pub start_line: i32,
+    pub start_column: usize,
+    pub end_line: i32,
+    pub end_column: usize,
+    pub block: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +355,7 @@ struct TerminalShared {
     dirty_generation: AtomicU64,
     pending_inputs: AtomicU64,
     snapshot_cache: Mutex<Option<CachedTerminalSnapshot>>,
+    theme: Mutex<ThemeSource>,
 }
 
 struct CachedTerminalSnapshot {
@@ -326,14 +375,13 @@ struct TerminalPaletteKey {
 }
 
 impl TerminalPaletteKey {
-    fn current() -> Self {
-        let palette = settings::current_theme().terminal;
+    fn from_theme(theme: TerminalTheme) -> Self {
         Self {
-            default_fg: palette.default_fg,
-            default_bg: palette.default_bg,
-            cursor: palette.cursor,
-            selection: palette.selection,
-            ansi: palette.ansi,
+            default_fg: theme.default_fg,
+            default_bg: theme.default_bg,
+            cursor: theme.cursor,
+            selection: theme.selection,
+            ansi: theme.ansi,
         }
     }
 }
@@ -689,6 +737,27 @@ impl TerminalCore {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string()
+    }
+
+    /// Selection range in viewport coordinates plus the selection style.
+    pub fn selection_viewport_range(&self) -> Option<TerminalSelectionViewport> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        let offset = self.term.grid().display_offset() as i32;
+        Some(TerminalSelectionViewport {
+            start_line: range.start.line.0 + offset,
+            start_column: range.start.column.0,
+            end_line: range.end.line.0 + offset,
+            end_column: range.end.column.0,
+            block: range.is_block,
+        })
+    }
+
+    /// `(total, current)` for the active scrollback search.
+    pub fn search_status(&self) -> (usize, Option<usize>) {
+        match self.search.lock() {
+            Ok(search) => (search.matches.len(), search.current),
+            Err(_) => (0, None),
+        }
     }
 
     pub fn selection_purpose(&self) -> Option<TerminalSelectionPurpose> {
@@ -1270,11 +1339,11 @@ impl TerminalCore {
         self.scroll_to_display_offset(target);
     }
 
-    pub fn snapshot(&self, focused: bool) -> TerminalSnapshot {
+    pub fn snapshot(&self, focused: bool, theme: &TerminalTheme) -> TerminalSnapshot {
         let columns = self.columns;
         let screen_lines = self.screen_lines;
-        let default_fg = default_foreground();
-        let default_bg = default_background();
+        let default_fg = default_foreground(theme);
+        let default_bg = default_background(theme);
 
         let mut cells = (0..screen_lines)
             .map(|_| {
@@ -1340,6 +1409,7 @@ impl TerminalCore {
                 is_selected,
                 default_fg,
                 default_bg,
+                theme,
                 link,
             );
             cells[line_index][column] = cell;
@@ -1432,12 +1502,27 @@ fn search_match_display_offset(match_line: i32, screen_lines: usize, history_siz
 
 impl TerminalState {
     pub fn new(columns: usize, screen_lines: usize) -> Self {
+        Self::with_theme_source(columns, screen_lines, ThemeSource::Settings)
+    }
+
+    /// Create a terminal that uses a host-installed palette instead of the
+    /// process-wide desktop settings theme.
+    pub fn new_with_theme(columns: usize, screen_lines: usize, theme: TerminalTheme) -> Self {
+        Self::with_theme_source(columns, screen_lines, ThemeSource::Fixed(theme))
+    }
+
+    fn with_theme_source(
+        columns: usize,
+        screen_lines: usize,
+        theme: ThemeSource,
+    ) -> Self {
         let shared = Arc::new(TerminalShared {
             core: Mutex::new(TerminalCore::new(columns, screen_lines)),
             input_sequence: Mutex::new(()),
             dirty_generation: AtomicU64::new(0),
             pending_inputs: AtomicU64::new(0),
             snapshot_cache: Mutex::new(None),
+            theme: Mutex::new(theme),
         });
         let (sender, receiver) = mpsc::channel::<ParserInput>();
         let parser = Arc::new(ParserHandle { sender });
@@ -1449,6 +1534,47 @@ impl TerminalState {
             .expect("failed to spawn terminal parser thread");
 
         Self { shared, parser }
+    }
+
+    /// Update the palette used for future snapshots and invalidate the cache.
+    /// Returns `true` when the theme actually changed.
+    pub fn set_theme(&self, theme: TerminalTheme) -> bool {
+        let mut source = self
+            .shared
+            .theme
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let next = ThemeSource::Fixed(theme);
+        if *source == next {
+            return false;
+        }
+        *source = next;
+        drop(source);
+        self.mark_dirty_locked();
+        true
+    }
+
+    /// Return to the process-wide settings theme (desktop behavior).
+    pub fn use_settings_theme(&self) {
+        let mut source = self
+            .shared
+            .theme
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if matches!(*source, ThemeSource::Settings) {
+            return;
+        }
+        *source = ThemeSource::Settings;
+        drop(source);
+        self.mark_dirty_locked();
+    }
+
+    fn resolved_theme(&self) -> TerminalTheme {
+        self.shared
+            .theme
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .resolve()
     }
 
     pub fn generation(&self) -> u64 {
@@ -1464,31 +1590,24 @@ impl TerminalState {
     }
 
     pub fn push_bytes(&self, bytes: &[u8]) {
+        self.push_bytes_inner(bytes, false);
+    }
+
+    /// Push bytes and wait until the parser has consumed them.
+    ///
+    /// Responses generated by parsing (PtyWrite queries, OSC 52) are ready to
+    /// drain when this returns, so a host that must answer the remote does not
+    /// depend on a later output batch.
+    pub fn push_bytes_blocking(&self, bytes: &[u8]) {
+        self.push_bytes_inner(bytes, true);
+    }
+
+    fn push_bytes_inner(&self, bytes: &[u8], wait: bool) {
         if bytes.is_empty() {
             return;
         }
 
-        let _input_sequence = self
-            .shared
-            .input_sequence
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
-        let input = ParserInput {
-            bytes: bytes.to_vec(),
-            completion: None,
-        };
-        if let Err(error) = self.parser.sender.send(input) {
-            parse_input(&self.shared, error.0);
-        }
-    }
-
-    pub fn push_text(&self, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-
-        let (completion, completed) = mpsc::sync_channel(1);
+        let completion = wait.then(|| mpsc::sync_channel(1));
         {
             let _input_sequence = self
                 .shared
@@ -1497,14 +1616,20 @@ impl TerminalState {
                 .unwrap_or_else(|error| error.into_inner());
             self.shared.pending_inputs.fetch_add(1, Ordering::AcqRel);
             let input = ParserInput {
-                bytes: text.as_bytes().to_vec(),
-                completion: Some(completion),
+                bytes: bytes.to_vec(),
+                completion: completion.as_ref().map(|(sender, _)| sender.clone()),
             };
             if let Err(error) = self.parser.sender.send(input) {
                 parse_input(&self.shared, error.0);
             }
         }
-        let _ = completed.recv();
+        if let Some((_, completed)) = completion {
+            let _ = completed.recv();
+        }
+    }
+
+    pub fn push_text(&self, text: &str) {
+        self.push_bytes_blocking(text.as_bytes());
     }
 
     pub fn resize(&mut self, columns: usize, screen_lines: usize) -> bool {
@@ -1608,6 +1733,14 @@ impl TerminalState {
 
     pub fn selection_text(&self) -> Option<String> {
         self.with_core(TerminalCore::selection_text)
+    }
+
+    pub fn selection_viewport_range(&self) -> Option<TerminalSelectionViewport> {
+        self.with_core(TerminalCore::selection_viewport_range)
+    }
+
+    pub fn search_status(&self) -> (usize, Option<usize>) {
+        self.with_core(TerminalCore::search_status)
     }
 
     pub fn selection_purpose(&self) -> Option<TerminalSelectionPurpose> {
@@ -1743,7 +1876,8 @@ impl TerminalState {
     }
 
     pub fn snapshot(&self, focused: bool) -> Arc<TerminalSnapshot> {
-        let palette = TerminalPaletteKey::current();
+        let theme = self.resolved_theme();
+        let palette = TerminalPaletteKey::from_theme(theme);
         let core = self
             .shared
             .core
@@ -1764,7 +1898,7 @@ impl TerminalState {
             return cached.snapshot.clone();
         }
 
-        let snapshot = Arc::new(core.snapshot(focused));
+        let snapshot = Arc::new(core.snapshot(focused, &theme));
         *cache = Some(CachedTerminalSnapshot {
             generation,
             focused,
@@ -1865,23 +1999,24 @@ fn build_cell(
     colors: &Colors,
     is_cursor: bool,
     is_selected: bool,
-    default_fg: Hsla,
-    default_bg: Hsla,
+    default_fg: TerminalColor,
+    default_bg: TerminalColor,
+    theme: &TerminalTheme,
     link: Option<Arc<str>>,
 ) -> TerminalCell {
-    let mut fg = resolve_color(cell.fg, colors);
-    let mut bg = resolve_color(cell.bg, colors);
+    let mut fg = resolve_color(cell.fg, colors, theme);
+    let mut bg = resolve_color(cell.bg, colors, theme);
 
     if cell.flags.contains(Flags::INVERSE) {
         std::mem::swap(&mut fg, &mut bg);
     }
 
     if is_selected {
-        bg = rgba_to_hsla(rgb(settings::current_theme().terminal.selection));
+        bg = TerminalColor::from_hex(theme.selection);
     }
 
     if is_cursor {
-        let cursor_color = resolve_named_color(NamedColor::Cursor, colors);
+        let cursor_color = resolve_named_color(NamedColor::Cursor, colors, theme);
         bg = cursor_color;
         fg = default_bg;
     }
@@ -1920,14 +2055,14 @@ fn build_cell(
 }
 
 impl TerminalCell {
-    fn with_default_fg(mut self, default_fg: Hsla) -> Self {
+    fn with_default_fg(mut self, default_fg: TerminalColor) -> Self {
         if self.dim {
             self.fg = mix_with_default(self.fg, default_fg, 0.35);
         }
         self
     }
 
-    fn with_legible_foreground(mut self, default_fg: Hsla, default_bg: Hsla) -> Self {
+    fn with_legible_foreground(mut self, default_fg: TerminalColor, default_bg: TerminalColor) -> Self {
         self.fg = legible_foreground(self.fg, self.bg, default_fg, default_bg);
         self
     }
@@ -2045,23 +2180,20 @@ fn is_url_char(ch: char) -> bool {
     !ch.is_whitespace() && !matches!(ch, '"' | '<' | '>' | '`' | '{' | '}' | '|')
 }
 
-fn mix_with_default(color: Hsla, default: Hsla, amount: f32) -> Hsla {
+fn mix_with_default(color: TerminalColor, default: TerminalColor, amount: f32) -> TerminalColor {
     mix_colors(color, default, amount)
 }
 
-fn mix_colors(color: Hsla, target: Hsla, amount: f32) -> Hsla {
-    let color: Rgba = color.into();
-    let target: Rgba = target.into();
-    let mix = Rgba {
-        r: color.r + (target.r - color.r) * amount,
-        g: color.g + (target.g - color.g) * amount,
-        b: color.b + (target.b - color.b) * amount,
-        a: color.a,
-    };
-    rgba_to_hsla(mix)
+fn mix_colors(color: TerminalColor, target: TerminalColor, amount: f32) -> TerminalColor {
+    color.mix(target, amount)
 }
 
-fn legible_foreground(fg: Hsla, bg: Hsla, default_fg: Hsla, default_bg: Hsla) -> Hsla {
+fn legible_foreground(
+    fg: TerminalColor,
+    bg: TerminalColor,
+    default_fg: TerminalColor,
+    default_bg: TerminalColor,
+) -> TerminalColor {
     let current_ratio = contrast_ratio(fg, bg);
     if current_ratio >= MIN_TERMINAL_TEXT_CONTRAST {
         return fg;
@@ -2090,20 +2222,7 @@ fn legible_foreground(fg: Hsla, bg: Hsla, default_fg: Hsla, default_bg: Hsla) ->
         }
     }
 
-    let black = rgba_to_hsla(Rgba {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    });
-    let white = rgba_to_hsla(Rgba {
-        r: 1.0,
-        g: 1.0,
-        b: 1.0,
-        a: 1.0,
-    });
-
-    for candidate in [default_fg, default_bg, black, white] {
+    for candidate in [default_fg, default_bg, TerminalColor::BLACK, TerminalColor::WHITE] {
         let ratio = contrast_ratio(candidate, bg);
         if ratio > best_ratio {
             best = candidate;
@@ -2114,7 +2233,7 @@ fn legible_foreground(fg: Hsla, bg: Hsla, default_fg: Hsla, default_bg: Hsla) ->
     best
 }
 
-fn contrast_ratio(a: Hsla, b: Hsla) -> f32 {
+fn contrast_ratio(a: TerminalColor, b: TerminalColor) -> f32 {
     let a = relative_luminance(a);
     let b = relative_luminance(b);
     let lighter = a.max(b);
@@ -2122,8 +2241,7 @@ fn contrast_ratio(a: Hsla, b: Hsla) -> f32 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
-fn relative_luminance(color: Hsla) -> f32 {
-    let color: Rgba = color.into();
+fn relative_luminance(color: TerminalColor) -> f32 {
     0.2126 * linear_channel(color.r)
         + 0.7152 * linear_channel(color.g)
         + 0.0722 * linear_channel(color.b)
@@ -2137,47 +2255,46 @@ fn linear_channel(value: f32) -> f32 {
     }
 }
 
-fn resolve_color(color: Color, colors: &Colors) -> Hsla {
+fn resolve_color(color: Color, colors: &Colors, theme: &TerminalTheme) -> TerminalColor {
     match color {
-        Color::Named(named) => resolve_named_color(named, colors),
-        Color::Spec(rgb_value) => rgba_to_hsla(rgb_to_rgba(rgb_value)),
+        Color::Named(named) => resolve_named_color(named, colors, theme),
+        Color::Spec(rgb_value) => rgb_to_color(rgb_value),
         Color::Indexed(index) => {
             if let Some(rgb_value) = colors[index as usize] {
-                rgba_to_hsla(rgb_to_rgba(rgb_value))
+                rgb_to_color(rgb_value)
             } else {
-                rgba_to_hsla(rgb_to_rgba(indexed_color(index)))
+                rgb_to_color(indexed_color(index, theme))
             }
         }
     }
 }
 
-fn resolve_named_color(named: NamedColor, colors: &Colors) -> Hsla {
+fn resolve_named_color(named: NamedColor, colors: &Colors, theme: &TerminalTheme) -> TerminalColor {
     if let Some(rgb_value) = colors[named] {
-        return rgba_to_hsla(rgb_to_rgba(rgb_value));
+        return rgb_to_color(rgb_value);
     }
 
-    let palette = settings::current_theme().terminal;
-    let ansi = palette.ansi;
+    let ansi = theme.ansi;
     match named {
-        NamedColor::Foreground | NamedColor::BrightForeground => default_foreground(),
-        NamedColor::Background => default_background(),
-        NamedColor::Cursor => rgba_to_hsla(rgb(palette.cursor)),
-        NamedColor::Black => rgba_to_hsla(rgb(ansi[0])),
-        NamedColor::Red => rgba_to_hsla(rgb(ansi[1])),
-        NamedColor::Green => rgba_to_hsla(rgb(ansi[2])),
-        NamedColor::Yellow => rgba_to_hsla(rgb(ansi[3])),
-        NamedColor::Blue => rgba_to_hsla(rgb(ansi[4])),
-        NamedColor::Magenta => rgba_to_hsla(rgb(ansi[5])),
-        NamedColor::Cyan => rgba_to_hsla(rgb(ansi[6])),
-        NamedColor::White => rgba_to_hsla(rgb(ansi[7])),
-        NamedColor::BrightBlack => rgba_to_hsla(rgb(ansi[8])),
-        NamedColor::BrightRed => rgba_to_hsla(rgb(ansi[9])),
-        NamedColor::BrightGreen => rgba_to_hsla(rgb(ansi[10])),
-        NamedColor::BrightYellow => rgba_to_hsla(rgb(ansi[11])),
-        NamedColor::BrightBlue => rgba_to_hsla(rgb(ansi[12])),
-        NamedColor::BrightMagenta => rgba_to_hsla(rgb(ansi[13])),
-        NamedColor::BrightCyan => rgba_to_hsla(rgb(ansi[14])),
-        NamedColor::BrightWhite => rgba_to_hsla(rgb(ansi[15])),
+        NamedColor::Foreground | NamedColor::BrightForeground => default_foreground(theme),
+        NamedColor::Background => default_background(theme),
+        NamedColor::Cursor => TerminalColor::from_hex(theme.cursor),
+        NamedColor::Black => TerminalColor::from_hex(ansi[0]),
+        NamedColor::Red => TerminalColor::from_hex(ansi[1]),
+        NamedColor::Green => TerminalColor::from_hex(ansi[2]),
+        NamedColor::Yellow => TerminalColor::from_hex(ansi[3]),
+        NamedColor::Blue => TerminalColor::from_hex(ansi[4]),
+        NamedColor::Magenta => TerminalColor::from_hex(ansi[5]),
+        NamedColor::Cyan => TerminalColor::from_hex(ansi[6]),
+        NamedColor::White => TerminalColor::from_hex(ansi[7]),
+        NamedColor::BrightBlack => TerminalColor::from_hex(ansi[8]),
+        NamedColor::BrightRed => TerminalColor::from_hex(ansi[9]),
+        NamedColor::BrightGreen => TerminalColor::from_hex(ansi[10]),
+        NamedColor::BrightYellow => TerminalColor::from_hex(ansi[11]),
+        NamedColor::BrightBlue => TerminalColor::from_hex(ansi[12]),
+        NamedColor::BrightMagenta => TerminalColor::from_hex(ansi[13]),
+        NamedColor::BrightCyan => TerminalColor::from_hex(ansi[14]),
+        NamedColor::BrightWhite => TerminalColor::from_hex(ansi[15]),
         NamedColor::DimBlack => dim_color(ansi[0]),
         NamedColor::DimRed => dim_color(ansi[1]),
         NamedColor::DimGreen => dim_color(ansi[2]),
@@ -2186,15 +2303,14 @@ fn resolve_named_color(named: NamedColor, colors: &Colors) -> Hsla {
         NamedColor::DimMagenta => dim_color(ansi[5]),
         NamedColor::DimCyan => dim_color(ansi[6]),
         NamedColor::DimWhite => dim_color(ansi[7]),
-        NamedColor::DimForeground => dim_color(palette.default_fg),
+        NamedColor::DimForeground => dim_color(theme.default_fg),
     }
 }
 
-fn indexed_color(index: u8) -> Rgb {
+fn indexed_color(index: u8, theme: &TerminalTheme) -> Rgb {
     match index {
         0..=15 => {
-            let palette = settings::current_theme().terminal;
-            let [_, red, green, blue] = palette.ansi[index as usize].to_be_bytes();
+            let [_, red, green, blue] = theme.ansi[index as usize].to_be_bytes();
             Rgb {
                 r: red,
                 g: green,
@@ -2420,35 +2536,20 @@ fn cube_value(value: u8) -> u8 {
     if value == 0 { 0 } else { 55 + value * 40 }
 }
 
-fn dim_color(hex: u32) -> Hsla {
-    let color = rgb(hex);
-    rgba_to_hsla(Rgba {
-        r: color.r * 0.7,
-        g: color.g * 0.7,
-        b: color.b * 0.7,
-        a: color.a,
-    })
+fn dim_color(hex: u32) -> TerminalColor {
+    TerminalColor::from_hex(hex).dimmed(0.7)
 }
 
-pub fn default_foreground() -> Hsla {
-    rgba_to_hsla(rgb(settings::current_theme().terminal.default_fg))
+pub fn default_foreground(theme: &TerminalTheme) -> TerminalColor {
+    TerminalColor::from_hex(theme.default_fg)
 }
 
-pub fn default_background() -> Hsla {
-    rgba_to_hsla(rgb(settings::current_theme().terminal.default_bg))
+pub fn default_background(theme: &TerminalTheme) -> TerminalColor {
+    TerminalColor::from_hex(theme.default_bg)
 }
 
-fn rgb_to_rgba(rgb_value: Rgb) -> Rgba {
-    Rgba {
-        r: rgb_value.r as f32 / 255.0,
-        g: rgb_value.g as f32 / 255.0,
-        b: rgb_value.b as f32 / 255.0,
-        a: 1.0,
-    }
-}
-
-fn rgba_to_hsla(color: Rgba) -> Hsla {
-    color.into()
+fn rgb_to_color(rgb_value: Rgb) -> TerminalColor {
+    TerminalColor::from_rgb8(rgb_value.r, rgb_value.g, rgb_value.b)
 }
 
 #[cfg(test)]
@@ -2488,8 +2589,9 @@ mod tests {
 
     #[test]
     fn apply_detected_links_sets_link_on_visible_cells() {
-        let fg = default_foreground();
-        let bg = default_background();
+        let theme = TerminalTheme::from_settings();
+        let fg = default_foreground(&theme);
+        let bg = default_background(&theme);
         let mut row = "open http://example.test/path now"
             .chars()
             .map(|character| {
@@ -2573,19 +2675,19 @@ mod tests {
 
     #[test]
     fn legible_foreground_leaves_high_contrast_text_alone() {
-        let fg = rgba_to_hsla(rgb(0xe8eaed));
-        let bg = rgba_to_hsla(rgb(0x101418));
+        let fg = TerminalColor::from_hex(0xe8eaed);
+        let bg = TerminalColor::from_hex(0x101418);
         let adjusted = legible_foreground(fg, bg, fg, bg);
 
-        assert_rgba_close(adjusted, fg);
+        assert_color_close(adjusted, fg);
     }
 
     #[test]
     fn legible_foreground_repairs_low_contrast_ansi_blocks() {
-        let fg = rgba_to_hsla(rgb(0xa5f29f));
-        let bg = rgba_to_hsla(rgb(0x8ee58b));
-        let default_fg = rgba_to_hsla(rgb(0xece6df));
-        let default_bg = rgba_to_hsla(rgb(0x160f0b));
+        let fg = TerminalColor::from_hex(0xa5f29f);
+        let bg = TerminalColor::from_hex(0x8ee58b);
+        let default_fg = TerminalColor::from_hex(0xece6df);
+        let default_bg = TerminalColor::from_hex(0x160f0b);
 
         let adjusted = legible_foreground(fg, bg, default_fg, default_bg);
 
@@ -3074,12 +3176,34 @@ mod tests {
     }
 
     #[test]
+    fn set_theme_reports_changes_and_invalidates_snapshots() {
+        let initial = TerminalTheme::from_settings();
+        let terminal = TerminalState::new_with_theme(4, 2, initial);
+
+        let before = terminal.generation();
+        assert!(!terminal.set_theme(initial), "an unchanged theme is a no-op");
+        assert_eq!(terminal.generation(), before);
+
+        let next = TerminalTheme {
+            default_fg: initial.default_fg ^ 0x00ff_ff,
+            default_bg: initial.default_bg ^ 0x00ff_ff,
+            ..initial
+        };
+        assert!(terminal.set_theme(next), "a different theme reports a change");
+        assert!(terminal.generation() > before);
+
+        let snapshot = terminal.snapshot(false);
+        assert_eq!(snapshot.default_fg, TerminalColor::from_hex(next.default_fg));
+        assert_eq!(snapshot.default_bg, TerminalColor::from_hex(next.default_bg));
+    }
+
+    #[test]
     fn snapshot_cursor_position_does_not_depend_on_focus() {
         let mut core = TerminalCore::new(12, 3);
         core.push_bytes(b"\x1b[2;4H");
 
-        let focused = core.snapshot(true);
-        let unfocused = core.snapshot(false);
+        let focused = core.snapshot(true, &TerminalTheme::from_settings());
+        let unfocused = core.snapshot(false, &TerminalTheme::from_settings());
         let expected = TerminalCursorPosition {
             viewport_line: 1,
             column: 3,
@@ -3097,7 +3221,7 @@ mod tests {
         core.push_bytes(b"0\r\n1\r\n2\r\n3\r\n4\r\n5");
         core.scroll(TerminalScroll::Top);
 
-        let snapshot = core.snapshot(true);
+        let snapshot = core.snapshot(true, &TerminalTheme::from_settings());
 
         assert!(snapshot.display_offset > 0);
         assert!(snapshot.cursor.viewport_line >= snapshot.screen_lines as i32);
@@ -3327,7 +3451,7 @@ mod tests {
         let viewport_line = target.line.0 + core.display_offset() as i32;
         assert!((0..core.screen_lines() as i32).contains(&viewport_line));
 
-        let snapshot = core.snapshot(false);
+        let snapshot = core.snapshot(false, &TerminalTheme::from_settings());
         assert!(
             snapshot
                 .cells
@@ -3373,9 +3497,7 @@ mod tests {
         assert!(!terminal.has_pending_input(), "terminal parser timed out");
     }
 
-    fn assert_rgba_close(actual: Hsla, expected: Hsla) {
-        let actual: Rgba = actual.into();
-        let expected: Rgba = expected.into();
+    fn assert_color_close(actual: TerminalColor, expected: TerminalColor) {
         let delta = (actual.r - expected.r).abs()
             + (actual.g - expected.g).abs()
             + (actual.b - expected.b).abs()

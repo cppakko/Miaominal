@@ -5600,7 +5600,6 @@ name = "miaominal-terminal"
 version = "0.2.4"
 dependencies = [
  "alacritty_terminal",
- "gpui-kit",
  "miaominal-core",
  "miaominal-settings",
 ]

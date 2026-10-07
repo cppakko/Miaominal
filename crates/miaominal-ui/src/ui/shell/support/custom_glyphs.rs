@@ -1,5 +1,14 @@
-use gpui_kit::{Background, Bounds, Hsla, Pixels, Point, Window, fill, px, size};
-use miaominal_terminal::TerminalSnapshot;
+use gpui_kit::{Background, Bounds, Hsla, Pixels, Point, Rgba, Window, fill, px, size};
+use miaominal_terminal::{TerminalColor, TerminalSnapshot};
+
+fn terminal_hsla(color: TerminalColor) -> Hsla {
+    Hsla::from(Rgba {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: color.a,
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LineStyle {
@@ -63,9 +72,11 @@ pub(super) fn paint_custom_glyphs(
 
             let bounds = cell_bounds(origin, cell_width, line_height, col, row, scale);
             match glyph {
-                CustomGlyph::Box(glyph) => paint_box_glyph(glyph, bounds, cell.fg, scale, window),
+                CustomGlyph::Box(glyph) => {
+                    paint_box_glyph(glyph, bounds, terminal_hsla(cell.fg), scale, window)
+                }
                 CustomGlyph::Block(glyph) => {
-                    paint_block_glyph(glyph, bounds, cell.fg, scale, window)
+                    paint_block_glyph(glyph, bounds, terminal_hsla(cell.fg), scale, window)
                 }
             }
         }

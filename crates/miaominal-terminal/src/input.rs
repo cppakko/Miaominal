@@ -68,9 +68,48 @@ pub fn sanitize_paste(text: &str, bracketed: bool) -> Vec<u8> {
     }
 }
 
-/// Keyboard input encoding stays UI-agnostic: it only depends on `gpui`
-/// keystroke types plus terminal input mode values.
+/// Keyboard input encoding stays platform-agnostic: it only depends on the
+/// neutral key stroke type plus terminal input mode values.
 use std::borrow::Cow;
+
+/// Modifier state for one key stroke.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerminalModifiers {
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub platform: bool,
+    pub function: bool,
+}
+
+impl TerminalModifiers {
+    pub fn is_empty(self) -> bool {
+        !(self.control || self.alt || self.shift || self.platform || self.function)
+    }
+}
+
+/// Platform-neutral key stroke; hosts convert their native key event into this
+/// shape before calling [`encode_terminal_input`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TerminalKeyStroke {
+    pub modifiers: TerminalModifiers,
+    pub key: String,
+    pub key_char: Option<String>,
+}
+
+impl TerminalKeyStroke {
+    pub fn new(
+        modifiers: TerminalModifiers,
+        key: impl Into<String>,
+        key_char: Option<String>,
+    ) -> Self {
+        Self {
+            modifiers,
+            key: key.into(),
+            key_char,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalKeyPhase {
@@ -104,11 +143,11 @@ pub fn encode_terminal_named_key(
     key: TerminalNamedKey,
     input_modes: TerminalInputModes,
 ) -> Option<Vec<u8>> {
-    let keystroke = gpui_kit::Keystroke {
-        modifiers: gpui_kit::Modifiers::default(),
-        key: key.as_str().into(),
-        key_char: None,
-    };
+    let keystroke = TerminalKeyStroke::new(
+        TerminalModifiers::default(),
+        key.as_str(),
+        None,
+    );
     let mut bytes = encode_terminal_input(
         TerminalKeyEvent::new(&keystroke, TerminalKeyPhase::Press),
         input_modes,
@@ -124,12 +163,12 @@ pub fn encode_terminal_named_key(
 
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalKeyEvent<'a> {
-    pub keystroke: &'a gpui_kit::Keystroke,
+    pub keystroke: &'a TerminalKeyStroke,
     pub phase: TerminalKeyPhase,
 }
 
 impl<'a> TerminalKeyEvent<'a> {
-    pub fn new(keystroke: &'a gpui_kit::Keystroke, phase: TerminalKeyPhase) -> Self {
+    pub fn new(keystroke: &'a TerminalKeyStroke, phase: TerminalKeyPhase) -> Self {
         Self { keystroke, phase }
     }
 }
@@ -183,7 +222,7 @@ fn control_sequence(key: &str) -> Option<u8> {
     })
 }
 
-fn encode_text_input(keystroke: &gpui_kit::Keystroke) -> Option<Vec<u8>> {
+fn encode_text_input(keystroke: &TerminalKeyStroke) -> Option<Vec<u8>> {
     let mut bytes = match keystroke.key.as_str() {
         "space" => {
             if keystroke.modifiers.control {
@@ -224,7 +263,7 @@ fn encode_text_input(keystroke: &gpui_kit::Keystroke) -> Option<Vec<u8>> {
 }
 
 fn encode_named_key_normal(
-    keystroke: &gpui_kit::Keystroke,
+    keystroke: &TerminalKeyStroke,
     input_modes: TerminalInputModes,
 ) -> Option<Vec<u8>> {
     if keystroke.modifiers.platform {
@@ -806,7 +845,7 @@ fn associated_text<'a>(
     }
 }
 
-fn base_text_key_char(keystroke: &gpui_kit::Keystroke) -> Option<char> {
+fn base_text_key_char(keystroke: &TerminalKeyStroke) -> Option<char> {
     let actual_char = keystroke.key_char.as_deref()?.chars().next()?;
     if keystroke.key.chars().count() == 1 {
         let key_char = keystroke.key.chars().next()?;
@@ -822,7 +861,7 @@ fn base_text_key_char(keystroke: &gpui_kit::Keystroke) -> Option<char> {
     }
 }
 
-fn is_named_key_without_text(keystroke: &gpui_kit::Keystroke) -> bool {
+fn is_named_key_without_text(keystroke: &TerminalKeyStroke) -> bool {
     keystroke.key_char.is_none()
         && matches!(
             keystroke.key.as_str(),
@@ -983,7 +1022,7 @@ impl SequenceModifiers {
     }
 }
 
-fn sequence_modifiers(modifiers: gpui_kit::Modifiers) -> SequenceModifiers {
+fn sequence_modifiers(modifiers: TerminalModifiers) -> SequenceModifiers {
     let mut sequence_modifiers = SequenceModifiers::default();
     sequence_modifiers.set(SequenceModifier::Shift, modifiers.shift);
     sequence_modifiers.set(SequenceModifier::Alt, modifiers.alt);
@@ -1172,9 +1211,9 @@ mod tests {
         alt: bool,
         control: bool,
         platform: bool,
-    ) -> gpui_kit::Keystroke {
-        gpui_kit::Keystroke {
-            modifiers: gpui_kit::Modifiers {
+    ) -> TerminalKeyStroke {
+        TerminalKeyStroke {
+            modifiers: TerminalModifiers {
                 shift,
                 control,
                 alt,

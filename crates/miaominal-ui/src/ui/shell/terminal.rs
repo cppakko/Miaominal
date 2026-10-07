@@ -660,8 +660,9 @@ impl WorkspaceTerminalInputExt for AppView {
             return;
         }
 
+        let text_keystroke = terminal_key_stroke(&event.keystroke);
         let key_event = TerminalKeyEvent::new(
-            &event.keystroke,
+            &text_keystroke,
             if event.is_held {
                 TerminalKeyPhase::Repeat
             } else {
@@ -763,7 +764,8 @@ impl WorkspaceTerminalInputExt for AppView {
             }
             return;
         };
-        let key_event = TerminalKeyEvent::new(&event.keystroke, TerminalKeyPhase::Release);
+        let text_keystroke = terminal_key_stroke(&event.keystroke);
+        let key_event = TerminalKeyEvent::new(&text_keystroke, TerminalKeyPhase::Release);
         let Some(action) = classify_terminal_key(key_event, input_modes) else {
             if should_preserve_focus {
                 window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);

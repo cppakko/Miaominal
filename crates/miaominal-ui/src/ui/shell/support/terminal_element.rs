@@ -4,13 +4,13 @@ use crate::ui::shell::{
 };
 use alacritty_terminal::index::Side;
 use gpui_kit::{
-    Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, FontStyle, FontWeight, Hsla,
-    InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
-    StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
-    Window, canvas, fill, px, quad, rgba, size,
+    Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, Font, FontFallbacks,
+    FontStyle, FontWeight, Hsla, InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, Render, Rgba, SharedString, StrikethroughStyle, Styled, TextAlign, TextRun,
+    UTF16Selection, UnderlineStyle, WeakEntity, Window, canvas, fill, font, px, quad, rgba, size,
 };
 use miaominal_terminal::{
-    SearchMatchKind, TerminalFreeTypeTarget, TerminalSnapshot, terminal_font, terminal_font_size,
+    SearchMatchKind, TerminalColor, TerminalFreeTypeTarget, TerminalSnapshot,
 };
 use std::{
     collections::hash_map::DefaultHasher,
@@ -22,6 +22,34 @@ use std::{
 const TERMINAL_SCROLLBAR_TRACK_WIDTH: f32 = 6.0;
 const TERMINAL_SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 20.0;
 const TERMINAL_FREE_TYPE_DROP_LINE_ALPHA: f32 = 0.08;
+
+/// Desktop terminal font; the shared terminal crate no longer constructs GPUI
+/// fonts, so the selection lives with the renderer.
+pub(in crate::ui::shell) fn terminal_font() -> Font {
+    let mut f = font(miaominal_settings::terminal_font_family());
+    let fallbacks = miaominal_settings::font_fallbacks();
+    if !fallbacks.is_empty() {
+        f.fallbacks = Some(FontFallbacks::from_fonts(fallbacks));
+    }
+    f
+}
+
+pub(in crate::ui::shell) fn terminal_font_size() -> f32 {
+    miaominal_settings::terminal_font_size()
+}
+
+fn terminal_rgba(color: TerminalColor) -> Rgba {
+    Rgba {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: color.a,
+    }
+}
+
+fn terminal_hsla(color: TerminalColor) -> Hsla {
+    Hsla::from(terminal_rgba(color))
+}
 
 pub(in crate::ui::shell) struct TerminalCanvasPrepaint {
     snapshot: Arc<TerminalSnapshot>,
@@ -521,7 +549,7 @@ fn paint_snapshot(
     let font_size = px(terminal_font_size());
     let cursor_unfocused = !snapshot.focused_cursor;
 
-    window.paint_quad(fill(bounds, Background::from(snapshot.default_bg)));
+    window.paint_quad(fill(bounds, Background::from(terminal_rgba(snapshot.default_bg))));
     if let Some(target) = drop_target {
         paint_free_type_drop_line_highlight(
             snapshot,
@@ -608,7 +636,7 @@ fn paint_free_type_drop_line_highlight(
     );
     let color = Hsla {
         a: TERMINAL_FREE_TYPE_DROP_LINE_ALPHA,
-        ..snapshot.default_fg
+        ..terminal_hsla(snapshot.default_fg)
     };
     window.paint_quad(fill(bounds, Background::from(color)));
 }
@@ -653,7 +681,7 @@ fn paint_free_type_drop_caret(
         },
         size: size(caret_width, line_height),
     };
-    window.paint_quad(fill(caret_bounds, Background::from(snapshot.default_fg)));
+    window.paint_quad(fill(caret_bounds, Background::from(terminal_rgba(snapshot.default_fg))));
 }
 
 fn paint_backgrounds(
@@ -702,7 +730,7 @@ fn paint_backgrounds(
                 row,
                 scale_factor,
             );
-            window.paint_quad(fill(bounds, Background::from(cell.bg)));
+            window.paint_quad(fill(bounds, Background::from(terminal_rgba(cell.bg))));
 
             col += span;
         }
@@ -796,7 +824,7 @@ fn paint_unfocused_cursor(
             );
             window.paint_quad(gpui_kit::outline(
                 bounds,
-                cell.bg,
+                terminal_hsla(cell.bg),
                 gpui_kit::BorderStyle::Solid,
             ));
         }
@@ -928,7 +956,7 @@ fn build_line_shape_key_and_runs(
 
         let underline = if cell.underline || hover_underline {
             Some(UnderlineStyle {
-                color: Some(cell.fg),
+                color: Some(terminal_hsla(cell.fg)),
                 thickness: px(1.0),
                 wavy: false,
             })
@@ -938,7 +966,7 @@ fn build_line_shape_key_and_runs(
 
         let strikethrough = if cell.strikethrough {
             Some(StrikethroughStyle {
-                color: Some(cell.fg),
+                color: Some(terminal_hsla(cell.fg)),
                 thickness: px(1.0),
             })
         } else {
@@ -948,7 +976,7 @@ fn build_line_shape_key_and_runs(
         let run = TextRun {
             len,
             font,
-            color: cell.fg,
+            color: terminal_hsla(cell.fg),
             background_color: None,
             underline,
             strikethrough,
@@ -1048,7 +1076,13 @@ fn paint_scrollbar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_terminal::{TerminalCursorPosition, default_background, default_foreground};
+    use miaominal_terminal::{
+        TerminalCursorPosition, TerminalTheme, default_background, default_foreground,
+    };
+
+    fn test_theme() -> TerminalTheme {
+        TerminalTheme::from_settings()
+    }
 
     fn test_bounds(height: f32) -> Bounds<Pixels> {
         Bounds {
@@ -1066,8 +1100,9 @@ mod tests {
         columns: usize,
         screen_lines: usize,
     ) -> TerminalSnapshot {
-        let fg = default_foreground();
-        let bg = default_background();
+        let theme = test_theme();
+        let fg = default_foreground(&theme);
+        let bg = default_background(&theme);
         TerminalSnapshot {
             cells: (0..screen_lines)
                 .map(|_| {
@@ -1187,8 +1222,9 @@ mod tests {
 
     #[test]
     fn hovered_link_range_stays_on_hovered_run_only() {
-        let fg = default_foreground();
-        let bg = default_background();
+        let theme = test_theme();
+        let fg = default_foreground(&theme);
+        let bg = default_background(&theme);
         let mut cells = "a link b link"
             .chars()
             .map(|character| {
@@ -1218,8 +1254,9 @@ mod tests {
 
     #[test]
     fn custom_glyphs_are_suppressed_from_text() {
-        let fg = default_foreground();
-        let bg = default_background();
+        let theme = test_theme();
+        let fg = default_foreground(&theme);
+        let bg = default_background(&theme);
         let cells = ['a', '\u{2502}', 'b', '\u{2551}', 'c', '\u{2588}']
             .into_iter()
             .map(|character| {
@@ -1236,8 +1273,9 @@ mod tests {
 
     #[test]
     fn shape_key_text_len_matches_materialized_text() {
-        let fg = default_foreground();
-        let bg = default_background();
+        let theme = test_theme();
+        let fg = default_foreground(&theme);
+        let bg = default_background(&theme);
         let mut cells = ['a', '你', 'b']
             .into_iter()
             .map(|character| {

@@ -1,12 +1,46 @@
 use super::super::workspace::SplitDirection;
 use super::super::*;
+use super::terminal_element::{terminal_font, terminal_font_size};
 use miaominal_terminal as terminal;
 use miaominal_terminal::{
-    TerminalInputModes, TerminalScroll, terminal_cell_width_default, terminal_font,
-    terminal_font_size, terminal_line_height_default,
+    TerminalInputModes, TerminalScroll, terminal_cell_width_default, terminal_line_height_default,
 };
 
-pub(in crate::ui::shell) use miaominal_terminal::{TerminalKeyEvent, TerminalKeyPhase};
+pub(in crate::ui::shell) use miaominal_terminal::{
+    TerminalKeyEvent, TerminalKeyStroke, TerminalKeyPhase, TerminalModifiers,
+};
+
+/// Convert a GPUI keystroke into the platform-neutral terminal key stroke.
+pub(in crate::ui::shell) fn terminal_key_stroke(
+    keystroke: &gpui_kit::Keystroke,
+) -> TerminalKeyStroke {
+    TerminalKeyStroke {
+        modifiers: TerminalModifiers {
+            control: keystroke.modifiers.control,
+            alt: keystroke.modifiers.alt,
+            shift: keystroke.modifiers.shift,
+            platform: keystroke.modifiers.platform,
+            function: keystroke.modifiers.function,
+        },
+        key: keystroke.key.clone(),
+        key_char: keystroke.key_char.clone(),
+    }
+}
+
+/// Convert the neutral key stroke back for settings key-binding matching.
+fn gpui_keystroke(keystroke: &TerminalKeyStroke) -> gpui_kit::Keystroke {
+    gpui_kit::Keystroke {
+        modifiers: gpui_kit::Modifiers {
+            control: keystroke.modifiers.control,
+            alt: keystroke.modifiers.alt,
+            shift: keystroke.modifiers.shift,
+            platform: keystroke.modifiers.platform,
+            function: keystroke.modifiers.function,
+        },
+        key: keystroke.key.clone(),
+        key_char: keystroke.key_char.clone(),
+    }
+}
 
 pub(in crate::ui::shell) enum TerminalKeyAction {
     Bytes(Vec<u8>),
@@ -72,22 +106,23 @@ pub(in crate::ui::shell) fn classify_terminal_key(
 
     if event.phase == TerminalKeyPhase::Press {
         let bindings = miaominal_settings::current_settings().key_bindings;
-        if bindings.copy.matches_keystroke(keystroke) {
+        let settings_keystroke = gpui_keystroke(keystroke);
+        if bindings.copy.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::Copy);
         }
-        if bindings.paste.matches_keystroke(keystroke) {
+        if bindings.paste.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::Paste);
         }
-        if bindings.search.matches_keystroke(keystroke) {
+        if bindings.search.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::OpenSearch);
         }
-        if bindings.split_right.matches_keystroke(keystroke) {
+        if bindings.split_right.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::Split(SplitDirection::Right));
         }
-        if bindings.split_down.matches_keystroke(keystroke) {
+        if bindings.split_down.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::Split(SplitDirection::Down));
         }
-        if bindings.close_pane.matches_keystroke(keystroke) {
+        if bindings.close_pane.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::ClosePane);
         }
     }

@@ -183,7 +183,8 @@ use support::{
     render_rounded_prompt_overlay, render_terminal_canvas_for_pane,
     set_code_editor_input_placeholder, set_editor_value, set_input_placeholder, set_input_value,
     set_textarea_placeholder, set_textarea_value, short_feedback_animation, terminal_cell_width,
-    terminal_line_height, terminal_scrollbar_metrics, terminal_scrollbar_offset_for_pointer,
+    terminal_key_stroke, terminal_line_height, terminal_scrollbar_metrics,
+    terminal_scrollbar_offset_for_pointer,
 };
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui_kit::Rgba {

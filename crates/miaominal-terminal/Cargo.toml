@@ -6,6 +6,5 @@ publish = false
 
 [dependencies]
 alacritty_terminal.workspace = true
-gpui-kit.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-settings = { path = "../miaominal-settings", default-features = false }
