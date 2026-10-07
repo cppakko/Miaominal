@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+#[cfg(not(target_os = "android"))]
 use fs2::FileExt as _;
 use miaominal_paths::{self as paths, atomic_write};
 use miaominal_settings::{AppSettings, CURRENT_ONBOARDING_VERSION, changed, install};
@@ -211,6 +212,10 @@ impl SettingsFileLock {
             .write(true)
             .open(&lock_path)
             .with_context(|| format!("failed to open {}", lock_path.display()))?;
+        // Android's libc does not provide `flock`. The embedded mobile runtime
+        // owns its business root exclusively (one process, serialized writes),
+        // so the in-process guard is sufficient there.
+        #[cfg(not(target_os = "android"))]
         file.lock_exclusive()
             .with_context(|| format!("failed to lock {}", lock_path.display()))?;
         Ok(Self { file })
@@ -219,7 +224,10 @@ impl SettingsFileLock {
 
 impl Drop for SettingsFileLock {
     fn drop(&mut self) {
+        #[cfg(not(target_os = "android"))]
         let _ = fs2::FileExt::unlock(&self.file);
+        #[cfg(target_os = "android")]
+        let _ = &self.file;
     }
 }
 

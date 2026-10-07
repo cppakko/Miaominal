@@ -119,6 +119,7 @@ pub struct SyncEngine {
     pub last_capability_report: Option<CapabilityReport>,
 }
 
+#[cfg(feature = "desktop")]
 impl Default for SyncEngine {
     fn default() -> Self {
         Self::new()
@@ -135,6 +136,8 @@ impl Clone for SyncEngine {
 }
 
 impl SyncEngine {
+    /// Desktop constructor: the operating-system keyring holds sync secrets.
+    #[cfg(feature = "desktop")]
     pub fn new() -> Self {
         let config_store = SyncConfigStore::load().unwrap_or_else(|err| {
             log::warn!("failed to load sync config: {err:?}");
@@ -146,6 +149,7 @@ impl SyncEngine {
         }
     }
 
+    #[cfg(feature = "desktop")]
     pub fn new_locked_vault() -> Self {
         let config_store = SyncConfigStore::load_with_locked_vault().unwrap_or_else(|err| {
             log::warn!("failed to load locked vault sync config: {err:?}");

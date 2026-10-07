@@ -351,6 +351,7 @@ migration_cleanup_warning = "新数据目录已经启用，但旧目录暂时无
 
 [settings.about.data_directory.errors]
 portable_mode = "Portable 模式的数据目录固定在应用程序旁，无法另行修改。"
+embedded_mode = "当前构建在启动时固定数据目录，无法在此修改。"
 runtime_unavailable = "当前数据目录信息不可用。请重启 Miaominal 后重试。"
 target_unavailable = "无法访问所选文件夹。请确认文件夹仍然存在，并检查访问权限。"
 target_unsafe_link = "符号链接和目录 Junction 不能用作数据目录。"

@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+default = ["desktop"]
+desktop = ["miaominal-secrets/desktop", "miaominal-storage/desktop"]
+mobile = ["miaominal-secrets/mobile", "miaominal-storage/mobile"]
+
 [dependencies]
 aes-gcm.workspace = true
 anyhow.workspace = true
@@ -12,9 +17,9 @@ base64.workspace = true
 log.workspace = true
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
-miaominal-secrets = { path = "../miaominal-secrets" }
+miaominal-secrets = { path = "../miaominal-secrets", default-features = false }
 miaominal-settings = { path = "../miaominal-settings", default-features = false }
-miaominal-storage = { path = "../miaominal-storage" }
+miaominal-storage = { path = "../miaominal-storage", default-features = false }
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true

@@ -1,13 +1,18 @@
+#[cfg(feature = "desktop")]
 #[path = "services/agent_service.rs"]
 mod agent_service;
+#[cfg(feature = "desktop")]
 #[path = "services/app_services.rs"]
 mod app_services;
+#[cfg(feature = "desktop")]
 #[path = "services/auto_sync.rs"]
 mod auto_sync;
+#[cfg(feature = "desktop")]
 #[path = "services/chat_service.rs"]
 mod chat_service;
 #[path = "services/keychain_service.rs"]
 mod keychain_service;
+#[cfg(feature = "desktop")]
 #[path = "services/openssh_integration_service.rs"]
 mod openssh_integration_service;
 #[path = "services/port_forward_manager.rs"]
@@ -16,24 +21,33 @@ mod port_forward_manager;
 mod profile_service;
 #[path = "services/proxy_service.rs"]
 mod proxy_service;
+#[cfg(feature = "desktop")]
 #[path = "services/settings_service.rs"]
 mod settings_service;
 #[path = "services/sftp_service.rs"]
 mod sftp_service;
+#[cfg(feature = "desktop")]
 #[path = "services/ssh_bridge_service.rs"]
 mod ssh_bridge_service;
+#[cfg(any(feature = "desktop", feature = "mobile"))]
 #[path = "services/sync_executor.rs"]
 mod sync_executor;
+#[cfg(any(feature = "desktop", feature = "mobile"))]
 #[path = "services/sync_service.rs"]
 mod sync_service;
 #[path = "services/terminal_service.rs"]
 mod terminal_service;
 
+#[cfg(feature = "desktop")]
 pub use agent_service::AgentService;
+#[cfg(feature = "desktop")]
 pub use app_services::{AppServices, LoadedAppData};
+#[cfg(feature = "desktop")]
 pub use auto_sync::{AutoSyncIntervention, AutoSyncPhase, AutoSyncService, AutoSyncSnapshot};
+#[cfg(feature = "desktop")]
 pub use chat_service::ChatService;
 pub use keychain_service::KeychainService;
+#[cfg(feature = "desktop")]
 pub use openssh_integration_service::OpenSshIntegrationService;
 pub use port_forward_manager::{
     PortForwardKey, PortForwardManager, PortForwardManagerSnapshot, PortForwardPrompt,
@@ -41,11 +55,15 @@ pub use port_forward_manager::{
 };
 pub use profile_service::{ImportedProfilesResult, ProfileService};
 pub use proxy_service::{ProxyPasswordUpdate, ProxyService, UpsertProxyOutcome};
+#[cfg(feature = "desktop")]
 pub use settings_service::{
     LocalVaultMode, LocalVaultPassphraseChangeOutcome, LocalVaultTransition, SettingsService,
 };
 pub use sftp_service::{PlannedSftpDownload, SftpService};
+#[cfg(feature = "desktop")]
 pub use ssh_bridge_service::{SshBridgeRouteRefresh, SshBridgeService};
+#[cfg(any(feature = "desktop", feature = "mobile"))]
 pub use sync_executor::SyncExecutor;
+#[cfg(any(feature = "desktop", feature = "mobile"))]
 pub use sync_service::{SyncReloadResult, SyncService, SyncTaskResult};
 pub use terminal_service::TerminalService;

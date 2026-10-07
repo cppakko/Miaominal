@@ -98,6 +98,9 @@ fn vault_chat_refresh_action(
             VaultChatRefreshAction::RefreshLocalVault
         }
         Ok(miaominal_paths::CredentialPolicy::SystemKeyring) => VaultChatRefreshAction::Preserve,
+        Ok(miaominal_paths::CredentialPolicy::PlatformInjected) => {
+            VaultChatRefreshAction::Preserve
+        }
         Err(()) => VaultChatRefreshAction::ClearUnavailable,
     }
 }

@@ -4,13 +4,21 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+default = ["desktop"]
+# Desktop builds use the operating-system keyring as the default credential
+# backend. Mobile builds inject the credential backend from the host process
+# and must never link a desktop keyring implementation.
+desktop = ["dep:keyring"]
+mobile = []
+
 [dependencies]
 aes.workspace = true
 aes-gcm.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 base64.workspace = true
-keyring.workspace = true
+keyring = { workspace = true, optional = true }
 log.workspace = true
 memsafe.workspace = true
 miaominal-paths = { path = "../miaominal-paths" }

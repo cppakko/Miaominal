@@ -100,6 +100,7 @@ impl SecretStore {
     const LOCKED_VAULT_MESSAGE: &'static str = "local vault is locked";
     const REVOKED_VAULT_MESSAGE: &'static str = "local vault session has been revoked";
 
+    #[cfg(feature = "desktop")]
     pub fn new() -> Self {
         Self {
             credentials: CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE),
@@ -380,6 +381,7 @@ impl SecretStore {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl Default for SecretStore {
     fn default() -> Self {
         Self::new()

@@ -4,21 +4,50 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+default = ["desktop"]
+# Desktop builds include AI/chat, the OpenSSH bridge, automatic sync, and the
+# operating-system keyring through the shared storage/secrets crates.
+desktop = [
+    "dep:directories",
+    "dep:miaominal-agent",
+    "dep:miaominal-sync",
+    "dep:notify",
+    "miaominal-secrets/desktop",
+    "miaominal-sftp/desktop",
+    "miaominal-ssh/desktop",
+    "miaominal-storage/desktop",
+    "miaominal-sync/desktop",
+]
+# Mobile builds keep only the storage/credential services that run with a host
+# injected credential backend: profiles, proxies, keys, forwarding, SFTP and
+# terminal session helpers, plus the sync engine plumbing (no desktop file
+# watcher). The sync modules compile against the same stores and the injected
+# credential backend.
+mobile = [
+    "dep:miaominal-sync",
+    "miaominal-secrets/mobile",
+    "miaominal-sftp/mobile",
+    "miaominal-ssh/mobile",
+    "miaominal-storage/mobile",
+    "miaominal-sync/mobile",
+]
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-directories.workspace = true
+directories = { workspace = true, optional = true }
 log.workspace = true
-miaominal-agent = { path = "../miaominal-agent" }
+miaominal-agent = { path = "../miaominal-agent", optional = true }
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
-miaominal-secrets = { path = "../miaominal-secrets" }
+miaominal-secrets = { path = "../miaominal-secrets", default-features = false }
 miaominal-settings = { path = "../miaominal-settings", default-features = false }
-miaominal-sftp = { path = "../miaominal-sftp" }
-miaominal-ssh = { path = "../miaominal-ssh" }
-miaominal-storage = { path = "../miaominal-storage" }
-miaominal-sync = { path = "../miaominal-sync" }
-notify.workspace = true
+miaominal-sftp = { path = "../miaominal-sftp", default-features = false }
+miaominal-ssh = { path = "../miaominal-ssh", default-features = false }
+miaominal-storage = { path = "../miaominal-storage", default-features = false }
+miaominal-sync = { path = "../miaominal-sync", optional = true, default-features = false }
+notify = { workspace = true, optional = true }
 sha2.workspace = true
 rand.workspace = true
 tokio.workspace = true
@@ -27,4 +56,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 russh.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
+tokio = { version = "1", features = ["io-util", "net"] }

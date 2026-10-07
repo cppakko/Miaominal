@@ -39,6 +39,8 @@ pub struct SyncConfigStore {
 }
 
 impl SyncConfigStore {
+    /// Load the desktop configuration through the operating-system keyring.
+    #[cfg(feature = "desktop")]
     pub fn load() -> Result<Self> {
         Self::load_with_credentials(CredentialStore::new_keyring(APP_CREDENTIAL_SERVICE))
     }
@@ -93,6 +95,7 @@ impl SyncConfigStore {
         Ok(store)
     }
 
+    #[cfg(feature = "desktop")]
     pub fn fallback() -> Self {
         Self::with_credentials(
             std::env::temp_dir().join("miaominal_sync_config.toml"),

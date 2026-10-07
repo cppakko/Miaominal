@@ -355,6 +355,7 @@ migration_cleanup_warning = "The new data directory is active, but the previous 
 
 [settings.about.data_directory.errors]
 portable_mode = "Portable mode uses a fixed data directory next to the application."
+embedded_mode = "This build fixes the data directory at startup; it cannot be changed here."
 runtime_unavailable = "The current data directory information is unavailable. Restart Miaominal and try again."
 target_unavailable = "The selected folder could not be accessed. Check that it still exists and that you have permission to open it."
 target_unsafe_link = "Symbolic links and directory junctions cannot be used as the data directory."

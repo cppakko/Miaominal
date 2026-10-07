@@ -23,18 +23,24 @@ const MIGRATION_MARKER_FILE: &str = ".miaominal-migration.toml";
 const PORTABLE_FLAG_FILE: &str = "portable.flag";
 const PORTABLE_DATA_DIR: &str = "data";
 const STALE_ATOMIC_TEMP_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-static RUNTIME_CONTEXT: OnceLock<Result<RuntimeContext, String>> = OnceLock::new();
+static RUNTIME_CONTEXT: OnceLock<RuntimeContext> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeMode {
     Standard,
     Portable,
+    /// Embedded host such as Android: all directories are provided by the host
+    /// process and no desktop directory discovery is performed.
+    Embedded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CredentialPolicy {
     SystemKeyring,
     LocalVaultRequired,
+    /// The host process owns credential storage; the shared code must go
+    /// through an injected credential backend instead of a system keyring.
+    PlatformInjected,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +52,7 @@ pub enum RuntimeWarningKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataDirectoryChangeErrorKind {
     PortableMode,
+    EmbeddedMode,
     RuntimeUnavailable,
     TargetUnavailable,
     TargetUnsafeLink,
@@ -97,6 +104,7 @@ pub struct RuntimeContext {
     active_data_dir: PathBuf,
     default_data_dir: PathBuf,
     bootstrap_dir: PathBuf,
+    cache_dir: Option<PathBuf>,
     config_initialization: ConfigDirInitialization,
     warning: Option<String>,
     warning_kind: Option<RuntimeWarningKind>,
@@ -111,6 +119,7 @@ impl RuntimeContext {
         match self.mode {
             RuntimeMode::Standard => CredentialPolicy::SystemKeyring,
             RuntimeMode::Portable => CredentialPolicy::LocalVaultRequired,
+            RuntimeMode::Embedded => CredentialPolicy::PlatformInjected,
         }
     }
 
@@ -124,6 +133,11 @@ impl RuntimeContext {
 
     pub fn bootstrap_dir(&self) -> &Path {
         &self.bootstrap_dir
+    }
+
+    /// Host-provided temporary directory; only embedded runtimes have one.
+    pub fn cache_dir(&self) -> Option<&Path> {
+        self.cache_dir.as_deref()
     }
 
     pub fn config_initialization(&self) -> &ConfigDirInitialization {
@@ -220,12 +234,17 @@ fn legacy_project_dirs() -> Result<ProjectDirs> {
 }
 
 pub fn initialize_runtime() -> Result<RuntimeContext> {
-    match RUNTIME_CONTEXT
-        .get_or_init(|| initialize_runtime_from_environment().map_err(|error| format!("{error:#}")))
-    {
-        Ok(context) => Ok(context.clone()),
-        Err(error) => Err(anyhow!(error.clone())),
+    if let Some(context) = RUNTIME_CONTEXT.get() {
+        return Ok(context.clone());
     }
+    let context = initialize_runtime_from_environment()?;
+    // Only successful initialization is fixed process-wide; a failed attempt
+    // stays retryable (for example after the host frees disk space).
+    let _ = RUNTIME_CONTEXT.set(context);
+    Ok(RUNTIME_CONTEXT
+        .get()
+        .expect("the runtime context was just initialized")
+        .clone())
 }
 
 fn initialize_runtime_from_environment() -> Result<RuntimeContext> {
@@ -249,6 +268,7 @@ fn initialize_runtime_with(
             active_data_dir: data_dir.clone(),
             default_data_dir: data_dir.clone(),
             bootstrap_dir: portable_root,
+            cache_dir: None,
             config_initialization: ConfigDirInitialization::Current { path: data_dir },
             warning: None,
             warning_kind: None,
@@ -318,10 +338,118 @@ fn initialize_standard_runtime(current: PathBuf, legacy: PathBuf) -> Result<Runt
         active_data_dir: active,
         default_data_dir: current,
         bootstrap_dir,
+        cache_dir: None,
         config_initialization: initialization,
         warning,
         warning_kind,
     })
+}
+
+/// Initialize the runtime for an embedded host such as Android.
+///
+/// The embedded host provides the business and cache directories explicitly;
+/// no desktop directory discovery, executable location, or `HOME` inspection
+/// happens. A process may fix exactly one embedded root: the first successful
+/// call wins, and a later call with different directories fails instead of
+/// silently switching the business root. Failures are returned to the caller
+/// and are **not** cached, so a host can retry after fixing the environment;
+/// the runtime never falls back to a temporary directory.
+pub fn initialize_embedded_runtime(
+    data_dir: impl AsRef<Path>,
+    cache_dir: impl AsRef<Path>,
+) -> Result<RuntimeContext> {
+    initialize_embedded_runtime_in(&RUNTIME_CONTEXT, data_dir.as_ref(), cache_dir.as_ref())
+}
+
+fn initialize_embedded_runtime_in(
+    slot: &OnceLock<RuntimeContext>,
+    data_dir: &Path,
+    cache_dir: &Path,
+) -> Result<RuntimeContext> {
+    validate_embedded_roots(data_dir, cache_dir)?;
+    if let Some(context) = slot.get() {
+        return verify_embedded_root(context, data_dir, cache_dir);
+    }
+    let candidate = embedded_runtime_context(data_dir, cache_dir)?;
+    let _ = slot.set(candidate);
+    let context = slot
+        .get()
+        .expect("the embedded runtime context should be available after setting it");
+    verify_embedded_root(context, data_dir, cache_dir)
+}
+
+fn verify_embedded_root(
+    context: &RuntimeContext,
+    data_dir: &Path,
+    cache_dir: &Path,
+) -> Result<RuntimeContext> {
+    if context.mode() != RuntimeMode::Embedded
+        || context.active_data_dir() != data_dir
+        || context.cache_dir() != Some(cache_dir)
+    {
+        return Err(anyhow!(
+            "the process runtime is already initialized with a different business root"
+        ));
+    }
+    Ok(context.clone())
+}
+
+fn validate_embedded_roots(data_dir: &Path, cache_dir: &Path) -> Result<()> {
+    validate_embedded_root(data_dir, "embedded data directory")?;
+    validate_embedded_root(cache_dir, "embedded cache directory")?;
+    if data_dir == cache_dir {
+        return Err(anyhow!(
+            "embedded data and cache directories must be different"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_embedded_root(path: &Path, label: &str) -> Result<()> {
+    if !path.is_absolute() {
+        return Err(anyhow!(
+            "{label} must be an absolute path: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn embedded_runtime_context(data_dir: &Path, cache_dir: &Path) -> Result<RuntimeContext> {
+    validate_embedded_roots(data_dir, cache_dir)?;
+    let data_dir = data_dir.to_path_buf();
+    let cache_dir = cache_dir.to_path_buf();
+    ensure_embedded_root(&data_dir, "embedded data directory")?;
+    ensure_embedded_root(&cache_dir, "embedded cache directory")?;
+    Ok(RuntimeContext {
+        mode: RuntimeMode::Embedded,
+        active_data_dir: data_dir.clone(),
+        default_data_dir: data_dir.clone(),
+        bootstrap_dir: data_dir.clone(),
+        cache_dir: Some(cache_dir),
+        config_initialization: ConfigDirInitialization::Current { path: data_dir },
+        warning: None,
+        warning_kind: None,
+    })
+}
+
+fn ensure_embedded_root(directory: &Path, label: &str) -> Result<()> {
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(anyhow!("{label} {} is not a real directory", directory.display()));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(directory)
+                .with_context(|| format!("failed to create {label} {}", directory.display()))?;
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {label} {}", directory.display()));
+        }
+    }
+    verify_directory_writable(directory)
+        .with_context(|| format!("{label} {} is not usable", directory.display()))
 }
 
 pub fn runtime_mode() -> Result<RuntimeMode> {
@@ -363,12 +491,7 @@ pub fn schedule_data_dir_change(target: impl AsRef<Path>) -> Result<()> {
             format!("runtime data directory is unavailable: {error:#}"),
         )
     })?;
-    if context.mode() == RuntimeMode::Portable {
-        return Err(classified_data_directory_error(
-            DataDirectoryChangeErrorKind::PortableMode,
-            "the data directory is fixed in portable mode",
-        ));
-    }
+    ensure_data_directory_change_allowed(context.mode())?;
     let target = target.as_ref();
     validate_migration_target(context.active_data_dir(), target, context.bootstrap_dir())?;
     let target = fs::canonicalize(target).map_err(|error| {
@@ -399,6 +522,20 @@ pub fn schedule_data_dir_change(target: impl AsRef<Path>) -> Result<()> {
             format!("failed to write data location bootstrap: {error:#}"),
         )
     })
+}
+
+fn ensure_data_directory_change_allowed(mode: RuntimeMode) -> Result<()> {
+    match mode {
+        RuntimeMode::Portable => Err(classified_data_directory_error(
+            DataDirectoryChangeErrorKind::PortableMode,
+            "the data directory is fixed in portable mode",
+        )),
+        RuntimeMode::Embedded => Err(classified_data_directory_error(
+            DataDirectoryChangeErrorKind::EmbeddedMode,
+            "the data directory is fixed by the embedded host",
+        )),
+        RuntimeMode::Standard => Ok(()),
+    }
 }
 
 pub fn clear_active_data_dir() -> Result<()> {
@@ -2214,6 +2351,7 @@ mod tests {
             active_data_dir: active_data_dir.clone(),
             default_data_dir: active_data_dir.clone(),
             bootstrap_dir: active_data_dir.clone(),
+            cache_dir: None,
             config_initialization: ConfigDirInitialization::Current {
                 path: active_data_dir.clone(),
             },
@@ -2251,5 +2389,141 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn embedded_runtime_creates_host_provided_roots() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data").join("business");
+        let cache_dir = root.path().join("cache");
+
+        let context = embedded_runtime_context(&data_dir, &cache_dir)
+            .expect("embedded runtime should initialize");
+
+        assert_eq!(context.mode(), RuntimeMode::Embedded);
+        assert_eq!(context.credential_policy(), CredentialPolicy::PlatformInjected);
+        assert_eq!(context.active_data_dir(), data_dir.as_path());
+        assert_eq!(context.default_data_dir(), data_dir.as_path());
+        assert_eq!(context.bootstrap_dir(), data_dir.as_path());
+        assert_eq!(context.cache_dir(), Some(cache_dir.as_path()));
+        assert!(data_dir.is_dir());
+        assert!(cache_dir.is_dir());
+        assert!(matches!(
+            context.config_initialization(),
+            ConfigDirInitialization::Current { path } if path == &data_dir
+        ));
+    }
+
+    #[test]
+    fn embedded_runtime_is_repeatable_for_the_same_root() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data");
+        let cache_dir = root.path().join("cache");
+
+        let first = embedded_runtime_context(&data_dir, &cache_dir)
+            .expect("first initialization should succeed");
+        let second = embedded_runtime_context(&data_dir, &cache_dir)
+            .expect("second initialization should succeed");
+
+        assert_eq!(first.active_data_dir(), second.active_data_dir());
+        assert_eq!(first.cache_dir(), second.cache_dir());
+    }
+
+    #[test]
+    fn embedded_runtime_rejects_relative_roots() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let cache_dir = root.path().join("cache");
+
+        let error = embedded_runtime_context(Path::new("relative-data"), &cache_dir)
+            .expect_err("relative data directory should be rejected");
+
+        assert!(error.to_string().contains("absolute path"));
+    }
+
+    #[test]
+    fn embedded_runtime_rejects_roots_that_are_files() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data");
+        let cache_dir = root.path().join("cache");
+        fs::write(&data_dir, b"not a directory").expect("blocking file should be written");
+
+        let error = embedded_runtime_context(&data_dir, &cache_dir)
+            .expect_err("a regular file must not be accepted as an embedded root");
+
+        assert!(error.to_string().contains("not a real directory"));
+    }
+
+    #[test]
+    fn embedded_runtime_rejects_identical_roots() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let shared = root.path().join("shared");
+
+        let error = embedded_runtime_context(&shared, &shared).expect_err("shared root should fail");
+
+        assert!(error.to_string().contains("must be different"));
+    }
+
+    #[test]
+    fn embedded_runtime_fixes_one_root_per_process_slot() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data");
+        let cache_dir = root.path().join("cache");
+        let slot: OnceLock<RuntimeContext> = OnceLock::new();
+
+        let first = initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
+            .expect("first root should be accepted");
+        let again = initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
+            .expect("the same root should stay valid");
+        let error = initialize_embedded_runtime_in(&slot, &root.path().join("other-data"), &cache_dir)
+            .expect_err("a different root should be rejected");
+
+        assert_eq!(first.mode(), RuntimeMode::Embedded);
+        assert_eq!(again.active_data_dir(), first.active_data_dir());
+        assert!(error.to_string().contains("different business root"));
+    }
+
+    #[test]
+    fn embedded_runtime_failure_is_not_cached() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data");
+        let cache_dir = root.path().join("cache");
+        let slot: OnceLock<RuntimeContext> = OnceLock::new();
+        fs::write(&data_dir, b"not a directory").expect("blocking file should be written");
+
+        initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
+            .expect_err("the obstructed root must fail");
+        assert!(slot.get().is_none());
+
+        fs::remove_file(&data_dir).expect("blocking file should be removed");
+        let context = initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
+            .expect("retrying after the environment was fixed should succeed");
+
+        assert_eq!(context.mode(), RuntimeMode::Embedded);
+        assert!(slot.get().is_some());
+    }
+
+    #[test]
+    fn embedded_runtime_rejects_relative_roots_without_fixing_the_slot() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = root.path().join("data");
+        let cache_dir = root.path().join("cache");
+        let slot: OnceLock<RuntimeContext> = OnceLock::new();
+
+        initialize_embedded_runtime_in(&slot, Path::new("relative"), &cache_dir)
+            .expect_err("relative roots must be rejected before touching the slot");
+        initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
+            .expect("a valid root should still initialize afterwards");
+    }
+
+    #[test]
+    fn embedded_mode_never_allows_a_data_directory_change() {
+        let error = ensure_data_directory_change_allowed(RuntimeMode::Embedded)
+            .expect_err("embedded mode must reject directory changes");
+
+        assert_eq!(
+            data_directory_change_error_kind(&error),
+            DataDirectoryChangeErrorKind::EmbeddedMode
+        );
+        assert!(ensure_data_directory_change_allowed(RuntimeMode::Standard).is_ok());
     }
 }

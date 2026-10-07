@@ -2259,6 +2259,9 @@ fn localized_data_directory_change_error(error: &anyhow::Error) -> String {
         miaominal_paths::DataDirectoryChangeErrorKind::PortableMode => {
             "settings.about.data_directory.errors.portable_mode"
         }
+        miaominal_paths::DataDirectoryChangeErrorKind::EmbeddedMode => {
+            "settings.about.data_directory.errors.embedded_mode"
+        }
         miaominal_paths::DataDirectoryChangeErrorKind::RuntimeUnavailable => {
             "settings.about.data_directory.errors.runtime_unavailable"
         }

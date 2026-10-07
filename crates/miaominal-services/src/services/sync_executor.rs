@@ -9,6 +9,7 @@ use miaominal_sync::{RemoteSyncState, SyncEngine};
 /// The production implementation delegates to `SyncService`. Content operations
 /// share a process-wide mutex; capability probes and cleanup use a separate lock
 /// so a slow probe cannot block manual sync. Tests can substitute an in-memory mock.
+#[cfg(feature = "desktop")]
 pub trait SyncOps: Send + Sync + 'static {
     fn check_capability(
         &self,
@@ -115,6 +116,7 @@ impl SyncExecutor {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl SyncOps for SyncExecutor {
     async fn check_capability(
         &self,

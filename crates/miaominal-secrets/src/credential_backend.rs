@@ -4,11 +4,14 @@ use aes_gcm::aead::{Aead, AeadInOut, KeyInit, Nonce, array::Array};
 use anyhow::{Context, Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
+#[cfg(feature = "desktop")]
 use keyring::Entry;
 use miaominal_paths::{self as paths, atomic_write};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+#[cfg(not(target_os = "android"))]
+use std::fs::{File, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,6 +61,7 @@ pub struct CredentialStore {
 }
 
 impl CredentialStore {
+    #[cfg(feature = "desktop")]
     pub fn new_keyring(service: impl Into<Arc<str>>) -> Self {
         #[cfg(target_os = "macos")]
         let backend: Arc<dyn CredentialBackend> = Arc::new(BlobKeyringCredentialBackend);
@@ -113,9 +117,11 @@ impl std::fmt::Debug for CredentialStore {
 #[derive(Debug, Default)]
 pub struct LockedCredentialBackend;
 
+#[cfg(feature = "desktop")]
 #[derive(Debug, Default)]
 pub struct KeyringCredentialBackend;
 
+#[cfg(feature = "desktop")]
 impl KeyringCredentialBackend {
     fn entry(service: &str, account: &str) -> Result<Entry> {
         Entry::new(service, account)
@@ -123,6 +129,7 @@ impl KeyringCredentialBackend {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl CredentialBackend for KeyringCredentialBackend {
     fn name(&self) -> &'static str {
         "keyring"
@@ -156,16 +163,20 @@ impl CredentialBackend for KeyringCredentialBackend {
 
 // Process-wide lock to serialise read-modify-write operations on any blob entry.
 // All CredentialStore instances share this lock regardless of which service they use.
+#[cfg(feature = "desktop")]
 fn blob_io_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[cfg(feature = "desktop")]
 const BLOB_ACCOUNT: &str = "__blob__";
 
+#[cfg(feature = "desktop")]
 #[derive(Debug, Default)]
 pub struct BlobKeyringCredentialBackend;
 
+#[cfg(feature = "desktop")]
 impl BlobKeyringCredentialBackend {
     fn load_blob(service: &str) -> Result<BTreeMap<String, String>> {
         let entry = Entry::new(service, BLOB_ACCOUNT)
@@ -217,6 +228,7 @@ impl BlobKeyringCredentialBackend {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl CredentialBackend for BlobKeyringCredentialBackend {
     fn name(&self) -> &'static str {
         "keyring-blob"
@@ -366,12 +378,14 @@ fn record_vault_derivation() {
 #[cfg(not(test))]
 fn record_vault_derivation() {}
 
+#[cfg(not(target_os = "android"))]
 fn vault_lock_file_path(file_path: &Path) -> PathBuf {
     let mut lock_path = file_path.as_os_str().to_os_string();
     lock_path.push(".lock");
     PathBuf::from(lock_path)
 }
 
+#[cfg(not(target_os = "android"))]
 fn open_vault_lock_file(file_path: &Path) -> Result<File> {
     let lock_path = vault_lock_file_path(file_path);
     if let Some(parent) = lock_path.parent() {
@@ -393,11 +407,22 @@ fn with_vault_file_lock<T>(file_path: &Path, operation: impl FnOnce() -> Result<
         .lock()
         .map_err(|_| anyhow!("vault I/O lock poisoned"))?;
 
-    let lock_path = vault_lock_file_path(file_path);
-    let lock_file = open_vault_lock_file(file_path)?;
-    lock_file
-        .lock()
-        .with_context(|| format!("failed to lock vault file {}", lock_path.display()))?;
+    // Android's libc does not provide `flock`. The embedded mobile runtime is
+    // the only process touching its business root, so the in-process lock
+    // above is the complete critical section there. Desktop keeps the sidecar
+    // file lock that extends the same critical section across processes; the
+    // handle must stay alive until `operation` has finished.
+    #[cfg(not(target_os = "android"))]
+    let _file_lock = {
+        let lock_path = vault_lock_file_path(file_path);
+        let lock_file = open_vault_lock_file(file_path)?;
+        lock_file
+            .lock()
+            .with_context(|| format!("failed to lock vault file {}", lock_path.display()))?;
+        lock_file
+    };
+    #[cfg(target_os = "android")]
+    let _ = file_path;
 
     operation()
 }
@@ -1703,6 +1728,20 @@ mod tests {
         run_vault_lock_probe(&path, "available");
 
         drop(lock_file);
+        cleanup_test_vault(&path);
+    }
+
+    #[test]
+    fn vault_file_lock_is_held_for_the_whole_operation() {
+        let path = test_vault_path("lock-held-during-operation");
+        with_vault_file_lock(&path, || {
+            // Another process must still observe the lock while the operation
+            // runs: the sidecar handle may not be dropped early.
+            run_vault_lock_probe(&path, "blocked");
+            Ok(())
+        })
+        .expect("operation should run while the file lock is held");
+        run_vault_lock_probe(&path, "available");
         cleanup_test_vault(&path);
     }
 
