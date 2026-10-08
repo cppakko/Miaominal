@@ -239,6 +239,7 @@ interface TerminalSessionHandle {
     ): Boolean
     fun paste(text: String)
     fun resize(columns: Int, lines: Int)
+    /** Positive lines reveal older history; negative lines move toward the latest output. */
     fun scroll(lines: Int)
     fun scrollTo(displayOffset: Int)
     fun search(pattern: String?): Int

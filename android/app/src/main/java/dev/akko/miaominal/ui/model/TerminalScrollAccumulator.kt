@@ -11,6 +11,8 @@ internal class TerminalScrollAccumulator {
         remainder += deltaPx
         val rows = (remainder / cellHeight).toInt()
         remainder -= rows * cellHeight
-        return -rows
+        // Touch Y grows downward; positive terminal scroll reveals older history
+        // and moves the content down with the finger.
+        return rows
     }
 }

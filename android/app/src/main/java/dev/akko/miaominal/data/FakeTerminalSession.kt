@@ -177,7 +177,7 @@ class FakeTerminalSession(
     }
 
     override fun scroll(lines: Int) {
-        displayOffset = (displayOffset - lines).coerceAtLeast(0)
+        displayOffset = (displayOffset + lines).coerceAtLeast(0)
         bumpRevision()
     }
 
