@@ -5,7 +5,7 @@ edition.workspace = true
 build = "build.rs"
 description = "Desktop terminal application with SSH, SFTP, configuration sync, and secure credential storage."
 readme = ".github/README.md"
-license = "MIT"
+license.workspace = true
 repository = "https://github.com/cppakko/miaominal"
 homepage = "https://github.com/cppakko/miaominal"
 default-run = "miaominal"
@@ -33,6 +33,7 @@ resolver = "3"
 [workspace.package]
 version = "0.2.4"
 edition = "2024"
+license = "GPL-3.0-only"
 
 [workspace.dependencies]
 aes = { version = "0.9.0", features = ["zeroize"] }
@@ -204,7 +205,7 @@ assets = [
 
 [package.metadata.generate-rpm]
 release = "1"
-license = "MIT"
+license = "GPL-3.0-only"
 summary = "Desktop terminal application for SSH, SFTP, and remote development"
 vendor = "cppakko"
 require-sh = false

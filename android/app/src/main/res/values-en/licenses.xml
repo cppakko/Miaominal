@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_licenses">Licenses</string>
+    <string name="about_project_license">Project license (GPLv3)</string>
+    <string name="about_project_license_desc">GNU General Public License, version 3 (GPL-3.0-only).</string>
+    <string name="about_third_party_licenses">Third-party notices</string>
+    <string name="about_third_party_licenses_desc">View copyright notices, license terms and notices for open-source components.</string>
+    <string name="about_view_license">View</string>
+    <string name="about_close_license">Close license</string>
+    <string name="about_license_loading">Loading license…</string>
+    <string name="about_license_read_failed">Unable to read the license file. Please retry.</string>
+</resources>

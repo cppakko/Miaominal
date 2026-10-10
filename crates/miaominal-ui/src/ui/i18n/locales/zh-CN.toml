@@ -323,6 +323,14 @@ title = "概览"
 version = "版本 {version}"
 description = "一款支持 SSH、SFTP、终端会话、端口转发和 AI 辅助工作流的桌面客户端。"
 
+[settings.about.licenses]
+title = "许可证"
+project_description = "GNU 通用公共许可证，第 3 版。"
+third_party = "第三方许可声明"
+third_party_description = "查看开源组件的版权信息和许可条款。"
+view_project = "查看许可证"
+view_third_party = "查看声明"
+
 [settings.about.onboarding]
 title = "引导"
 label = "首次启动引导"

@@ -7,7 +7,7 @@
     <a href="https://github.com/cppakko/miaominal/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/cppakko/miaominal?include_prereleases&color=2ea44f"></a>
     <a href="https://github.com/cppakko/miaominal/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/cppakko/miaominal/release.yml?label=release"></a>
     <a href="https://www.rust-lang.org/"><img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-dea584?logo=rust&logoColor=white"></a>
-    <a href="../LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+    <a href="../LICENSE"><img alt="License GPL-3.0-only" src="https://img.shields.io/badge/license-GPL--3.0--only-blue"></a>
     <br>
     <p align="center">
         Miaominal 是面向远程开发和服务器运维的桌面 SSH 工作台。在一个工作区中管理主机、终端会话、SFTP 文件传输、端口转发和会话级 Agent，并通过 OpenSSH 集成把已保存的主机连接提供给外部客户端。使用 Rust、GPUI Kit 和 <code>alacritty_terminal</code> 构建。
@@ -210,3 +210,9 @@ winget install -e --id Kitware.CMake
 choco install nasm --yes --no-progress
 cargo build --release
 ```
+
+## 许可证
+
+Copyright (c) 2026 akko.
+
+Miaominal 采用 GNU 通用公共许可证第 3 版（仅此版本，GPL-3.0-only）。完整条款见 [LICENSE](../LICENSE)。

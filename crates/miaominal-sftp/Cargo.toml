@@ -2,6 +2,7 @@
 name = "miaominal-sftp"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 
 [features]

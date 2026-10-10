@@ -1593,6 +1593,28 @@ fn about_page(settings: Entity<SettingsController>) -> SettingPage {
                         .into_any_element()
                 })),
             SettingGroup::new()
+                .title(i18n::string("settings.about.licenses.title"))
+                .item(
+                    SettingItem::new(
+                        "GPL-3.0-only",
+                        SettingField::element(LicenseDocumentField(
+                            crate::ui::licenses::LicenseDocument::Project,
+                        )),
+                    )
+                    .description(i18n::string("settings.about.licenses.project_description")),
+                )
+                .item(
+                    SettingItem::new(
+                        i18n::string("settings.about.licenses.third_party"),
+                        SettingField::element(LicenseDocumentField(
+                            crate::ui::licenses::LicenseDocument::ThirdParty,
+                        )),
+                    )
+                    .description(i18n::string(
+                        "settings.about.licenses.third_party_description",
+                    )),
+                ),
+            SettingGroup::new()
                 .title(i18n::string("settings.about.onboarding.title"))
                 .item(
                     SettingItem::new(
@@ -1624,6 +1646,36 @@ fn about_page(settings: Entity<SettingsController>) -> SettingPage {
                     .description(i18n::string("settings.about.reset_local.description")),
                 ),
         ])
+}
+
+#[derive(Clone)]
+struct LicenseDocumentField(crate::ui::licenses::LicenseDocument);
+
+impl SettingFieldElement for LicenseDocumentField {
+    type Element = Button;
+
+    fn render_field(&self, _: &RenderOptions, _: &mut Window, _: &mut App) -> Self::Element {
+        let document = self.0;
+        let (id, label) = match document {
+            crate::ui::licenses::LicenseDocument::Project => (
+                "settings-view-project-license",
+                i18n::string("settings.about.licenses.view_project"),
+            ),
+            crate::ui::licenses::LicenseDocument::ThirdParty => (
+                "settings-view-third-party-licenses",
+                i18n::string("settings.about.licenses.view_third_party"),
+            ),
+        };
+        settings_action_button(id, label, false, move |_, cx| {
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = document.open() {
+                        log::warn!("failed to open license document: {error:#}");
+                    }
+                })
+                .detach();
+        })
+    }
 }
 
 #[derive(Clone)]

@@ -179,6 +179,14 @@ enum class SettingsEntry(
         SettingsDestination.Sync, "sync-capabilities",
         R.string.sync_mobile_connection_test, R.string.sync_mobile_capability_hint
     ),
+    AboutProjectLicense(
+        SettingsDestination.About, "about-licenses",
+        R.string.about_project_license, R.string.about_project_license_desc
+    ),
+    AboutThirdPartyLicenses(
+        SettingsDestination.About, "about-licenses",
+        R.string.about_third_party_licenses, R.string.about_third_party_licenses_desc
+    ),
     AboutOnboarding(
         SettingsDestination.About, "about-onboarding",
         R.string.desktop_about_onboarding_group, R.string.setting_about

@@ -327,6 +327,14 @@ title = "Overview"
 version = "Version {version}"
 description = "A desktop client for SSH, SFTP, terminal sessions, port forwarding, and AI-assisted workflows."
 
+[settings.about.licenses]
+title = "Licenses"
+project_description = "GNU General Public License, version 3."
+third_party = "Third-party notices"
+third_party_description = "View copyright notices and license terms for open-source components."
+view_project = "View license"
+view_third_party = "View notices"
+
 [settings.about.onboarding]
 title = "Onboarding"
 label = "First-run onboarding"

@@ -7,7 +7,7 @@
     <a href="https://github.com/cppakko/miaominal/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/cppakko/miaominal?include_prereleases&color=2ea44f"></a>
     <a href="https://github.com/cppakko/miaominal/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/cppakko/miaominal/release.yml?label=release"></a>
     <a href="https://www.rust-lang.org/"><img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-dea584?logo=rust&logoColor=white"></a>
-    <a href="../LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+    <a href="../LICENSE"><img alt="License GPL-3.0-only" src="https://img.shields.io/badge/license-GPL--3.0--only-blue"></a>
     <br>
     <p align="center">
         Miaominal is a desktop SSH workspace for remote development and server operations. Manage hosts, terminal sessions, SFTP transfers, port forwarding, and session agents in one workspace, then expose saved hosts to external clients through OpenSSH integration. Built with Rust, GPUI Kit, and <code>alacritty_terminal</code>.
@@ -211,3 +211,9 @@ winget install -e --id Kitware.CMake
 choco install nasm --yes --no-progress
 cargo build --release
 ```
+
+## License
+
+Copyright (c) 2026 akko.
+
+Miaominal is licensed under the GNU General Public License, version 3 only (GPL-3.0-only). See [LICENSE](../LICENSE) for the full license text.

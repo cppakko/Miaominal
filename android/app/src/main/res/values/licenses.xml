@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_licenses">许可证</string>
+    <string name="about_project_license">项目许可证（GPLv3）</string>
+    <string name="about_project_license_desc">GNU 通用公共许可证，第 3 版（GPL-3.0-only）。</string>
+    <string name="about_third_party_licenses">第三方许可声明</string>
+    <string name="about_third_party_licenses_desc">查看开源组件的版权信息、许可条款和声明。</string>
+    <string name="about_view_license">查看</string>
+    <string name="about_close_license">关闭许可证</string>
+    <string name="about_license_loading">正在加载许可证…</string>
+    <string name="about_license_read_failed">无法读取许可证文件，请重试。</string>
+</resources>

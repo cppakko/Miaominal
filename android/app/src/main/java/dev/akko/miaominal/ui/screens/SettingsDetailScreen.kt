@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -97,6 +98,7 @@ import dev.akko.miaominal.ui.components.PageSubtitle
 import dev.akko.miaominal.ui.components.SectionTitle
 import dev.akko.miaominal.ui.components.SeedColorPicker
 import dev.akko.miaominal.ui.model.appVersionName
+import dev.akko.miaominal.ui.model.LicenseDocument
 import dev.akko.miaominal.ui.theme.ThemeMode
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -665,13 +667,14 @@ private fun AboutSettingsPage(
     // the version badge reveal the native-backend card for this session.
     var diagnosticsVisible by rememberSaveable { mutableStateOf(false) }
     var versionTaps by rememberSaveable { mutableIntStateOf(0) }
+    var licenseDocument by rememberSaveable { mutableStateOf<LicenseDocument?>(null) }
     val versionName = remember(context) { appVersionName(context) }
     val backendClient = remember(context) { NativeBackendClient.get(context) }
     val backendState by backendClient.state.collectAsState()
     val backendVersion = (backendState as? NativeBackendState.Running)?.packageVersion
     val versionInfo = "Miaominal\n${stringResource(R.string.about_app_version)}: $versionName\n${stringResource(R.string.about_backend_version)}: ${backendVersion ?: stringResource(R.string.ui_unknown)}"
 
-        val listState = rememberLazyListState()
+    val listState = rememberLazyListState()
     SettingsAnchorScroll(listState, focusAnchor)
     LazyColumn(state = listState,
         modifier = modifier,
@@ -724,6 +727,12 @@ private fun AboutSettingsPage(
                 TextButton(onClick = { copySettingsText(context, versionInfo) }) { Text(stringResource(R.string.settings_copy_versions)) }
             }
         }
+        item(key = "about-licenses") {
+            SectionTitle(title = stringResource(R.string.about_licenses), focused = focusAnchor == "about-licenses")
+        }
+        items(LicenseDocument.entries, key = { "about-license-${it.name}" }) { document ->
+            LicenseDocumentCard(document, onClick = { licenseDocument = document })
+        }
         item(key = "about-onboarding") { SectionTitle(title = stringResource(R.string.desktop_about_onboarding_group), focused = focusAnchor == "about-onboarding") }
         item {
             SettingsDetailCard {
@@ -741,6 +750,9 @@ private fun AboutSettingsPage(
             item(key = "about-diagnostics") { SectionTitle(title = uiString(R.string.ui_diagnostics), focused = focusAnchor == "about-diagnostics") }
             item { NativeBackendCard() }
         }
+    }
+    licenseDocument?.let { document ->
+        LicenseDocumentPanel(document, onDismiss = { licenseDocument = null })
     }
 }
 

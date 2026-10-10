@@ -2,6 +2,7 @@
 name = "miaominal-secrets"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 
 [features]
