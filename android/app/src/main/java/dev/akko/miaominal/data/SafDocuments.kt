@@ -17,8 +17,8 @@ import java.io.FileNotFoundException
  *
  * Rust never guesses a real path: it asks this adapter for directory listings,
  * metadata, document creation and removal, and it only receives file
- * descriptors for file content. Every operation is scoped to a tree URI the
- * user authorized with a persistable URI permission.
+ * descriptors for file content. Operations use either an authorized SAF tree
+ * or the shared storage root with the system's all files access permission.
  */
 /**
  * Display label for an authorized tree, derived without querying the provider
@@ -43,6 +43,18 @@ class SafDocuments(context: Context) {
 
     private val appContext = context.applicationContext
     private val resolver: ContentResolver get() = appContext.contentResolver
+    private val sharedStorage = SharedStorageDocuments()
+    private val preferences get() = appContext.getSharedPreferences("local_storage", Context.MODE_PRIVATE)
+
+    fun defaultTreeUri(): String? = sharedStorage.rootUri() ?: preferences.getString("tree_uri", null)?.takeIf { saved ->
+        resolver.persistedUriPermissions.any { it.uri.toString() == saved && it.isReadPermission && it.isWritePermission }
+    }
+
+    private fun <T> shared(operation: String, path: String, action: () -> T): T = try {
+        action()
+    } catch (error: Throwable) {
+        throw failure(operation, path, error)
+    }
 
     data class Document(
         val name: String,
@@ -63,6 +75,9 @@ class SafDocuments(context: Context) {
     }
 
     fun list(treeUri: String, relativePath: String): List<SafEntry> {
+        if (isSharedStorageTree(treeUri)) return listDocuments(treeUri, relativePath).map { entry ->
+            SafEntry(entry.name, entry.relativePath, entry.toKind(), entry.size?.toULong())
+        }
         val tree = parseTree(treeUri)
         val directory = resolve(tree, relativePath, createDirectories = false)
             ?: throw storageFailure("document not found: $relativePath")
@@ -81,6 +96,7 @@ class SafDocuments(context: Context) {
 
     /** Local-pane listing, retaining document URIs for UI actions. */
     fun listDocuments(treeUri: String, relativePath: String): List<Document> {
+        if (isSharedStorageTree(treeUri)) return shared("list", relativePath) { sharedStorage.listDocuments(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         val directory = resolve(tree, relativePath, createDirectories = false)
             ?: return emptyList()
@@ -88,6 +104,10 @@ class SafDocuments(context: Context) {
     }
 
     fun stat(treeUri: String, relativePath: String): SafEntry {
+        if (isSharedStorageTree(treeUri)) {
+            val entry = document(treeUri, relativePath) ?: throw storageFailure("file not found: $relativePath")
+            return SafEntry(entry.name, relativePath, entry.toKind(), entry.size?.toULong())
+        }
         val tree = parseTree(treeUri)
         val document = resolve(tree, relativePath, createDirectories = false)
             ?: throw storageFailure("document not found: $relativePath")
@@ -100,16 +120,19 @@ class SafDocuments(context: Context) {
     }
 
     fun document(treeUri: String, relativePath: String): Document? {
+        if (isSharedStorageTree(treeUri)) return shared("stat", relativePath) { sharedStorage.document(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         return resolve(tree, relativePath, createDirectories = false)
     }
 
     fun createDirectory(treeUri: String, relativePath: String) {
+        if (isSharedStorageTree(treeUri)) return shared("create", relativePath) { sharedStorage.createDirectory(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         resolve(tree, relativePath, createDirectories = true)
     }
 
     fun delete(treeUri: String, relativePath: String) {
+        if (isSharedStorageTree(treeUri)) return shared("delete", relativePath) { sharedStorage.delete(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         val document = resolve(tree, relativePath, createDirectories = false) ?: return
         try {
@@ -126,6 +149,7 @@ class SafDocuments(context: Context) {
      * descriptor and closes this original.
      */
     fun openFile(treeUri: String, relativePath: String): Int {
+        if (isSharedStorageTree(treeUri)) return shared("open", relativePath) { sharedStorage.openFile(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         val document = resolve(tree, relativePath, createDirectories = false)
             ?: throw storageFailure("document not found: $relativePath")
@@ -145,6 +169,7 @@ class SafDocuments(context: Context) {
      * until [finishWrite] commits the replacement.
      */
     fun beginWrite(treeUri: String, relativePath: String): SafWriteStart {
+        if (isSharedStorageTree(treeUri)) return shared("write", relativePath) { sharedStorage.beginWrite(treeUri, relativePath) }
         val tree = parseTree(treeUri)
         val name = relativePath.substringAfterLast('/')
         if (name.isBlank()) {
@@ -193,6 +218,9 @@ class SafDocuments(context: Context) {
      * save under a different name.
      */
     fun finishWrite(treeUri: String, targetRelative: String, stagingRelative: String?, commit: Boolean) {
+        if (isSharedStorageTree(treeUri)) return shared("finish write", targetRelative) {
+            sharedStorage.finishWrite(treeUri, targetRelative, stagingRelative, commit)
+        }
         val tree = parseTree(treeUri)
         if (!commit) {
             val cleanup = stagingRelative ?: targetRelative
@@ -243,6 +271,7 @@ class SafDocuments(context: Context) {
     /** Persist the URI permission granted by a picker result. */
     fun takePersistablePermission(uri: Uri): Boolean = try {
         resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        preferences.edit().putString("tree_uri", uri.toString()).apply()
         true
     } catch (_: SecurityException) {
         // Some providers only grant a transient permission; the tree stays

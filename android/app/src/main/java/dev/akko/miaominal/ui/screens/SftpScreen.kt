@@ -1,25 +1,17 @@
 package dev.akko.miaominal.ui.screens
 
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.stateDescription
 import android.content.ClipData
 import android.content.ClipboardManager
 import dev.akko.miaominal.data.TransferRequest
 import dev.akko.miaominal.data.TransferKey
 import dev.akko.miaominal.ui.model.FileSort
 import dev.akko.miaominal.ui.model.visibleFiles
-import dev.akko.miaominal.ui.components.DirectoryControls
-import dev.akko.miaominal.ui.components.PathBreadcrumbs
+import dev.akko.miaominal.ui.model.visibleLocalFiles
 import dev.akko.miaominal.ui.components.LocalTwoPaneAvailable
+import dev.akko.miaominal.ui.components.SessionTopBarCapsule
 
 import dev.akko.miaominal.ui.uiString
 
@@ -27,18 +19,21 @@ import dev.akko.miaominal.ui.components.WorkspaceBackHandler as BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -50,13 +45,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.ArrowUpward
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -70,58 +62,68 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import dev.akko.miaominal.ui.components.HintIcon as Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import dev.akko.miaominal.ui.theme.UiSpacing
+import dev.akko.miaominal.ui.theme.successColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.akko.miaominal.MiaominalApplication
-import dev.akko.miaominal.ui.components.PageEmptyState
 import dev.akko.miaominal.R
 import dev.akko.miaominal.data.HostKeyDecision
 import dev.akko.miaominal.data.LocalUploadHandle
 import dev.akko.miaominal.data.SafLocalEntry
+import dev.akko.miaominal.data.isSharedStorageTree
+import dev.akko.miaominal.ui.components.rememberAllFilesAccessRequest
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.akko.miaominal.data.SftpDirectoryModel
 import dev.akko.miaominal.data.SftpEntryKind
 import dev.akko.miaominal.data.SftpOperationErrorModel
@@ -137,13 +139,12 @@ import dev.akko.miaominal.data.SftpTransferModel
 import dev.akko.miaominal.data.SftpTransferStateModel
 import dev.akko.miaominal.nativebridge.BackendException
 import dev.akko.miaominal.ui.LocalMiaominalRepository
-import dev.akko.miaominal.ui.components.SessionIdentity
 import dev.akko.miaominal.ui.components.SessionRequestDialog
-import dev.akko.miaominal.ui.components.SessionTopBarCapsule
 import dev.akko.miaominal.ui.model.HostProfileUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -196,14 +197,28 @@ fun SftpScreen(
     var paneName by rememberSaveable(profile.id) { mutableStateOf(FsPane.Remote.name) }
     val pane = FsPane.valueOf(paneName)
     val pagerState = rememberPagerState(initialPage = if (pane == FsPane.Local) 0 else 1, pageCount = { 2 })
-    LaunchedEffect(pagerState.currentPage) {
-        paneName = if (pagerState.currentPage == 0) FsPane.Local.name else FsPane.Remote.name
+    LaunchedEffect(pagerState.settledPage) {
+        paneName = if (pagerState.settledPage == 0) FsPane.Local.name else FsPane.Remote.name
+    }
+    LaunchedEffect(pagerState, pagerState.isScrollInProgress) {
+        if (!pagerState.isScrollInProgress) {
+            // Let the normal release/fling start before recovering a cancelled
+            // scroll or a restored drag offset that would otherwise stay between panes.
+            withFrameNanos { }
+            if (!pagerState.isScrollInProgress && abs(pagerState.currentPageOffsetFraction) > 0.001f) {
+                pagerState.requestScrollToPage(pagerState.currentPage)
+            }
+        }
     }
 
-    var localTreeUri by rememberSaveable(profile.id) { mutableStateOf<String?>(null) }
+    var localTreeUri by rememberSaveable(profile.id) { mutableStateOf(repository.defaultLocalTreeUri()) }
     var localPath by rememberSaveable(profile.id) { mutableStateOf("") }
     var localEntries by remember(profile.id) { mutableStateOf<List<SafLocalEntry>>(emptyList()) }
     var localRefresh by remember { mutableStateOf(0) }
+    var localLoading by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+    var listedLocalRoot by remember { mutableStateOf<String?>(null) }
+    var listedLocalPath by remember { mutableStateOf("") }
 
     var selectedRemote by rememberSaveable(profile.id) { mutableStateOf(emptyList<String>()) }
     var selectedLocal by rememberSaveable(profile.id) { mutableStateOf(emptyList<String>()) }
@@ -211,8 +226,12 @@ fun SftpScreen(
     var localSelecting by rememberSaveable(profile.id) { mutableStateOf(false) }
     var remoteQuery by rememberSaveable(profile.id) { mutableStateOf("") }
     var localQuery by rememberSaveable(profile.id) { mutableStateOf("") }
+    var remoteSearchVisible by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var localSearchVisible by rememberSaveable(profile.id) { mutableStateOf(false) }
     var remoteSort by rememberSaveable(profile.id) { mutableStateOf(FileSort.Name.name) }
     var localSort by rememberSaveable(profile.id) { mutableStateOf(FileSort.Name.name) }
+    var remoteSortAscending by rememberSaveable(profile.id) { mutableStateOf(true) }
+    var localSortAscending by rememberSaveable(profile.id) { mutableStateOf(true) }
     val remoteListState = rememberLazyListState()
     val localListState = rememberLazyListState()
     val paneStates = rememberSaveableStateHolder()
@@ -237,7 +256,47 @@ fun SftpScreen(
     suspend fun remoteListing() {
         val sessionHandle = handle ?: return
         val path = remotePath.ifBlank { "." }
-        sessionHandle.listDirectory(path).onFailure { snackbar.showSnackbar(describeSftpError(it)) }
+        sessionHandle.listDirectory(path)
+            .onSuccess { directory = sessionHandle.directorySnapshot() }
+            .onFailure { snackbar.showSnackbar(describeSftpError(it)) }
+    }
+
+    fun navigateRemote(path: String) {
+        val sessionHandle = handle ?: return
+        remotePath = path
+        remoteQuery = ""; remoteSearchVisible = false
+        selectedRemote = emptyList(); remoteSelecting = false
+        remoteListState.requestScrollToItem(0)
+        sessionHandle.listDirectory(path)
+            .onSuccess { directory = sessionHandle.directorySnapshot() }
+            .onFailure {
+                remotePath = directory.path
+                scope.launch { snackbar.showSnackbar(describeSftpError(it)) }
+            }
+    }
+
+    fun navigateLocal(path: String) {
+        localPath = if (path == ".") "" else path
+        localQuery = ""; localSearchVisible = false
+        selectedLocal = emptyList(); localSelecting = false
+        localListState.requestScrollToItem(0)
+        localRefresh += 1
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, repository) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && (localTreeUri == null || isSharedStorageTree(localTreeUri))) {
+                val availableRoot = repository.defaultLocalTreeUri()
+                if (localTreeUri != availableRoot) {
+                    localTreeUri = availableRoot
+                    localEntries = emptyList()
+                    navigateLocal("")
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun selectedRemoteEntries(): List<SftpEntryModel> =
@@ -289,8 +348,8 @@ fun SftpScreen(
     }
 
     // Canonicalize the displayed remote path from the accepted listing.
-    LaunchedEffect(directory.requestId, directory.path) {
-        if (directory.path.isNotBlank() && directory.error == null) {
+    LaunchedEffect(directory.requestId, directory.path, directory.loading) {
+        if (!directory.loading && directory.path.isNotBlank() && directory.error == null) {
             remotePath = directory.path
         }
         val selected = selectedRemote.filter { path -> directory.entries.any { it.path == path } }
@@ -305,10 +364,19 @@ fun SftpScreen(
     }
 
     LaunchedEffect(localTreeUri, localPath, localRefresh) {
-        val tree = localTreeUri ?: return@LaunchedEffect
+        val tree = localTreeUri
+        localError = null
+        if (tree == null) {
+            localEntries = emptyList()
+            localLoading = false
+            return@LaunchedEffect
+        }
+        if (tree != listedLocalRoot || localPath != listedLocalPath) localEntries = emptyList()
+        localLoading = true
         repository.listSafDirectory(tree, localPath)
-            .onSuccess { localEntries = it }
-            .onFailure { snackbar.showSnackbar(describeSftpError(it)) }
+            .onSuccess { localEntries = it; listedLocalRoot = tree; listedLocalPath = localPath }
+            .onFailure { localEntries = emptyList(); localError = describeSftpError(it) }
+        localLoading = false
     }
 
     // Queue-only directory operations (create/remove/rename) report failure
@@ -434,8 +502,7 @@ fun SftpScreen(
         scope.launch {
             repository.persistSafTreePermission(uri.toString())
             localTreeUri = uri.toString()
-            localPath = ""
-            localRefresh += 1
+            navigateLocal("")
             val pending = pendingDownload
             pendingDownload = null
             if (pending != null) {
@@ -447,7 +514,19 @@ fun SftpScreen(
     fun requestLocalTree(download: List<SftpEntryModel>? = null) {
         pendingDownload = download
         backgroundPolicy?.beginUserFlow()
-        localTreePicker.launch(localTreeUri?.let(android.net.Uri::parse))
+        localTreePicker.launch(localTreeUri?.takeUnless(::isSharedStorageTree)?.let(android.net.Uri::parse))
+    }
+
+    val requestLocalAccess = rememberAllFilesAccessRequest {
+        backgroundPolicy?.endUserFlow()
+        val availableRoot = repository.defaultLocalTreeUri()
+        if (availableRoot != null) {
+            localTreeUri = availableRoot
+            navigateLocal("")
+            val pending = pendingDownload
+            pendingDownload = null
+            if (pending != null) executeDownloads(pending)
+        }
     }
 
     fun deleteSelection() {
@@ -482,7 +561,6 @@ fun SftpScreen(
     val visibleTransfers = remember(sheetTransfers, recordsRevision) {
         sheetTransfers.filterNot { repository.transferActions.isHidden(TransferKey(it.connectionId, it.transferId)) }
     }
-    val transferFabVisible = true
     fun closeSftp() {
         val connectionId = handle?.connectionId ?: return
         scope.launch {
@@ -500,58 +578,68 @@ fun SftpScreen(
 
     BackHandler {
         when {
-            remoteSelecting -> { selectedRemote = emptyList(); remoteSelecting = false }
-            localSelecting -> { selectedLocal = emptyList(); localSelecting = false }
+            pane == FsPane.Remote && remoteSearchVisible -> { remoteSearchVisible = false; remoteQuery = "" }
+            pane == FsPane.Local && localSearchVisible -> { localSearchVisible = false; localQuery = "" }
+            pane == FsPane.Remote && remoteSelecting -> { selectedRemote = emptyList(); remoteSelecting = false }
+            pane == FsPane.Local && localSelecting -> { selectedLocal = emptyList(); localSelecting = false }
             pane == FsPane.Local && localPath.isNotBlank() -> {
-                localPath = parentLocalPath(localPath)
-                localRefresh += 1
+                navigateLocal(parentLocalPath(localPath))
             }
             else -> onDismiss()
         }
     }
 
+    val ready = session?.phase == SftpPhase.Ready
+    val visibleRemoteEntries = remember(directory.entries, directory.loading, directory.path, remotePath,
+        remoteQuery, remoteSort, remoteSortAscending) {
+        // Refresh retains its files; a different directory must never show the previous one's actions.
+        if (directory.loading && directory.path != remotePath) emptyList()
+        else visibleFiles(directory.entries, remoteQuery, FileSort.valueOf(remoteSort), remoteSortAscending)
+    }
+    val visibleLocalEntries = remember(localEntries, localQuery, localSort, localSortAscending) {
+        visibleLocalFiles(localEntries, localQuery, FileSort.valueOf(localSort), localSortAscending)
+    }
+    val twoPanes = LocalTwoPaneAvailable.current
+    val localRootLabel = if (isSharedStorageTree(localTreeUri)) stringResource(R.string.sftp_storage_internal)
+        else localTreeUri?.let(repository::safTreeLabel) ?: stringResource(R.string.fm_local)
+    val activePath = if (pane == FsPane.Local) localPath else remotePath.ifBlank { directory.path }
+    val folderTitle = activePath.trimEnd('/').substringAfterLast('/').takeIf { it.isNotBlank() && it != "." }
+        ?: if (pane == FsPane.Local) localRootLabel
+        else stringResource(R.string.sftp_browser_root)
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        bottomBar = {
+            SftpBrowserFooter(local = pane == FsPane.Local, showPaneSwitch = ready && !twoPanes,
+                onSelect = { local -> scope.launch { pagerState.animateScrollToPage(if (local) 0 else 1) } },
+                panePosition = { pagerState.currentPage + pagerState.currentPageOffsetFraction },
+                transfers = visibleTransfers, onTransfers = { transferSheetVisible = true })
+        },
         floatingActionButton = {
-            if (transferFabVisible) {
-                androidx.compose.material3.ExtendedFloatingActionButton(
-                    onClick = { transferSheetVisible = true },
-                    text = { Text(stringResource(R.string.ux_transfers,
-                        visibleTransfers.count { !it.state.isTerminal },
-                        visibleTransfers.count { it.state == SftpTransferStateModel.Failed })) },
-                    icon = { Icon(Icons.Outlined.Download, null) }
-                )
-            }
+            if (ready && (pane == FsPane.Remote || twoPanes) && !remoteSelecting && !localSelecting) SftpCreateAction(
+                onUploadFiles = { backgroundPolicy?.beginUserFlow(); uploadFilePicker.launch(arrayOf("*/*")) },
+                onUploadFolder = { requestLocalTree() },
+                onCreateFolder = { newFolderName = ""; createFolderVisible = true }
+            )
         }
     ) { contentPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
             SftpConnectionHeader(
                 profile = profile,
                 session = session,
+                title = if (ready && !twoPanes) folderTitle else "SFTP",
                 onMenu = onMenu,
+                searchAvailable = ready && !twoPanes && (pane == FsPane.Remote || localTreeUri != null),
+                onSearch = { if (pane == FsPane.Local) localSearchVisible = true else remoteSearchVisible = true },
+                onTransfers = { transferSheetVisible = true },
+                onRefresh = { if (pane == FsPane.Local) localRefresh += 1 else scope.launch { remoteListing() } },
                 onCancel = {
                     if (onRequestClose != null && handle != null) onRequestClose(handle!!.connectionId)
                     else if (transfers.any { !it.state.isTerminal }) confirmCloseTransfers = true
                     else closeSftp()
                 }
             )
-            val ready = session?.phase == SftpPhase.Ready
-            if (ready && !LocalTwoPaneAvailable.current) {
-                PrimaryTabRow(selectedTabIndex = if (pane == FsPane.Local) 0 else 1) {
-                    Tab(
-                        selected = pane == FsPane.Local,
-                        onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
-                        text = { Text(stringResource(R.string.fm_local)) }
-                    )
-                    Tab(
-                        selected = pane == FsPane.Remote,
-                        onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
-                        text = { Text(stringResource(R.string.fm_remote)) }
-                    )
-                }
-            }
             val paneContent: @Composable (Int) -> Unit = { page ->
                 paneStates.SaveableStateProvider("files-$page") {
                 if (!ready) {
@@ -564,33 +652,36 @@ fun SftpScreen(
                 } else {
                 when (page) {
                     0 -> LocalPane(
+                        searchVisible = localSearchVisible,
+                        showSearchAction = twoPanes,
+                        onOpenSearch = { localSearchVisible = true },
+                        onCloseSearch = { localSearchVisible = false; localQuery = "" },
                         selecting = localSelecting,
                         onBeginSelection = { localSelecting = true },
-                        query = localQuery, onQuery = { localQuery = it },
-                        sort = FileSort.valueOf(localSort), onSort = { localSort = it.name },
+                        query = localQuery, onQuery = { localQuery = it; localListState.requestScrollToItem(0) },
+                        sort = FileSort.valueOf(localSort), sortAscending = localSortAscending,
+                        onSort = {
+                            localSortAscending = if (localSort == it.name) !localSortAscending else it == FileSort.Name
+                            localSort = it.name
+                            localListState.requestScrollToItem(0)
+                        },
                         listState = localListState,
-                        transferFabVisible = transferFabVisible,
                         treeUri = localTreeUri,
-                        treeLabel = localTreeUri?.let(repository::safTreeLabel),
+                        treeLabel = localRootLabel,
                         path = localPath,
-                        onNavigatePath = { localPath = if (it == ".") "" else it; localQuery = ""; selectedLocal = emptyList(); localRefresh += 1 },
-                        entries = localEntries.filter { it.name.contains(localQuery.trim(), true) }.sortedWith(
-                            compareByDescending<SafLocalEntry> { it.isDirectory }.then(
-                                when (FileSort.valueOf(localSort)) {
-                                    FileSort.Name -> compareBy { it.name.lowercase(java.util.Locale.ROOT) }
-                                    FileSort.Size -> compareByDescending { it.size ?: Long.MIN_VALUE }
-                                    FileSort.Modified -> compareByDescending { it.modifiedAtMs ?: Long.MIN_VALUE }
-                                }).thenBy { it.name }),
+                        onNavigatePath = ::navigateLocal,
+                        entries = visibleLocalEntries,
+                        loading = localLoading,
+                        error = localError,
                         selected = selectedLocal.toSet(),
                         onPickTree = { requestLocalTree() },
+                        onRequestAccess = { backgroundPolicy?.beginUserFlow(); requestLocalAccess() },
                         onNavigateUp = {
-                            localPath = parentLocalPath(localPath)
-                            localRefresh += 1
+                            navigateLocal(parentLocalPath(localPath))
                         },
                         onRefresh = { localRefresh += 1 },
                         onEnter = { entry ->
-                            localPath = entry.relativePath
-                            localRefresh += 1
+                            navigateLocal(entry.relativePath)
                         },
                         onToggleSelection = { entry ->
                             localSelecting = true
@@ -598,11 +689,11 @@ fun SftpScreen(
                             selectedLocal = (selectedLocal.toSet()).toggle(entry.relativePath).toList()
                         },
                         onSelectAll = {
-                            selectedLocal = localEntries.map { it.relativePath }
+                            selectedLocal = visibleLocalEntries.map { it.relativePath }
                         },
                         onClearSelection = { selectedLocal = emptyList(); localSelecting = false },
-                        onUploadToRemote = {
-                            val targets = selectedLocalEntries()
+                        onUploadToRemote = { entry ->
+                            val targets = entry?.let { listOf(it) } ?: selectedLocalEntries()
                             val sessionHandle = handle
                             if (sessionHandle == null || targets.isEmpty()) return@LocalPane
                             val targetPath = remotePath.ifBlank { "." }
@@ -626,27 +717,32 @@ fun SftpScreen(
                     )
 
                     else -> RemotePane(
+                        searchVisible = remoteSearchVisible,
+                        showSearchAction = twoPanes,
+                        onOpenSearch = { remoteSearchVisible = true },
+                        onCloseSearch = { remoteSearchVisible = false; remoteQuery = "" },
                         selecting = remoteSelecting,
                         onBeginSelection = { remoteSelecting = true },
-                        query = remoteQuery, onQuery = { remoteQuery = it },
-                        sort = FileSort.valueOf(remoteSort), onSort = { remoteSort = it.name },
+                        query = remoteQuery, onQuery = { remoteQuery = it; remoteListState.requestScrollToItem(0) },
+                        sort = FileSort.valueOf(remoteSort), sortAscending = remoteSortAscending,
+                        onSort = {
+                            remoteSortAscending = if (remoteSort == it.name) !remoteSortAscending else it == FileSort.Name
+                            remoteSort = it.name
+                            remoteListState.requestScrollToItem(0)
+                        },
                         listState = remoteListState,
-                        onNavigatePath = { remotePath = it; remoteQuery = ""; scope.launch { remoteListing() } },
-                        transferFabVisible = transferFabVisible,
+                        onNavigatePath = ::navigateRemote,
                         path = remotePath.ifBlank { directory.path },
-                        entries = visibleFiles(directory.entries, remoteQuery, FileSort.valueOf(remoteSort)),
+                        entries = visibleRemoteEntries,
                         loading = directory.loading,
                         error = directory.error,
                         selected = selectedRemote.toSet(),
                         onNavigateUp = {
-                            val target = parentRemotePath(remotePath)
-                            remotePath = target
-                            scope.launch { remoteListing() }
+                            navigateRemote(parentRemotePath(remotePath))
                         },
                         onRefresh = { scope.launch { remoteListing() } },
                         onEnter = { entry ->
-                            remotePath = entry.path
-                            scope.launch { remoteListing() }
+                            navigateRemote(entry.path)
                         },
                         onToggleSelection = { entry ->
                             remoteSelecting = true
@@ -654,16 +750,12 @@ fun SftpScreen(
                             selectedRemote = selectedRemote.toSet().toggle(entry.path).toList()
                         },
                         onSelectAll = {
-                            selectedRemote = directory.entries.map { it.path }
+                            selectedRemote = visibleRemoteEntries.map { it.path }
                         },
                         onClearSelection = { selectedRemote = emptyList(); remoteSelecting = false },
                         onEditPath = {
                             pathInput = remotePath
                             pathEditVisible = true
-                        },
-                        onCreateFolder = {
-                            newFolderName = ""
-                            createFolderVisible = true
                         },
                         onRename = { entry ->
                             renameTarget = entry
@@ -675,10 +767,9 @@ fun SftpScreen(
                             backgroundPolicy?.beginUserFlow()
                             uploadFilePicker.launch(arrayOf("*/*"))
                         },
-                        onUploadFolder = { requestLocalTree() },
                         onDownload = { entries ->
-                            paneName = FsPane.Local.name
-                            scope.launch { pagerState.animateScrollToPage(0) }
+                            if (twoPanes) paneName = FsPane.Local.name
+                            else scope.launch { pagerState.animateScrollToPage(0) }
                             if (localTreeUri == null) {
                                 requestLocalTree(entries)
                             } else {
@@ -690,14 +781,20 @@ fun SftpScreen(
                 }
                 }
             }
-            if (LocalTwoPaneAvailable.current && ready) {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxSize()) { paneContent(0) }
-                    androidx.compose.material3.VerticalDivider()
-                    Box(Modifier.weight(1f).fillMaxSize()) { paneContent(1) }
+            if (twoPanes && ready) {
+                Row(
+                    Modifier.weight(1f).fillMaxWidth().padding(horizontal = UiSpacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(UiSpacing.sm)
+                ) {
+                    SftpPaneSurface(Modifier.weight(1f), rounded = true) { paneContent(0) }
+                    SftpPaneSurface(Modifier.weight(1f), rounded = true) { paneContent(1) }
                 }
-            } else HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize(),
-                userScrollEnabled = ready) { paneContent(it) }
+            } else HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag("sftp-pane-pager"),
+                pageSpacing = UiSpacing.xs,
+                userScrollEnabled = ready
+            ) { page -> SftpPaneSurface { paneContent(page) } }
         }
     }
 
@@ -882,8 +979,7 @@ fun SftpScreen(
                 TextButton(
                     onClick = {
                         pathEditVisible = false
-                        remotePath = pathInput.trim().ifBlank { "." }
-                        scope.launch { remoteListing() }
+                        navigateRemote(pathInput.trim().ifBlank { "." })
                     }
                 ) { Text(stringResource(android.R.string.ok)) }
             },
@@ -935,26 +1031,37 @@ fun SftpScreen(
     }
 
     if (transferSheetVisible) {
-        ModalBottomSheet(onDismissRequest = { transferSheetVisible = false }) {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                Text(
-                    stringResource(R.string.sftp_transfers_title),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { repository.transferActions.hideCompleted(sheetTransfers); recordsRevision += 1 }) {
-                    Text(stringResource(R.string.ux_clear_completed))
+        ModalBottomSheet(onDismissRequest = { transferSheetVisible = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = UiSpacing.sm).testTag("sftp-transfer-list")) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.sftp_transfers_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { transferSheetVisible = false }) {
+                        Icon(Icons.Outlined.Close, stringResource(android.R.string.cancel))
+                    }
                 }
-                LazyColumn {
-                    items(visibleTransfers, key = { "${it.connectionId}:${it.transferId}" }) { transfer ->
-                        SftpTransferRow(
-                            transfer = transfer,
-                            onRetry = { retryTarget = transfer },
-                            handle = transferHandleFor(transfer),
-                            onPause = { transferHandleFor(transfer)?.pause() },
-                            onResume = { transferHandleFor(transfer)?.resume() },
-                            onCancel = { transferHandleFor(transfer)?.cancel() }
-                        )
+                if (visibleTransfers.isEmpty()) SftpBrowserEmptyState(
+                    icon = Icons.Outlined.CloudDownload,
+                    title = stringResource(R.string.sftp_browser_transfer_empty),
+                    description = stringResource(R.string.sftp_browser_transfer_empty_hint),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp)
+                ) else {
+                    TextButton(onClick = { repository.transferActions.hideCompleted(sheetTransfers); recordsRevision += 1 }) {
+                        Text(stringResource(R.string.ux_clear_completed))
+                    }
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(UiSpacing.xs), contentPadding = PaddingValues(bottom = UiSpacing.md)) {
+                        items(visibleTransfers, key = { "${it.connectionId}:${it.transferId}" }) { transfer ->
+                            SftpTransferRow(
+                                transfer = transfer,
+                                onRetry = { retryTarget = transfer },
+                                onPause = { transferHandleFor(transfer)?.pause() },
+                                onResume = { transferHandleFor(transfer)?.resume() },
+                                onCancel = { transferHandleFor(transfer)?.cancel() }
+                            )
+                        }
                     }
                 }
             }
@@ -966,31 +1073,50 @@ fun SftpScreen(
 private fun SftpConnectionHeader(
     profile: HostProfileUi,
     session: SftpSessionModel?,
+    title: String,
+    searchAvailable: Boolean,
     onMenu: () -> Unit,
+    onSearch: () -> Unit,
+    onTransfers: () -> Unit,
+    onRefresh: () -> Unit,
     onCancel: () -> Unit
 ) {
     val connected = session?.phase == SftpPhase.Ready
-    Column(
-        Modifier.fillMaxWidth()
-    ) {
-        // Same layout as the terminal top bar: drawer affordance, host identity
-        // with the status dot, then the session actions.
+    var actionsVisible by remember { mutableStateOf(false) }
+    val statusLabel = stringResource(if (connected) R.string.ux_connected else R.string.ux_waiting)
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         SessionTopBarCapsule {
             IconButton(onClick = onMenu) {
-                Icon(
-                    Icons.Outlined.Menu,
-                    contentDescription = stringResource(R.string.links_sidebar_toggle),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Icon(Icons.Outlined.Menu, stringResource(R.string.links_sidebar_toggle),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            SessionIdentity(profile, connected, Modifier.weight(1f))
-            if (connected) {
-                IconButton(onClick = onCancel) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        contentDescription = stringResource(R.string.terminal_close_session),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            Column(Modifier.weight(1f).padding(horizontal = UiSpacing.xs).semantics { stateDescription = statusLabel },
+                verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
+                    Box(Modifier.size(6.dp).background(
+                        if (connected) successColor else MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
+                    Text(profile.name + " · SFTP", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (searchAvailable) IconButton(onClick = onSearch, modifier = Modifier.testTag("sftp-search-action")) {
+                Icon(Icons.Outlined.Search, stringResource(R.string.ux_filter_directory),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box {
+                IconButton(onClick = { actionsVisible = true }) {
+                    Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DropdownMenu(expanded = actionsVisible, onDismissRequest = { actionsVisible = false }) {
+                    if (connected) DropdownMenuItem(text = { Text(stringResource(R.string.fm_refresh)) },
+                        onClick = { actionsVisible = false; onRefresh() }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.sftp_transfers_title)) },
+                        onClick = { actionsVisible = false; onTransfers() }, leadingIcon = { Icon(Icons.Outlined.SwapVert, null) })
+                    if (connected) DropdownMenuItem(text = { Text(stringResource(R.string.terminal_close_session)) },
+                        onClick = { actionsVisible = false; onCancel() }, leadingIcon = { Icon(Icons.Outlined.Close, null) })
                 }
             }
         }
@@ -1012,32 +1138,30 @@ private fun phaseLabel(session: SftpSessionModel): String = when (session.phase)
 private fun SftpWaitingPane(session: SftpSessionModel?, error: String?, onEdit: () -> Unit, onRetry: () -> Unit) {
     val failed = error != null || session?.phase?.isTerminal == true
     if (failed) {
-        PageEmptyState(
+        SftpBrowserEmptyState(
             icon = Icons.Outlined.FolderOff,
             title = stringResource(R.string.ui_connection_failed),
-            text = error ?: session?.failure ?: session?.let(::phaseLabel).orEmpty(),
+            description = error ?: session?.failure ?: session?.let(::phaseLabel).orEmpty(),
             modifier = Modifier.fillMaxSize(),
             action = { dev.akko.miaominal.ui.components.ConnectionErrorActions(
                 error ?: session?.failure.orEmpty(), onRetry, onEdit) }
         )
-    } else Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(12.dp))
-            Text(session?.let(::phaseLabel) ?: uiString(R.string.ui_opening_sftp_session))
-        }
-    }
+    } else SftpBrowserLoadingState(
+        status = session?.let(::phaseLabel) ?: uiString(R.string.ui_opening_sftp_session),
+        modifier = Modifier.fillMaxSize()
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun RemotePane(
+    searchVisible: Boolean, showSearchAction: Boolean,
+    onOpenSearch: () -> Unit, onCloseSearch: () -> Unit,
     selecting: Boolean, onBeginSelection: () -> Unit,
     query: String, onQuery: (String) -> Unit,
-    sort: FileSort, onSort: (FileSort) -> Unit,
+    sort: FileSort, sortAscending: Boolean, onSort: (FileSort) -> Unit,
     listState: LazyListState,
     onNavigatePath: (String) -> Unit,
-    transferFabVisible: Boolean,
     path: String,
     entries: List<SftpEntryModel>,
     loading: Boolean,
@@ -1050,26 +1174,24 @@ private fun RemotePane(
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
     onEditPath: () -> Unit,
-    onCreateFolder: () -> Unit,
     onRename: (SftpEntryModel) -> Unit,
     onDelete: () -> Unit,
     onDeleteEntry: (SftpEntryModel) -> Unit,
     onUploadFiles: () -> Unit,
-    onUploadFolder: () -> Unit,
     onDownload: (List<SftpEntryModel>) -> Unit
 ) {
-    var menuVisible by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<SftpEntryModel?>(null) }
     val context = LocalContext.current
-    val selectedLabel = stringResource(R.string.ux_selected)
-    val unselectedLabel = stringResource(R.string.ux_not_selected)
     detail?.let { entry ->
         ModalBottomSheet(onDismissRequest = { detail = null }) {
             Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(entry.name, style = MaterialTheme.typography.headlineSmall)
-                androidx.compose.foundation.text.selection.SelectionContainer { Text(entry.path) }
-                Text(formatBytes(entry.size), style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = { detail = null; onDownload(listOf(entry)) }) { Text(stringResource(R.string.fm_download)) }
+                SftpFileDetailHeader(entry.name, entry.path, entryIcon(entry),
+                    if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size))
+                FilledTonalButton(onClick = { detail = null; onDownload(listOf(entry)) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Download, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(UiSpacing.xs))
+                    Text(stringResource(R.string.fm_download))
+                }
                 TextButton(onClick = { detail = null; onRename(entry) }) { Text(stringResource(R.string.fm_rename)) }
                 TextButton(onClick = { detail = null; onDeleteEntry(entry) }) { Text(stringResource(R.string.action_delete)) }
                 TextButton(onClick = { (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager)
@@ -1078,107 +1200,71 @@ private fun RemotePane(
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onNavigateUp) {
-                Icon(Icons.Outlined.ArrowUpward, contentDescription = stringResource(R.string.sftp_navigate_up))
-            }
-            Box(
-                modifier = Modifier.weight(1f)
-                    .clickable(
-                        role = androidx.compose.ui.semantics.Role.Button,
-                        onClickLabel = stringResource(R.string.sftp_edit_path),
-                        onClick = onEditPath
-                    )
-                    .heightIn(min = 48.dp)
-                    .padding(horizontal = 4.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Text(
-                    text = path.ifBlank { "." },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onCreateFolder) {
-                Icon(Icons.Outlined.CreateNewFolder, contentDescription = stringResource(R.string.fm_new_folder))
-            }
-            if (error == null) IconButton(onClick = onRefresh, enabled = !loading) {
-                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.fm_refresh))
-            }
-            Box {
-                IconButton(onClick = { menuVisible = true }) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.fm_more_actions))
-                }
-                DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.ux_choose)) }, onClick = { menuVisible = false; onBeginSelection() })
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.sftp_upload_files)) },
-                        onClick = { menuVisible = false; onUploadFiles() },
-                        leadingIcon = { Icon(Icons.Outlined.Upload, contentDescription = null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.sftp_upload_folder)) },
-                        onClick = { menuVisible = false; onUploadFolder() },
-                        leadingIcon = { Icon(Icons.Outlined.CloudUpload, contentDescription = null) }
-                    )
-                }
-            }
-        }
-        PathBreadcrumbs(path, onNavigatePath)
-        DirectoryControls(query, onQuery, sort, onSort, onBeginSelection)
-        if (loading) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
+        SftpDirectoryBar(
+            local = false, path = path.ifBlank { "." }, count = entries.size,
+            onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
+            onPathAction = onEditPath, onRefresh = onRefresh, refreshing = loading,
+            searchVisible = searchVisible, showSearchAction = showSearchAction,
+            onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
+            query = query, onQuery = onQuery, sort = sort, sortAscending = sortAscending,
+            onSort = onSort, onSelect = onBeginSelection
+        )
         if (selecting || selected.isNotEmpty()) {
             SelectionBar(
                 count = selected.size,
                 onSelectAll = onSelectAll,
                 onClear = onClearSelection,
-                actions = {
-                    TextButton(onClick = { onDownload(entries.filter { it.path in selected }) }) {
-                        Text(stringResource(R.string.fm_download))
-                    }
+                actionLabel = stringResource(R.string.fm_download),
+                actionIcon = Icons.Outlined.Download,
+                onAction = { onDownload(entries.filter { it.path in selected }) },
+                extraActions = {
                     var selectionMenu by remember { mutableStateOf(false) }
                     Box {
                         IconButton(onClick = { selectionMenu = true }) { Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions)) }
                         DropdownMenu(selectionMenu, { selectionMenu = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(R.string.fm_delete_selected)) }, onClick = { selectionMenu = false; onDelete() })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.fm_delete_selected)) }, enabled = selected.isNotEmpty(), onClick = { selectionMenu = false; onDelete() })
                         }
                     }
                 }
             )
         }
-        if (error != null) {
-            PageEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
-                text = error,
-                modifier = Modifier.fillMaxSize(),
-                action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
-        } else if (entries.isEmpty() && !loading) {
-            PageEmptyState(Icons.Outlined.FolderOpen, stringResource(R.string.sftp_no_entries),
-                modifier = Modifier.fillMaxSize())
-        } else {
-            LazyColumn(state = listState, contentPadding = PaddingValues(bottom = if (transferFabVisible) 112.dp else 0.dp)) {
-                items(entries, key = { it.path }) { entry ->
-                    RemoteEntryRow(
-                        entry = entry,
-                        selected = entry.path in selected,
-                        onClick = {
-                            when (dev.akko.miaominal.ui.model.fileTapAction(selecting || selected.isNotEmpty(), entry.isDirectory)) {
-                                dev.akko.miaominal.ui.model.FileTapAction.ToggleSelection -> onToggleSelection(entry)
-                                dev.akko.miaominal.ui.model.FileTapAction.OpenDirectory -> onEnter(entry)
-                                dev.akko.miaominal.ui.model.FileTapAction.OpenDetails -> detail = entry
-                            }
-                        },
-                        onLongClick = { onToggleSelection(entry) },
-                        onRename = { onRename(entry) },
-                        onDelete = { onDeleteEntry(entry) },
-                        onDownload = { onDownload(listOf(entry)) }
-                    )
+        SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
+            modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (error != null) {
+                SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
+                    description = error,
+                    modifier = Modifier.fillMaxSize(),
+                    action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
+            } else if (entries.isEmpty()) {
+                SftpBrowserEmptyState(
+                    if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
+                    stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.sftp_no_entries),
+                    stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_directory_empty_hint),
+                    modifier = Modifier.fillMaxSize(),
+                    action = {
+                        if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) }
+                        else FilledTonalButton(onClick = onUploadFiles) { Text(stringResource(R.string.sftp_upload_files)) }
+                    }
+                )
+            } else {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-remote-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = 88.dp)) {
+                    items(entries, key = { it.path }) { entry ->
+                        RemoteEntryRow(
+                            entry = entry,
+                            selected = entry.path in selected,
+                            onClick = {
+                                when (dev.akko.miaominal.ui.model.fileTapAction(selecting || selected.isNotEmpty(), entry.isDirectory)) {
+                                    dev.akko.miaominal.ui.model.FileTapAction.ToggleSelection -> onToggleSelection(entry)
+                                    dev.akko.miaominal.ui.model.FileTapAction.OpenDirectory -> onEnter(entry)
+                                    dev.akko.miaominal.ui.model.FileTapAction.OpenDetails -> detail = entry
+                                }
+                            },
+                            onLongClick = { onToggleSelection(entry) },
+                            onRename = { onRename(entry) },
+                            onDelete = { onDeleteEntry(entry) },
+                            onDownload = { onDownload(listOf(entry)) }
+                        )
+                    }
                 }
             }
         }
@@ -1197,33 +1283,15 @@ private fun RemoteEntryRow(
     onDownload: () -> Unit
 ) {
     var menuVisible by remember { mutableStateOf(false) }
-    ListItem(
-        colors = if (selected) {
-            ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-        } else {
-            ListItemDefaults.colors()
-        },
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick,
-            onLongClickLabel = stringResource(R.string.ux_selection)).semantics { this.selected = selected },
-        headlineContent = {
-            Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        supportingContent = {
-            Text(
-                stringResource(
-                    R.string.fm_entry_metadata,
-                    if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size),
-                    entry.owner ?: entry.attributes ?: ""
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        leadingContent = {
-            if (selected) Icon(Icons.Outlined.CheckCircle, stringResource(R.string.ux_selected))
-            else Icon(entryIcon(entry), contentDescription = null)
-        },
-        trailingContent = {
+    SftpFileRow(
+        name = entry.name,
+        metadata = listOfNotNull(
+            if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size),
+            (entry.owner ?: entry.attributes)?.takeIf { it.isNotBlank() }
+        ).joinToString(" · "),
+        directory = entry.isDirectory, selected = selected, icon = entryIcon(entry),
+        onClick = onClick, onLongClick = onLongClick,
+        trailing = {
             Box {
                 IconButton(onClick = { menuVisible = true }) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.fm_item_actions))
@@ -1253,33 +1321,41 @@ private fun RemoteEntryRow(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LocalPane(
+    searchVisible: Boolean, showSearchAction: Boolean,
+    onOpenSearch: () -> Unit, onCloseSearch: () -> Unit,
     selecting: Boolean, onBeginSelection: () -> Unit,
     query: String, onQuery: (String) -> Unit,
-    sort: FileSort, onSort: (FileSort) -> Unit,
+    sort: FileSort, sortAscending: Boolean, onSort: (FileSort) -> Unit,
     listState: LazyListState,
-    transferFabVisible: Boolean,
     treeUri: String?,
     treeLabel: String?,
     path: String,
     onNavigatePath: (String) -> Unit,
     entries: List<SafLocalEntry>,
+    loading: Boolean,
+    error: String?,
     selected: Set<String>,
     onPickTree: () -> Unit,
+    onRequestAccess: () -> Unit,
     onNavigateUp: () -> Unit,
     onRefresh: () -> Unit,
     onEnter: (SafLocalEntry) -> Unit,
     onToggleSelection: (SafLocalEntry) -> Unit,
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
-    onUploadToRemote: () -> Unit
+    onUploadToRemote: (SafLocalEntry?) -> Unit
 ) {
     var detail by remember { mutableStateOf<SafLocalEntry?>(null) }
     val context = LocalContext.current
     detail?.let { entry -> ModalBottomSheet(onDismissRequest = { detail = null }) {
-        Column(Modifier.fillMaxWidth().padding(24.dp)) {
-            Text(entry.name, style = MaterialTheme.typography.headlineSmall)
-            androidx.compose.foundation.text.selection.SelectionContainer { Text(entry.relativePath) }
-            TextButton(onClick = { detail = null; onToggleSelection(entry); onUploadToRemote() }) { Text(stringResource(R.string.fm_upload_to_remote)) }
+        Column(Modifier.fillMaxWidth().padding(UiSpacing.md), verticalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
+            SftpFileDetailHeader(entry.name, entry.relativePath, sftpFileIcon(entry.name, entry.isDirectory),
+                if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size))
+            FilledTonalButton(onClick = { detail = null; onUploadToRemote(entry) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Upload, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(UiSpacing.xs))
+                Text(stringResource(R.string.fm_upload_to_remote))
+            }
             TextButton(onClick = { detail = null; onToggleSelection(entry) }) { Text(stringResource(R.string.ux_choose)) }
             TextButton(onClick = { (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager)
                 .setPrimaryClip(ClipData.newPlainText("path", entry.relativePath)) }) { Text(stringResource(R.string.ux_copy_path)) }
@@ -1287,186 +1363,225 @@ private fun LocalPane(
     } }
     Column(modifier = Modifier.fillMaxSize()) {
         if (treeUri == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                    Spacer(Modifier.height(8.dp))
-                    Text(stringResource(R.string.sftp_local_pick_hint))
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = onPickTree) { Text(stringResource(R.string.sftp_local_pick)) }
-                }
-            }
+            SftpBrowserEmptyState(
+                icon = Icons.Outlined.FolderOpen,
+                title = stringResource(R.string.sftp_browser_local_title),
+                description = stringResource(R.string.sftp_storage_local_hint),
+                modifier = Modifier.fillMaxSize(),
+                action = { Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Button(onClick = onRequestAccess) { Text(stringResource(R.string.sftp_storage_allow)) }
+                    TextButton(onClick = onPickTree) { Text(stringResource(R.string.sftp_local_pick)) }
+                } }
+            )
             return@Column
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onNavigateUp) {
-                Icon(Icons.Outlined.ArrowUpward, contentDescription = stringResource(R.string.sftp_navigate_up))
-            }
-            Text(
-                text = if (path.isBlank()) (treeLabel ?: "") else path,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.fm_refresh))
-            }
-            IconButton(onClick = onPickTree) {
-                Icon(Icons.Outlined.FolderOpen, contentDescription = stringResource(R.string.sftp_local_pick))
-            }
-        }
-        PathBreadcrumbs(path, onNavigatePath)
-        DirectoryControls(query, onQuery, sort, onSort, onBeginSelection)
+        SftpDirectoryBar(
+            local = true, path = path, rootLabel = treeLabel, count = entries.size,
+            onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
+            onPathAction = onPickTree, onRefresh = onRefresh, refreshing = loading,
+            searchVisible = searchVisible, showSearchAction = showSearchAction,
+            onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
+            query = query, onQuery = onQuery, sort = sort, sortAscending = sortAscending,
+            onSort = onSort, onSelect = onBeginSelection
+        )
         if (selecting || selected.isNotEmpty()) {
             SelectionBar(
                 count = selected.size,
                 onSelectAll = onSelectAll,
                 onClear = onClearSelection,
-                actions = {
-                    TextButton(onClick = onUploadToRemote) {
-                        Text(stringResource(R.string.fm_upload_to_remote))
-                    }
-                }
+                actionLabel = stringResource(R.string.fm_upload_to_remote),
+                actionIcon = Icons.Outlined.Upload,
+                onAction = { onUploadToRemote(null) }
             )
         }
-        if (entries.isEmpty()) {
-            PageEmptyState(Icons.Outlined.FolderOpen, stringResource(R.string.fm_local_empty),
-                modifier = Modifier.fillMaxSize())
-        } else {
-            LazyColumn(state = listState, contentPadding = PaddingValues(bottom = if (transferFabVisible) 112.dp else 0.dp)) {
-                items(entries, key = { it.relativePath }) { entry ->
-                    ListItem(
-                        colors = if (entry.relativePath in selected) {
-                            ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                        } else {
-                            ListItemDefaults.colors()
-                        },
-                        modifier = Modifier.combinedClickable(
+        SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
+            modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (error != null) {
+                SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
+                    description = error, modifier = Modifier.fillMaxSize(),
+                    action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
+            } else if (entries.isEmpty()) {
+                SftpBrowserEmptyState(
+                    if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
+                    stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.fm_local_empty),
+                    stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_local_empty_hint),
+                    modifier = Modifier.fillMaxSize(),
+                    action = { if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) } }
+                )
+            } else {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-local-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = UiSpacing.sm)) {
+                    items(entries, key = { it.relativePath }) { entry ->
+                        SftpFileRow(
+                            name = entry.name,
+                            metadata = if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size),
+                            directory = entry.isDirectory, selected = entry.relativePath in selected,
                             onClick = { if (selecting || selected.isNotEmpty()) onToggleSelection(entry)
-                                else if (entry.isDirectory) onEnter(entry) else detail = entry },
+                                    else if (entry.isDirectory) onEnter(entry) else detail = entry },
                             onLongClick = { onToggleSelection(entry) },
-                            onLongClickLabel = stringResource(R.string.ux_selection)
-                        ).semantics { this.selected = entry.relativePath in selected },
-                        headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = {
-                            Text(if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size))
-                        },
-                        leadingContent = {
-                            Icon(
-                                if (entry.isDirectory) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.InsertDriveFile,
-                                contentDescription = null
-                            )
-                        },
-                        trailingContent = {
-                            if (entry.relativePath in selected) {
-                                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                            trailing = {
+                                if (entry.isDirectory && entry.relativePath !in selected) Icon(Icons.Outlined.ChevronRight, null,
+                                    Modifier.padding(end = UiSpacing.sm), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SelectionBar(
     count: Int,
     onSelectAll: () -> Unit,
     onClear: () -> Unit,
-    actions: @Composable () -> Unit
+    actionLabel: String,
+    actionIcon: ImageVector,
+    onAction: () -> Unit,
+    extraActions: @Composable () -> Unit = {}
 ) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-        androidx.compose.foundation.layout.FlowRow(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.fm_selected_count, count),
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(start = 4.dp)
-            )
-            TextButton(onClick = onSelectAll) { Text(stringResource(R.string.fm_select_all)) }
-            actions()
-            IconButton(onClick = onClear) {
-                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.fm_clear_selection))
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = UiSpacing.xs, vertical = UiSpacing.xxs)
+            .testTag("sftp-selection-bar"),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = colors.secondaryContainer,
+        contentColor = colors.onSecondaryContainer
+    ) {
+        Column(Modifier.padding(start = UiSpacing.sm, end = UiSpacing.xs, bottom = UiSpacing.xs)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.CheckCircle, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(UiSpacing.xs))
+                Text(
+                    text = stringResource(R.string.fm_selected_count, count),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                extraActions()
+                IconButton(onClick = onClear, modifier = Modifier.testTag("sftp-selection-close")) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.fm_clear_selection))
+                }
+            }
+            val selectAllLabel = stringResource(R.string.fm_select_all)
+            val labelStyle = MaterialTheme.typography.labelLarge
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val iconSize = with(density) { maxOf(18.dp, labelStyle.fontSize.toDp()) }
+            val labelWidth = with(density) {
+                maxOf(measurer.measure(selectAllLabel, labelStyle, maxLines = 1).size.width,
+                    measurer.measure(actionLabel, labelStyle, maxLines = 1).size.width).toDp()
+            }
+            val minButtonWidth = labelWidth + iconSize + UiSpacing.xs * 3
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(end = UiSpacing.xs)) {
+                if (maxWidth < minButtonWidth * 2 + UiSpacing.xs) {
+                    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
+                        SelectionActionButton(selectAllLabel, Icons.Outlined.SelectAll, iconSize, onSelectAll,
+                            Modifier.fillMaxWidth(), primary = false)
+                        SelectionActionButton(actionLabel, actionIcon, iconSize, onAction,
+                            Modifier.fillMaxWidth().testTag("sftp-selection-action"), enabled = count > 0)
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                        horizontalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
+                        SelectionActionButton(selectAllLabel, Icons.Outlined.SelectAll, iconSize, onSelectAll,
+                            Modifier.weight(1f).fillMaxHeight(), primary = false)
+                        SelectionActionButton(actionLabel, actionIcon, iconSize, onAction,
+                            Modifier.weight(1f).fillMaxHeight().testTag("sftp-selection-action"), enabled = count > 0)
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun SelectionActionButton(label: String, icon: ImageVector, iconSize: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit, modifier: Modifier, enabled: Boolean = true, primary: Boolean = true) {
+    val content: @Composable RowScope.() -> Unit = {
+        Icon(icon, null, Modifier.size(iconSize))
+        Spacer(Modifier.width(UiSpacing.xs))
+        Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 1)
+    }
+    val padding = PaddingValues(horizontal = UiSpacing.xs, vertical = UiSpacing.xs)
+    if (primary) Button(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp),
+        contentPadding = padding, content = content)
+    else OutlinedButton(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), contentPadding = padding,
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+        content = content)
 }
 
 @Composable
 private fun SftpTransferRow(
     transfer: SftpTransferModel,
     onRetry: () -> Unit,
-    handle: SftpTransferHandle?,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onCancel: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(transferIcon(transfer), contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
+        Column(modifier = Modifier.fillMaxWidth().padding(UiSpacing.sm), verticalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(transferIcon(transfer), contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer) }
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        transfer.sourceLabel.ifBlank { transfer.destination },
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${transferStateLabel(transfer.state)} · ${formatBytes(transfer.bytesComplete)} / ${formatBytes(transfer.bytesTotal)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                when (transfer.state) {
+                    SftpTransferStateModel.Running, SftpTransferStateModel.Queued -> {
+                        IconButton(onClick = onPause) {
+                            Icon(Icons.Outlined.Pause, contentDescription = uiString(R.string.ui_pause))
+                        }
+                    }
+                    SftpTransferStateModel.Paused -> {
+                        IconButton(onClick = onResume) {
+                            Icon(Icons.Outlined.PlayArrow, contentDescription = uiString(R.string.ui_resume))
+                        }
+                    }
+                    else -> Unit
+                }
+                if (!transfer.state.isTerminal) {
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.Outlined.Close, contentDescription = uiString(R.string.tool_action_cancel))
+                    }
+                }
+            }
+            LinearProgressIndicator(
+                progress = { transfer.progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            )
+            if (transfer.childCount > 0) {
                 Text(
-                    transfer.sourceLabel.ifBlank { transfer.destination },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${transferStateLabel(transfer.state)} · ${formatBytes(transfer.bytesComplete)} / ${formatBytes(transfer.bytesTotal)}",
+                    text = uiString(R.string.ui_items, transfer.childrenDone, transfer.childCount) +
+                        if (transfer.childrenFailed > 0) uiString(R.string.ui_failed, transfer.childrenFailed) else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            when (transfer.state) {
-                SftpTransferStateModel.Running, SftpTransferStateModel.Queued -> {
-                    IconButton(onClick = onPause) {
-                        Icon(Icons.Outlined.Pause, contentDescription = uiString(R.string.ui_pause))
-                    }
-                }
-                SftpTransferStateModel.Paused -> {
-                    IconButton(onClick = onResume) {
-                        Icon(Icons.Outlined.PlayArrow, contentDescription = uiString(R.string.ui_resume))
-                    }
-                }
-                else -> Unit
+            if (transfer.state == SftpTransferStateModel.Failed) {
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.ux_retry_transfer)) }
             }
-            if (!transfer.state.isTerminal) {
-                IconButton(onClick = onCancel) {
-                    Icon(Icons.Outlined.Close, contentDescription = uiString(R.string.tool_action_cancel))
-                }
+            if (transfer.error != null) {
+                Text(
+                    describeTransferError(transfer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
-        LinearProgressIndicator(
-            progress = { transfer.progress },
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-        )
-        if (transfer.childCount > 0) {
-            Text(
-                text = uiString(R.string.ui_items, transfer.childrenDone, transfer.childCount) +
-                    if (transfer.childrenFailed > 0) uiString(R.string.ui_failed, transfer.childrenFailed) else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (transfer.state == SftpTransferStateModel.Failed) {
-            TextButton(onClick = onRetry) { Text(stringResource(R.string.ux_retry_transfer)) }
-        }
-        if (transfer.error != null) {
-            Text(
-                describeTransferError(transfer),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-        HorizontalDivider(color = Color.Transparent)
     }
 }
 
@@ -1500,12 +1615,6 @@ private fun joinLocalPath(parent: String, name: String): String =
 
 private fun parentLocalPath(path: String): String =
     path.substringBeforeLast('/', "")
-
-private fun transferPercent(transfers: List<SftpTransferModel>): Int {
-    if (transfers.isEmpty()) return 0
-    val total = transfers.map { it.progress }.fold(0f) { sum, value -> sum + value }
-    return (total / transfers.size * 100f).toInt().coerceIn(0, 100)
-}
 
 private fun describeSftpError(error: Throwable): String = when (error) {
     is dev.akko.miaominal.data.TransferRetryException -> uiString(when (error.reason) {
@@ -1583,7 +1692,7 @@ private fun formatBytes(bytes: Long?): String {
 private fun entryIcon(entry: SftpEntryModel): ImageVector = when (entry.kind) {
     SftpEntryKind.Directory -> Icons.Outlined.Folder
     SftpEntryKind.Symlink -> Icons.AutoMirrored.Outlined.DriveFileMove
-    else -> Icons.AutoMirrored.Outlined.InsertDriveFile
+    else -> sftpFileIcon(entry.name, entry.isDirectory)
 }
 
 private fun transferIcon(transfer: SftpTransferModel): ImageVector =

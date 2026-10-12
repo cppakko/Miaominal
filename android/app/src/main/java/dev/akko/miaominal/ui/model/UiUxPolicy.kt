@@ -1,5 +1,6 @@
 package dev.akko.miaominal.ui.model
 
+import dev.akko.miaominal.data.SafLocalEntry
 import dev.akko.miaominal.data.SftpEntryModel
 import dev.akko.miaominal.data.TerminalCellFlags
 import dev.akko.miaominal.data.TerminalRowModel
@@ -12,15 +13,32 @@ fun fileTapAction(selecting: Boolean, directory: Boolean) = when {
     else -> FileTapAction.OpenDetails
 }
 
-fun visibleFiles(entries: List<SftpEntryModel>, query: String, sort: FileSort): List<SftpEntryModel> {
-    val order = when (sort) {
-        FileSort.Name -> compareBy<SftpEntryModel> { it.name.lowercase(java.util.Locale.ROOT) }
-        FileSort.Size -> compareByDescending<SftpEntryModel> { it.size ?: Long.MIN_VALUE }
-        FileSort.Modified -> compareByDescending<SftpEntryModel> { it.modifiedAtMs ?: Long.MIN_VALUE }
-    }
+fun visibleFiles(entries: List<SftpEntryModel>, query: String, sort: FileSort,
+    ascending: Boolean = sort == FileSort.Name): List<SftpEntryModel> {
+    val order = fileSortOrder(sort, ascending, SftpEntryModel::name, SftpEntryModel::size, SftpEntryModel::modifiedAtMs)
     return entries.filter { it.name.contains(query.trim(), ignoreCase = true) }
         .sortedWith(compareByDescending<SftpEntryModel> { it.isDirectory }.then(order)
             .thenBy { it.name.lowercase(java.util.Locale.ROOT) }.thenBy { it.path })
+}
+
+fun visibleLocalFiles(entries: List<SafLocalEntry>, query: String, sort: FileSort,
+    ascending: Boolean = sort == FileSort.Name): List<SafLocalEntry> {
+    val order = fileSortOrder(sort, ascending, SafLocalEntry::name, SafLocalEntry::size, SafLocalEntry::modifiedAtMs)
+    return entries.filter { it.name.contains(query.trim(), ignoreCase = true) }
+        .sortedWith(compareByDescending<SafLocalEntry> { it.isDirectory }.then(order)
+            .thenBy { it.name.lowercase(java.util.Locale.ROOT) }.thenBy { it.relativePath })
+}
+
+private fun <T> fileSortOrder(sort: FileSort, ascending: Boolean, name: (T) -> String,
+    size: (T) -> Long?, modified: (T) -> Long?): Comparator<T> {
+    val nameOrder = compareBy<T> { name(it).lowercase(java.util.Locale.ROOT) }
+    // Missing metadata stays last in both directions, within each directory/file group.
+    val numberOrder = nullsLast(if (ascending) naturalOrder<Long>() else reverseOrder<Long>())
+    return when (sort) {
+        FileSort.Name -> if (ascending) nameOrder else nameOrder.reversed()
+        FileSort.Size -> compareBy(numberOrder, size)
+        FileSort.Modified -> compareBy(numberOrder, modified)
+    }
 }
 
 fun terminalRowText(row: TerminalRowModel): String = row.cells

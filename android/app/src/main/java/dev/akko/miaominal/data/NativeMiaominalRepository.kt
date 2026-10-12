@@ -385,6 +385,8 @@ class NativeMiaominalRepository(
         safDocuments.takePersistablePermission(android.net.Uri.parse(uri))
     }
 
+    override fun defaultLocalTreeUri(): String? = safDocuments.defaultTreeUri()
+
     override suspend fun listSafDirectory(
         treeUri: String,
         relativePath: String

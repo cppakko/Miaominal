@@ -87,8 +87,8 @@ class FakeSftpSession(
         revision += 1
     }
 
-    fun seedDirectory(path: String, entries: List<SftpEntryModel>) {
-        directory = directory.copy(path = path, entries = entries, loading = false, requestId = nextRequestId++)
+    fun seedDirectory(path: String, entries: List<SftpEntryModel>, loading: Boolean = false) {
+        directory = directory.copy(path = path, entries = entries, loading = loading, requestId = nextRequestId++)
         revision += 1
     }
 
@@ -162,9 +162,17 @@ class FakeSftpSession(
         trees[path] = entries
     }
 
+    /** Hold queued listings until seedDirectory supplies the server response. */
+    var deferDirectoryListings = false
+
     override fun listDirectory(path: String): Result<Long> {
         requestedPaths.add(path)
         val requestId = nextRequestId++
+        if (deferDirectoryListings) {
+            directory = directory.copy(loading = true, error = null, requestId = requestId)
+            revision += 1
+            return Result.success(requestId)
+        }
         val normalized = if (path == "." || path.isBlank()) {
             "/home/tester"
         } else {

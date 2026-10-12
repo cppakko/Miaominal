@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
@@ -46,16 +47,17 @@ private const val PERMISSIONS_PREFERENCES = "permissions"
 private const val NOTIFICATIONS_ASKED_KEY = "notifications_asked"
 
 class MainActivity : AppCompatActivity() {
+    private var startupPermissionsReady by mutableStateOf(false)
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { startupPermissionsReady = true }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         UiStrings.updateConfiguration(this)
         enableEdgeToEdge()
-        requestNotificationPermissionOnce()
+        startupPermissionsReady = !requestNotificationPermissionOnce()
         setContent {
-            MiaominalRoot()
+            MiaominalRoot(startupPermissionsReady)
         }
     }
 
@@ -72,24 +74,25 @@ class MainActivity : AppCompatActivity() {
      * afterwards the permission is only revisited from the settings screen or
      * the system settings.
      */
-    private fun requestNotificationPermissionOnce() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val container = (application as? MiaominalApplication)?.container ?: return
-        if (!container.repository.devicePreferences.value.backgroundKeepAlive) return
+    private fun requestNotificationPermissionOnce(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val container = (application as? MiaominalApplication)?.container ?: return false
+        if (!container.repository.devicePreferences.value.backgroundKeepAlive) return false
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
-        if (granted) return
+        if (granted) return false
         val preferences = getSharedPreferences(PERMISSIONS_PREFERENCES, Context.MODE_PRIVATE)
-        if (preferences.getBoolean(NOTIFICATIONS_ASKED_KEY, false)) return
+        if (preferences.getBoolean(NOTIFICATIONS_ASKED_KEY, false)) return false
         preferences.edit().putBoolean(NOTIFICATIONS_ASKED_KEY, true).apply()
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        return true
     }
 }
 
 @Composable
-private fun MiaominalRoot() {
+private fun MiaominalRoot(startupPermissionsReady: Boolean) {
     val context = LocalContext.current
     val repository: MiaominalRepository = remember(context) {
         (context.applicationContext as? MiaominalApplication)?.container?.repository
@@ -155,6 +158,7 @@ private fun MiaominalRoot() {
             onSeedColorChange = { appearance.update(repository, systemDarkTheme, nextSeed = it) },
             agentChat = agentChat
         )
+        dev.akko.miaominal.ui.components.StartupStoragePermission(startupPermissionsReady)
     }
     }
 }

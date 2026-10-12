@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sftp_storage_permission_title">Access your files</string>
+    <string name="sftp_storage_permission_body">Allow Miaominal to access all files to browse phone storage, upload, and download directly in the SFTP Local pane, without choosing a folder each time. Turn on “Allow access to manage all files” in the system settings that follow.</string>
+    <string name="sftp_storage_allow">Allow file access</string>
+    <string name="sftp_storage_later">Not now</string>
+    <string name="sftp_storage_internal">Internal storage</string>
+    <string name="sftp_storage_local_hint">Allow file access to browse phone storage directly, or choose just one folder for transfers.</string>
+    <string name="sftp_storage_settings_unavailable">File access settings are unavailable. Choose a folder instead.</string>
+</resources>

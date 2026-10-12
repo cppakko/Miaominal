@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sftp_storage_permission_title">访问手机文件</string>
+    <string name="sftp_storage_permission_body">允许 Miaominal 访问所有文件，即可在 SFTP 的本地页面直接浏览手机存储、上传和下载文件，无需每次选择文件夹。请在接下来的系统设置中开启“允许管理所有文件”。</string>
+    <string name="sftp_storage_allow">允许文件访问</string>
+    <string name="sftp_storage_later">暂不设置</string>
+    <string name="sftp_storage_internal">内部存储</string>
+    <string name="sftp_storage_local_hint">允许文件访问后，可直接浏览手机存储。也可以只选择一个文件夹用于传输。</string>
+    <string name="sftp_storage_settings_unavailable">无法打开文件访问设置，请使用文件夹选择。</string>
+</resources>

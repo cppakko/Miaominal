@@ -79,6 +79,7 @@ class InMemoryMiaominalRepository(
 
     /** Local entries returned by the fake SAF pane. */
     var safLocalEntries: List<SafLocalEntry> = emptyList()
+    var localStorageRoot: String? = null
     private var nextConnectionId = 1L
 
     private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -224,6 +225,8 @@ class InMemoryMiaominalRepository(
         })
 
     override suspend fun persistSafTreePermission(uri: String): Boolean = true
+
+    override fun defaultLocalTreeUri(): String? = localStorageRoot
 
     override suspend fun listSafDirectory(
         treeUri: String,

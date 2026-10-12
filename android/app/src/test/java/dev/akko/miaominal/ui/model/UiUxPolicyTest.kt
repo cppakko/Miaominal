@@ -23,6 +23,26 @@ class UiUxPolicyTest {
         assertEquals(listOf("Folder"), visibleFiles(files, " FOLD ", FileSort.Name).map { it.name })
     }
 
+    @Test fun bothSortDirectionsKeepDirectoriesFirstAndMissingMetadataLastInBothPanes() {
+        val files = listOf(file("unknown"), file("small", 1, 9), file("big", 99, 1),
+            file("Zebra", directory = true), file("Alpha", directory = true))
+        val localFiles = files.map { SafLocalEntry(it.name, it.path, it.isDirectory, it.size, it.modifiedAtMs) }
+        val cases = listOf(
+            Triple(FileSort.Name, true, listOf("Alpha", "Zebra", "big", "small", "unknown")),
+            Triple(FileSort.Name, false, listOf("Zebra", "Alpha", "unknown", "small", "big")),
+            Triple(FileSort.Size, true, listOf("Alpha", "Zebra", "small", "big", "unknown")),
+            Triple(FileSort.Size, false, listOf("Alpha", "Zebra", "big", "small", "unknown")),
+            Triple(FileSort.Modified, true, listOf("Alpha", "Zebra", "big", "small", "unknown")),
+            Triple(FileSort.Modified, false, listOf("Alpha", "Zebra", "small", "big", "unknown"))
+        )
+        cases.forEach { (sort, ascending, expected) ->
+            assertEquals("Remote $sort ascending=$ascending", expected,
+                visibleFiles(files, "", sort, ascending).map { it.name })
+            assertEquals("Local $sort ascending=$ascending", expected,
+                visibleLocalFiles(localFiles, "", sort, ascending).map { it.name })
+        }
+    }
+
     @Test fun formReportsTheFirstErrorInVisualOrder() {
         assertEquals(EditorErrorField.Name, firstEditorError("", "", "0", false))
         assertEquals(EditorErrorField.Host, firstEditorError("name", " ", "0", false))

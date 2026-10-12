@@ -1,9 +1,5 @@
 package dev.akko.miaominal.ui.screens
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -18,10 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
@@ -32,9 +24,9 @@ import dev.akko.miaominal.ui.components.ConnectionErrorActions
 import dev.akko.miaominal.ui.components.HintIcon as Icon
 import dev.akko.miaominal.ui.components.SessionIdentity
 import dev.akko.miaominal.ui.components.SessionTopBarCapsule
+import dev.akko.miaominal.ui.components.SessionStatusMessage
 import dev.akko.miaominal.ui.components.WorkspaceBackHandler as BackHandler
 import dev.akko.miaominal.ui.model.HostProfileUi
-import dev.akko.miaominal.ui.theme.MiaominalMotion
 import dev.akko.miaominal.ui.theme.UiSpacing
 
 /** Presentation only: the status follows the connection owner's phase, never a timer. */
@@ -104,30 +96,7 @@ fun ConnectingScreen(
                         Modifier.widthIn(max = 400.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Keep the status line in place when a prompt or result replaces loading.
-                        Box(Modifier.size(32.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
-                            if (busy) CircularProgressIndicator(
-                                Modifier.fillMaxSize(), color = colors.primary,
-                                trackColor = colors.surfaceContainerHighest, strokeWidth = 3.dp
-                            )
-                        }
-                        Spacer(Modifier.height(UiSpacing.sm))
-                        AnimatedContent(
-                            targetState = titleRes,
-                            transitionSpec = {
-                                fadeIn(MiaominalMotion.fadeThroughIn()) togetherWith
-                                    fadeOut(MiaominalMotion.fadeThroughOut())
-                            },
-                            label = "connection-status",
-                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-                        ) { title ->
-                            Text(
-                                stringResource(title),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (failed) colors.error else colors.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                        }
+                        SessionStatusMessage(status = stringResource(titleRes), busy = busy, failed = failed)
                         if (failed) {
                             Spacer(Modifier.height(UiSpacing.sm))
                             SelectionContainer {

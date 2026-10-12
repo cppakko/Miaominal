@@ -102,8 +102,11 @@ interface MiaominalRepository {
     /** Persist the read/write permission for a SAF tree picked by the user. */
     suspend fun persistSafTreePermission(uri: String): Boolean
 
+    /** Shared storage when permitted, otherwise the last persistently authorized folder. */
+    fun defaultLocalTreeUri(): String? = null
+
     /**
-     * List one directory of an authorized SAF tree for the local pane. The
+     * List one directory of an authorized local root for the local pane. The
      * implementation moves the provider query off the main thread.
      */
     suspend fun listSafDirectory(treeUri: String, relativePath: String): Result<List<SafLocalEntry>>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sftp_browser_sort_size">大小</string>
+    <string name="sftp_browser_sort_modified">修改时间</string>
+    <string name="sftp_browser_sort_ascending">升序</string>
+    <string name="sftp_browser_sort_descending">降序</string>
+    <string name="sftp_browser_close_search">关闭筛选</string>
+    <string name="sftp_browser_add">上传或新建</string>
+    <string name="sftp_browser_close_create">关闭新建菜单</string>
+    <string name="sftp_browser_filter_sort">筛选与排序</string>
+    <string name="sftp_browser_sort_by">排序方式</string>
+    <string name="sftp_browser_options">选项</string>
+    <string name="sftp_browser_root">根目录</string>
+    <string name="sftp_browser_loading_directory">正在读取文件夹…</string>
+    <string name="sftp_browser_loading_short">读取中…</string>
+    <string name="sftp_browser_item_count">%1$d 个项目</string>
+    <string name="sftp_browser_clear_search">清除筛选</string>
+    <string name="sftp_browser_transfer_idle">查看传输记录与进度</string>
+    <string name="sftp_browser_transfer_records">%1$d 条传输记录</string>
+    <string name="sftp_browser_transfer_empty">还没有传输任务</string>
+    <string name="sftp_browser_transfer_empty_hint">上传或下载文件后，可在这里查看进度。</string>
+    <string name="sftp_browser_local_title">连接你的本地文件</string>
+    <string name="sftp_browser_local_hint">选择一个文件夹，在手机与服务器之间传输文件。</string>
+    <string name="sftp_browser_directory_empty_hint">上传文件或新建文件夹，开始整理此目录。</string>
+    <string name="sftp_browser_filter_empty_hint">试试其他关键词，或清除筛选查看全部文件。</string>
+    <string name="sftp_browser_local_empty_hint">可从远程下载文件到此目录。</string>
+</resources>

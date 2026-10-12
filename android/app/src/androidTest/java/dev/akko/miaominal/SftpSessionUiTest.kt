@@ -2,7 +2,11 @@ package dev.akko.miaominal
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -38,6 +42,9 @@ import org.junit.Test
 class SftpSessionUiTest {
     @get:Rule
     val compose = createComposeRule()
+
+    private fun label(id: Int, vararg args: Any): String =
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.getString(id, *args)
 
     private val repository = InMemoryMiaominalRepository(
         hosts = TestFixtures.hosts(),
@@ -76,7 +83,7 @@ class SftpSessionUiTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("SFTP")[0].performClick()
         compose.waitUntil(timeoutMillis = 15_000) {
-            compose.onAllNodesWithText("远程").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText(label(R.string.fm_remote)).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -133,14 +140,14 @@ class SftpSessionUiTest {
         if (includeTargetInSelection) {
             compose.onNodeWithText("docs").performTouchInput { longClick() }
         }
-        compose.onAllNodesWithContentDescription("项目操作")[0].performClick()
-        compose.onNodeWithText("删除").performClick()
+        compose.onAllNodesWithContentDescription(label(R.string.fm_item_actions))[0].performClick()
+        compose.onNodeWithText(label(R.string.action_delete)).performClick()
         compose.onNodeWithTag("sftp-delete-targets")
-            .assertTextEquals("将从远程删除 1 个项目。\n\ndocs")
-        compose.onNodeWithText("取消").performClick()
+            .assertTextEquals(label(R.string.fm_delete_multi_message, label(R.string.fm_remote), 1) + "\n\ndocs")
+        compose.onNodeWithText(label(android.R.string.cancel)).performClick()
         compose.onNodeWithText("report.txt").assertIsDisplayed()
         compose.onNodeWithText("docs").assertIsDisplayed()
-        compose.onNodeWithText(if (includeTargetInSelection) "已选 2 项" else "已选 1 项")
+        compose.onNodeWithText(label(R.string.fm_selected_count, if (includeTargetInSelection) 2 else 1))
             .assertIsDisplayed()
     }
 
@@ -174,23 +181,23 @@ class SftpSessionUiTest {
 
         val restoration = StateRestorationTester(compose)
         setContent(restoration)
-        expandHostAndOpenSftpWaitingForText("确认主机密钥")
+        expandHostAndOpenSftpWaitingForText(label(R.string.session_trust_title))
 
-        compose.onNodeWithText("确认主机密钥").assertIsDisplayed()
+        compose.onNodeWithText(label(R.string.session_trust_title)).assertIsDisplayed()
         compose.onNodeWithText("SHA256:sftp-test", substring = true).assertIsDisplayed()
 
         restoration.emulateSavedInstanceStateRestore()
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("确认主机密钥").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText(label(R.string.session_trust_title)).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("确认主机密钥").assertIsDisplayed()
+        compose.onNodeWithText(label(R.string.session_trust_title)).assertIsDisplayed()
 
-        compose.onNodeWithText("仅本次信任").performClick()
+        compose.onNodeWithText(label(R.string.session_trust_accept_once)).performClick()
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("确认主机密钥").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText(label(R.string.session_trust_title)).fetchSemanticsNodes().isEmpty()
         }
         assertEquals(SftpPhase.Ready, session.snapshot().phase)
-        compose.onNodeWithText("确认主机密钥").assertDoesNotExist()
+        compose.onNodeWithText(label(R.string.session_trust_title)).assertDoesNotExist()
     }
 
     @Test
@@ -201,12 +208,12 @@ class SftpSessionUiTest {
         openSftpScreen()
 
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("%", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithText("%", substring = true)[0].performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").performClick()
         compose.waitForIdle()
         compose.onNodeWithText("release.tar.gz").assertIsDisplayed()
-        compose.onNodeWithText("传输中", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(label(R.string.ui_transferring), substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -218,11 +225,11 @@ class SftpSessionUiTest {
 
         compose.waitForIdle()
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("%", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithText("%", substring = true)[0].performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("失败", substring = true).assertIsDisplayed()
+        compose.onNode(hasText(label(R.string.forward_runtime_failed), substring = true) and hasAnyAncestor(hasTestTag("sftp-transfer-list"))).assertIsDisplayed()
     }
 
     @Test
@@ -241,11 +248,11 @@ class SftpSessionUiTest {
         compose.waitForIdle()
 
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("%", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithText("%", substring = true)[0].performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").performClick()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("继续").performClick()
+        compose.onNodeWithContentDescription(label(R.string.ui_resume)).performClick()
         compose.waitForIdle()
 
         assertEquals(
@@ -263,9 +270,9 @@ class SftpSessionUiTest {
         repository.refreshSftpSnapshots()
 
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("权限不足", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText(label(R.string.ui_permission_denied), substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithText("权限不足", substring = true)[0].assertIsDisplayed()
+        compose.onAllNodesWithText(label(R.string.ui_permission_denied), substring = true)[0].assertIsDisplayed()
     }
 
     @Test
@@ -276,6 +283,6 @@ class SftpSessionUiTest {
         expandHostAndOpenSftp()
         // Without a seeded session the repository opens a ready fake; the
         // screen must stay usable rather than crash.
-        compose.onNodeWithText("远程").assertIsDisplayed()
+        compose.onNodeWithText(label(R.string.fm_remote)).assertIsDisplayed()
     }
 }

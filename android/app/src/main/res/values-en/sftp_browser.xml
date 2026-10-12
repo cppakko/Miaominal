@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sftp_browser_sort_size">Size</string>
+    <string name="sftp_browser_sort_modified">Modified</string>
+    <string name="sftp_browser_sort_ascending">Ascending</string>
+    <string name="sftp_browser_sort_descending">Descending</string>
+    <string name="sftp_browser_close_search">Close filter</string>
+    <string name="sftp_browser_add">Upload or create</string>
+    <string name="sftp_browser_close_create">Close create menu</string>
+    <string name="sftp_browser_filter_sort">Filter and sort</string>
+    <string name="sftp_browser_sort_by">Sort by</string>
+    <string name="sftp_browser_options">Options</string>
+    <string name="sftp_browser_root">Root</string>
+    <string name="sftp_browser_loading_directory">Loading folder…</string>
+    <string name="sftp_browser_loading_short">Loading…</string>
+    <string name="sftp_browser_item_count">%1$d items</string>
+    <string name="sftp_browser_clear_search">Clear filter</string>
+    <string name="sftp_browser_transfer_idle">View transfer history and progress</string>
+    <string name="sftp_browser_transfer_records">%1$d transfer records</string>
+    <string name="sftp_browser_transfer_empty">No transfers yet</string>
+    <string name="sftp_browser_transfer_empty_hint">Upload or download files to follow their progress here.</string>
+    <string name="sftp_browser_local_title">Connect your local files</string>
+    <string name="sftp_browser_local_hint">Choose a folder to move files between your phone and server.</string>
+    <string name="sftp_browser_directory_empty_hint">Upload files or create a folder to get started.</string>
+    <string name="sftp_browser_filter_empty_hint">Try another keyword or clear the filter to see all files.</string>
+    <string name="sftp_browser_local_empty_hint">Download remote files into this folder.</string>
+</resources>
