@@ -1238,6 +1238,193 @@ impl SessionController {
 #[cfg(test)]
 mod monitor_layout_tests {
     use super::*;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AnyWindowHandle, Background, ScaledPixels, TestAppContext, WindowBounds, WindowOptions,
+        size,
+    };
+
+    struct MonitorTrendTestView {
+        chart: MonitorTrendChart,
+    }
+
+    impl Render for MonitorTrendTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.chart.clone())
+        }
+    }
+
+    fn points(values: &[(&str, f64)]) -> Vec<MonitorChartPoint> {
+        values
+            .iter()
+            .map(|(label, value)| MonitorChartPoint {
+                label: (*label).into(),
+                value: *value,
+            })
+            .collect()
+    }
+
+    fn open_chart(
+        cx: &mut TestAppContext,
+        primary: Vec<MonitorChartPoint>,
+        secondary: Vec<MonitorChartPoint>,
+    ) -> (AnyWindowHandle, Entity<MonitorTrendTestView>) {
+        cx.update(gpui_kit::init);
+        let roles = miaominal_settings::current_theme().material.roles;
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(240.0), px(88.0)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|_| MonitorTrendTestView {
+                        chart: MonitorTrendChart::new(
+                            primary,
+                            roles.primary,
+                            secondary,
+                            roles.secondary,
+                            100.0,
+                            vec![0.0, 25.0, 100.0],
+                        ),
+                    })
+                },
+            )
+            .expect("open monitor chart test window")
+        });
+        cx.simulate_window_scale_factor_change(handle, 1.0);
+        (handle, view)
+    }
+
+    fn painted_grid(cx: &mut TestAppContext, handle: AnyWindowHandle) -> Vec<Bounds<ScaledPixels>> {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let grid_background = Background::from(cx.theme().border.opacity(0.72));
+            window
+                .painted_quads()
+                .into_iter()
+                .filter(|quad| quad.background == grid_background)
+                .map(|quad| quad.bounds)
+                .collect()
+        })
+        .expect("draw monitor chart test window")
+    }
+
+    fn assert_grid_rows(
+        grid: &[Bounds<ScaledPixels>],
+        scale_factor: f32,
+        expected_centers: [f32; 3],
+    ) {
+        let mut rows = grid
+            .iter()
+            .map(|bounds| bounds.center().y.as_f32() / scale_factor)
+            .collect::<Vec<_>>();
+        rows.sort_by(f32::total_cmp);
+        rows.dedup();
+        assert_eq!(rows.len(), expected_centers.len());
+        // Painted bounds are snapped device pixels. A logical line center may move
+        // by half a device pixel, while its 1px logical stroke keeps its thickness.
+        for (actual, expected) in rows.iter().zip(expected_centers) {
+            assert!(
+                (actual - expected).abs() <= 0.5 / scale_factor,
+                "grid center {actual} is not near {expected} at scale {scale_factor}"
+            );
+        }
+        assert!(
+            grid.iter()
+                .all(|bounds| bounds.size.height.as_f32() == scale_factor)
+        );
+    }
+
+    #[gpui_kit::test]
+    fn monitor_grid_is_cleared_when_history_becomes_empty(cx: &mut TestAppContext) {
+        let (handle, view) = open_chart(cx, Vec::new(), Vec::new());
+        assert!(painted_grid(cx, handle).is_empty());
+
+        view.update(cx, |view, cx| {
+            view.chart.primary = points(&[("1", 40.0), ("2", 60.0)]);
+            cx.notify();
+        });
+        assert!(!painted_grid(cx, handle).is_empty());
+
+        view.update(cx, |view, cx| {
+            view.chart.primary.clear();
+            cx.notify();
+        });
+        assert!(painted_grid(cx, handle).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn monitor_grid_is_painted_with_a_single_primary_sample(cx: &mut TestAppContext) {
+        let (handle, _) = open_chart(cx, points(&[("1", 40.0)]), Vec::new());
+        assert_grid_rows(&painted_grid(cx, handle), 1.0, [3.0, 64.5, 85.0]);
+    }
+
+    #[gpui_kit::test]
+    fn monitor_grid_is_painted_with_different_series_histories(cx: &mut TestAppContext) {
+        let (handle, _) = open_chart(
+            cx,
+            points(&[("2", 25.0), ("3", 50.0)]),
+            points(&[("1", 75.0), ("2", 50.0), ("3", 25.0)]),
+        );
+        assert_grid_rows(&painted_grid(cx, handle), 1.0, [3.0, 64.5, 85.0]);
+    }
+
+    #[gpui_kit::test]
+    fn monitor_grid_resizes_without_changing_history(cx: &mut TestAppContext) {
+        let (handle, view) = open_chart(
+            cx,
+            points(&[("1", 25.0), ("2", 50.0)]),
+            points(&[("1", 75.0), ("2", 25.0)]),
+        );
+        let initial = painted_grid(cx, handle);
+        assert_grid_rows(&initial, 1.0, [3.0, 64.5, 85.0]);
+
+        cx.simulate_window_resize(handle, size(px(360.0), px(150.0)));
+        let resized = painted_grid(cx, handle);
+        assert_grid_rows(&resized, 1.0, [3.0, 111.0, 147.0]);
+        assert!(
+            resized
+                .iter()
+                .all(|bounds| bounds.right().as_f32() <= 360.0)
+        );
+        assert!(
+            resized
+                .iter()
+                .any(|bounds| bounds.right().as_f32() >= 356.0)
+        );
+        assert!(resized.len() > initial.len());
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.chart.primary[1].value, 50.0);
+            assert_eq!(view.chart.secondary[1].value, 25.0);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn monitor_grid_keeps_logical_geometry_when_display_scale_changes(cx: &mut TestAppContext) {
+        let (handle, _) = open_chart(cx, points(&[("1", 25.0), ("2", 50.0)]), Vec::new());
+        let initial = painted_grid(cx, handle);
+        assert_grid_rows(&initial, 1.0, [3.0, 64.5, 85.0]);
+
+        cx.simulate_window_scale_factor_change(handle, 2.0);
+        let scaled = painted_grid(cx, handle);
+        assert_grid_rows(&scaled, 2.0, [3.0, 64.5, 85.0]);
+        assert_eq!(scaled.len(), initial.len());
+        assert!(
+            initial
+                .iter()
+                .all(|bounds| bounds.size.width.as_f32() == 4.0)
+        );
+        assert!(
+            scaled
+                .iter()
+                .all(|bounds| bounds.size.width.as_f32() == 8.0)
+        );
+    }
 
     fn snapshot(platform: SessionMonitorPlatform) -> SessionMonitorSnapshot {
         SessionMonitorSnapshot {

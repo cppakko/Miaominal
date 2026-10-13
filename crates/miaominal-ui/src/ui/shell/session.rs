@@ -1214,15 +1214,85 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::TestAppContext;
     use gpui_kit::component::WindowExt as _;
+    use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
+    use gpui_kit::{AnyWindowHandle, TestAppContext, WindowBounds, WindowOptions, size};
 
-    struct EmptyTestView;
+    // Isolate the window hosting contract from runtime services while exercising
+    // the production notification helper and real content-changing UI actions.
+    struct SessionNotificationTestView {
+        show_workspace: bool,
+    }
 
-    impl Render for EmptyTestView {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    impl Render for SessionNotificationTestView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let content = if self.show_workspace {
+                "Workspace"
+            } else {
+                "Onboarding"
+            };
             div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_start()
+                .p_4()
+                .gap_2()
+                .child(
+                    Button::new("session-notify")
+                        .label("Notify")
+                        .w(px(160.))
+                        .on_click(|_, window, cx| {
+                            push_session_notification(
+                                SessionNotificationTone::Success,
+                                "Connected".to_string(),
+                                "SSH connection succeeded".to_string(),
+                                "connection-test-success-test".to_string(),
+                                window,
+                                cx,
+                            );
+                        }),
+                )
+                .child(
+                    Button::new("session-switch-content")
+                        .label("Switch content")
+                        .w(px(160.))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_workspace = !this.show_workspace;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .id("session-notification-content")
+                        .test_support()
+                        .aria_label(content)
+                        .child(content),
+                )
         }
+    }
+
+    fn open_notification_test_window(
+        cx: &mut TestAppContext,
+    ) -> (AnyWindowHandle, Entity<SessionNotificationTestView>) {
+        cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(800.), px(600.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|_| SessionNotificationTestView {
+                        show_workspace: false,
+                    })
+                },
+            )
+            .expect("open notification test window")
+        })
     }
 
     #[test]
@@ -1261,24 +1331,80 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn session_notification_is_pushed_to_supplied_window(cx: &mut TestAppContext) {
+    fn session_notification_is_rendered_once_across_content_changes(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
-        let (_root, cx) = cx.add_window_view(|window, cx| {
-            let view = cx.new(|_| EmptyTestView);
-            Root::new(view, window, cx)
-        });
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (handle, content) = open_notification_test_window(cx);
 
-        cx.update(|window, cx| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
             assert!(window.notifications(cx).is_empty());
-            push_session_notification(
-                SessionNotificationTone::Success,
-                "Connected".to_string(),
-                "SSH connection succeeded".to_string(),
-                "connection-test-success-test".to_string(),
-                window,
-                cx,
+            assert!(window.try_find("notification").is_none());
+            assert_eq!(
+                window.find("session-notification-content").label(),
+                Some("Onboarding"),
             );
+
+            window.click("session-notify", cx);
             assert_eq!(window.notifications(cx).len(), 1);
-        });
+            let notification_id = window.notifications(cx)[0].entity_id();
+            // find requires a unique observed target, so duplicated hosting
+            // fails here even when the queue contains only one notification.
+            let notification = window.find("notification");
+            assert_eq!(notification.role(), Some(gpui_kit::Role::Alert));
+            assert!(notification.visible());
+            assert!(notification.bounds().size.width > px(0.));
+            assert!(notification.bounds().size.height > px(0.));
+            let notification_path = notification.path().to_vec();
+
+            for expected_content in ["Workspace", "Onboarding", "Workspace"] {
+                window.click("session-switch-content", cx);
+                assert_eq!(
+                    window.find("session-notification-content").label(),
+                    Some(expected_content),
+                );
+                assert_eq!(window.notifications(cx).len(), 1);
+                assert_eq!(window.notifications(cx)[0].entity_id(), notification_id);
+                let notification = window.find("notification");
+                assert!(notification.visible());
+                assert_eq!(notification.path(), notification_path.as_slice());
+            }
+        })
+        .unwrap();
+
+        cx.update(|cx| assert!(content.read(cx).show_workspace));
+    }
+
+    #[gpui_kit::test]
+    fn session_notifications_are_rendered_only_in_the_supplied_window(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (first, _first_content) = open_notification_test_window(cx);
+        let (second, _second_content) = open_notification_test_window(cx);
+
+        cx.update_window(first, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("session-notify", cx);
+            assert_eq!(window.notifications(cx).len(), 1);
+            assert!(window.find("notification").visible());
+        })
+        .unwrap();
+
+        cx.update_window(second, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.notifications(cx).is_empty());
+            assert!(window.try_find("notification").is_none());
+            window.click("session-notify", cx);
+            assert_eq!(window.notifications(cx).len(), 1);
+            assert!(window.find("notification").visible());
+        })
+        .unwrap();
+
+        cx.update_window(first, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.notifications(cx).len(), 1);
+            assert!(window.find("notification").visible());
+        })
+        .unwrap();
     }
 }
