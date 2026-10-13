@@ -25,8 +25,10 @@ use super::contracts::{
 use super::i18n;
 
 mod catalog;
+mod runtime_persistence;
 mod snippets;
 use catalog::ConnectionCatalog;
+use runtime_persistence::{PendingRuntimePersistence, persisted_runtime_candidate};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ApplicationGenerations {
@@ -154,6 +156,8 @@ pub(crate) struct ApplicationState {
     vault_auto_lock_task: Option<gpui_kit::Task<()>>,
     port_forward_snapshot: PortForwardManagerSnapshot,
     runtime_observer_task: Option<gpui_kit::Task<()>>,
+    runtime_persistence: PendingRuntimePersistence,
+    runtime_persistence_retry_task: Option<gpui_kit::Task<()>>,
     bridge_observer_task: Option<gpui_kit::Task<()>>,
     auto_sync_observer_task: Option<gpui_kit::Task<()>>,
     sync_executor: Option<SyncExecutor>,
@@ -305,6 +309,8 @@ impl ApplicationState {
             vault_auto_lock_task: None,
             port_forward_snapshot,
             runtime_observer_task: None,
+            runtime_persistence: PendingRuntimePersistence::default(),
+            runtime_persistence_retry_task: None,
             bridge_observer_task: None,
             auto_sync_observer_task: None,
             sync_executor,
@@ -595,21 +601,17 @@ impl ApplicationState {
                 log::warn!("failed to reload settings after sync: {error}");
             }
             if let Ok(profiles) = &reload.sessions {
-                let mut profiles = profiles.clone();
-                let runtime_state_changed =
-                    reconcile_port_forward_enabled(&mut profiles, &self.port_forward_snapshot);
-                if runtime_state_changed
-                    && let Some(store) = &self.services.session_store
-                    && let Err(error) = store.save(&profiles)
-                {
-                    log::warn!(
-                        "failed to preserve local port-forward runtime state after sync: {error:?}"
-                    );
-                }
-                if self.catalog.set_profiles(profiles) {
+                // First adopt the data actually loaded from durable storage. Runtime
+                // overrides are committed separately and may remain pending.
+                if self.catalog.set_profiles(profiles.clone()) {
                     catalogs_changed = true;
                     routes_changed = true;
                 }
+                if self.reconcile_runtime_persistence(cx) {
+                    catalogs_changed = true;
+                    routes_changed = true;
+                }
+                self.ensure_runtime_persistence_retry(cx);
             } else if let Err(error) = &reload.sessions {
                 log::warn!("failed to reload sessions after sync: {error}");
             }
@@ -797,6 +799,78 @@ impl ApplicationState {
         cx.notify();
     }
 
+    fn reconcile_runtime_persistence(&mut self, cx: &mut Context<Self>) -> bool {
+        let result = persisted_runtime_candidate(
+            &self.catalog.profiles(),
+            &self.port_forward_snapshot,
+            |profiles| {
+                let store = self
+                    .services
+                    .session_store
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("session storage unavailable"))?;
+                store.save(profiles)
+            },
+        );
+        match result {
+            Ok(candidate) => {
+                self.runtime_persistence.resolved();
+                candidate.is_some_and(|profiles| self.catalog.set_profiles(profiles))
+            }
+            Err(error) => {
+                log::warn!("failed to persist port-forward runtime state: {error:?}");
+                if self.runtime_persistence.failed() {
+                    crate::ui::shell::publish_app_notification(
+                        crate::ui::shell::AppNotification::new(
+                            crate::ui::shell::AppNotificationTone::Warning,
+                            crate::ui::shell::AppNotificationPriority::High,
+                            i18n::string("forwarding.messages.persistence_pending"),
+                            i18n::string("forwarding.messages.persistence_retry"),
+                        )
+                        .stable_id("port-forward-persistence"),
+                        cx,
+                    );
+                }
+                false
+            }
+        }
+    }
+
+    fn ensure_runtime_persistence_retry(&mut self, cx: &mut Context<Self>) {
+        if !self.runtime_persistence.pending {
+            self.runtime_persistence_retry_task = None;
+            return;
+        }
+        if self.runtime_persistence_retry_task.is_some() {
+            return;
+        }
+        self.runtime_persistence_retry_task = Some(cx.spawn(async move |this, cx| {
+            let mut attempt = 0;
+            loop {
+                cx.background_executor()
+                    .timer(runtime_persistence::retry_delay(attempt))
+                    .await;
+                let resolved = this.update(cx, |state, cx| {
+                    if state.runtime_persistence.pending && state.reconcile_runtime_persistence(cx)
+                    {
+                        state.refresh_connection_catalog_services();
+                        state.generations.catalogs = next_generation(state.generations.catalogs);
+                        cx.notify();
+                    }
+                    let resolved = !state.runtime_persistence.pending;
+                    if resolved {
+                        state.runtime_persistence_retry_task = None;
+                    }
+                    resolved
+                });
+                match resolved {
+                    Ok(true) | Err(_) => break,
+                    Ok(false) => attempt = attempt.saturating_add(1),
+                }
+            }
+        }));
+    }
+
     fn start_runtime_observers(&mut self, cx: &mut Context<Self>) {
         if self.runtime_observer_task.is_some() {
             return;
@@ -814,28 +888,12 @@ impl ApplicationState {
                             return;
                         }
                         state.port_forward_snapshot = snapshot;
-                        let mut profiles = state.catalog.profiles();
-                        let result = persist_port_forward_enabled(
-                            &mut profiles,
-                            &state.port_forward_snapshot,
-                            |profiles| {
-                                if let Some(store) = &state.services.session_store {
-                                    store.save(profiles)?;
-                                }
-                                Ok(())
-                            },
-                        );
-                        match result {
-                            Ok(true) => {
-                                state.catalog.set_profiles(profiles);
-                                state.generations.catalogs =
-                                    next_generation(state.generations.catalogs)
-                            }
-                            Ok(false) => {}
-                            Err(error) => log::warn!(
-                                "failed to persist terminal port-forward runtime state: {error:?}"
-                            ),
+                        if state.reconcile_runtime_persistence(cx) {
+                            state.generations.catalogs =
+                                next_generation(state.generations.catalogs);
+                            state.refresh_connection_catalog_services();
                         }
+                        state.ensure_runtime_persistence_retry(cx);
                         state.generations.port_forwards =
                             next_generation(state.generations.port_forwards);
                         cx.notify();
@@ -995,6 +1053,7 @@ fn remaining_vault_auto_lock_duration(
     duration.saturating_sub(elapsed)
 }
 
+#[cfg(test)]
 fn persist_port_forward_enabled(
     profiles: &mut Vec<SessionProfile>,
     snapshot: &PortForwardManagerSnapshot,
