@@ -32,8 +32,6 @@ pub(in crate::ui::shell) use workspace_panes::WorkspacePanesAppViewExt;
 mod workspace_session_status;
 #[path = "layout/workspace_side_panel.rs"]
 mod workspace_side_panel;
-#[path = "layout/workspace_snippets.rs"]
-mod workspace_snippets;
 #[path = "layout/workspace_terminal_menu.rs"]
 mod workspace_terminal_menu;
 #[path = "layout/workspace_terminal_search.rs"]

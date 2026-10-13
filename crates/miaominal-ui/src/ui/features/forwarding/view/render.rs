@@ -4,8 +4,6 @@ use crate::ui::components::{
 use crate::ui::i18n;
 use miaominal_services::PortForwardRuntimeState;
 
-use super::super::super::*;
-use super::super::empty_state::shell_empty_page;
 use super::{
     components::{forwarding_empty_state, forwarding_section},
     render_helpers::{
@@ -13,6 +11,8 @@ use super::{
         render_forward_endpoint_editor, route_direction_icon, truncate_with_ellipsis,
     },
 };
+use crate::ui::shell::pages::empty_state::shell_empty_page;
+use crate::ui::shell::*;
 
 const FORWARD_RULE_CARD_ACTION_WIDTH: f32 = 52.0;
 const FORWARD_RULE_CARD_TITLE_MAX_CHARS: usize = 15;
@@ -76,7 +76,7 @@ fn render_forward_rule_connection_control(
 }
 
 fn render_forward_rule_card(
-    controller: Entity<SessionController>,
+    controller: Entity<ForwardingController>,
     actions: ForwardRuleActions,
     profile: &SessionProfile,
     rule: &PortForwardRule,
@@ -182,7 +182,7 @@ fn render_forward_rule_card(
 }
 
 fn render_forward_rule_list_row(
-    controller: Entity<SessionController>,
+    controller: Entity<ForwardingController>,
     actions: ForwardRuleActions,
     profile: &SessionProfile,
     rule: &PortForwardRule,
@@ -262,13 +262,14 @@ fn render_forward_rule_list_row(
     })
 }
 
-impl SessionController {
+impl ForwardingController {
     fn render_port_forward_rule_composer(
         &self,
         controller: Entity<Self>,
         selected_profile: Option<&SessionProfile>,
+        cx: &App,
     ) -> gpui_kit::AnyElement {
-        let forms = self.panel_forms().forwarding;
+        let forms = self.forms.clone();
         let editor_state = self.editor_state();
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -298,7 +299,8 @@ impl SessionController {
         let online_badge = selected_profile.map(|profile| {
             format!(
                 "{} online",
-                self.online_session_count_for_profile(&profile.id)
+                self.runtime
+                    .online_session_count_for_profile(&profile.id, cx)
             )
         });
         let forward_kind_selected_index = match editor_state.port_forward_kind {
@@ -502,7 +504,7 @@ impl SessionController {
         &self,
         controller: Entity<Self>,
         on_save: impl Fn(&mut Window, &mut App) + 'static,
-        _cx: &App,
+        cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let editor_state = self.editor_state();
@@ -641,6 +643,7 @@ impl SessionController {
                                         this.child(self.render_port_forward_rule_composer(
                                             controller.clone(),
                                             selected_profile,
+                                            cx,
                                         ))
                                     }),
                             ),
@@ -656,7 +659,7 @@ impl SessionController {
         actions: ForwardRuleActions,
         cx: &App,
     ) -> gpui_kit::AnyElement {
-        let filter_input = self.panel_forms().forwarding.filter_input;
+        let filter_input = self.forms.clone().filter_input;
         let filter_text = filter_input.read(cx).value().trim().to_ascii_lowercase();
         let profiles = self.profiles();
         let rules_with_profiles: Vec<_> = profiles
@@ -685,7 +688,7 @@ impl SessionController {
             .into_any_element();
         }
 
-        let is_list = self.catalog_view().forward_view_mode == ProfileViewMode::List;
+        let is_list = self.view_mode.get() == ProfileViewMode::List;
         let mut rules = if is_list {
             v_flex().w_full().gap_2()
         } else {
@@ -732,7 +735,7 @@ impl SessionController {
         cx: &App,
     ) -> gpui_kit::AnyElement {
         let actions = ForwardRuleActions::new(controller.clone());
-        let filter_input = self.panel_forms().forwarding.filter_input;
+        let filter_input = self.forms.clone().filter_input;
         let profiles = self.profiles();
         let total_rules = profiles
             .iter()
@@ -752,7 +755,7 @@ impl SessionController {
                 .into_any_element();
         }
 
-        let is_list = self.catalog_view().forward_view_mode == ProfileViewMode::List;
+        let is_list = self.view_mode.get() == ProfileViewMode::List;
 
         let header =
             v_flex()

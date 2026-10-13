@@ -1,6 +1,6 @@
-use super::super::super::*;
-use super::super::empty_state::shell_empty_page;
 use crate::ui::i18n;
+use crate::ui::shell::pages::empty_state::shell_empty_page;
+use crate::ui::shell::*;
 use miaominal_core::known_host::KnownHostEntry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,9 +47,7 @@ fn derive_trusted_known_hosts(
         .map(|entry| {
             let linked_profiles = sessions
                 .iter()
-                .filter(|profile| {
-                    !profile.is_local() && profile.host == entry.host && profile.port == entry.port
-                })
+                .filter(|profile| profile.host == entry.host && profile.port == entry.port)
                 .map(|profile| LinkedTrustedProfile {
                     id: profile.id.clone(),
                     name: profile.connection_label(),
@@ -127,7 +125,7 @@ fn trusted_filter_label(filter: TrustedHostFilter) -> String {
 }
 
 fn trusted_filter_button(
-    controller: Entity<SessionController>,
+    controller: Entity<TrustedHostsController>,
     filter: TrustedHostFilter,
     active: bool,
 ) -> impl IntoElement {
@@ -209,7 +207,7 @@ fn risk_badge(view: &TrustedKnownHostView) -> Option<gpui_kit::AnyElement> {
 }
 
 fn trusted_host_card(
-    controller: Entity<SessionController>,
+    controller: Entity<TrustedHostsController>,
     view: TrustedKnownHostView,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -290,7 +288,7 @@ fn trusted_host_card(
 }
 
 fn trusted_detail_panel(
-    controller: Entity<SessionController>,
+    controller: Entity<TrustedHostsController>,
     view: &TrustedKnownHostView,
     path: String,
 ) -> impl IntoElement {
@@ -539,7 +537,7 @@ fn trusted_detail_panel(
         )
 }
 
-impl SessionController {
+impl TrustedHostsController {
     pub(in crate::ui::shell) fn render_trusted_known_host_delete_prompt(
         &self,
         controller: Entity<Self>,
@@ -600,9 +598,9 @@ impl SessionController {
         controller: Entity<Self>,
         cx: &App,
     ) -> gpui_kit::AnyElement {
-        let trusted_filter_input = self.panel_forms().trusted.filter_input;
+        let trusted_filter_input = self.filter_input.clone();
         let entries = self.known_hosts_entries().clone();
-        let profiles = self.profiles();
+        let profiles = self.catalog.profiles();
         let views = derive_trusted_known_hosts(&entries, &profiles);
         let total = views.len();
         let linked = views.iter().filter(|view| !view.is_orphaned()).count();
@@ -626,7 +624,7 @@ impl SessionController {
         }
 
         let query = trusted_filter_input.read(cx).value().to_string();
-        let filter = self.catalog_view().trusted_host_filter;
+        let filter = self.filter;
         let filtered: Vec<_> = views
             .iter()
             .filter(|view| trusted_host_matches_query(view, &query))
@@ -770,9 +768,9 @@ impl SessionController {
         controller: Entity<Self>,
     ) -> impl IntoElement {
         let entries = self.known_hosts_entries().clone();
-        let profiles = self.profiles();
+        let profiles = self.catalog.profiles();
         let views = derive_trusted_known_hosts(&entries, &profiles);
-        let path = self.known_hosts().path().display().to_string();
+        let path = self.store.path().display().to_string();
 
         let selected_known_host = self.selected_known_host();
         selected_trusted_host(&views, selected_known_host.as_ref())
@@ -785,178 +783,6 @@ impl SessionController {
                 .into_any_element()
             })
     }
-
-    pub(in crate::ui::shell) fn render_trusted_host_key_prompt(
-        &self,
-        on_decision: impl Fn(HostKeyDecision, &mut App) + Clone + 'static,
-        prompt: &HostKeyPrompt,
-        exit_progress: Option<f32>,
-        bottom_popup_viewport_height: f32,
-    ) -> gpui_kit::AnyElement {
-        render_host_key_prompt(
-            on_decision,
-            prompt,
-            exit_progress,
-            bottom_popup_viewport_height,
-            "trusted-host-key",
-        )
-    }
-}
-
-pub(in crate::ui::shell) fn render_host_key_prompt(
-    on_decision: impl Fn(HostKeyDecision, &mut App) + Clone + 'static,
-    prompt: &HostKeyPrompt,
-    exit_progress: Option<f32>,
-    bottom_popup_viewport_height: f32,
-    stable_key: impl AsRef<str>,
-) -> gpui_kit::AnyElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let mismatch = prompt.previous_fingerprint.is_some();
-    let title = if mismatch {
-        i18n::string("session.status.host_key_mismatch")
-    } else {
-        i18n::string("session.status.verify_host_key")
-    };
-    let subtitle = if mismatch {
-        let port = prompt.port.to_string();
-        i18n::string_args(
-            "trusted.prompt.mismatch_subtitle",
-            &[("host", prompt.host.as_str()), ("port", &port)],
-        )
-    } else {
-        let port = prompt.port.to_string();
-        i18n::string_args(
-            "trusted.prompt.verify_subtitle",
-            &[("host", prompt.host.as_str()), ("port", &port)],
-        )
-    };
-
-    let icon_tint = if mismatch {
-        roles.error
-    } else {
-        material.extended.warning.color
-    };
-
-    let summary = h_flex()
-        .w_full()
-        .gap_4()
-        .items_start()
-        .child(
-            div()
-                .size(px(52.0))
-                .rounded(px(16.0))
-                .bg(color_with_alpha(icon_tint, 0x28))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(rgb(icon_tint))
-                .child(Icon::new(AppIcon::FingerPrint).size(px(24.0))),
-        )
-        .child(
-            v_flex().flex_1().min_w(px(0.0)).justify_center().child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(roles.on_surface))
-                    .child(format!("{}:{}", prompt.host, prompt.port)),
-            ),
-        );
-
-    let mut details = v_flex()
-        .w_full()
-        .gap_2()
-        .child(detail_row(
-            i18n::string("trusted.details.algorithm"),
-            &prompt.algorithm,
-        ))
-        .child(detail_row(
-            i18n::string("trusted.details.fingerprint_sha256"),
-            &prompt.fingerprint,
-        ));
-
-    if let Some(previous) = prompt.previous_fingerprint.as_ref() {
-        details = details.child(detail_row(
-            i18n::string("trusted.details.previously_trusted"),
-            previous,
-        ));
-    }
-
-    let on_reject = on_decision.clone();
-    let on_once = on_decision.clone();
-    let on_save = on_decision;
-
-    let actions = h_flex()
-        .w_full()
-        .justify_end()
-        .gap_3()
-        .child(
-            basic_dialog_action_button(
-                "host-key-reject",
-                i18n::string("trusted.actions.reject"),
-                BasicDialogActionTone::Destructive,
-            )
-            .large()
-            .on_click(move |_, _, cx| {
-                on_reject(HostKeyDecision::Reject, cx);
-            }),
-        )
-        .child(
-            basic_dialog_action_button(
-                "host-key-once",
-                i18n::string("trusted.actions.accept_once"),
-                BasicDialogActionTone::Default,
-            )
-            .large()
-            .on_click(move |_, _, cx| {
-                on_once(HostKeyDecision::AcceptOnce, cx);
-            }),
-        )
-        .child(
-            basic_dialog_action_button(
-                "host-key-save",
-                i18n::string("trusted.actions.trust_and_remember"),
-                BasicDialogActionTone::Default,
-            )
-            .large()
-            .on_click(move |_, _, cx| {
-                on_save(HostKeyDecision::AcceptAndSave, cx);
-            }),
-        );
-
-    let body = v_flex()
-        .w_full()
-        .gap_5()
-        .child(
-            div()
-                .w_full()
-                .rounded(px(18.0))
-                .bg(rgb(roles.surface_container_high))
-                .p_4()
-                .child(summary),
-        )
-        .child(
-            div()
-                .w_full()
-                .rounded(px(18.0))
-                .bg(rgb(roles.surface_container_high))
-                .p_4()
-                .child(details),
-        )
-        .into_any_element();
-
-    render_bottom_popup(
-        bottom_popup_panel(
-            title.to_string(),
-            Some(subtitle),
-            Some(body),
-            actions.into_any_element(),
-            bottom_popup_viewport_height,
-        ),
-        stable_key,
-        exit_progress,
-        |_window, _cx| {},
-    )
 }
 
 fn detail_row(label: String, value: &str) -> gpui_kit::AnyElement {
@@ -1065,18 +891,5 @@ mod tests {
             )
             .is_some()
         );
-    }
-    #[test]
-    fn local_terminal_profiles_never_link_to_known_hosts() {
-        let entries = vec![known_host("example.com", 22, "ssh-ed25519", "SHA256:a")];
-        let mut local = SessionProfile::blank_local("local-a", 1);
-        local.host = "example.com".into();
-        local.port = 22;
-        let sessions = vec![local];
-
-        let views = derive_trusted_known_hosts(&entries, &sessions);
-
-        assert!(views[0].linked_profiles.is_empty());
-        assert!(views[0].is_orphaned());
     }
 }

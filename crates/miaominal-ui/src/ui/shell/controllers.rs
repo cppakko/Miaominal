@@ -9,6 +9,7 @@ use super::{
     WorkspaceTerminalInputExt, terminal_cell_width_default, terminal_line_height_default,
 };
 use crate::ui::i18n;
+use miaominal_core::known_host::KnownHostEntry;
 use miaominal_secrets::SecretStore;
 use miaominal_services::SyncTaskResult;
 use miaominal_settings::AppSettings;
@@ -46,14 +47,12 @@ pub(in crate::ui::shell) use keychain::{
 };
 pub(in crate::ui::shell) use local_vault_root::LocalVaultRootExt;
 pub(in crate::ui::shell) use session::{
-    ClosedSessionTabState, MonitorChartPoint, PendingKnownHostDeleteState,
-    PendingPortForwardRuleDeleteState, PendingSnippetDeleteState, PortForwardSessionStart,
-    SessionConnectionState, SessionController, SessionControllerArgs, SessionEventOutcome,
-    SessionEventTabRemoval, SessionFailureStatus, SessionNotificationRequest,
-    SessionNotificationTone, SessionPortSession, SessionPortSnapshot, SessionPurpose,
-    SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
-    SessionTerminalTarget, TerminalLease, TerminalLeaseError, TerminalLeaseGrant,
-    TransferredSessionTab, TransferredSessionWorkspaceUi, TrustedHostFilter,
+    ClosedSessionTabState, MonitorChartPoint, PortForwardSessionStart, SessionConnectionState,
+    SessionController, SessionControllerArgs, SessionEventOutcome, SessionEventTabRemoval,
+    SessionFailureStatus, SessionNotificationRequest, SessionNotificationTone, SessionPortSession,
+    SessionPortSnapshot, SessionPurpose, SessionQueryPort, SessionSidePanelView, SessionTabState,
+    SessionTerminalPort, SessionTerminalTarget, TerminalLease, TerminalLeaseError,
+    TerminalLeaseGrant, TransferredSessionTab, TransferredSessionWorkspaceUi,
 };
 #[cfg(test)]
 pub(in crate::ui::shell) use session::{SESSION_MONITOR_HISTORY_LIMIT, SessionMonitoringState};
@@ -90,8 +89,7 @@ pub(in crate::ui::shell) enum AppCommand {
     WindowActivationChanged {
         active: bool,
     },
-    ProfilesCommitted(Vec<SessionProfile>),
-    SaveSnippetRequested(Box<miaominal_core::snippet::SnippetRecord>),
+    SaveSnippetRequested(Box<crate::ui::contracts::snippets::SnippetSaveSubmission>),
     ImportProfilesRequested(miaominal_core::profile::ImportSourceKind),
     Feedback(String),
     KnownHostsChanged,
@@ -173,6 +171,8 @@ pub(in crate::ui::shell) enum TabOpenRequest {
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) enum DeferredAppCommand {
     SaveHostProfile,
+    SaveSnippet,
+    SavePortForwardRule,
     Session(SessionDeferredCommand),
     Agent(AgentDeferredCommand),
     Sftp(SftpDeferredCommand),
@@ -183,8 +183,6 @@ pub(in crate::ui::shell) enum DeferredAppCommand {
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) enum SessionDeferredCommand {
     OpenProfile(Box<SessionProfile>),
-    SavePortForwardRule,
-    SaveSnippet,
 }
 
 #[derive(Clone, Debug)]
@@ -253,48 +251,99 @@ fn terminal_metrics_changed(previous: &AppSettings, next: &AppSettings) -> bool 
 pub(in crate::ui::shell) struct ControllerSet {
     pub session: Entity<SessionController>,
     pub hosts: Entity<super::HostsController>,
+    pub forwarding: Entity<super::ForwardingController>,
+    pub snippets: Entity<super::SnippetsController>,
+    pub trusted_hosts: Entity<super::TrustedHostsController>,
     pub agent: Entity<AgentController>,
     pub sftp: Entity<SftpController>,
     pub settings: Entity<SettingsController>,
     pub keychain: Entity<KeychainController>,
 }
 
+pub(in crate::ui::shell) struct ControllerSetArgs {
+    pub session: SessionControllerArgs,
+    pub hosts: super::HostsControllerArgs,
+    pub snippet_store: Option<miaominal_storage::config_store::store::SnippetStore>,
+    pub known_hosts_entries: Vec<KnownHostEntry>,
+    pub agent: AgentControllerArgs,
+    pub sftp: SftpControllerArgs,
+    pub keychain: KeychainControllerArgs,
+    pub settings: SettingsControllerArgs,
+}
+
 impl ControllerSet {
     pub(in crate::ui::shell) fn new(
-        session: SessionControllerArgs,
-        agent: AgentControllerArgs,
-        sftp: SftpControllerArgs,
-        keychain: KeychainControllerArgs,
-        settings: SettingsControllerArgs,
+        args: ControllerSetArgs,
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> Self {
-        let hosts = cx.new(|cx| {
-            super::HostsController::new(
-                super::HostsControllerArgs {
-                    catalog_query: crate::ui::application::application_state(cx)
-                        .read(cx)
-                        .catalog_query(),
-                    profile_commit: crate::ui::application::profile_commit_port(cx),
-                    session_store: session.session_store.clone(),
-                    secrets: session.secrets.clone(),
-                    profiles: session.profiles.clone(),
-                    proxies: session.proxies.clone(),
-                    selected_profile: session.selected_profile,
-                    managed_keys: session.managed_keys.clone(),
-                    local_vault_status: session.local_vault_status,
-                },
+        let ControllerSetArgs {
+            session,
+            hosts,
+            snippet_store,
+            known_hosts_entries,
+            agent,
+            sftp,
+            keychain,
+            settings,
+        } = args;
+        let hosts = cx.new(|cx| super::HostsController::new(hosts, window, cx));
+        let catalog = crate::ui::application::application_state(cx)
+            .read(cx)
+            .catalog_query();
+        let trusted_hosts = cx.new(|cx| {
+            super::TrustedHostsController::new(
+                session.known_hosts.clone(),
+                known_hosts_entries,
+                catalog,
                 window,
                 cx,
             )
         });
+        let snippets = cx.new(|cx| {
+            super::SnippetsController::new(
+                crate::ui::application::snippet_catalog_port(cx),
+                snippet_store,
+                None,
+                window,
+                cx,
+            )
+        });
+        let forwarding_services = (
+            crate::ui::application::application_state(cx)
+                .read(cx)
+                .snapshot()
+                .services
+                .session_store,
+            session.secrets.clone(),
+            session.local_vault_status,
+            session.port_forward_manager.clone(),
+        );
         let session = cx.new(|cx| SessionController::new(session, window, cx));
         let session_query = session.read(cx).query_port();
         let catalog_query = crate::ui::application::application_state(cx)
             .read(cx)
             .catalog_query();
         let session_terminal = session.read(cx).terminal_port();
+        let forwarding = cx.new(|cx| {
+            super::ForwardingController::new(
+                super::ForwardingControllerArgs {
+                    catalog: catalog_query.clone(),
+                    profile_commit: crate::ui::application::profile_commit_port(cx),
+                    store: forwarding_services.0,
+                    secrets: forwarding_services.1,
+                    vault_status: forwarding_services.2,
+                    manager: Some(forwarding_services.3),
+                    runtime: SessionController::forwarding_port(&session),
+                },
+                window,
+                cx,
+            )
+        });
         Self {
+            forwarding,
+            snippets,
+            trusted_hosts,
             hosts,
             session,
             agent: cx.new(|cx| {
@@ -343,8 +392,7 @@ impl ControllerSet {
             }};
         }
 
-        subscriptions.push(cx.observe(&self.session, |this, _controller, cx| {
-            this.publish_session_application_state(cx);
+        subscriptions.push(cx.observe(&self.session, |_this, _controller, cx| {
             cx.notify();
         }));
         subscriptions.push(cx.subscribe_in(
@@ -366,6 +414,9 @@ impl ControllerSet {
             },
         ));
         connect!(&self.hosts);
+        connect!(&self.trusted_hosts);
+        connect!(&self.snippets);
+        connect!(&self.forwarding);
         connect!(&self.sftp);
         let observed_settings = Rc::new(RefCell::new(self.settings.read(cx).settings().clone()));
         subscriptions.push(cx.observe(&self.settings, move |this, controller, cx| {
@@ -421,6 +472,9 @@ impl ControllerSet {
         local_vault_status: LocalVaultStatus,
         cx: &mut Context<AppView>,
     ) {
+        self.forwarding.update(cx, |controller, cx| {
+            controller.credentials_changed(secrets.clone(), local_vault_status, cx);
+        });
         self.hosts.update(cx, |controller, cx| {
             controller.credentials_changed(secrets.clone(), local_vault_status, cx);
         });

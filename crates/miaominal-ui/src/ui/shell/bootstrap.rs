@@ -283,7 +283,7 @@ impl AppView {
             proxies,
             selected_profile,
             known_hosts_entries,
-            snippets,
+            snippets: _,
             managed_keys,
             chat_service,
             chat_sessions,
@@ -348,64 +348,78 @@ impl AppView {
         let auto_collect_session_monitoring =
             settings_store.settings().auto_collect_session_monitoring;
         let controllers = ControllerSet::new(
-            SessionControllerArgs {
-                runtime: services.runtime.clone(),
-                session_store: services.session_store.clone(),
+            super::controllers::ControllerSetArgs {
+                hosts: super::HostsControllerArgs {
+                    catalog_query: application.read(cx).catalog_query(),
+                    profile_commit: crate::ui::application::profile_commit_port(cx),
+                    session_store: services.session_store.clone(),
+                    secrets: vault.secrets.clone(),
+                    profiles: profiles.clone(),
+                    proxies: proxies.clone(),
+                    selected_profile,
+                    managed_keys: managed_keys.clone(),
+                    local_vault_status,
+                },
                 snippet_store: services.snippet_store.clone(),
-                secrets: vault.secrets.clone(),
-                known_hosts: services.known_hosts.clone(),
-                profiles,
-                proxies: proxies.clone(),
-                selected_profile,
-                managed_keys: managed_keys.clone(),
-                snippets,
-                selected_snippet: None,
                 known_hosts_entries,
-                terminal_focus,
-                local_vault_status,
-                auto_collect_session_monitoring,
-                ssh_bridge_service: services.ssh_bridge_service.clone(),
-                open_ssh_integration_service: services.open_ssh_integration_service.clone(),
-                port_forward_manager: services.port_forward_manager.clone(),
-            },
-            AgentControllerArgs {
-                task_runtime: services.runtime.clone(),
-                agent_service: services.agent_service.clone(),
-                secrets: vault.secrets.clone(),
-                known_hosts: services.known_hosts.clone(),
-                chat_service,
-                chat_sessions,
-                local_vault_status,
-            },
-            SftpControllerArgs {
-                service: miaominal_services::SftpService::new(
-                    services.runtime.clone(),
-                    vault.secrets.clone(),
-                    services.known_hosts.clone(),
-                ),
-                local_hidden_columns: settings_store.settings().local_sftp_hidden_columns.clone(),
-                remote_hidden_columns: settings_store.settings().remote_sftp_hidden_columns.clone(),
-            },
-            KeychainControllerArgs {
-                managed_keys,
-                runtime: services.runtime.clone(),
-                keychain_store: services.keychain_store.clone(),
-                secrets: vault.secrets.clone(),
-                known_hosts: services.known_hosts.clone(),
-                local_vault_status,
-            },
-            SettingsControllerArgs {
-                runtime: services.runtime.clone(),
-                proxy_store: services.proxy_store.clone(),
-                proxies: proxies.clone(),
-                settings_store,
-                secrets: vault.secrets.clone(),
-                sync_engine: vault.sync_engine.clone(),
-                local_vault_status,
-                ssh_bridge_service: services.ssh_bridge_service.clone(),
-                open_ssh_integration_service: services.open_ssh_integration_service.clone(),
-                sync_executor: sync_executor.clone(),
-                auto_sync: auto_sync.clone(),
+                session: SessionControllerArgs {
+                    runtime: services.runtime.clone(),
+                    secrets: vault.secrets.clone(),
+                    known_hosts: services.known_hosts.clone(),
+                    profiles,
+                    proxies: proxies.clone(),
+                    selected_profile,
+                    terminal_focus,
+                    local_vault_status,
+                    auto_collect_session_monitoring,
+                    ssh_bridge_service: services.ssh_bridge_service.clone(),
+                    port_forward_manager: services.port_forward_manager.clone(),
+                },
+                agent: AgentControllerArgs {
+                    task_runtime: services.runtime.clone(),
+                    agent_service: services.agent_service.clone(),
+                    secrets: vault.secrets.clone(),
+                    known_hosts: services.known_hosts.clone(),
+                    chat_service,
+                    chat_sessions,
+                    local_vault_status,
+                },
+                sftp: SftpControllerArgs {
+                    service: miaominal_services::SftpService::new(
+                        services.runtime.clone(),
+                        vault.secrets.clone(),
+                        services.known_hosts.clone(),
+                    ),
+                    local_hidden_columns: settings_store
+                        .settings()
+                        .local_sftp_hidden_columns
+                        .clone(),
+                    remote_hidden_columns: settings_store
+                        .settings()
+                        .remote_sftp_hidden_columns
+                        .clone(),
+                },
+                keychain: KeychainControllerArgs {
+                    managed_keys,
+                    runtime: services.runtime.clone(),
+                    keychain_store: services.keychain_store.clone(),
+                    secrets: vault.secrets.clone(),
+                    known_hosts: services.known_hosts.clone(),
+                    local_vault_status,
+                },
+                settings: SettingsControllerArgs {
+                    runtime: services.runtime.clone(),
+                    proxy_store: services.proxy_store.clone(),
+                    proxies: proxies.clone(),
+                    settings_store,
+                    secrets: vault.secrets.clone(),
+                    sync_engine: vault.sync_engine.clone(),
+                    local_vault_status,
+                    ssh_bridge_service: services.ssh_bridge_service.clone(),
+                    open_ssh_integration_service: services.open_ssh_integration_service.clone(),
+                    sync_executor: sync_executor.clone(),
+                    auto_sync: auto_sync.clone(),
+                },
             },
             window,
             cx,
@@ -486,6 +500,15 @@ impl AppView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.controllers.forwarding.update(cx, |controller, cx| {
+            controller.refresh_localized_placeholders(window, cx);
+        });
+        self.controllers.snippets.update(cx, |controller, cx| {
+            controller.refresh_localized_placeholders(window, cx);
+        });
+        self.controllers.trusted_hosts.update(cx, |controller, cx| {
+            controller.refresh_localized_placeholders(window, cx);
+        });
         self.controllers.hosts.update(cx, |controller, cx| {
             controller.refresh_localized_placeholders(window, cx);
         });

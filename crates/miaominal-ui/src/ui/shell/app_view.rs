@@ -1050,7 +1050,7 @@ impl AppView {
         cx: &App,
     ) -> Option<PendingKnownHostDeleteState> {
         self.controllers
-            .session
+            .trusted_hosts
             .read(cx)
             .pending_known_host_delete()
     }
@@ -1059,7 +1059,7 @@ impl AppView {
         &self,
         cx: &App,
     ) -> Option<PendingSnippetDeleteState> {
-        self.controllers.session.read(cx).pending_snippet_delete()
+        self.controllers.snippets.read(cx).pending_snippet_delete()
     }
 
     pub(in crate::ui::shell) fn pending_port_forward_rule_delete_prompt(
@@ -1067,7 +1067,7 @@ impl AppView {
         cx: &App,
     ) -> Option<PendingPortForwardRuleDeleteState> {
         self.controllers
-            .session
+            .forwarding
             .read(cx)
             .pending_port_forward_rule_delete()
     }

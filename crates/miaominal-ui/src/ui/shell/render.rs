@@ -367,7 +367,7 @@ impl Render for AppView {
                 this.child(self.render_managed_key_rename_prompt(&prompt, None, cx))
             })
             .when_some(pending_known_host_delete, |this, prompt| {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.trusted_hosts.clone();
                 this.child(controller.read(cx).render_trusted_known_host_delete_prompt(
                     controller.clone(),
                     &prompt,
@@ -375,10 +375,28 @@ impl Render for AppView {
                 ))
             })
             .when_some(pending_snippet_delete, |this, prompt| {
-                this.child(self.render_snippet_delete_prompt(entity.clone(), &prompt, None))
+                this.child(
+                    self.controllers
+                        .snippets
+                        .read(cx)
+                        .render_snippet_delete_prompt(
+                            self.controllers.snippets.clone(),
+                            &prompt,
+                            None,
+                        ),
+                )
             })
             .when_some(pending_port_forward_rule_delete, |this, prompt| {
-                this.child(self.render_port_forward_rule_delete_prompt(&prompt, None))
+                this.child(
+                    self.controllers
+                        .forwarding
+                        .read(cx)
+                        .render_port_forward_rule_delete_prompt(
+                            self.controllers.forwarding.clone(),
+                            &prompt,
+                            None,
+                        ),
+                )
             })
             .when_some(pending_chat_session_delete, |this, prompt| {
                 this.child(self.render_chat_session_delete_prompt(&prompt, None))
@@ -748,13 +766,13 @@ impl AppView {
                     .render_keychain_page(controller.clone(), cx)
             }
             SidebarSection::PortForwarding => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.forwarding.clone();
                 controller
                     .read(cx)
                     .render_forward_page(controller.clone(), cx)
             }
             SidebarSection::KnownHosts => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.trusted_hosts.clone();
                 controller
                     .read(cx)
                     .render_trusted_page(controller.clone(), cx)
@@ -766,13 +784,13 @@ impl AppView {
                 pages::render_settings_page(settings, settings_instance_generation, destination)
             }
             SidebarSection::Snippets => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.snippets.clone();
                 let edit_controller = controller.clone();
                 controller.read(cx).render_snippets_page(
                     controller.clone(),
                     move |index, window, cx| {
                         edit_controller.update(cx, |controller, cx| {
-                            controller.open_existing_snippet_editor(index, window, cx);
+                            controller.open_existing_snippet_editor(&index, window, cx);
                         });
                     },
                     cx,
@@ -1129,7 +1147,6 @@ impl AppView {
                 self.workspace.active_topbar_tab,
             )
             .filter(|kind| page_editor_sidebar_matches_view(*kind, view))?;
-            let controller = self.controllers.session.read(cx);
             let is_open = match kind {
                 PageEditorSidebarKind::Hosts => {
                     self.controllers
@@ -1139,16 +1156,19 @@ impl AppView {
                         .host_editor_open
                 }
                 PageEditorSidebarKind::PortForwarding => {
-                    controller.editor_state().port_forward_editor_open
+                    self.controllers.forwarding.read(cx).editor_open()
                 }
-                PageEditorSidebarKind::Snippets => controller.editor_state().snippets_editor_open,
+                PageEditorSidebarKind::Snippets => self.controllers.snippets.read(cx).editor_open(),
                 PageEditorSidebarKind::Keychain => self.controllers.keychain.read(cx).editor_open(),
-                PageEditorSidebarKind::KnownHosts => controller.selected_known_host().is_some(),
+                PageEditorSidebarKind::KnownHosts => self
+                    .controllers
+                    .trusted_hosts
+                    .read(cx)
+                    .selected_known_host()
+                    .is_some(),
             };
             return is_open.then_some(kind);
         }
-        let controller = self.controllers.session.read(cx);
-        let editors = controller.editor_state();
         match section {
             SidebarSection::Hosts
                 if self
@@ -1160,16 +1180,25 @@ impl AppView {
             {
                 Some(PageEditorSidebarKind::Hosts)
             }
-            SidebarSection::PortForwarding if editors.port_forward_editor_open => {
+            SidebarSection::PortForwarding
+                if self.controllers.forwarding.read(cx).editor_open() =>
+            {
                 Some(PageEditorSidebarKind::PortForwarding)
             }
-            SidebarSection::Snippets if editors.snippets_editor_open => {
+            SidebarSection::Snippets if self.controllers.snippets.read(cx).editor_open() => {
                 Some(PageEditorSidebarKind::Snippets)
             }
             SidebarSection::Keychain if self.controllers.keychain.read(cx).editor_open() => {
                 Some(PageEditorSidebarKind::Keychain)
             }
-            SidebarSection::KnownHosts if controller.selected_known_host().is_some() => {
+            SidebarSection::KnownHosts
+                if self
+                    .controllers
+                    .trusted_hosts
+                    .read(cx)
+                    .selected_known_host()
+                    .is_some() =>
+            {
                 Some(PageEditorSidebarKind::KnownHosts)
             }
             _ => None,
@@ -1404,7 +1433,7 @@ impl AppView {
                     .into_any_element()
             }
             PageEditorSidebarKind::PortForwarding => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.forwarding.clone();
                 let settings_controller = self.controllers.settings.clone();
                 let save_controller = controller.clone();
                 controller
@@ -1424,7 +1453,7 @@ impl AppView {
                     .into_any_element()
             }
             PageEditorSidebarKind::Snippets => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.snippets.clone();
                 let save_controller = controller.clone();
                 controller
                     .read(cx)
@@ -1446,7 +1475,7 @@ impl AppView {
                 .render_keychain_editor_sidebar(self.controllers.keychain.clone())
                 .into_any_element(),
             PageEditorSidebarKind::KnownHosts => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.trusted_hosts.clone();
                 controller
                     .read(cx)
                     .render_trusted_known_host_sidebar(controller.clone())
@@ -1541,9 +1570,9 @@ impl AppView {
                     this.child(
                         div().absolute().right(px(28.0)).bottom(px(28.0)).child(
                             self.controllers
-                                .session
+                                .forwarding
                                 .read(cx)
-                                .render_forward_fab(self.controllers.session.clone()),
+                                .render_forward_fab(self.controllers.forwarding.clone()),
                         ),
                     )
                 },
@@ -1571,7 +1600,7 @@ impl AppView {
                     && !show_snippets_editor_sidebar,
                 |this| {
                     this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
-                        let controller = self.controllers.session.clone();
+                        let controller = self.controllers.snippets.clone();
                         let open_controller = controller.clone();
                         controller.read(cx).render_snippets_fab(move |window, cx| {
                             open_controller.update(cx, |controller, cx| {
@@ -1588,7 +1617,7 @@ impl AppView {
                     && !show_known_hosts_sidebar,
                 |this| {
                     this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
-                        let controller = self.controllers.session.clone();
+                        let controller = self.controllers.trusted_hosts.clone();
                         controller
                             .read(cx)
                             .render_known_hosts_refresh_fab(controller.clone())
@@ -1791,117 +1820,6 @@ impl AppView {
         HostsController::render_profile_import_result(
             self.controllers.hosts.clone(),
             prompt,
-            exit_progress,
-        )
-    }
-
-    fn render_snippet_delete_prompt(
-        &self,
-        _entity: Entity<Self>,
-        prompt: &PendingSnippetDeleteState,
-        exit_progress: Option<f32>,
-    ) -> gpui_kit::AnyElement {
-        let description = if prompt.snippet_description.trim().is_empty() {
-            i18n::string("dialogs.snippet_delete.untitled_snippet")
-        } else {
-            prompt.snippet_description.clone()
-        };
-        let subtitle = i18n::string_args(
-            "dialogs.snippet_delete.message",
-            &[("description", description.as_str())],
-        );
-
-        let controller_cancel = self.controllers.session.clone();
-        let controller_confirm = self.controllers.session.clone();
-
-        let actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                basic_dialog_action_button(
-                    "snippet-delete-cancel",
-                    i18n::string("dialogs.snippet_delete.cancel"),
-                    BasicDialogActionTone::Default,
-                )
-                .on_click(move |_, _, cx| {
-                    controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_snippet_delete(cx);
-                    });
-                }),
-            )
-            .child(
-                basic_dialog_action_button(
-                    "snippet-delete-confirm",
-                    i18n::string("dialogs.snippet_delete.confirm"),
-                    BasicDialogActionTone::Destructive,
-                )
-                .on_click(move |_, _, cx| {
-                    controller_confirm.update(cx, |controller, cx| {
-                        controller.confirm_snippet_delete(cx);
-                    });
-                }),
-            );
-
-        render_basic_dialog(
-            "snippet-delete",
-            i18n::string("dialogs.snippet_delete.title"),
-            Some(subtitle),
-            None,
-            actions.into_any_element(),
-            exit_progress,
-        )
-    }
-
-    fn render_port_forward_rule_delete_prompt(
-        &self,
-        prompt: &PendingPortForwardRuleDeleteState,
-        exit_progress: Option<f32>,
-    ) -> gpui_kit::AnyElement {
-        let subtitle = i18n::string_args(
-            "dialogs.forwarding_rule_delete.message",
-            &[
-                ("rule", prompt.rule_label.as_str()),
-                ("profile", prompt.profile_label.as_str()),
-            ],
-        );
-
-        let controller_cancel = self.controllers.session.clone();
-        let controller_confirm = self.controllers.session.clone();
-
-        let actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                basic_dialog_action_button(
-                    "port-forward-rule-delete-cancel",
-                    i18n::string("dialogs.forwarding_rule_delete.cancel"),
-                    BasicDialogActionTone::Default,
-                )
-                .on_click(move |_, _, cx| {
-                    controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_port_forward_rule_removal(cx);
-                    });
-                }),
-            )
-            .child(
-                basic_dialog_action_button(
-                    "port-forward-rule-delete-confirm",
-                    i18n::string("dialogs.forwarding_rule_delete.confirm"),
-                    BasicDialogActionTone::Destructive,
-                )
-                .on_click(move |_, _, cx| {
-                    controller_confirm.update(cx, |controller, cx| {
-                        controller.confirm_port_forward_rule_removal(cx);
-                    });
-                }),
-            );
-
-        render_basic_dialog(
-            "port-forward-rule-delete",
-            i18n::string("dialogs.forwarding_rule_delete.title"),
-            Some(subtitle),
-            None,
-            actions.into_any_element(),
             exit_progress,
         )
     }
@@ -3846,19 +3764,31 @@ impl AppView {
                 self.render_managed_key_rename_prompt(&prompt, Some(exit_progress), cx)
             }
             DialogOverlaySnapshot::KnownHostDelete(prompt) => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.trusted_hosts.clone();
                 controller.read(cx).render_trusted_known_host_delete_prompt(
                     controller.clone(),
                     &prompt,
                     Some(exit_progress),
                 )
             }
-            DialogOverlaySnapshot::SnippetDelete(prompt) => {
-                self.render_snippet_delete_prompt(entity, &prompt, Some(exit_progress))
-            }
-            DialogOverlaySnapshot::PortForwardRuleDelete(prompt) => {
-                self.render_port_forward_rule_delete_prompt(&prompt, Some(exit_progress))
-            }
+            DialogOverlaySnapshot::SnippetDelete(prompt) => self
+                .controllers
+                .snippets
+                .read(cx)
+                .render_snippet_delete_prompt(
+                    self.controllers.snippets.clone(),
+                    &prompt,
+                    Some(exit_progress),
+                ),
+            DialogOverlaySnapshot::PortForwardRuleDelete(prompt) => self
+                .controllers
+                .forwarding
+                .read(cx)
+                .render_port_forward_rule_delete_prompt(
+                    self.controllers.forwarding.clone(),
+                    &prompt,
+                    Some(exit_progress),
+                ),
             DialogOverlaySnapshot::ChatSessionDelete(prompt) => {
                 self.render_chat_session_delete_prompt(&prompt, Some(exit_progress))
             }

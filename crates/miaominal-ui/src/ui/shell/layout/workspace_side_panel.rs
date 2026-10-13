@@ -202,11 +202,25 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
                 history_select,
             )
         }
-        SessionSidePanelView::Snippets => super::workspace_snippets::render_session_snippets_panel(
-            session_controller.clone(),
-            app.workspace.workspace.active_tab,
-            cx,
-        ),
+        SessionSidePanelView::Snippets => {
+            let controller = session_controller.read(cx);
+            let filter_input = controller.workspace_snippets_filter_input();
+            let selected_package = controller.workspace_snippets_selected_package_filter();
+            let terminal_port = controller.terminal_port();
+            let filter_controller = session_controller.clone();
+            app.controllers.snippets.read(cx).render_workspace_panel(
+                filter_input,
+                selected_package,
+                terminal_port,
+                move |package, cx| {
+                    filter_controller.update(cx, |controller, cx| {
+                        controller.handle_workspace_snippets_package_filter_toggle(package, cx)
+                    });
+                },
+                app.workspace.workspace.active_tab,
+                cx,
+            )
+        }
         SessionSidePanelView::Sftp => {
             render_session_sftp_panel(app, session_controller, session_tab_id, cx)
         }

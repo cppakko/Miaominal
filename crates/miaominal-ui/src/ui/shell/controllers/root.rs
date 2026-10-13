@@ -84,14 +84,12 @@ impl AppView {
         }
         if !retention.port_forwarding {
             self.controllers
-                .session
+                .forwarding
                 .read(cx)
                 .clear_port_forward_editor();
         }
         if !retention.snippets {
-            let controller = self.controllers.session.read(cx);
-            controller.set_snippets_editor_open(false);
-            controller.set_selected_snippet(None);
+            self.controllers.snippets.read(cx).dismiss_editor();
         }
         if !retention.keychain {
             self.controllers
@@ -100,7 +98,7 @@ impl AppView {
         }
         if !retention.known_hosts {
             self.controllers
-                .session
+                .trusted_hosts
                 .read(cx)
                 .set_selected_known_host(None);
         }
@@ -778,7 +776,7 @@ impl AppView {
 
     fn handle_snippet_save_request(
         &mut self,
-        snippet: miaominal_core::snippet::SnippetRecord,
+        snippet: crate::ui::contracts::snippets::SnippetSaveSubmission,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -788,15 +786,13 @@ impl AppView {
             .read(cx)
             .sync_requires_local_vault_unlock()
         {
-            self.defer_app_command_in_window(
-                DeferredAppCommand::Session(SessionDeferredCommand::SaveSnippet),
-                window,
-                cx,
-            );
+            if self.controllers.snippets.read(cx).defer_save(snippet) {
+                self.defer_app_command_in_window(DeferredAppCommand::SaveSnippet, window, cx);
+            }
             return;
         }
 
-        let controller = self.controllers.session.clone();
+        let controller = self.controllers.snippets.clone();
         controller.update(cx, |controller, cx| {
             controller.commit_snippet_save_request(snippet, window, cx);
         });
@@ -871,6 +867,24 @@ impl AppView {
                 });
             }
             AppCommand::SessionEventApplied { tab_id, outcome } => {
+                if let Some((profile_id, connected_at)) = outcome.connected_profile.clone() {
+                    let service = crate::ui::application::profile_service(cx);
+                    let result = crate::ui::application::profile_commit_port(cx).commit(
+                        cx,
+                        move |mut latest| {
+                            if let Some(profile) =
+                                latest.iter_mut().find(|profile| profile.id == profile_id)
+                            {
+                                profile.last_connected_at = Some(connected_at);
+                                service.persist_sessions(&latest)?;
+                            }
+                            Ok(latest)
+                        },
+                    );
+                    if let Err(error) = result {
+                        log::warn!("failed to persist connection metadata: {error:?}");
+                    }
+                }
                 self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
             }
             AppCommand::ProxiesChanged(proxies) => {
@@ -895,17 +909,16 @@ impl AppView {
 
     fn handle_app_command(&mut self, command: &AppCommand, cx: &mut Context<Self>) {
         match command {
-            AppCommand::ProfilesCommitted(profiles) => {
-                application_state(cx).update(cx, |application, cx| {
-                    application.publish_profiles(profiles.clone(), cx);
-                });
+            AppCommand::KnownHostsChanged => {
+                let application = application_state(cx);
+                match application.read(cx).snapshot().services.known_hosts.list() {
+                    Ok(entries) => application.update(cx, |application, cx| {
+                        application.publish_known_hosts(entries, cx);
+                    }),
+                    Err(error) => log::warn!("failed to refresh trusted hosts: {error:?}"),
+                }
             }
             AppCommand::Feedback(message) => self.shell.status_message = message.clone(),
-            AppCommand::KnownHostsChanged => {
-                self.controllers.session.update(cx, |controller, cx| {
-                    controller.refresh_known_hosts(cx);
-                });
-            }
             AppCommand::TabStatusChanged { tab_id, status } => {
                 if let Some(mut tab) = self.workspace.tabs.get_mut(*tab_id) {
                     tab.status = status.clone();
@@ -958,17 +971,26 @@ impl AppView {
                 profile_id,
                 favorites,
             } => {
-                let result = self.controllers.session.update(cx, |controller, cx| {
-                    controller.persist_remote_path_favorites(profile_id, favorites.clone(), cx)
-                });
-                let persisted = self
-                    .controllers
-                    .session
+                let target = profile_id.clone();
+                let desired = favorites.clone();
+                let service = crate::ui::application::profile_service(cx);
+                let result = crate::ui::application::profile_commit_port(cx).commit(
+                    cx,
+                    move |mut latest| {
+                        let profile = latest
+                            .iter_mut()
+                            .find(|profile| profile.id == target)
+                            .ok_or_else(|| anyhow::anyhow!("missing profile {target}"))?;
+                        profile.remote_path_favorites = desired;
+                        service.persist_sessions(&latest)?;
+                        Ok(latest)
+                    },
+                );
+                let persisted = application_state(cx)
                     .read(cx)
-                    .profiles()
-                    .iter()
-                    .find(|profile| profile.id == *profile_id)
-                    .map(|profile| profile.remote_path_favorites.clone())
+                    .catalog_query()
+                    .profile(profile_id)
+                    .map(|profile| profile.remote_path_favorites)
                     .unwrap_or_default();
                 self.controllers.sftp.update(cx, |controller, cx| {
                     controller.sync_remote_path_favorites(profile_id, &persisted, cx);
@@ -1023,23 +1045,21 @@ impl AppView {
 
     fn handle_managed_keys_change(&mut self, change: &ManagedKeysChange, cx: &mut Context<Self>) {
         if let ManagedKeysChange::Removed { key_id } = change {
-            let sessions_changed = {
-                self.controllers
-                    .session
-                    .read(cx)
-                    .clear_managed_key_profile_references(key_id)
-            };
+            let key_id_for_commit = key_id.clone();
+            let service = crate::ui::application::profile_service(cx);
+            let result =
+                crate::ui::application::profile_commit_port(cx).commit(cx, move |mut latest| {
+                    if super::clear_managed_key_profile_references(&mut latest, &key_id_for_commit)
+                    {
+                        service.persist_sessions(&latest)?;
+                    }
+                    Ok(latest)
+                });
             self.controllers
                 .hosts
                 .read(cx)
                 .remove_managed_key_from_editor(key_id, cx);
-
-            if sessions_changed
-                && self.controllers.session.read(cx).session_store_available()
-                && let Err(error) = self.controllers.session.update(cx, |controller, cx| {
-                    controller.persist_profiles_and_publish(cx)
-                })
-            {
+            if let Err(error) = result {
                 self.shell.status_message = i18n::string_args(
                     "keychain.messages.removed_locally_session_save_failed",
                     &[("error", &error.to_string())],

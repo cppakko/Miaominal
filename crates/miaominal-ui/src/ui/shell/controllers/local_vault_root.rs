@@ -191,6 +191,16 @@ impl LocalVaultRootExt for AppView {
         cx: &mut Context<Self>,
     ) {
         match follow_up {
+            DeferredAppCommand::SavePortForwardRule => {
+                self.controllers.forwarding.update(cx, |controller, cx| {
+                    controller.continue_save_port_forward_rule_after_unlock(window, cx);
+                });
+            }
+            DeferredAppCommand::SaveSnippet => {
+                self.controllers.snippets.update(cx, |controller, cx| {
+                    controller.continue_save_snippet_after_unlock(window, cx);
+                });
+            }
             DeferredAppCommand::SaveHostProfile => {
                 self.controllers.hosts.update(cx, |controller, cx| {
                     controller.continue_save_profile_after_unlock(window, cx);
@@ -199,18 +209,6 @@ impl LocalVaultRootExt for AppView {
             DeferredAppCommand::Session(command) => match command {
                 SessionDeferredCommand::OpenProfile(profile) => {
                     self.open_session_tab(*profile, window, cx);
-                }
-                SessionDeferredCommand::SavePortForwardRule => {
-                    let controller = self.controllers.session.clone();
-                    controller.update(cx, |controller, cx| {
-                        controller.continue_save_port_forward_rule_after_unlock(window, cx);
-                    });
-                }
-                SessionDeferredCommand::SaveSnippet => {
-                    let controller = self.controllers.session.clone();
-                    controller.update(cx, |controller, cx| {
-                        controller.continue_save_snippet_after_unlock(window, cx);
-                    });
                 }
             },
             DeferredAppCommand::Keychain(command) => {

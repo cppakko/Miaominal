@@ -79,10 +79,23 @@ impl SessionController {
                 snapshot.active_terminal_tab_id != Some(tab_id),
             )
         };
+        // AcceptAndSave is delivered to the SSH worker asynchronously. Reconcile
+        // after authentication progresses, when the worker has finished learning the key.
+        let authentication_progressed = matches!(
+            event,
+            SessionEvent::Connected(_)
+                | SessionEvent::Error(_)
+                | SessionEvent::Closed
+                | SessionEvent::KeyboardInteractivePrompt(_)
+        );
         let Some(mut outcome) = self.apply_session_event(tab_id, event, inactive_tab, &tab_title)
         else {
             return;
         };
+
+        if authentication_progressed {
+            self.publish_authenticated_known_hosts(cx);
+        }
 
         if let Some(error) = outcome.schedule_reconnect_error.take() {
             self.schedule_reconnect(tab_id, error, cx);
@@ -101,7 +114,6 @@ impl SessionController {
             self.remove_tab(tab_id);
         }
 
-        self.publish_committed_profiles(cx);
         cx.emit(AppCommand::SessionEventApplied { tab_id, outcome });
         cx.notify();
     }
@@ -179,6 +191,7 @@ impl SessionController {
         }
         let terminal_port = self.terminal_port();
         let mut outcome = SessionEventOutcome {
+            connected_profile: None,
             tab_status: None,
             clipboard_writes: Vec::new(),
             notification: None,
@@ -558,15 +571,7 @@ impl SessionController {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            if let Some(profile) = self
-                .profiles
-                .borrow_mut()
-                .iter_mut()
-                .find(|profile| profile.id == profile_id)
-            {
-                profile.last_connected_at = Some(now);
-            }
-            let _ = self.persist_profiles();
+            outcome.connected_profile = Some((profile_id, now));
         }
         if let Some(commands) = close_connection_test_commands {
             let _ = commands.close();

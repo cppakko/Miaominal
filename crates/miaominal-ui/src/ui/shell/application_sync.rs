@@ -48,13 +48,16 @@ impl AppView {
                 .read(cx)
                 .replace_proxies_from_application(snapshot.proxies.clone());
             self.controllers
-                .session
+                .snippets
                 .read(cx)
                 .replace_snippets(snapshot.snippets);
             self.controllers
-                .session
+                .trusted_hosts
                 .read(cx)
                 .replace_known_hosts_entries(snapshot.known_hosts_entries);
+            self.controllers.forwarding.update(cx, |controller, cx| {
+                controller.adopt_catalog(window, cx);
+            });
             self.controllers.settings.update(cx, |controller, cx| {
                 controller.replace_proxies(snapshot.proxies, window, cx);
             });
@@ -324,23 +327,6 @@ impl AppView {
             local_vault_status,
             cx,
         );
-    }
-
-    pub(in crate::ui::shell) fn publish_session_application_state(&self, cx: &mut Context<Self>) {
-        if self.applying_application_snapshot {
-            return;
-        }
-        let (snippets, known_hosts) = {
-            let controller = self.controllers.session.read(cx);
-            (
-                controller.snippets().clone(),
-                controller.known_hosts_entries().clone(),
-            )
-        };
-
-        application_state(cx).update(cx, |application, cx| {
-            application.publish_session_management(snippets, known_hosts, cx);
-        });
     }
 
     pub(in crate::ui::shell) fn publish_settings_application_state(&self, cx: &mut Context<Self>) {

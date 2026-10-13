@@ -53,6 +53,8 @@ mod controllers;
 // Phase 5: remove this logical Shell seam after shared UI contracts leave Shell.
 #[path = "features/hosts.rs"]
 mod hosts;
+#[path = "features/trusted_hosts.rs"]
+mod trusted_hosts;
 use hosts::{HostsController, HostsControllerArgs};
 mod forms;
 mod layout;
@@ -115,12 +117,11 @@ pub(in crate::ui::shell) use controllers::{
     LocalVaultEnableResult, LocalVaultOperationResult, LocalVaultRootExt, LocalVaultUnlockResult,
     ManagedKeysChange, MonitorChartPoint, OnboardingState, OnboardingStep,
     OnboardingStepTransition, OnboardingStepTransitionPhase, PendingAiProviderPopupState,
-    PendingChatSessionDeleteState, PendingChatSessionRenameState, PendingKnownHostDeleteState,
+    PendingChatSessionDeleteState, PendingChatSessionRenameState,
     PendingLocalDataResetConfirmState, PendingLocalDataResetConfirmationPopupState,
     PendingLocalVaultDisableConfirmState, PendingManagedKeyDeleteState,
-    PendingManagedKeyRenameState, PendingPortForwardRuleDeleteState, PendingProfileDeleteState,
-    PendingProfileImportResultState, PendingProxyConfigPopupState, PendingSnippetDeleteState,
-    PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
+    PendingManagedKeyRenameState, PendingProfileDeleteState, PendingProfileImportResultState,
+    PendingProxyConfigPopupState, PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
     PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
     PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
     PendingSyncUnsafeWriteConsentState, PendingWebSearchConfigPopupState, PromptHistoryDirection,
@@ -136,7 +137,7 @@ pub(in crate::ui::shell) use controllers::{
     SftpPromptState, SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus,
     SftpTransferRow, SftpTransferStatus, SyncPullConfirmReason, TerminalLease, TerminalLeaseError,
     TerminalLeaseGrant, TerminalMenuCommand, TransferredSessionTab, TransferredSessionWorkspaceUi,
-    TransferredSftpTab, TransferredSftpWindowUi, TrustedHostFilter, split_message_into_blocks,
+    TransferredSftpTab, TransferredSftpWindowUi, split_message_into_blocks,
 };
 #[cfg(test)]
 pub(in crate::ui::shell) use controllers::{
@@ -284,14 +285,7 @@ pub(in crate::ui::shell) struct TopbarActiveTabTransition {
     pub(in crate::ui::shell) duration: Duration,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum PageEditorSidebarKind {
-    Hosts,
-    PortForwarding,
-    Snippets,
-    Keychain,
-    KnownHosts,
-}
+use crate::ui::contracts::navigation::PageEditorSidebarKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PageEditorSidebarTransitionPhase {
@@ -555,3 +549,16 @@ impl SelectItem for ManagedKeySelectItem {
             .contains(&query)
     }
 }
+
+use trusted_hosts::{PendingKnownHostDeleteState, TrustedHostFilter, TrustedHostsController};
+
+// Phase 5: remove these logical Shell seams with the shared presentation imports.
+#[path = "features/snippets.rs"]
+mod snippets;
+use snippets::{PendingSnippetDeleteState, SnippetsController};
+
+#[path = "features/forwarding.rs"]
+mod forwarding;
+use forwarding::{
+    ForwardingController, ForwardingControllerArgs, PendingPortForwardRuleDeleteState,
+};

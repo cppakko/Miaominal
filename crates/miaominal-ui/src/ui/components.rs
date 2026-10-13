@@ -1,3 +1,7 @@
+pub(crate) mod animation;
+pub(crate) mod host_key_prompt;
+pub(crate) mod tokens;
+
 #[path = "components/badge.rs"]
 mod badge;
 #[path = "components/card_surface.rs"]

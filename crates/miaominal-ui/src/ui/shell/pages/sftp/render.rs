@@ -3566,7 +3566,7 @@ impl SftpController {
     ) -> gpui_kit::AnyElement {
         if let SftpPromptKind::ConfirmHostKey { prompt } = &prompt.kind {
             let controller = entity;
-            return super::super::trusted::render_host_key_prompt(
+            return crate::ui::components::host_key_prompt::render_host_key_prompt(
                 move |decision, cx| {
                     controller.update(cx, |controller, cx| {
                         controller.resolve_host_key_prompt(tab_id, decision, cx);

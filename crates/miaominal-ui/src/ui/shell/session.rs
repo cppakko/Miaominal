@@ -972,6 +972,7 @@ impl AppView {
             removal,
             schedule_reconnect_error,
             refresh_monitoring_profile,
+            connected_profile: _,
             mut should_notify,
         } = outcome;
 

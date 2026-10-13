@@ -1,3 +1,5 @@
+#[path = "../../features/session/host_key_prompt.rs"]
+mod host_key_prompt;
 use crate::ui::contracts::CatalogQueryPort;
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
@@ -6,46 +8,34 @@ use std::{
     time::SystemTime,
 };
 
-use gpui_kit::component::{
-    input::{EditorState, InputEvent, InputState, TabSize},
-    select::{SearchableVec, SelectEvent, SelectState},
-};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
-    App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, ScrollHandle,
-    Subscription, WeakEntity, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, ScrollHandle, Subscription,
+    WeakEntity, Window,
 };
 use miaominal_agent::{TerminalOutputReceiver, TerminalOutputTap};
-use miaominal_core::keychain::ManagedKeyRecord;
-use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::{AuthMethod, PortForwardKind, PortForwardRule};
 use miaominal_core::proxy::ProxyProfile;
-use miaominal_core::snippet::SnippetRecord;
 use miaominal_secrets::SecretStore;
 use miaominal_services::{
-    OpenSshIntegrationService, PortForwardManager, PortForwardManagerSnapshot, PortForwardPrompt,
-    PortForwardRuntimeState, ProfileService, SshBridgeService, TerminalService,
+    PortForwardManager, PortForwardManagerSnapshot, PortForwardPrompt, PortForwardRuntimeState,
+    SshBridgeService, TerminalService,
 };
 use miaominal_ssh::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionConnection,
     SessionMonitorSnapshot,
 };
-use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use miaominal_terminal::TerminalState;
 use tokio::runtime::Handle as TokioHandle;
 
-use super::{
-    AppCommand, DeferredAppCommand, SessionDeferredCommand, SessionSftpProgressLayoutState,
-    TabOpenRequest,
-};
+use super::{AppCommand, SessionSftpProgressLayoutState};
 use crate::ui::{
     i18n,
     shell::{
-        DialogOverlaySnapshot, ForwardProfileSelectItem, LocalVaultStatus, PageEditorSidebarKind,
-        ProfileViewMode, SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation,
-        ValidationFailure, WorkspaceSidePanelTransition, new_input_state,
-        set_code_editor_input_placeholder, set_editor_value, set_input_placeholder,
-        set_input_value, validation_notification,
+        DialogOverlaySnapshot, LocalVaultStatus, SessionProfile, TabId, TabKindTag, TabState,
+        TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state,
+        set_input_placeholder, set_input_value,
     },
 };
 
@@ -54,7 +44,6 @@ mod forwarding;
 mod lifecycle;
 mod local_session;
 mod search;
-mod snippets;
 mod terminal;
 
 pub(in crate::ui::shell) const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
@@ -252,6 +241,7 @@ pub(in crate::ui::shell) enum SessionEventTabRemoval {
 
 #[derive(Clone, Debug)]
 pub(in crate::ui::shell) struct SessionEventOutcome {
+    pub(in crate::ui::shell) connected_profile: Option<(String, u64)>,
     pub(in crate::ui::shell) tab_status: Option<String>,
     pub(in crate::ui::shell) clipboard_writes: Vec<String>,
     pub(in crate::ui::shell) notification: Option<SessionNotificationRequest>,
@@ -259,56 +249,6 @@ pub(in crate::ui::shell) struct SessionEventOutcome {
     pub(in crate::ui::shell) schedule_reconnect_error: Option<String>,
     pub(in crate::ui::shell) refresh_monitoring_profile: Option<String>,
     pub(in crate::ui::shell) should_notify: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingKnownHostDeleteState {
-    pub(in crate::ui::shell) host: String,
-    pub(in crate::ui::shell) port: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::ui::shell) enum TrustedHostFilter {
-    #[default]
-    All,
-    Linked,
-    Orphaned,
-    DefaultPort,
-    CustomPort,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingSnippetDeleteState {
-    pub(in crate::ui::shell) snippet_id: String,
-    pub(in crate::ui::shell) snippet_description: String,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingPortForwardRuleDeleteState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) rule_id: String,
-    pub(in crate::ui::shell) profile_label: String,
-    pub(in crate::ui::shell) rule_label: String,
-}
-
-struct PortForwardRuleInputValues {
-    profile_id: String,
-    profile_index: usize,
-    kind: PortForwardKind,
-    resolved_label: String,
-    listen_host: String,
-    listen_port: u16,
-    target_host: String,
-    target_port: u16,
-}
-
-struct SavePortForwardRuleAfterUnlockResult {
-    profiles: Vec<SessionProfile>,
-    profile_id: String,
-    profile_name: String,
-    rule: PortForwardRule,
-    is_edit: bool,
-    persist_error: Option<String>,
 }
 
 pub(in crate::ui::shell) struct ClosedSessionTabState {
@@ -370,56 +310,6 @@ pub(in crate::ui::shell) struct SessionWorkspaceForms {
     pub(in crate::ui::shell) snippets_panel: WorkspaceSnippetsForms,
 }
 
-#[derive(Clone)]
-pub(in crate::ui::shell) struct SnippetsForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
-    pub(in crate::ui::shell) description_input: Entity<InputState>,
-    pub(in crate::ui::shell) package_input: Entity<InputState>,
-    pub(in crate::ui::shell) package_select: Entity<SelectState<SearchableVec<String>>>,
-    pub(in crate::ui::shell) creating_new_package: bool,
-    pub(in crate::ui::shell) script_input: Entity<EditorState>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct TrustedHostsForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct PortForwardingForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
-    pub(in crate::ui::shell) profile_select:
-        Entity<SelectState<SearchableVec<ForwardProfileSelectItem>>>,
-    pub(in crate::ui::shell) label_input: Entity<InputState>,
-    pub(in crate::ui::shell) listen_host_input: Entity<InputState>,
-    pub(in crate::ui::shell) listen_port_input: Entity<InputState>,
-    pub(in crate::ui::shell) target_host_input: Entity<InputState>,
-    pub(in crate::ui::shell) target_port_input: Entity<InputState>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct SessionPanelForms {
-    pub(in crate::ui::shell) trusted: TrustedHostsForms,
-    pub(in crate::ui::shell) forwarding: PortForwardingForms,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct SessionCatalogViewState {
-    pub(in crate::ui::shell) forward_view_mode: ProfileViewMode,
-    pub(in crate::ui::shell) snippets_view_mode: ProfileViewMode,
-    pub(in crate::ui::shell) trusted_host_filter: TrustedHostFilter,
-    pub(in crate::ui::shell) snippets_package_filter: Option<String>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct SessionEditorState {
-    pub(in crate::ui::shell) snippets_editor_open: bool,
-    pub(in crate::ui::shell) port_forward_editor_open: bool,
-    pub(in crate::ui::shell) port_forward_editor_profile_id: Option<String>,
-    pub(in crate::ui::shell) port_forward_editor_rule_id: Option<String>,
-    pub(in crate::ui::shell) port_forward_kind: PortForwardKind,
-}
-
 impl SessionConnectionState {
     pub(in crate::ui::shell) fn preserves_terminal_history(&self) -> bool {
         matches!(
@@ -474,18 +364,10 @@ pub(in crate::ui::shell) struct SessionController {
     services: SessionControllerServices,
     profiles: RefCell<Vec<SessionProfile>>,
     // Phase 2: drain only successful persistence; redraws never republish profile snapshots.
-    committed_profiles: RefCell<Option<Vec<SessionProfile>>>,
     proxies: RefCell<Vec<ProxyProfile>>,
     selected_profile: Cell<Option<usize>>,
     forms: Option<RefCell<SessionWorkspaceForms>>,
-    snippets_forms: Option<RefCell<SnippetsForms>>,
     kbi_inputs: RefCell<Vec<Entity<InputState>>>,
-    snippets: RefCell<Vec<SnippetRecord>>,
-    selected_snippet: Cell<Option<usize>>,
-    known_hosts_entries: RefCell<Vec<KnownHostEntry>>,
-    panel_forms: Option<SessionPanelForms>,
-    catalog_view: RefCell<SessionCatalogViewState>,
-    editor_state: RefCell<SessionEditorState>,
     search_target: Cell<Option<TabId>>,
     tabs: RefCell<HashMap<TabId, SessionTabState>>,
     shared_profile_monitoring: RefCell<HashMap<String, SessionMonitoringState>>,
@@ -493,7 +375,6 @@ pub(in crate::ui::shell) struct SessionController {
     monitor_scroll_handle: ScrollHandle,
     reported_terminal_focus_tab_id: RefCell<Option<TabId>>,
     panel: RefCell<SessionPanelState>,
-    pending_dialogs: RefCell<SessionPendingDialogs>,
     ports: Rc<RefCell<SessionPortState>>,
     terminal_focus_subscriptions: RefCell<Option<(Subscription, Subscription)>>,
     _subscriptions: Vec<Subscription>,
@@ -501,41 +382,29 @@ pub(in crate::ui::shell) struct SessionController {
 
 pub(in crate::ui::shell) struct SessionControllerArgs {
     pub(in crate::ui::shell) runtime: TokioHandle,
-    pub(in crate::ui::shell) session_store: Option<SessionStore>,
-    pub(in crate::ui::shell) snippet_store: Option<SnippetStore>,
     pub(in crate::ui::shell) secrets: SecretStore,
     pub(in crate::ui::shell) known_hosts: KnownHostsStore,
     pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
     pub(in crate::ui::shell) proxies: Vec<ProxyProfile>,
     pub(in crate::ui::shell) selected_profile: Option<usize>,
-    pub(in crate::ui::shell) managed_keys: Vec<ManagedKeyRecord>,
-    pub(in crate::ui::shell) snippets: Vec<SnippetRecord>,
-    pub(in crate::ui::shell) selected_snippet: Option<usize>,
-    pub(in crate::ui::shell) known_hosts_entries: Vec<KnownHostEntry>,
     pub(in crate::ui::shell) terminal_focus: FocusHandle,
     pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
     pub(in crate::ui::shell) auto_collect_session_monitoring: bool,
     pub(in crate::ui::shell) ssh_bridge_service: SshBridgeService,
-    pub(in crate::ui::shell) open_ssh_integration_service: OpenSshIntegrationService,
     pub(in crate::ui::shell) port_forward_manager: PortForwardManager,
 }
 
 struct SessionFormsBundle {
     workspace: SessionWorkspaceForms,
-    snippets: SnippetsForms,
-    panel: SessionPanelForms,
 }
 
 struct SessionControllerServices {
     runtime: Option<TokioHandle>,
-    session_store: Option<SessionStore>,
-    snippet_store: Option<SnippetStore>,
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     local_vault_status: LocalVaultStatus,
     auto_collect_session_monitoring: Cell<bool>,
     ssh_bridge_service: Option<SshBridgeService>,
-    open_ssh_integration_service: Option<OpenSshIntegrationService>,
     port_forward_manager: Option<PortForwardManager>,
 }
 
@@ -545,14 +414,6 @@ struct SessionPanelState {
     view: SessionSidePanelView,
     visible: bool,
     transition: Option<WorkspaceSidePanelTransition>,
-    selected_known_host: Option<(String, u16, String)>,
-}
-
-#[derive(Default)]
-struct SessionPendingDialogs {
-    known_host_delete: Option<PendingKnownHostDeleteState>,
-    snippet_delete: Option<PendingSnippetDeleteState>,
-    port_forward_rule_delete: Option<PendingPortForwardRuleDeleteState>,
 }
 
 fn dedicated_port_forward_rules(
@@ -577,29 +438,7 @@ fn dedicated_port_forward_rules(
 }
 
 impl SessionController {
-    fn build_forms(
-        profiles: &[SessionProfile],
-        snippets: &[SnippetRecord],
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> SessionFormsBundle {
-        let snippet_script_input = cx.new(|cx| {
-            EditorState::new(window, cx)
-                .language("bash")
-                .tab_size(TabSize {
-                    tab_size: 2,
-                    ..Default::default()
-                })
-                .placeholder("")
-        });
-        set_code_editor_input_placeholder(
-            &snippet_script_input,
-            i18n::string("placeholders.snippets.script_body"),
-            true,
-            window,
-            cx,
-        );
-
+    fn build_forms(window: &mut Window, cx: &mut Context<Self>) -> SessionFormsBundle {
         SessionFormsBundle {
             workspace: SessionWorkspaceForms {
                 search: TerminalSearchForms {
@@ -629,98 +468,6 @@ impl SessionController {
                     selected_package_filter: None,
                 },
             },
-            snippets: SnippetsForms {
-                filter_input: new_input_state(
-                    i18n::string("placeholders.snippets.filter"),
-                    "",
-                    false,
-                    window,
-                    cx,
-                ),
-                description_input: new_input_state(
-                    i18n::string("placeholders.snippets.description_example"),
-                    "",
-                    false,
-                    window,
-                    cx,
-                ),
-                package_input: new_input_state(
-                    i18n::string("placeholders.snippets.new_package_name"),
-                    "",
-                    false,
-                    window,
-                    cx,
-                ),
-                package_select: cx.new(|cx| {
-                    SelectState::new(
-                        SearchableVec::new(Self::collect_available_snippet_packages(snippets)),
-                        None,
-                        window,
-                        cx,
-                    )
-                }),
-                creating_new_package: snippets.is_empty(),
-                script_input: snippet_script_input,
-            },
-            panel: SessionPanelForms {
-                trusted: TrustedHostsForms {
-                    filter_input: new_input_state(
-                        i18n::string("placeholders.trusted.filter"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                },
-                forwarding: PortForwardingForms {
-                    filter_input: new_input_state(
-                        i18n::string("placeholders.forward.filter"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                    profile_select: cx.new(|cx| {
-                        SelectState::new(Self::forward_profile_options(profiles), None, window, cx)
-                            .searchable(true)
-                    }),
-                    label_input: new_input_state(
-                        i18n::string("placeholders.forward.rule_label"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                    listen_host_input: new_input_state(
-                        i18n::string("placeholders.forward.listen_host"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                    listen_port_input: new_input_state(
-                        i18n::string("placeholders.forward.listen_port"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                    target_host_input: new_input_state(
-                        i18n::string("placeholders.forward.target_host"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                    target_port_input: new_input_state(
-                        i18n::string("placeholders.forward.target_port"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                },
-            },
         }
     }
 
@@ -729,58 +476,6 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let panel = self.panel_forms();
-        for (input, key) in [
-            (
-                &panel.forwarding.filter_input,
-                "placeholders.forward.filter",
-            ),
-            (
-                &panel.forwarding.label_input,
-                "placeholders.forward.rule_label",
-            ),
-            (
-                &panel.forwarding.listen_host_input,
-                "placeholders.forward.listen_host",
-            ),
-            (
-                &panel.forwarding.listen_port_input,
-                "placeholders.forward.listen_port",
-            ),
-            (
-                &panel.forwarding.target_host_input,
-                "placeholders.forward.target_host",
-            ),
-            (
-                &panel.forwarding.target_port_input,
-                "placeholders.forward.target_port",
-            ),
-            (&panel.trusted.filter_input, "placeholders.trusted.filter"),
-        ] {
-            set_input_placeholder(input, i18n::string(key), window, cx);
-        }
-
-        let snippets = self.snippets_forms();
-        for (input, key) in [
-            (&snippets.filter_input, "placeholders.snippets.filter"),
-            (
-                &snippets.description_input,
-                "placeholders.snippets.description_example",
-            ),
-            (
-                &snippets.package_input,
-                "placeholders.snippets.new_package_name",
-            ),
-        ] {
-            set_input_placeholder(input, i18n::string(key), window, cx);
-        }
-        set_code_editor_input_placeholder(
-            &snippets.script_input,
-            i18n::string("placeholders.snippets.script_body"),
-            true,
-            window,
-            cx,
-        );
         set_input_placeholder(
             &self.terminal_search_input(),
             i18n::string("placeholders.workspace.search_scrollback"),
@@ -800,7 +495,7 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let forms = Self::build_forms(&args.profiles, &args.snippets, window, cx);
+        let forms = Self::build_forms(window, cx);
         macro_rules! subscribe_to_change {
             ($input:expr) => {
                 cx.subscribe(&$input, |_controller, _input, event: &InputEvent, cx| {
@@ -812,11 +507,6 @@ impl SessionController {
         }
         let terminal_search_input = forms.workspace.search.input.clone();
         let session_snippets_filter_input = forms.workspace.snippets_panel.filter_input.clone();
-        let snippets_filter_input = forms.snippets.filter_input.clone();
-        let snippet_package_select = forms.snippets.package_select.clone();
-        let trusted_filter_input = forms.panel.trusted.filter_input.clone();
-        let forwarding_filter_input = forms.panel.forwarding.filter_input.clone();
-        let forward_profile_select = forms.panel.forwarding.profile_select.clone();
         let terminal_focus_in_subscription =
             cx.on_focus_in(&args.terminal_focus, window, |_controller, _window, cx| {
                 cx.emit(AppCommand::TerminalFocusReportingRequested);
@@ -849,30 +539,7 @@ impl SessionController {
                     _ => {}
                 },
             ),
-            subscribe_to_change!(trusted_filter_input),
-            subscribe_to_change!(forwarding_filter_input),
-            cx.subscribe(
-                &forward_profile_select,
-                |controller,
-                 _,
-                 event: &SelectEvent<SearchableVec<ForwardProfileSelectItem>>,
-                 cx| {
-                    let SelectEvent::Confirm(selected_profile_id) = event;
-                    controller.select_port_forward_editor_profile(selected_profile_id.clone(), cx);
-                },
-            ),
-            subscribe_to_change!(snippets_filter_input),
             subscribe_to_change!(session_snippets_filter_input),
-            cx.subscribe(
-                &snippet_package_select,
-                |controller, _, event: &SelectEvent<SearchableVec<String>>, cx| {
-                    let SelectEvent::Confirm(selected_package) = event;
-                    if selected_package.is_some() {
-                        controller.set_snippets_creating_new_package(false);
-                    }
-                    cx.notify();
-                },
-            ),
         ];
         subscriptions.push(
             cx.observe_window_activation(window, |_controller, window, cx| {
@@ -884,27 +551,20 @@ impl SessionController {
         let mut controller = Self::with_subscriptions(
             SessionControllerServices {
                 runtime: Some(args.runtime),
-                session_store: args.session_store,
-                snippet_store: args.snippet_store,
                 secrets: args.secrets,
                 known_hosts: args.known_hosts,
                 local_vault_status: args.local_vault_status,
                 auto_collect_session_monitoring: Cell::new(args.auto_collect_session_monitoring),
                 ssh_bridge_service: Some(args.ssh_bridge_service),
-                open_ssh_integration_service: Some(args.open_ssh_integration_service),
                 port_forward_manager: Some(args.port_forward_manager),
             },
             args.profiles,
             args.proxies,
             args.selected_profile,
             Some(forms.workspace),
-            Some(forms.snippets),
-            Some(forms.panel),
-            args.snippets,
-            args.selected_snippet,
-            args.known_hosts_entries,
             subscriptions,
         );
+        controller.ports.borrow_mut().owner = Some(cx.entity().downgrade());
         *controller.terminal_focus_subscriptions.get_mut() = Some((
             terminal_focus_in_subscription,
             terminal_focus_out_subscription,
@@ -922,40 +582,16 @@ impl SessionController {
         proxies: Vec<ProxyProfile>,
         selected_profile: Option<usize>,
         forms: Option<SessionWorkspaceForms>,
-        snippets_forms: Option<SnippetsForms>,
-        panel_forms: Option<SessionPanelForms>,
-        snippets: Vec<SnippetRecord>,
-        selected_snippet: Option<usize>,
-        known_hosts_entries: Vec<KnownHostEntry>,
         subscriptions: Vec<Subscription>,
     ) -> Self {
         let port_profiles = profiles.clone();
         Self {
             services,
             profiles: RefCell::new(profiles),
-            committed_profiles: RefCell::new(None),
             proxies: RefCell::new(proxies),
             selected_profile: Cell::new(selected_profile),
             forms: forms.map(RefCell::new),
-            snippets_forms: snippets_forms.map(RefCell::new),
             kbi_inputs: RefCell::new(Vec::new()),
-            snippets: RefCell::new(snippets),
-            selected_snippet: Cell::new(selected_snippet),
-            known_hosts_entries: RefCell::new(known_hosts_entries),
-            panel_forms,
-            catalog_view: RefCell::new(SessionCatalogViewState {
-                forward_view_mode: ProfileViewMode::Grid,
-                snippets_view_mode: ProfileViewMode::Grid,
-                trusted_host_filter: TrustedHostFilter::All,
-                snippets_package_filter: None,
-            }),
-            editor_state: RefCell::new(SessionEditorState {
-                snippets_editor_open: false,
-                port_forward_editor_open: false,
-                port_forward_editor_profile_id: None,
-                port_forward_editor_rule_id: None,
-                port_forward_kind: PortForwardKind::Local,
-            }),
             search_target: Cell::new(None),
             tabs: RefCell::new(HashMap::new()),
             shared_profile_monitoring: RefCell::new(HashMap::new()),
@@ -963,7 +599,6 @@ impl SessionController {
             monitor_scroll_handle: ScrollHandle::new(),
             reported_terminal_focus_tab_id: RefCell::new(None),
             panel: RefCell::new(SessionPanelState::default()),
-            pending_dialogs: RefCell::new(SessionPendingDialogs::default()),
             ports: Rc::new(RefCell::new(SessionPortState {
                 snapshot: SessionPortSnapshot::new(port_profiles, Vec::new(), None, None),
                 ..SessionPortState::default()
@@ -998,8 +633,6 @@ impl SessionController {
         Self::with_subscriptions(
             SessionControllerServices {
                 runtime: None,
-                session_store: None,
-                snippet_store: None,
                 secrets: SecretStore::new_locked_vault(),
                 known_hosts: KnownHostsStore::with_path(
                     std::env::temp_dir().join("miaominal-session-controller-test-known-hosts"),
@@ -1007,18 +640,12 @@ impl SessionController {
                 local_vault_status: LocalVaultStatus::Locked,
                 auto_collect_session_monitoring: Cell::new(false),
                 ssh_bridge_service: None,
-                open_ssh_integration_service: None,
                 port_forward_manager: None,
             },
             profiles,
             Vec::new(),
             None,
             None,
-            None,
-            None,
-            Vec::new(),
-            None,
-            Vec::new(),
             Vec::new(),
         )
     }
@@ -1033,24 +660,6 @@ impl SessionController {
         self.profiles.borrow()
     }
 
-    pub(in crate::ui::shell) fn clear_managed_key_profile_references(&self, key_id: &str) -> bool {
-        let changed = {
-            let mut profiles = self.profiles.borrow_mut();
-            super::clear_managed_key_profile_references(&mut profiles, key_id)
-        };
-        if changed {
-            self.sync_port_profiles();
-            self.refresh_ssh_bridge_routes();
-        }
-        changed
-    }
-
-    pub(in crate::ui::shell) fn replace_profiles(&self, profiles: Vec<SessionProfile>) {
-        self.committed_profiles.replace(Some(profiles.clone()));
-        self.replace_profiles_from_application(profiles);
-        self.refresh_ssh_bridge_routes();
-    }
-
     pub(in crate::ui::shell) fn replace_profiles_from_application(
         &self,
         profiles: Vec<SessionProfile>,
@@ -1061,7 +670,6 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
         self.replace_proxies_from_application(proxies);
-        self.refresh_ssh_bridge_routes();
     }
 
     pub(in crate::ui::shell) fn replace_proxies_from_application(
@@ -1073,13 +681,6 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn set_selected_profile(&self, selected: Option<usize>) {
         self.selected_profile.set(selected);
-    }
-
-    fn profile_service(&self) -> ProfileService {
-        ProfileService::new(
-            self.services.session_store.clone(),
-            self.services.secrets.clone(),
-        )
     }
 
     fn terminal_service(&self) -> TerminalService {
@@ -1114,14 +715,6 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn known_hosts(&self) -> KnownHostsStore {
-        self.services.known_hosts.clone()
-    }
-
-    pub(in crate::ui::shell) fn session_store_available(&self) -> bool {
-        self.services.session_store.is_some()
-    }
-
     pub(in crate::ui::shell) fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
         localized_port_forward_kind_label(kind)
     }
@@ -1140,32 +733,6 @@ impl SessionController {
             rule.target_host,
             rule.target_port
         )
-    }
-
-    pub(in crate::ui::shell) fn forward_profile_options(
-        profiles: &[SessionProfile],
-    ) -> SearchableVec<ForwardProfileSelectItem> {
-        SearchableVec::new(Self::forward_profile_items(profiles))
-    }
-
-    pub(in crate::ui::shell) fn sync_port_forward_profile_select(
-        &self,
-        selected_profile_id: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let options = Self::forward_profile_options(&self.profiles.borrow());
-        let selected_profile_id = selected_profile_id.map(str::to_string);
-        let profile_select = self.panel_forms().forwarding.profile_select;
-
-        profile_select.update(cx, |select, cx| {
-            select.set_items(options, window, cx);
-            if let Some(selected_profile_id) = selected_profile_id.as_ref() {
-                select.set_selected_value(selected_profile_id, window, cx);
-            } else {
-                select.set_selected_index(None, window, cx);
-            }
-        });
     }
 
     pub(in crate::ui::shell) fn port_forward_rule_indices(
@@ -1188,81 +755,6 @@ impl SessionController {
                             .map(|rule_index| (profile_index, rule_index))
                     })
             })
-    }
-
-    pub(in crate::ui::shell) fn update_port_forward_rule_enabled_state(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        enabled: bool,
-    ) -> Option<(String, String)> {
-        let (profile_index, rule_index) = self.port_forward_rule_indices(profile_id, rule_id)?;
-        let mut profiles = self.profiles.borrow_mut();
-        let profile = profiles.get_mut(profile_index)?;
-        let rule = profile.port_forwarding_rules.get_mut(rule_index)?;
-        rule.enabled = enabled;
-        Some((profile.name.clone(), Self::rule_summary_label(rule)))
-    }
-
-    pub(in crate::ui::shell) fn request_port_forward_rule_removal(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((profile_index, rule_index)) = self.port_forward_rule_indices(profile_id, rule_id)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        let rule_details = {
-            let profiles = self.profiles.borrow();
-            let profile = &profiles[profile_index];
-            profile
-                .port_forwarding_rules
-                .get(rule_index)
-                .map(|rule| (profile.connection_label(), Self::rule_summary_label(rule)))
-        };
-        let Some((profile_label, rule_label)) = rule_details else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        self.set_pending_port_forward_rule_delete(Some(PendingPortForwardRuleDeleteState {
-            profile_id: profile_id.to_string(),
-            rule_id: rule_id.to_string(),
-            profile_label,
-            rule_label,
-        }));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn cancel_port_forward_rule_removal(&self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_port_forward_rule_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::PortForwardRuleDelete(pending),
-            ));
-        }
-    }
-
-    pub(in crate::ui::shell) fn next_port_forward_rule_id(profile: &SessionProfile) -> String {
-        let mut next = profile.port_forwarding_rules.len() + 1;
-        loop {
-            let candidate = format!("pf-{next}");
-            if profile
-                .port_forwarding_rules
-                .iter()
-                .all(|rule| rule.id != candidate)
-            {
-                return candidate;
-            }
-            next += 1;
-        }
     }
 
     pub(in crate::ui::shell) fn sync_current_port_forward_rules_for_profile(
@@ -1301,1143 +793,6 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn forwarding_closed_connection_suffix(closed: bool) -> String {
-        if closed {
-            i18n::string("forwarding.messages.closed_connection_suffix")
-        } else {
-            String::new()
-        }
-    }
-
-    pub(in crate::ui::shell) fn forwarding_stopped_tunnel_suffix(stopped: bool) -> String {
-        if stopped {
-            i18n::string("forwarding.messages.stopped_tunnel_suffix")
-        } else {
-            String::new()
-        }
-    }
-
-    fn publish_committed_profiles(&self, cx: &mut Context<Self>) {
-        if let Some(profiles) = self.committed_profiles.take() {
-            cx.emit(AppCommand::ProfilesCommitted(profiles));
-        }
-    }
-
-    pub(in crate::ui::shell) fn persist_profiles_and_publish(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        self.persist_profiles()?;
-        self.publish_committed_profiles(cx);
-        Ok(())
-    }
-
-    pub(in crate::ui::shell) fn persist_profiles(&self) -> anyhow::Result<()> {
-        self.sync_port_profiles();
-        self.profile_service()
-            .persist_sessions(&self.profiles.borrow())?;
-        self.committed_profiles
-            .replace(Some(self.profiles.borrow().clone()));
-        self.refresh_ssh_bridge_routes();
-        Ok(())
-    }
-
-    pub(in crate::ui::shell) fn persist_remote_path_favorites(
-        &self,
-        profile_id: &str,
-        favorites: Vec<String>,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        let previous = {
-            let mut profiles = self.profiles.borrow_mut();
-            let profile = profiles
-                .iter_mut()
-                .find(|profile| profile.id == profile_id)
-                .ok_or_else(|| anyhow::anyhow!("missing profile {profile_id}"))?;
-            std::mem::replace(&mut profile.remote_path_favorites, favorites)
-        };
-        if let Err(error) = self.persist_profiles_and_publish(cx) {
-            if let Some(profile) = self
-                .profiles
-                .borrow_mut()
-                .iter_mut()
-                .find(|profile| profile.id == profile_id)
-            {
-                profile.remote_path_favorites = previous;
-            }
-            self.sync_port_profiles();
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    fn refresh_ssh_bridge_routes(&self) {
-        let profiles = self.profiles.borrow().clone();
-        let proxies = self.proxies.borrow().clone();
-        if let Some(service) = &self.services.open_ssh_integration_service {
-            if let Err(error) = service.refresh(profiles, proxies) {
-                log::warn!("failed to refresh managed OpenSSH config: {error:?}");
-            }
-        } else if let Some(service) = &self.services.ssh_bridge_service {
-            service.refresh_routes(profiles, proxies);
-        }
-    }
-
-    pub(in crate::ui::shell) fn duplicate_port_forward_rule(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((profile_index, rule_index)) = self.port_forward_rule_indices(profile_id, rule_id)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        let duplicate = {
-            let profiles = self.profiles.borrow();
-            let profile = &profiles[profile_index];
-            profile
-                .port_forwarding_rules
-                .get(rule_index)
-                .map(|source_rule| {
-                    let mut duplicated_rule = source_rule.clone();
-                    duplicated_rule.id = Self::next_port_forward_rule_id(profile);
-                    let source_label = Self::rule_summary_label(source_rule);
-                    duplicated_rule.label = i18n::string_args(
-                        "forwarding.messages.duplicate_label",
-                        &[("label", &source_label)],
-                    );
-                    (profile.name.clone(), duplicated_rule)
-                })
-        };
-        let Some((profile_name, duplicated_rule)) = duplicate else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        self.profiles.borrow_mut()[profile_index]
-            .port_forwarding_rules
-            .insert(rule_index + 1, duplicated_rule.clone());
-        let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
-        let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        let message = match self.persist_profiles_and_publish(cx) {
-            Ok(()) => i18n::string_args(
-                "forwarding.messages.duplicated",
-                &[
-                    ("rule", &duplicated_rule.label),
-                    ("profile", &profile_name),
-                    ("synced_suffix", &synced_suffix),
-                ],
-            ),
-            Err(error) => {
-                let error = error.to_string();
-                i18n::string_args(
-                    "forwarding.messages.duplicated_memory_only",
-                    &[
-                        ("rule", &duplicated_rule.label),
-                        ("synced_suffix", &synced_suffix),
-                        ("error", &error),
-                    ],
-                )
-            }
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    fn read_port_forward_rule_input_values(
-        &self,
-        cx: &App,
-    ) -> anyhow::Result<PortForwardRuleInputValues> {
-        let editor_state = self.editor_state();
-        let kind = editor_state.port_forward_kind;
-        let Some(profile_id) = editor_state.port_forward_editor_profile_id else {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.forwarding.validation.host_profile_required",
-            ))
-            .into());
-        };
-        let Some(profile_index) = self
-            .profiles
-            .borrow()
-            .iter()
-            .position(|profile| profile.id == profile_id)
-        else {
-            return Err(ValidationFailure::invalid(i18n::string(
-                "errors.forwarding.validation.selected_host_profile_missing",
-            ))
-            .into());
-        };
-
-        let forms = self.panel_forms().forwarding;
-        let label = forms.label_input.read(cx).value().to_string();
-        let listen_host = forms.listen_host_input.read(cx).value().trim().to_string();
-        let listen_port_text = forms.listen_port_input.read(cx).value().trim().to_string();
-        let target_host = forms.target_host_input.read(cx).value().trim().to_string();
-        let target_port_text = forms.target_port_input.read(cx).value().trim().to_string();
-
-        if listen_host.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.forwarding.validation.listen_host_required",
-            ))
-            .into());
-        }
-        if listen_port_text.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.forwarding.validation.listen_port_required",
-            ))
-            .into());
-        }
-        if target_host.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.forwarding.validation.target_host_required",
-            ))
-            .into());
-        }
-        if target_port_text.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.forwarding.validation.target_port_required",
-            ))
-            .into());
-        }
-
-        let listen_port: u16 = listen_port_text.trim().parse().map_err(|_| {
-            anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
-                "errors.forwarding.validation.invalid_listen_port",
-                &[("port", &listen_port_text)],
-            )))
-        })?;
-        let target_port: u16 = target_port_text.trim().parse().map_err(|_| {
-            anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
-                "errors.forwarding.validation.invalid_target_port",
-                &[("port", &target_port_text)],
-            )))
-        })?;
-
-        let resolved_label = {
-            let label = label.trim();
-            if label.is_empty() {
-                format!(
-                    "{} {}:{} -> {}:{}",
-                    Self::localized_port_forward_kind_label(kind),
-                    listen_host,
-                    listen_port,
-                    target_host,
-                    target_port
-                )
-            } else {
-                label.to_string()
-            }
-        };
-
-        Ok(PortForwardRuleInputValues {
-            profile_id,
-            profile_index,
-            kind,
-            resolved_label,
-            listen_host,
-            listen_port,
-            target_host,
-            target_port,
-        })
-    }
-
-    fn report_port_forward_rule_save_error(
-        &self,
-        error: anyhow::Error,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
-            let message = validation.message.clone();
-            cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
-                window,
-                validation_notification(validation.kind, message),
-                cx,
-            );
-        } else {
-            let message = error.to_string();
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "forwarding.messages.save_failed",
-                &[("message", &message)],
-            )));
-        }
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn save_port_forward_rule(
-        &self,
-        sync_requires_local_vault_unlock: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let PortForwardRuleInputValues {
-            profile_id,
-            profile_index,
-            kind,
-            resolved_label,
-            listen_host,
-            listen_port,
-            target_host,
-            target_port,
-        } = match self.read_port_forward_rule_input_values(cx) {
-            Ok(values) => values,
-            Err(error) => {
-                self.report_port_forward_rule_save_error(error, window, cx);
-                return;
-            }
-        };
-
-        if sync_requires_local_vault_unlock {
-            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Session(
-                SessionDeferredCommand::SavePortForwardRule,
-            )));
-            return;
-        }
-
-        let editor_rule_id = self.editor_state().port_forward_editor_rule_id;
-        if let Some(rule_id) = editor_rule_id {
-            let rule_index = self.profiles.borrow()[profile_index]
-                .port_forwarding_rules
-                .iter()
-                .position(|rule| rule.id == rule_id);
-            let Some(rule_index) = rule_index else {
-                self.set_port_forward_editor_rule_id(None);
-                cx.emit(AppCommand::Feedback(i18n::string(
-                    "forwarding.messages.rule_no_longer_exists",
-                )));
-                cx.notify();
-                return;
-            };
-
-            let existing_enabled =
-                self.profiles.borrow()[profile_index].port_forwarding_rules[rule_index].enabled;
-            let updated_rule = PortForwardRule {
-                id: rule_id,
-                label: resolved_label,
-                kind,
-                listen_host,
-                listen_port,
-                target_host,
-                target_port,
-                enabled: existing_enabled,
-            };
-
-            let profile_name = {
-                let mut profiles = self.profiles.borrow_mut();
-                let profile = &mut profiles[profile_index];
-                profile.port_forwarding_rules[rule_index] = updated_rule.clone();
-                profile.name.clone()
-            };
-            let synced_sessions = self.sync_current_port_forward_rules_for_profile(&profile_id);
-            let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-
-            self.clear_port_forward_editor();
-            cx.emit(AppCommand::SidebarEditorStateChanged(None));
-            let message = match self.persist_profiles_and_publish(cx) {
-                Ok(()) => i18n::string_args(
-                    "forwarding.messages.saved",
-                    &[
-                        ("rule", &updated_rule.label),
-                        ("profile", &profile_name),
-                        ("synced_suffix", &synced_suffix),
-                    ],
-                ),
-                Err(error) => {
-                    let error = error.to_string();
-                    i18n::string_args(
-                        "forwarding.messages.saved_memory_only",
-                        &[
-                            ("rule", &updated_rule.label),
-                            ("synced_suffix", &synced_suffix),
-                            ("error", &error),
-                        ],
-                    )
-                }
-            };
-            cx.emit(AppCommand::Feedback(message));
-            cx.notify();
-            return;
-        }
-
-        let rule = {
-            let profiles = self.profiles.borrow();
-            let profile = &profiles[profile_index];
-            PortForwardRule {
-                id: Self::next_port_forward_rule_id(profile),
-                label: resolved_label,
-                kind,
-                listen_host,
-                listen_port,
-                target_host,
-                target_port,
-                enabled: true,
-            }
-        };
-
-        let profile_name = {
-            let mut profiles = self.profiles.borrow_mut();
-            let profile = &mut profiles[profile_index];
-            profile.port_forwarding_rules.push(rule.clone());
-            profile.name.clone()
-        };
-        let synced_sessions = self.sync_current_port_forward_rules_for_profile(&profile_id);
-        let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-
-        self.clear_port_forward_editor();
-        cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        let message = match self.persist_profiles_and_publish(cx) {
-            Ok(()) => i18n::string_args(
-                "forwarding.messages.added",
-                &[
-                    ("rule", &rule.label),
-                    ("profile", &profile_name),
-                    ("synced_suffix", &synced_suffix),
-                ],
-            ),
-            Err(error) => {
-                let error = error.to_string();
-                i18n::string_args(
-                    "forwarding.messages.added_memory_only",
-                    &[
-                        ("rule", &rule.label),
-                        ("synced_suffix", &synced_suffix),
-                        ("error", &error),
-                    ],
-                )
-            }
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn continue_save_port_forward_rule_after_unlock(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let PortForwardRuleInputValues {
-            profile_id,
-            profile_index,
-            kind,
-            resolved_label,
-            listen_host,
-            listen_port,
-            target_host,
-            target_port,
-        } = match self.read_port_forward_rule_input_values(cx) {
-            Ok(values) => values,
-            Err(error) => {
-                self.report_port_forward_rule_save_error(error, window, cx);
-                return;
-            }
-        };
-
-        let mut profiles = self.profiles.borrow().clone();
-        let editor_rule_id = self.editor_state().port_forward_editor_rule_id;
-        let (rule, profile_name, is_edit) = if let Some(rule_id) = editor_rule_id {
-            let Some(rule_index) = profiles[profile_index]
-                .port_forwarding_rules
-                .iter()
-                .position(|rule| rule.id == rule_id)
-            else {
-                self.set_port_forward_editor_rule_id(None);
-                cx.emit(AppCommand::Feedback(i18n::string(
-                    "forwarding.messages.rule_no_longer_exists",
-                )));
-                cx.notify();
-                return;
-            };
-
-            let existing_enabled =
-                profiles[profile_index].port_forwarding_rules[rule_index].enabled;
-            let updated_rule = PortForwardRule {
-                id: rule_id,
-                label: resolved_label,
-                kind,
-                listen_host,
-                listen_port,
-                target_host,
-                target_port,
-                enabled: existing_enabled,
-            };
-            let profile_name = profiles[profile_index].name.clone();
-            profiles[profile_index].port_forwarding_rules[rule_index] = updated_rule.clone();
-            (updated_rule, profile_name, true)
-        } else {
-            let rule = {
-                let profile = &profiles[profile_index];
-                PortForwardRule {
-                    id: Self::next_port_forward_rule_id(profile),
-                    label: resolved_label,
-                    kind,
-                    listen_host,
-                    listen_port,
-                    target_host,
-                    target_port,
-                    enabled: true,
-                }
-            };
-            let profile_name = profiles[profile_index].name.clone();
-            profiles[profile_index]
-                .port_forwarding_rules
-                .push(rule.clone());
-            (rule, profile_name, false)
-        };
-
-        let service = self.profile_service();
-        let (tx, rx) = std::sync::mpsc::sync_channel::<
-            anyhow::Result<SavePortForwardRuleAfterUnlockResult>,
-        >(1);
-        let spawn_result = std::thread::Builder::new()
-            .name("post-unlock-port-forward-save".to_string())
-            .spawn(move || {
-                let persist_error = service
-                    .persist_sessions(&profiles)
-                    .err()
-                    .map(|error| error.to_string());
-                tx.send(Ok(SavePortForwardRuleAfterUnlockResult {
-                    profiles,
-                    profile_id,
-                    profile_name,
-                    rule,
-                    is_edit,
-                    persist_error,
-                }))
-                .ok();
-            });
-
-        if let Err(error) = spawn_result {
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "forwarding.messages.save_failed",
-                &[("message", &error.to_string())],
-            )));
-            cx.notify();
-            return;
-        }
-
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    rx.recv().unwrap_or_else(|_| {
-                        Err(anyhow::anyhow!(
-                            "post-unlock port-forward save task cancelled"
-                        ))
-                    })
-                })
-                .await;
-
-            let _ = this.update(cx, move |controller, cx| match result {
-                Ok(result) => {
-                    controller.replace_profiles(result.profiles);
-                    controller.publish_committed_profiles(cx);
-                    let synced_sessions =
-                        controller.sync_current_port_forward_rules_for_profile(&result.profile_id);
-                    let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-                    controller.clear_port_forward_editor();
-                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
-
-                    let message = if let Some(error) = result.persist_error {
-                        if result.is_edit {
-                            i18n::string_args(
-                                "forwarding.messages.saved_memory_only",
-                                &[
-                                    ("rule", &result.rule.label),
-                                    ("synced_suffix", &synced_suffix),
-                                    ("error", error.as_str()),
-                                ],
-                            )
-                        } else {
-                            i18n::string_args(
-                                "forwarding.messages.added_memory_only",
-                                &[
-                                    ("rule", &result.rule.label),
-                                    ("synced_suffix", &synced_suffix),
-                                    ("error", error.as_str()),
-                                ],
-                            )
-                        }
-                    } else if result.is_edit {
-                        i18n::string_args(
-                            "forwarding.messages.saved",
-                            &[
-                                ("rule", &result.rule.label),
-                                ("profile", &result.profile_name),
-                                ("synced_suffix", &synced_suffix),
-                            ],
-                        )
-                    } else {
-                        i18n::string_args(
-                            "forwarding.messages.added",
-                            &[
-                                ("rule", &result.rule.label),
-                                ("profile", &result.profile_name),
-                                ("synced_suffix", &synced_suffix),
-                            ],
-                        )
-                    };
-                    cx.emit(AppCommand::Feedback(message));
-                    cx.notify();
-                }
-                Err(error) => {
-                    cx.emit(AppCommand::Feedback(i18n::string_args(
-                        "forwarding.messages.save_failed",
-                        &[("message", &error.to_string())],
-                    )));
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    pub(in crate::ui::shell) fn open_port_forward_panel(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_port_forward_editor_state(true, None, None, PortForwardKind::Local);
-        let forms = self.panel_forms().forwarding;
-        set_input_value(&forms.label_input, "", window, cx);
-        set_input_value(&forms.listen_host_input, "", window, cx);
-        set_input_value(&forms.listen_port_input, "", window, cx);
-        set_input_value(&forms.target_host_input, "", window, cx);
-        set_input_value(&forms.target_port_input, "", window, cx);
-        self.sync_port_forward_profile_select(None, window, cx);
-        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
-            PageEditorSidebarKind::PortForwarding,
-        )));
-        let message = if self.profiles.borrow().is_empty() {
-            i18n::string("forwarding.messages.create_host_profile_before_adding")
-        } else {
-            i18n::string("forwarding.messages.choose_host_profile_for_new_rule")
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn edit_port_forward_rule(
-        &self,
-        profile_id: String,
-        rule_id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((profile_index, rule_index)) =
-            self.port_forward_rule_indices(&profile_id, &rule_id)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        let profile = self.profiles.borrow()[profile_index].clone();
-        let Some(rule) = profile.port_forwarding_rules.get(rule_index).cloned() else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            return;
-        };
-
-        self.selected_profile.set(Some(profile_index));
-        self.set_port_forward_editor_state(
-            true,
-            Some(profile.id.clone()),
-            Some(rule.id.clone()),
-            rule.kind,
-        );
-        let forms = self.panel_forms().forwarding;
-        set_input_value(&forms.label_input, rule.label.clone(), window, cx);
-        set_input_value(
-            &forms.listen_host_input,
-            rule.listen_host.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.listen_port_input,
-            rule.listen_port.to_string(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.target_host_input,
-            rule.target_host.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.target_port_input,
-            rule.target_port.to_string(),
-            window,
-            cx,
-        );
-        self.sync_port_forward_profile_select(Some(profile.id.as_str()), window, cx);
-        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
-            PageEditorSidebarKind::PortForwarding,
-        )));
-        let rule_label = Self::rule_summary_label(&rule);
-        cx.emit(AppCommand::Feedback(i18n::string_args(
-            "forwarding.messages.editing_rule",
-            &[("rule", &rule_label)],
-        )));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn close_port_forward_rule_editor(&self, cx: &mut Context<Self>) {
-        let editor_state = self.editor_state();
-        if !editor_state.port_forward_editor_open {
-            return;
-        }
-
-        let message = if editor_state.port_forward_editor_rule_id.is_some() {
-            i18n::string("forwarding.messages.canceled_editing")
-        } else {
-            i18n::string("forwarding.messages.canceled_new")
-        };
-        self.clear_port_forward_editor();
-        cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    fn select_port_forward_editor_profile(
-        &self,
-        profile_id: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .editor_state
-            .borrow()
-            .port_forward_editor_rule_id
-            .is_some()
-        {
-            return;
-        }
-
-        let Some(profile_id) = profile_id else {
-            self.set_port_forward_editor_profile_id(None);
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.choose_profile_before_adding",
-            )));
-            cx.notify();
-            return;
-        };
-
-        let profile = self
-            .profiles
-            .borrow()
-            .iter()
-            .enumerate()
-            .find(|(_, profile)| profile.id == profile_id)
-            .map(|(index, profile)| (index, profile.id.clone(), profile.name.clone()));
-        let Some((profile_index, profile_id, profile_name)) = profile else {
-            self.set_port_forward_editor_profile_id(None);
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.profile_not_found",
-            )));
-            cx.notify();
-            return;
-        };
-
-        self.selected_profile.set(Some(profile_index));
-        self.set_port_forward_editor_profile_id(Some(profile_id));
-        if self
-            .editor_state
-            .borrow()
-            .port_forward_editor_rule_id
-            .is_none()
-        {
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "forwarding.messages.creating_rule_for_profile",
-                &[("profile", &profile_name)],
-            )));
-        }
-        cx.notify();
-    }
-
-    fn snippets_forms_state(&self) -> &RefCell<SnippetsForms> {
-        self.snippets_forms
-            .as_ref()
-            .expect("snippet forms are available in the application")
-    }
-
-    pub(in crate::ui::shell) fn snippets_forms(&self) -> SnippetsForms {
-        self.snippets_forms_state().borrow().clone()
-    }
-
-    pub(in crate::ui::shell) fn collect_available_snippet_packages(
-        snippets: &[SnippetRecord],
-    ) -> Vec<String> {
-        let mut packages = snippets
-            .iter()
-            .filter_map(|snippet| {
-                let package = snippet.package.trim();
-                (!package.is_empty()).then(|| package.to_string())
-            })
-            .collect::<Vec<_>>();
-        packages.sort_by_key(|package| package.to_ascii_lowercase());
-        packages.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-        packages
-    }
-
-    pub(in crate::ui::shell) fn begin_new_snippet_package(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let forms = self.snippets_forms();
-        self.set_snippets_creating_new_package(true);
-        forms.package_select.update(cx, |select, cx| {
-            select.set_selected_index(None, window, cx);
-        });
-        set_input_value(&forms.package_input, "", window, cx);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn close_snippets_editor(&self, cx: &mut Context<Self>) {
-        if !self.editor_state().snippets_editor_open {
-            return;
-        }
-        self.set_snippets_editor_open(false);
-        self.set_selected_snippet(None);
-        cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        cx.emit(AppCommand::Feedback(i18n::string(
-            "snippets.messages.closed_sidebar",
-        )));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn request_selected_snippet_delete(&self, cx: &mut Context<Self>) {
-        let Some(index) = self.selected_snippet() else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "snippets.messages.select_to_delete",
-            )));
-            return;
-        };
-        let Some(snippet) = self.snippets().get(index).cloned() else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "snippets.messages.select_to_delete",
-            )));
-            return;
-        };
-        self.set_pending_snippet_delete(Some(PendingSnippetDeleteState {
-            snippet_id: snippet.id,
-            snippet_description: snippet.description,
-        }));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_snippets_creating_new_package(&self, creating: bool) {
-        self.snippets_forms_state()
-            .borrow_mut()
-            .creating_new_package = creating;
-    }
-
-    pub(in crate::ui::shell) fn snippets(&self) -> Ref<'_, Vec<SnippetRecord>> {
-        self.snippets.borrow()
-    }
-
-    pub(in crate::ui::shell) fn replace_snippets(&self, snippets: Vec<SnippetRecord>) {
-        *self.snippets.borrow_mut() = snippets;
-    }
-
-    pub(in crate::ui::shell) fn selected_snippet(&self) -> Option<usize> {
-        self.selected_snippet.get()
-    }
-
-    pub(in crate::ui::shell) fn set_selected_snippet(&self, selected: Option<usize>) {
-        self.selected_snippet.set(selected);
-    }
-
-    pub(in crate::ui::shell) fn known_hosts_entries(&self) -> Ref<'_, Vec<KnownHostEntry>> {
-        self.known_hosts_entries.borrow()
-    }
-
-    pub(in crate::ui::shell) fn replace_known_hosts_entries(&self, entries: Vec<KnownHostEntry>) {
-        *self.known_hosts_entries.borrow_mut() = entries;
-    }
-
-    pub(in crate::ui::shell) fn refresh_known_hosts(&self, cx: &mut Context<Self>) {
-        match self.services.known_hosts.list() {
-            Ok(entries) => self.replace_known_hosts_entries(entries),
-            Err(error) => log::warn!("failed to refresh known_hosts list: {error:?}"),
-        }
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn refresh_known_hosts_with_feedback(&self, cx: &mut Context<Self>) {
-        self.refresh_known_hosts(cx);
-        cx.emit(AppCommand::Feedback(i18n::string(
-            "trusted.messages.refreshed",
-        )));
-    }
-
-    pub(in crate::ui::shell) fn select_trusted_known_host(
-        &self,
-        host: String,
-        port: u16,
-        fingerprint: String,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_selected_known_host(Some((host, port, fingerprint)));
-        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
-            PageEditorSidebarKind::KnownHosts,
-        )));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn close_trusted_known_host_sidebar(&self, cx: &mut Context<Self>) {
-        if self.take_selected_known_host().is_some() {
-            cx.emit(AppCommand::SidebarEditorStateChanged(None));
-            cx.notify();
-        }
-    }
-
-    pub(in crate::ui::shell) fn copy_known_host_fingerprint(
-        &self,
-        fingerprint: String,
-        cx: &mut Context<Self>,
-    ) {
-        cx.write_to_clipboard(ClipboardItem::new_string(fingerprint));
-        cx.emit(AppCommand::Feedback(i18n::string(
-            "trusted.messages.copied_fingerprint",
-        )));
-    }
-
-    pub(in crate::ui::shell) fn copy_known_host_address(
-        &self,
-        host: String,
-        port: u16,
-        cx: &mut Context<Self>,
-    ) {
-        cx.write_to_clipboard(ClipboardItem::new_string(format!("{host}:{port}")));
-        cx.emit(AppCommand::Feedback(i18n::string(
-            "trusted.messages.copied_address",
-        )));
-    }
-
-    pub(in crate::ui::shell) fn open_linked_profile_from_known_host(
-        &self,
-        profile_id: String,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::ProfileEditor {
-            profile_id,
-            open_hosts_tab: false,
-        }));
-    }
-
-    pub(in crate::ui::shell) fn request_trusted_known_host_removal(
-        &self,
-        host: String,
-        port: u16,
-        cx: &mut Context<Self>,
-    ) {
-        if !self
-            .known_hosts_entries
-            .borrow()
-            .iter()
-            .any(|entry| entry.host == host && entry.port == port)
-        {
-            let port_text = port.to_string();
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "session.messages.no_host_key_entry",
-                &[("host", &host), ("port", &port_text)],
-            )));
-            return;
-        }
-
-        self.set_pending_known_host_delete(Some(PendingKnownHostDeleteState { host, port }));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn confirm_trusted_known_host_removal(&self, cx: &mut Context<Self>) {
-        let Some(pending) = self.take_pending_known_host_delete() else {
-            return;
-        };
-
-        cx.emit(AppCommand::OverlayDismissed(
-            DialogOverlaySnapshot::KnownHostDelete(pending.clone()),
-        ));
-        if self
-            .selected_known_host()
-            .as_ref()
-            .is_some_and(|(host, port, _)| host == &pending.host && *port == pending.port)
-        {
-            self.set_selected_known_host(None);
-            cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        }
-
-        let message = match self
-            .services
-            .known_hosts
-            .remove(&pending.host, pending.port)
-        {
-            Ok(true) => {
-                self.refresh_known_hosts(cx);
-                let port = pending.port.to_string();
-                i18n::string_args(
-                    "session.messages.removed_host_key",
-                    &[("host", &pending.host), ("port", &port)],
-                )
-            }
-            Ok(false) => {
-                let port = pending.port.to_string();
-                i18n::string_args(
-                    "session.messages.no_host_key_entry",
-                    &[("host", &pending.host), ("port", &port)],
-                )
-            }
-            Err(error) => i18n::string_args(
-                "session.messages.remove_host_key_failed",
-                &[("error", &error.to_string())],
-            ),
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn cancel_trusted_known_host_removal(&self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_known_host_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::KnownHostDelete(pending),
-            ));
-        }
-    }
-
-    pub(in crate::ui::shell) fn panel_forms(&self) -> SessionPanelForms {
-        self.panel_forms
-            .as_ref()
-            .expect("session panel forms are available in the application")
-            .clone()
-    }
-
-    pub(in crate::ui::shell) fn catalog_view(&self) -> SessionCatalogViewState {
-        self.catalog_view.borrow().clone()
-    }
-
-    pub(in crate::ui::shell) fn set_forward_view_mode(
-        &mut self,
-        mode: ProfileViewMode,
-        cx: &mut Context<Self>,
-    ) {
-        self.catalog_view.get_mut().forward_view_mode = mode;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_snippets_view_mode(
-        &mut self,
-        mode: ProfileViewMode,
-        cx: &mut Context<Self>,
-    ) {
-        self.catalog_view.get_mut().snippets_view_mode = mode;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_trusted_host_filter(
-        &mut self,
-        filter: TrustedHostFilter,
-        cx: &mut Context<Self>,
-    ) {
-        self.catalog_view.get_mut().trusted_host_filter = filter;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn toggle_snippets_package_filter(
-        &mut self,
-        package: String,
-        cx: &mut Context<Self>,
-    ) {
-        let selected_package = if self
-            .catalog_view
-            .get_mut()
-            .snippets_package_filter
-            .as_deref()
-            == Some(package.as_str())
-        {
-            self.catalog_view.get_mut().snippets_package_filter = None;
-            None
-        } else {
-            self.catalog_view.get_mut().snippets_package_filter = Some(package.clone());
-            Some(package)
-        };
-        let status = if let Some(selected_package) = selected_package.as_ref() {
-            i18n::string_args(
-                "snippets.messages.filtering_by_package",
-                &[("package", selected_package)],
-            )
-        } else {
-            i18n::string("snippets.messages.viewing_all")
-        };
-        cx.emit(AppCommand::Feedback(status));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn clear_snippets_package_filter(&self) {
-        self.catalog_view.borrow_mut().snippets_package_filter = None;
-    }
-
-    pub(in crate::ui::shell) fn editor_state(&self) -> SessionEditorState {
-        self.editor_state.borrow().clone()
-    }
-
-    pub(in crate::ui::shell) fn set_snippets_editor_open(&self, open: bool) {
-        self.editor_state.borrow_mut().snippets_editor_open = open;
-    }
-
-    pub(in crate::ui::shell) fn set_port_forward_editor_state(
-        &self,
-        open: bool,
-        profile_id: Option<String>,
-        rule_id: Option<String>,
-        kind: PortForwardKind,
-    ) {
-        let mut state = self.editor_state.borrow_mut();
-        state.port_forward_editor_open = open;
-        state.port_forward_editor_profile_id = profile_id;
-        state.port_forward_editor_rule_id = rule_id;
-        state.port_forward_kind = kind;
-    }
-
-    pub(in crate::ui::shell) fn clear_port_forward_editor(&self) {
-        let mut state = self.editor_state.borrow_mut();
-        state.port_forward_editor_open = false;
-        state.port_forward_editor_profile_id = None;
-        state.port_forward_editor_rule_id = None;
-    }
-
-    pub(in crate::ui::shell) fn set_port_forward_editor_profile_id(
-        &self,
-        profile_id: Option<String>,
-    ) {
-        self.editor_state
-            .borrow_mut()
-            .port_forward_editor_profile_id = profile_id;
-    }
-
-    pub(in crate::ui::shell) fn set_port_forward_editor_rule_id(&self, rule_id: Option<String>) {
-        self.editor_state.borrow_mut().port_forward_editor_rule_id = rule_id;
-    }
-
-    pub(in crate::ui::shell) fn set_port_forward_kind(
-        &self,
-        kind: PortForwardKind,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor_state.borrow_mut().port_forward_kind = kind;
-        cx.notify();
-    }
-
     pub(in crate::ui::shell) fn terminal_search(&self) -> Ref<'_, TerminalSearchForms> {
         Ref::map(self.forms().borrow(), |forms| &forms.search)
     }
@@ -2452,6 +807,24 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn terminal_search_open(&self) -> bool {
         self.forms().borrow().search.open
+    }
+
+    pub(in crate::ui::shell) fn handle_workspace_snippets_package_filter_toggle(
+        &self,
+        package: String,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_package = self.toggle_workspace_snippets_package_filter(&package);
+        let message = if let Some(selected_package) = selected_package.as_ref() {
+            i18n::string_args(
+                "snippets.messages.filtering_by_package",
+                &[("package", selected_package)],
+            )
+        } else {
+            i18n::string("snippets.messages.viewing_all")
+        };
+        cx.emit(AppCommand::Feedback(message));
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn workspace_snippets_filter_input(&self) -> Entity<InputState> {
@@ -2529,16 +902,6 @@ impl SessionController {
             ),
             session,
         )
-    }
-
-    pub(in crate::ui::shell) fn forward_profile_items(
-        profiles: &[SessionProfile],
-    ) -> Vec<ForwardProfileSelectItem> {
-        profiles
-            .iter()
-            .filter(|profile| !profile.is_local())
-            .map(ForwardProfileSelectItem::new)
-            .collect()
     }
 
     pub(in crate::ui::shell) fn build_pending_tab(
@@ -2896,21 +1259,6 @@ impl SessionController {
         panel.transition = transition;
     }
 
-    pub(in crate::ui::shell) fn selected_known_host(&self) -> Option<(String, u16, String)> {
-        self.panel.borrow().selected_known_host.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_selected_known_host(
-        &self,
-        selected: Option<(String, u16, String)>,
-    ) {
-        self.panel.borrow_mut().selected_known_host = selected;
-    }
-
-    pub(in crate::ui::shell) fn take_selected_known_host(&self) -> Option<(String, u16, String)> {
-        self.panel.borrow_mut().selected_known_host.take()
-    }
-
     pub(in crate::ui::shell) fn take_workspace_ui_for_transfer(
         &mut self,
         window: &mut Window,
@@ -3179,7 +1527,7 @@ impl SessionController {
                 &[("host", &prompt.host)],
             ),
             HostKeyDecision::AcceptAndSave => {
-                self.refresh_known_hosts(cx);
+                self.publish_authenticated_known_hosts(cx);
                 i18n::string_args(
                     "session.messages.trusting_host_key",
                     &[("host", &prompt.host)],
@@ -3192,6 +1540,13 @@ impl SessionController {
         };
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
+    }
+
+    fn publish_authenticated_known_hosts(&self, cx: &mut Context<Self>) {
+        match self.services.known_hosts.list() {
+            Ok(_) => cx.emit(AppCommand::KnownHostsChanged),
+            Err(error) => log::warn!("failed to read authenticated known hosts: {error:?}"),
+        }
     }
 
     pub(in crate::ui::shell) fn submit_keyboard_interactive(
@@ -3273,67 +1628,6 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn pending_known_host_delete(
-        &self,
-    ) -> Option<PendingKnownHostDeleteState> {
-        self.pending_dialogs.borrow().known_host_delete.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_pending_known_host_delete(
-        &self,
-        pending: Option<PendingKnownHostDeleteState>,
-    ) {
-        self.pending_dialogs.borrow_mut().known_host_delete = pending;
-    }
-
-    pub(in crate::ui::shell) fn take_pending_known_host_delete(
-        &self,
-    ) -> Option<PendingKnownHostDeleteState> {
-        self.pending_dialogs.borrow_mut().known_host_delete.take()
-    }
-
-    pub(in crate::ui::shell) fn pending_snippet_delete(&self) -> Option<PendingSnippetDeleteState> {
-        self.pending_dialogs.borrow().snippet_delete.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_pending_snippet_delete(
-        &self,
-        pending: Option<PendingSnippetDeleteState>,
-    ) {
-        self.pending_dialogs.borrow_mut().snippet_delete = pending;
-    }
-
-    pub(in crate::ui::shell) fn take_pending_snippet_delete(
-        &self,
-    ) -> Option<PendingSnippetDeleteState> {
-        self.pending_dialogs.borrow_mut().snippet_delete.take()
-    }
-
-    pub(in crate::ui::shell) fn pending_port_forward_rule_delete(
-        &self,
-    ) -> Option<PendingPortForwardRuleDeleteState> {
-        self.pending_dialogs
-            .borrow()
-            .port_forward_rule_delete
-            .clone()
-    }
-
-    pub(in crate::ui::shell) fn set_pending_port_forward_rule_delete(
-        &self,
-        pending: Option<PendingPortForwardRuleDeleteState>,
-    ) {
-        self.pending_dialogs.borrow_mut().port_forward_rule_delete = pending;
-    }
-
-    pub(in crate::ui::shell) fn take_pending_port_forward_rule_delete(
-        &self,
-    ) -> Option<PendingPortForwardRuleDeleteState> {
-        self.pending_dialogs
-            .borrow_mut()
-            .port_forward_rule_delete
-            .take()
-    }
-
     pub(in crate::ui::shell) fn online_session_count_for_profile(&self, profile_id: &str) -> usize {
         self.tabs
             .borrow()
@@ -3359,18 +1653,6 @@ impl SessionController {
     ) -> bool {
         self.port_forward_rule_session_id(profile_id, rule_id)
             .is_some()
-    }
-
-    pub(in crate::ui::shell) fn port_forward_rule_runtime_state(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-    ) -> Option<PortForwardRuntimeState> {
-        let manager = self.services.port_forward_manager.as_ref()?;
-        manager
-            .snapshot()
-            .session(profile_id, rule_id)
-            .map(|runtime| runtime.state.clone())
     }
 
     pub(in crate::ui::shell) fn terminal_profile_ids(&self) -> Vec<String> {
@@ -3889,6 +2171,27 @@ pub(in crate::ui::shell) struct SessionTerminalPort {
 }
 
 impl SessionTerminalPort {
+    /// Paste through the runtime owner so bracketed paste, free-type selection and
+    /// terminal history use the same path as keyboard input.
+    pub(in crate::ui::shell) fn paste_text(
+        &self,
+        tab_id: TabId,
+        text: String,
+        cx: &mut App,
+    ) -> bool {
+        let owner = self
+            .state
+            .borrow()
+            .owner
+            .clone()
+            .and_then(|owner| owner.upgrade());
+        owner.is_some_and(|owner| {
+            owner.update(cx, |controller, cx| {
+                controller.paste_terminal_text(tab_id, text, cx)
+            })
+        })
+    }
+
     pub(in crate::ui::shell) fn targets(&self) -> Vec<SessionTerminalTarget> {
         let state = self.state.borrow();
         state
@@ -4072,6 +2375,7 @@ pub(in crate::ui::shell) enum TerminalLeaseError {
 
 #[derive(Default)]
 struct SessionPortState {
+    owner: Option<gpui_kit::WeakEntity<SessionController>>,
     snapshot: SessionPortSnapshot,
     terminal_leases: HashMap<TabId, TerminalLeaseEntry>,
 }
@@ -4562,16 +2866,6 @@ mod tests {
             SessionController::build_local_tab(TabId::new(13), profile, TerminalState::default());
 
         assert_eq!(tab.title, i18n::string("tabs.initial.local_terminal_title"));
-    }
-
-    #[test]
-    fn forward_profile_items_skip_local_terminal_profiles() {
-        let profiles = vec![profile("ssh-a", "A"), local_profile("local-a", "Local")];
-
-        let items = SessionController::forward_profile_items(&profiles);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "ssh-a");
     }
 
     #[test]

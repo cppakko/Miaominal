@@ -25,6 +25,7 @@ use super::contracts::{
 use super::i18n;
 
 mod catalog;
+mod snippets;
 use catalog::ConnectionCatalog;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -391,19 +392,29 @@ impl ApplicationState {
         cx.notify();
     }
 
-    // Remaining management catalogs move to their own feature command ports.
-    pub(crate) fn publish_session_management(
+    pub(crate) fn publish_snippets(
         &mut self,
         snippets: Vec<SnippetRecord>,
-        known_hosts_entries: Vec<KnownHostEntry>,
         cx: &mut Context<Self>,
     ) {
-        if self.snippets == snippets && self.known_hosts_entries == known_hosts_entries {
+        if self.snippets == snippets {
             return;
         }
         self.snippets = snippets;
-        self.known_hosts_entries = known_hosts_entries;
         self.refresh_connection_catalog_services();
+        self.generations.catalogs = next_generation(self.generations.catalogs);
+        cx.notify();
+    }
+
+    pub(crate) fn publish_known_hosts(
+        &mut self,
+        entries: Vec<KnownHostEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.known_hosts_entries == entries {
+            return;
+        }
+        self.known_hosts_entries = entries;
         self.generations.catalogs = next_generation(self.generations.catalogs);
         cx.notify();
     }
@@ -804,21 +815,26 @@ impl ApplicationState {
                         }
                         state.port_forward_snapshot = snapshot;
                         let mut profiles = state.catalog.profiles();
-                        let catalogs_changed = reconcile_port_forward_enabled(
+                        let result = persist_port_forward_enabled(
                             &mut profiles,
                             &state.port_forward_snapshot,
+                            |profiles| {
+                                if let Some(store) = &state.services.session_store {
+                                    store.save(profiles)?;
+                                }
+                                Ok(())
+                            },
                         );
-                        if catalogs_changed {
-                            if let Some(store) = &state.services.session_store
-                                && let Err(error) = store.save(&profiles)
-                            {
-                                log::warn!(
-                                    "failed to persist terminal port-forward runtime state: {error:?}"
-                                );
+                        match result {
+                            Ok(true) => {
+                                state.catalog.set_profiles(profiles);
+                                state.generations.catalogs =
+                                    next_generation(state.generations.catalogs)
                             }
-                            state.catalog.set_profiles(profiles);
-                            state.generations.catalogs =
-                                next_generation(state.generations.catalogs);
+                            Ok(false) => {}
+                            Err(error) => log::warn!(
+                                "failed to persist terminal port-forward runtime state: {error:?}"
+                            ),
                         }
                         state.generations.port_forwards =
                             next_generation(state.generations.port_forwards);
@@ -979,6 +995,20 @@ fn remaining_vault_auto_lock_duration(
     duration.saturating_sub(elapsed)
 }
 
+fn persist_port_forward_enabled(
+    profiles: &mut Vec<SessionProfile>,
+    snapshot: &PortForwardManagerSnapshot,
+    persist: impl FnOnce(&[SessionProfile]) -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    let mut candidate = profiles.clone();
+    if !reconcile_port_forward_enabled(&mut candidate, snapshot) {
+        return Ok(false);
+    }
+    persist(&candidate)?;
+    *profiles = candidate;
+    Ok(true)
+}
+
 fn reconcile_port_forward_enabled(
     profiles: &mut [SessionProfile],
     snapshot: &PortForwardManagerSnapshot,
@@ -1136,6 +1166,19 @@ pub(crate) fn webdav_capability_summary(
         Some(file) => format!("{text} {file}"),
         None => text,
     }
+}
+
+pub(crate) fn snippet_catalog_port(cx: &App) -> crate::ui::contracts::snippets::SnippetCatalogPort {
+    snippets::port(cx)
+}
+
+pub(crate) fn profile_service(cx: &App) -> miaominal_services::ProfileService {
+    let application = application_state(cx);
+    let application = application.read(cx);
+    miaominal_services::ProfileService::new(
+        application.services.session_store.clone(),
+        application.services.secrets.clone(),
+    )
 }
 
 #[cfg(test)]
@@ -1370,6 +1413,28 @@ mod tests {
         assert_eq!(
             remaining_vault_auto_lock_duration(Duration::from_secs(300), Some(unlocked_at), now,),
             Duration::from_secs(210)
+        );
+    }
+
+    #[test]
+    fn failed_runtime_persistence_keeps_committed_catalog_and_retries_without_republishing() {
+        let mut profiles = vec![profile_with_enabled_forward()];
+        let original = profiles.clone();
+        let snapshot = port_forward_snapshot(PortForwardRuntimeState::Stopped);
+        assert!(
+            persist_port_forward_enabled(&mut profiles, &snapshot, |_| Err(anyhow::anyhow!(
+                "disk unavailable"
+            )))
+            .is_err()
+        );
+        assert_eq!(profiles, original);
+        assert!(persist_port_forward_enabled(&mut profiles, &snapshot, |_| Ok(())).unwrap());
+        assert!(!profiles[0].port_forwarding_rules[0].enabled);
+        assert!(
+            !persist_port_forward_enabled(&mut profiles, &snapshot, |_| panic!(
+                "unchanged snapshot must not persist again"
+            ))
+            .unwrap()
         );
     }
 

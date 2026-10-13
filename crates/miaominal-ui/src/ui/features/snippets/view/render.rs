@@ -1,8 +1,8 @@
 use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SectionCard, editor_button, md3_select};
 use crate::ui::i18n;
 
-use super::super::super::*;
-use super::super::empty_state::{shell_empty_page, shell_empty_state};
+use crate::ui::shell::pages::empty_state::{shell_empty_page, shell_empty_state};
+use crate::ui::shell::*;
 
 const SNIPPET_CARD_WIDTH: f32 = 332.0;
 const SNIPPET_EDITOR_HEIGHT: f32 = 240.0;
@@ -244,11 +244,11 @@ fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
     shell_empty_state(AppIcon::Notebook, message)
 }
 
-impl SessionController {
+impl SnippetsController {
     pub(in crate::ui::shell) fn render_snippets_page(
         &self,
         controller: Entity<Self>,
-        on_open_existing: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+        on_open_existing: impl Fn(String, &mut Window, &mut App) + Clone + 'static,
         cx: &App,
     ) -> gpui_kit::AnyElement {
         let snippets_forms = self.snippets_forms();
@@ -418,10 +418,11 @@ impl SessionController {
                             .w_full()
                             .min_w(px(0.0))
                             .gap_2()
-                            .children(visible_snippets.into_iter().map(|(index, snippet)| {
+                            .children(visible_snippets.into_iter().map(|(_, snippet)| {
                                 let on_open_existing = on_open_existing.clone();
+                                let snippet_id = snippet.id.clone();
                                 snippet_list_row(snippet, move |window, cx| {
-                                    on_open_existing(index, window, cx);
+                                    on_open_existing(snippet_id.clone(), window, cx);
                                 })
                                 .into_any_element()
                             }))
@@ -433,10 +434,11 @@ impl SessionController {
                             .flex()
                             .flex_wrap()
                             .gap_4()
-                            .children(visible_snippets.into_iter().map(|(index, snippet)| {
+                            .children(visible_snippets.into_iter().map(|(_, snippet)| {
                                 let on_open_existing = on_open_existing.clone();
+                                let snippet_id = snippet.id.clone();
                                 snippet_command_card(snippet, move |window, cx| {
-                                    on_open_existing(index, window, cx);
+                                    on_open_existing(snippet_id.clone(), window, cx);
                                 })
                                 .into_any_element()
                             }))

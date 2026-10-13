@@ -45,11 +45,7 @@ enum SettingsGroupId {
     SshBridgeSecurityPending,
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::ui::shell) enum SettingsDestination {
-    SshBridgeSecurity,
-    Sync,
-}
+pub(in crate::ui::shell) use crate::ui::contracts::navigation::SettingsDestination;
 
 struct NamedSettingPage {
     id: SettingsPageId,

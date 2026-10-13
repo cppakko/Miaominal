@@ -1,14 +1,14 @@
-use super::super::super::*;
 use super::utils::rule_summary;
 use crate::ui::i18n;
+use crate::ui::shell::*;
 
 #[derive(Clone)]
 pub(super) struct ForwardRuleActions {
-    controller: Entity<SessionController>,
+    controller: Entity<ForwardingController>,
 }
 
 impl ForwardRuleActions {
-    pub(super) fn new(controller: Entity<SessionController>) -> Self {
+    pub(super) fn new(controller: Entity<ForwardingController>) -> Self {
         Self { controller }
     }
 
@@ -38,7 +38,7 @@ impl ForwardRuleActions {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_forward_rule_context_menu(
     menu: PopupMenu,
-    controller: Entity<SessionController>,
+    controller: Entity<ForwardingController>,
     actions: ForwardRuleActions,
     profile_id: String,
     rule_id: String,

@@ -147,6 +147,7 @@ pub(in crate::ui::shell) struct HostsController {
     window_handle: gpui_kit::AnyWindowHandle,
     managed_key_options: RefCell<Vec<ManagedKeySelectItem>>,
     pending_save: RefCell<Option<HostSaveSubmission>>,
+    editor_revision: Cell<u64>,
     editor_profile_id: RefCell<Option<String>>,
     profiles: RefCell<Vec<SessionProfile>>,
     proxies: RefCell<Vec<ProxyProfile>>,
@@ -163,6 +164,7 @@ pub(in crate::ui::shell) struct HostsController {
 
 #[derive(Clone)]
 struct HostSaveSubmission {
+    editor_revision: u64,
     profile: SessionProfile,
     is_new: bool,
 }
@@ -695,6 +697,7 @@ impl HostsController {
                 &args.managed_keys,
             )),
             pending_save: RefCell::new(None),
+            editor_revision: Cell::new(0),
             editor_profile_id: RefCell::new(None),
             services: HostsServices {
                 session_store: args.session_store,
@@ -1158,6 +1161,7 @@ impl HostsController {
                         && (!profile.password.is_empty() || !profile.passphrase.is_empty()))
                 {
                     self.pending_save.replace(Some(HostSaveSubmission {
+                        editor_revision: self.editor_revision.get(),
                         profile,
                         is_new: self.editor_state().host_editor_is_new,
                     }));
@@ -1181,6 +1185,7 @@ impl HostsController {
         cx: &mut Context<Self>,
     ) {
         let submission = HostSaveSubmission {
+            editor_revision: self.editor_revision.get(),
             profile,
             is_new: self.editor_state().host_editor_is_new,
         };
@@ -1194,6 +1199,11 @@ impl HostsController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.editor_state().host_editor_open
+            || submission.editor_revision != self.editor_revision.get()
+        {
+            return;
+        }
         match self.save_prepared_profile(submission, cx) {
             Ok(profile) => {
                 self.load_selected_profile_into_inputs(managed_key_options, window, cx);
@@ -2646,6 +2656,8 @@ impl HostsController {
 
     pub(in crate::ui::shell) fn set_host_editor_state(&self, open: bool, is_new: bool) {
         self.pending_save.take();
+        self.editor_revision
+            .set(self.editor_revision.get().wrapping_add(1).max(1));
         self.editor_profile_id.replace(if open && !is_new {
             self.selected_profile()
                 .and_then(|index| self.profiles.borrow().get(index).map(|p| p.id.clone()))
@@ -3135,6 +3147,7 @@ mod tests {
             &service,
             &profiles,
             HostSaveSubmission {
+                editor_revision: 0,
                 profile: submitted.clone(),
                 is_new: false,
             },
@@ -3153,6 +3166,7 @@ mod tests {
                 &service,
                 &profiles[..1],
                 HostSaveSubmission {
+                    editor_revision: 0,
                     profile: submitted,
                     is_new: false
                 }
@@ -3228,6 +3242,75 @@ mod tests {
         std::fs::remove_file(store_path).unwrap();
     }
 
+    #[gpui_kit::test]
+    fn replacing_or_closing_host_editor_cancels_deferred_and_stale_saves(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut alpha = SessionProfile::blank("alpha", 1);
+        alpha.host = "alpha.example".into();
+        alpha.username = "alice".into();
+        alpha.auth_method = Some(AuthMethod::KeyboardInteractive);
+        let mut beta = SessionProfile::blank("beta", 2);
+        beta.host = "beta.example".into();
+        beta.username = "bob".into();
+        beta.auth_method = Some(AuthMethod::KeyboardInteractive);
+        let original = vec![alpha.clone(), beta];
+        let catalog = Rc::new(CatalogFixture::default());
+        catalog.profiles.replace(original.clone());
+        let path = std::env::temp_dir().join(format!(
+            "miaominal-host-editor-replacement-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let (window_handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let controller = cx.new(|cx| {
+                        let mut args = test_args(&catalog, original.clone());
+                        args.session_store = Some(SessionStore::with_path(path.clone()));
+                        HostsController::new(args, window, cx)
+                    });
+                    Harness { controller }
+                })
+            })
+            .expect("open host replacement test window")
+        });
+        let controller = cx.update(|cx| view.read(cx).controller.clone());
+        cx.update_window(window_handle, |_, window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.open_profile_editor(0, vec![], window, cx);
+                controller.request_profile_save(true, window, cx);
+                let stale = controller
+                    .pending_save
+                    .borrow()
+                    .clone()
+                    .expect("deferred alpha save");
+                controller.open_profile_editor(1, vec![], window, cx);
+                assert!(controller.pending_save.borrow().is_none());
+                controller.commit_profile_submission(stale, vec![], window, cx);
+                controller.continue_save_profile_after_unlock(window, cx);
+                assert!(controller.editor_state().host_editor_open);
+                assert_eq!(
+                    controller.current_host_editor_profile_id().as_deref(),
+                    Some("beta")
+                );
+                controller.request_profile_save(true, window, cx);
+                let stale = controller
+                    .pending_save
+                    .borrow()
+                    .clone()
+                    .expect("deferred beta save");
+                controller.close_host_editor(cx);
+                assert!(controller.pending_save.borrow().is_none());
+                controller.commit_profile_submission(stale, vec![], window, cx);
+                controller.continue_save_profile_after_unlock(window, cx);
+                assert!(!controller.editor_state().host_editor_open);
+            });
+        })
+        .unwrap();
+        assert_eq!(catalog.commits.get(), 0);
+        assert_eq!(catalog.profiles(), original);
+        assert!(!path.exists());
+    }
+
     #[test]
     fn new_submission_allocates_an_id_against_the_latest_catalog() {
         let service = ProfileService::new(
@@ -3243,6 +3326,7 @@ mod tests {
             &service,
             &profiles,
             HostSaveSubmission {
+                editor_revision: 0,
                 profile: draft,
                 is_new: true,
             },

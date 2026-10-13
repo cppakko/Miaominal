@@ -1,0 +1,411 @@
+use super::controllers::TabOpenRequest;
+use super::*;
+use crate::ui::contracts::CatalogQueryPort;
+use crate::ui::i18n;
+use gpui_kit::component::input::InputEvent;
+use gpui_kit::{ClipboardItem, EventEmitter, Subscription};
+use miaominal_core::known_host::KnownHostEntry;
+use miaominal_storage::known_hosts_store::KnownHostsStore;
+use std::cell::{Ref, RefCell};
+
+#[path = "trusted_hosts/view/mod.rs"]
+mod view;
+
+#[derive(Debug, Clone)]
+pub(in crate::ui::shell) struct PendingKnownHostDeleteState {
+    pub(in crate::ui::shell) host: String,
+    pub(in crate::ui::shell) port: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::ui::shell) enum TrustedHostFilter {
+    #[default]
+    All,
+    Linked,
+    Orphaned,
+    DefaultPort,
+    CustomPort,
+}
+
+pub(in crate::ui::shell) struct TrustedHostsController {
+    store: KnownHostsStore,
+    catalog: CatalogQueryPort,
+    known_hosts_entries: RefCell<Vec<KnownHostEntry>>,
+    filter_input: Entity<InputState>,
+    filter: TrustedHostFilter,
+    selected: RefCell<Option<(String, u16, String)>>,
+    pending_delete: RefCell<Option<PendingKnownHostDeleteState>>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<AppCommand> for TrustedHostsController {}
+
+impl TrustedHostsController {
+    pub(in crate::ui::shell) fn new(
+        store: KnownHostsStore,
+        entries: Vec<KnownHostEntry>,
+        catalog: CatalogQueryPort,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let filter_input = new_input_state(
+            i18n::string("placeholders.trusted.filter"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        let subscription = cx.subscribe(&filter_input, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        Self {
+            store,
+            catalog,
+            known_hosts_entries: RefCell::new(entries),
+            filter_input,
+            filter: TrustedHostFilter::All,
+            selected: RefCell::new(None),
+            pending_delete: RefCell::new(None),
+            _subscriptions: vec![subscription],
+        }
+    }
+
+    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_input.update(cx, |input, cx| {
+            input.set_placeholder(i18n::string("placeholders.trusted.filter"), window, cx)
+        });
+    }
+
+    fn known_hosts_entries(&self) -> Ref<'_, Vec<KnownHostEntry>> {
+        self.known_hosts_entries.borrow()
+    }
+
+    pub(in crate::ui::shell) fn replace_known_hosts_entries(&self, entries: Vec<KnownHostEntry>) {
+        *self.known_hosts_entries.borrow_mut() = entries;
+    }
+
+    pub(in crate::ui::shell) fn refresh_known_hosts_with_feedback(&self, cx: &mut Context<Self>) {
+        match self.store.list() {
+            Ok(entries) => {
+                if *self.known_hosts_entries.borrow() != entries {
+                    self.replace_known_hosts_entries(entries.clone());
+                    cx.emit(AppCommand::KnownHostsChanged);
+                }
+                cx.emit(AppCommand::Feedback(i18n::string(
+                    "trusted.messages.refreshed",
+                )));
+            }
+            Err(error) => log::warn!("failed to refresh known_hosts list: {error:?}"),
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn select_trusted_known_host(
+        &self,
+        host: String,
+        port: u16,
+        fingerprint: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_selected_known_host(Some((host, port, fingerprint)));
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::KnownHosts,
+        )));
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn close_trusted_known_host_sidebar(&self, cx: &mut Context<Self>) {
+        if self.take_selected_known_host().is_some() {
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui::shell) fn copy_known_host_fingerprint(
+        &self,
+        fingerprint: String,
+        cx: &mut Context<Self>,
+    ) {
+        cx.write_to_clipboard(ClipboardItem::new_string(fingerprint));
+        cx.emit(AppCommand::Feedback(i18n::string(
+            "trusted.messages.copied_fingerprint",
+        )));
+    }
+
+    pub(in crate::ui::shell) fn copy_known_host_address(
+        &self,
+        host: String,
+        port: u16,
+        cx: &mut Context<Self>,
+    ) {
+        cx.write_to_clipboard(ClipboardItem::new_string(format!("{host}:{port}")));
+        cx.emit(AppCommand::Feedback(i18n::string(
+            "trusted.messages.copied_address",
+        )));
+    }
+
+    pub(in crate::ui::shell) fn open_linked_profile_from_known_host(
+        &self,
+        profile_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AppCommand::OpenTab(TabOpenRequest::ProfileEditor {
+            profile_id,
+            open_hosts_tab: false,
+        }));
+    }
+
+    pub(in crate::ui::shell) fn request_trusted_known_host_removal(
+        &self,
+        host: String,
+        port: u16,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .known_hosts_entries
+            .borrow()
+            .iter()
+            .any(|entry| entry.host == host && entry.port == port)
+        {
+            let port_text = port.to_string();
+            cx.emit(AppCommand::Feedback(i18n::string_args(
+                "session.messages.no_host_key_entry",
+                &[("host", &host), ("port", &port_text)],
+            )));
+            return;
+        }
+
+        self.set_pending_known_host_delete(Some(PendingKnownHostDeleteState { host, port }));
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn confirm_trusted_known_host_removal(&self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_known_host_delete() else {
+            return;
+        };
+        let result = self.store.remove(&pending.host, pending.port);
+        let message = match result {
+            Ok(removed) => {
+                self.take_pending_known_host_delete();
+                cx.emit(AppCommand::OverlayDismissed(
+                    DialogOverlaySnapshot::KnownHostDelete(pending.clone()),
+                ));
+                if self
+                    .selected_known_host()
+                    .as_ref()
+                    .is_some_and(|(host, port, _)| host == &pending.host && *port == pending.port)
+                {
+                    self.set_selected_known_host(None);
+                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
+                }
+                // The successful store operation is authoritative even if a subsequent read fails.
+                let mut entries = self.known_hosts_entries.borrow().clone();
+                entries.retain(|entry| entry.host != pending.host || entry.port != pending.port);
+                let entries = self.store.list().unwrap_or(entries);
+                self.replace_known_hosts_entries(entries.clone());
+                cx.emit(AppCommand::KnownHostsChanged);
+                let port = pending.port.to_string();
+                i18n::string_args(
+                    if removed {
+                        "session.messages.removed_host_key"
+                    } else {
+                        "session.messages.no_host_key_entry"
+                    },
+                    &[("host", &pending.host), ("port", &port)],
+                )
+            }
+            Err(error) => i18n::string_args(
+                "session.messages.remove_host_key_failed",
+                &[("error", &error.to_string())],
+            ),
+        };
+        cx.emit(AppCommand::Feedback(message));
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn cancel_trusted_known_host_removal(&self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.take_pending_known_host_delete() {
+            cx.emit(AppCommand::OverlayDismissed(
+                DialogOverlaySnapshot::KnownHostDelete(pending),
+            ));
+        }
+    }
+
+    pub(in crate::ui::shell) fn selected_known_host(&self) -> Option<(String, u16, String)> {
+        self.selected.borrow().clone()
+    }
+
+    pub(in crate::ui::shell) fn set_selected_known_host(
+        &self,
+        selected: Option<(String, u16, String)>,
+    ) {
+        *self.selected.borrow_mut() = selected;
+    }
+
+    pub(in crate::ui::shell) fn take_selected_known_host(&self) -> Option<(String, u16, String)> {
+        self.selected.take()
+    }
+
+    pub(in crate::ui::shell) fn pending_known_host_delete(
+        &self,
+    ) -> Option<PendingKnownHostDeleteState> {
+        self.pending_delete.borrow().clone()
+    }
+
+    pub(in crate::ui::shell) fn set_pending_known_host_delete(
+        &self,
+        pending: Option<PendingKnownHostDeleteState>,
+    ) {
+        *self.pending_delete.borrow_mut() = pending;
+    }
+
+    pub(in crate::ui::shell) fn take_pending_known_host_delete(
+        &self,
+    ) -> Option<PendingKnownHostDeleteState> {
+        self.pending_delete.take()
+    }
+
+    pub(in crate::ui::shell) fn set_trusted_host_filter(
+        &mut self,
+        filter: TrustedHostFilter,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter = filter;
+        cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::contracts::CatalogReader;
+    use gpui_kit::{Render, TestAppContext};
+    use std::rc::Rc;
+
+    struct EmptyCatalog;
+    impl CatalogReader for EmptyCatalog {
+        fn profiles(&self) -> Vec<SessionProfile> {
+            vec![]
+        }
+        fn profile(&self, _: &str) -> Option<SessionProfile> {
+            None
+        }
+        fn proxies(&self) -> Vec<miaominal_core::proxy::ProxyProfile> {
+            vec![]
+        }
+    }
+
+    struct Harness {
+        controller: Entity<TrustedHostsController>,
+        commits: Vec<Vec<KnownHostEntry>>,
+        _subscription: Subscription,
+    }
+    impl Render for Harness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn deletion_failure_retains_target_and_snapshot_adoption_does_not_publish(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let path = std::env::temp_dir().join(format!(
+            "miaominal-trusted-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nother.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n").unwrap();
+        let store = KnownHostsStore::with_path(path.clone());
+        let entries = store.list().unwrap();
+        assert_eq!(entries.len(), 2);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let controller = cx.new(|cx| {
+                TrustedHostsController::new(
+                    KnownHostsStore::with_path(std::env::temp_dir()),
+                    entries.clone(),
+                    CatalogQueryPort::new(Rc::new(EmptyCatalog)),
+                    window,
+                    cx,
+                )
+            });
+            let subscription = cx.subscribe(
+                &controller,
+                |this: &mut Harness, controller, event: &AppCommand, cx| {
+                    if let AppCommand::KnownHostsChanged = event {
+                        this.commits
+                            .push(controller.read(cx).known_hosts_entries().clone());
+                    }
+                },
+            );
+            Harness {
+                controller,
+                commits: vec![],
+                _subscription: subscription,
+            }
+        });
+        let controller = view.read_with(cx, |view, _| view.controller.clone());
+        cx.update(|_, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.select_trusted_known_host(
+                    entries[0].host.clone(),
+                    entries[0].port,
+                    entries[0].fingerprint.clone(),
+                    cx,
+                );
+                controller.request_trusted_known_host_removal(
+                    entries[0].host.clone(),
+                    entries[0].port,
+                    cx,
+                );
+                controller.confirm_trusted_known_host_removal(cx);
+                assert!(controller.pending_known_host_delete().is_some());
+                assert!(controller.selected_known_host().is_some());
+                assert_eq!(*controller.known_hosts_entries.borrow(), entries);
+                controller.refresh_known_hosts_with_feedback(cx);
+                assert_eq!(*controller.known_hosts_entries.borrow(), entries);
+                let mut reordered = entries.clone();
+                reordered.reverse();
+                controller.replace_known_hosts_entries(reordered);
+                cx.notify();
+            })
+        });
+        assert!(view.read_with(cx, |view, _| view.commits.is_empty()));
+        cx.update(|_, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.store = store.clone();
+                controller.confirm_trusted_known_host_removal(cx);
+                assert!(controller.pending_known_host_delete().is_none());
+                assert!(controller.selected_known_host().is_none());
+                assert_eq!(
+                    controller.known_hosts_entries.borrow().as_slice(),
+                    &entries[1..]
+                );
+            })
+        });
+        assert_eq!(
+            view.read_with(cx, |view, _| view.commits.clone()),
+            vec![entries[1..].to_vec()]
+        );
+        assert_eq!(store.list().unwrap(), entries[1..]);
+        cx.update(|_, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.replace_known_hosts_entries(entries[1..].to_vec());
+                controller.refresh_known_hosts_with_feedback(cx);
+                cx.notify();
+            })
+        });
+        assert_eq!(view.read_with(cx, |view, _| view.commits.len()), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+}

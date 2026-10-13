@@ -93,210 +93,6 @@ impl SessionController {
         Some((tab_id, title))
     }
 
-    pub(in crate::ui::shell) fn confirm_port_forward_rule_removal(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pending) = self.take_pending_port_forward_rule_delete() else {
-            return;
-        };
-
-        cx.emit(AppCommand::OverlayDismissed(
-            DialogOverlaySnapshot::PortForwardRuleDelete(pending.clone()),
-        ));
-        if self
-            .port_forward_rule_indices(&pending.profile_id, &pending.rule_id)
-            .is_none()
-        {
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "forwarding.messages.already_removed",
-                &[
-                    ("rule", pending.rule_label.as_str()),
-                    ("profile", pending.profile_label.as_str()),
-                ],
-            )));
-            cx.notify();
-            return;
-        }
-
-        self.remove_port_forward_rule(&pending.profile_id, &pending.rule_id, cx);
-    }
-
-    fn remove_port_forward_rule(&self, profile_id: &str, rule_id: &str, cx: &mut Context<Self>) {
-        let Some((profile_index, rule_index)) = self.port_forward_rule_indices(profile_id, rule_id)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            cx.notify();
-            return;
-        };
-
-        let editor_state = self.editor_state();
-        if editor_state.port_forward_editor_profile_id.as_deref() == Some(profile_id)
-            && editor_state.port_forward_editor_rule_id.as_deref() == Some(rule_id)
-        {
-            self.clear_port_forward_editor();
-            cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        }
-
-        self.port_forward_manager().stop(profile_id, rule_id);
-        let retired = self.retire_port_forward_connection(profile_id, rule_id);
-        let (profile_name, rule_label) = {
-            let mut profiles = self.profiles.borrow_mut();
-            let profile = &mut profiles[profile_index];
-            let removed_rule = profile.port_forwarding_rules.remove(rule_index);
-            (
-                profile.name.clone(),
-                Self::rule_summary_label(&removed_rule),
-            )
-        };
-        let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
-        let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        let disconnect_suffix = Self::forwarding_closed_connection_suffix(retired.is_some());
-        let message = match self.persist_profiles_and_publish(cx) {
-            Ok(()) => i18n::string_args(
-                "forwarding.messages.removed",
-                &[
-                    ("rule", &rule_label),
-                    ("profile", &profile_name),
-                    ("disconnect_suffix", &disconnect_suffix),
-                    ("synced_suffix", &synced_suffix),
-                ],
-            ),
-            Err(error) => {
-                let error = error.to_string();
-                i18n::string_args(
-                    "forwarding.messages.removed_memory_only",
-                    &[
-                        ("rule", &rule_label),
-                        ("disconnect_suffix", &disconnect_suffix),
-                        ("synced_suffix", &synced_suffix),
-                        ("error", &error),
-                    ],
-                )
-            }
-        };
-        if let Some((tab_id, _)) = retired {
-            cx.emit(AppCommand::CloseTab(tab_id));
-        }
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_port_forward_rule_enabled(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if enabled {
-            self.connect_port_forward_rule(profile_id, rule_id, cx);
-            return;
-        }
-
-        let Some((profile_name, rule_label)) =
-            self.update_port_forward_rule_enabled_state(profile_id, rule_id, false)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            cx.notify();
-            return;
-        };
-
-        self.port_forward_manager().stop(profile_id, rule_id);
-        let retired = self.retire_port_forward_connection(profile_id, rule_id);
-        let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
-        let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        let persisted = self.persist_profiles_and_publish(cx);
-        let message = if retired.is_some() {
-            let stopped_suffix = Self::forwarding_stopped_tunnel_suffix(true);
-            match persisted {
-                Ok(()) => i18n::string_args(
-                    "forwarding.messages.disabled",
-                    &[
-                        ("rule", &rule_label),
-                        ("profile", &profile_name),
-                        ("stopped_suffix", &stopped_suffix),
-                        ("synced_suffix", &synced_suffix),
-                    ],
-                ),
-                Err(error) => {
-                    let error = error.to_string();
-                    i18n::string_args(
-                        "forwarding.messages.disabled_memory_only",
-                        &[
-                            ("rule", &rule_label),
-                            ("stopped_suffix", &stopped_suffix),
-                            ("synced_suffix", &synced_suffix),
-                            ("error", &error),
-                        ],
-                    )
-                }
-            }
-        } else {
-            match persisted {
-                Ok(()) => i18n::string_args(
-                    "forwarding.messages.disabled_plain",
-                    &[
-                        ("rule", &rule_label),
-                        ("profile", &profile_name),
-                        ("synced_suffix", &synced_suffix),
-                    ],
-                ),
-                Err(error) => {
-                    let error = error.to_string();
-                    i18n::string_args(
-                        "forwarding.messages.updated_memory_only",
-                        &[
-                            ("rule", &rule_label),
-                            ("synced_suffix", &synced_suffix),
-                            ("error", &error),
-                        ],
-                    )
-                }
-            }
-        };
-        if let Some((tab_id, _)) = retired {
-            cx.emit(AppCommand::CloseTab(tab_id));
-        }
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn connect_port_forward_rule(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        if self.has_port_forward_rule_session(profile_id, rule_id) {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.already_connected",
-            )));
-            cx.notify();
-            return;
-        }
-        let Some((profile, _)) = self.port_forward_rule(profile_id, rule_id) else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.rule_not_found",
-            )));
-            cx.notify();
-            return;
-        };
-        if self.profile_requires_local_vault_unlock(&profile) {
-            cx.emit(AppCommand::vault_unlock_prompt());
-            return;
-        }
-
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::PortForwarding {
-            profile_id: profile_id.to_string(),
-            rule_id: rule_id.to_string(),
-        }));
-    }
-
     pub(in crate::ui::shell) fn start_port_forward_session(
         &self,
         tab_id: TabId,
@@ -343,10 +139,8 @@ impl SessionController {
             }
         };
         rule.enabled = true;
-        let _ = self.update_port_forward_rule_enabled_state(profile_id, rule_id, true);
-        if let Err(error) = self.persist_profiles_and_publish(cx) {
-            log::warn!("failed to persist connected port-forward rule state: {error:?}");
-        }
+        // ApplicationState reconciles and persists the manager's semantic runtime
+        // snapshot. Starting a resource must not independently publish a stale catalog.
         let commands = self
             .port_forward_manager()
             .command_sender(profile_id, rule_id);
@@ -374,46 +168,6 @@ impl SessionController {
         );
         cx.notify();
         Some(PortForwardSessionStart { tab, feedback })
-    }
-
-    pub(in crate::ui::shell) fn disconnect_port_forward_rule(
-        &self,
-        profile_id: &str,
-        rule_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let _ = self.update_port_forward_rule_enabled_state(profile_id, rule_id, false);
-        let stopped = self.port_forward_manager().stop(profile_id, rule_id);
-        let retired = self.retire_port_forward_connection(profile_id, rule_id);
-        if !stopped && retired.is_none() {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "forwarding.messages.not_connected",
-            )));
-            cx.notify();
-            return;
-        }
-        let title = retired
-            .as_ref()
-            .map(|(_, title)| title.clone())
-            .unwrap_or_else(|| {
-                self.port_forward_rule(profile_id, rule_id)
-                    .map(|(_, rule)| Self::rule_summary_label(&rule))
-                    .unwrap_or_else(|| profile_id.to_string())
-            });
-
-        let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
-        let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        if let Err(error) = self.persist_profiles_and_publish(cx) {
-            log::warn!("failed to persist disconnected port-forward rule state: {error:?}");
-        }
-        if let Some((tab_id, _)) = retired {
-            cx.emit(AppCommand::CloseTab(tab_id));
-        }
-        cx.emit(AppCommand::Feedback(i18n::string_args(
-            "forwarding.messages.disconnected",
-            &[("title", &title), ("synced_suffix", &synced_suffix)],
-        )));
-        cx.notify();
     }
 
     pub(in crate::ui::shell) fn apply_port_forward_manager_snapshot(
@@ -531,6 +285,53 @@ impl SessionController {
             Self::build_port_forwarding_tab(tab_id, &profile, &runtime.rule, commands);
         tab.status = runtime.status_message.clone();
         Some((tab, session))
+    }
+}
+
+struct SessionForwardingRuntime(WeakEntity<SessionController>);
+impl crate::ui::contracts::ForwardingRuntime for SessionForwardingRuntime {
+    fn has_rule_session(&self, profile_id: &str, rule_id: &str, cx: &App) -> bool {
+        self.0.upgrade().is_some_and(|owner| {
+            owner
+                .read(cx)
+                .has_port_forward_rule_session(profile_id, rule_id)
+        })
+    }
+    fn online_session_count_for_profile(&self, profile_id: &str, cx: &App) -> usize {
+        self.0.upgrade().map_or(0, |owner| {
+            owner.read(cx).online_session_count_for_profile(profile_id)
+        })
+    }
+    fn sync_rules(&self, profile_id: &str, rules: &[PortForwardRule], cx: &mut App) -> usize {
+        self.0.upgrade().map_or(0, |owner| {
+            owner
+                .read(cx)
+                .sync_port_forward_rules_for_profile(profile_id, rules)
+        })
+    }
+    fn retire_rule_session(&self, profile_id: &str, rule_id: &str, cx: &mut App) -> bool {
+        self.0.upgrade().is_some_and(|owner| {
+            owner.update(cx, |controller, cx| {
+                if let Some((tab_id, _)) =
+                    controller.retire_port_forward_connection(profile_id, rule_id)
+                {
+                    cx.emit(AppCommand::CloseTab(tab_id));
+                    cx.notify();
+                    true
+                } else {
+                    false
+                }
+            })
+        })
+    }
+}
+impl SessionController {
+    pub(in crate::ui::shell) fn forwarding_port(
+        owner: &Entity<Self>,
+    ) -> crate::ui::contracts::ForwardingRuntimePort {
+        crate::ui::contracts::ForwardingRuntimePort::new(Rc::new(SessionForwardingRuntime(
+            owner.downgrade(),
+        )))
     }
 }
 
