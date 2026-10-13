@@ -1,4 +1,8 @@
-use super::super::super::super::super::*;
+use gpui_kit::component::stepper::StepperItem;
+use gpui_kit::component::{IconName, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{SharedString, div, rgb};
+use miaominal_core::profile::ProfileKind;
 
 pub(super) fn proxy_jump_stepper_item(
     icon: IconName,

@@ -8,11 +8,9 @@ pub(crate) use crate::ui::contracts::workspace::{
     PaneId, SplitAxis, SplitDirection, TabId, TabKindTag, TabPlacement,
 };
 use crate::ui::contracts::{ClosedSessionTabState, PageEditorSidebarKind, SessionTabDescriptor};
-use crate::ui::features::session::{PaneViewState, TerminalPaneFreeTypeDropTarget};
-#[cfg(test)]
-use crate::ui::features::session::{SessionController, SessionTabState};
+use crate::ui::features::session::{PaneViewState, TerminalDragState};
 use crate::ui::i18n;
-use gpui_kit::{FocusHandle, ScrollHandle};
+use gpui_kit::{App, FocusHandle, ScrollHandle};
 use miaominal_core::profile::SessionProfile;
 use std::{
     collections::{HashMap, HashSet},
@@ -176,8 +174,7 @@ pub(crate) struct WorkspaceModel {
     pub(crate) renaming_tab: Option<TabId>,
     pub(crate) primary_view_transition: Option<PrimaryViewTransition>,
     pub(crate) visible_primary_view: Option<PrimaryViewKind>,
-    pub(crate) terminal_originated_selection_drag: Option<PaneId>,
-    pub(crate) terminal_free_type_drop_target: Option<TerminalPaneFreeTypeDropTarget>,
+    pub(crate) terminal_drag: TerminalDragState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -417,8 +414,7 @@ impl WorkspaceModel {
             renaming_tab: None,
             primary_view_transition: None,
             visible_primary_view: None,
-            terminal_originated_selection_drag: None,
-            terminal_free_type_drop_target: None,
+            terminal_drag: TerminalDragState::default(),
         }
     }
 
@@ -923,12 +919,256 @@ impl TabWorkspaceState {
             pane_tab_drop_target: None,
         }
     }
+
+    /// Rebind window-local input and geometry while retaining layout transitions.
+    /// A pending pane close still owns its hidden tab until the new window finishes it.
+    pub(crate) fn rebind_window(&mut self, cx: &mut App) {
+        self.active_pane.reset_for_window(cx.focus_handle());
+        for pane in self.parked_panes.values_mut() {
+            pane.terminal_focus = cx.focus_handle();
+            pane.terminal_bounds = None;
+            pane.terminal_mouse_gesture = None;
+            pane.terminal_keyboard.reset();
+            pane.terminal_mouse_reporting.reset();
+            pane.terminal_pointer_target = None;
+            pane.terminal_pointer_position = None;
+            pane.terminal_link_query = None;
+            pane.terminal_hovered_link = None;
+            pane.terminal_link_open_modifier = false;
+            pane.terminal_scrollbar_drag = None;
+            pane.terminal_scrollbar_last_interaction_at = None;
+        }
+        self.pane_split_drag = None;
+        self.pane_tab_drop_target = None;
+    }
+}
+
+impl From<SessionTabDescriptor> for TabState {
+    fn from(value: SessionTabDescriptor) -> Self {
+        Self::new(
+            value.id(),
+            value.title().to_owned(),
+            value.status().to_owned(),
+            value.kind(),
+            value.placement(),
+        )
+    }
+}
+
+impl TabState {
+    pub(crate) fn session_descriptor(&self) -> SessionTabDescriptor {
+        SessionTabDescriptor::new(
+            self.id,
+            self.title.clone(),
+            self.status.clone(),
+            self.kind,
+            self.placement,
+        )
+    }
+}
+
+impl TabState {
+    pub(in crate::ui) fn new_sftp(id: TabId, profile: &SessionProfile) -> Self {
+        Self::new(
+            id,
+            profile.connection_label(),
+            i18n::string("tabs.initial.sftp_connecting"),
+            TabKindTag::Sftp,
+            TabPlacement::TopLevel,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::contracts::sftp::SftpTabState;
+
+    #[gpui_kit::test]
+    fn rebinding_nested_workspace_retains_animation_intent_and_clears_window_input(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use super::super::panes::{PaneCloseAnimation, PaneSplitAnimationKind, PaneTabDropZone};
+        use crate::ui::features::session::{TerminalMouseGesture, TerminalScrollbarDrag};
+        use gpui_kit::{Bounds, point, px, size};
+        use std::time::{Duration, Instant};
+
+        cx.update(|cx| {
+            for closing in [true, false] {
+                let active_tab = TabId::new(11);
+                let hidden_tab = TabId::new(12);
+                let active_focus = cx.focus_handle();
+                let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(300.0), px(200.0)));
+                let started_at = Instant::now();
+                let duration = Duration::from_millis(180);
+                let target_flexes = if closing { (0.999, 0.001) } else { (0.5, 0.5) };
+                let mut workspace = TabWorkspaceState::new(Some(active_tab), active_focus.clone());
+                workspace.active_pane_id = PaneId(2);
+                workspace.next_pane_id = 4;
+                workspace.pane_layout = PaneLayout::Split {
+                    axis: SplitAxis::Horizontal,
+                    children: vec![
+                        PaneLayout::Leaf(PaneId(1)),
+                        PaneLayout::Split {
+                            axis: SplitAxis::Vertical,
+                            children: vec![
+                                PaneLayout::Leaf(PaneId(2)),
+                                PaneLayout::Leaf(PaneId(3)),
+                            ],
+                            flexes: vec![0.8, 0.2],
+                        },
+                    ],
+                    flexes: vec![0.4, 0.6],
+                };
+                workspace.active_pane.terminal_bounds = Some(bounds);
+                workspace.active_pane.terminal_ime_anchor = Some((active_tab, bounds));
+                workspace.active_pane.terminal_mouse_gesture =
+                    Some(TerminalMouseGesture::TraditionalSelection);
+                workspace
+                    .active_pane
+                    .terminal_keyboard
+                    .record_press("a", active_tab, false);
+                workspace
+                    .active_pane
+                    .terminal_keyboard
+                    .suppress_release("escape");
+                workspace.active_pane.terminal_pointer_target = Some(active_tab);
+                workspace.active_pane.terminal_pointer_position = Some(bounds.origin);
+                workspace.active_pane.terminal_scrollbar_drag = Some(TerminalScrollbarDrag {
+                    thumb_grab_offset: 4.0,
+                });
+                workspace.active_pane.terminal_scrollbar_last_interaction_at = Some(started_at);
+                let mut parked_focuses = HashMap::new();
+                for (pane_id, tab_id) in [(PaneId(1), TabId::new(10)), (PaneId(3), hidden_tab)] {
+                    let focus = cx.focus_handle();
+                    let mut pane = ParkedPane::empty(focus.clone());
+                    pane.active_tab = Some(tab_id);
+                    pane.terminal_bounds = Some(bounds);
+                    pane.terminal_mouse_gesture = Some(TerminalMouseGesture::TraditionalSelection);
+                    pane.terminal_keyboard.record_press("a", tab_id, false);
+                    pane.terminal_keyboard.suppress_release("escape");
+                    pane.terminal_pointer_target = Some(tab_id);
+                    pane.terminal_pointer_position = Some(bounds.origin);
+                    pane.terminal_scrollbar_drag = Some(TerminalScrollbarDrag {
+                        thumb_grab_offset: 4.0,
+                    });
+                    pane.terminal_scrollbar_last_interaction_at = Some(started_at);
+                    parked_focuses.insert(pane_id, focus);
+                    workspace.parked_panes.insert(pane_id, pane);
+                }
+                workspace.pane_split_drag = Some(PaneSplitDragState {
+                    path: vec![1],
+                    child_index: 0,
+                    axis: SplitAxis::Vertical,
+                    initial_pointer: 100.0,
+                    initial_flex_a: 0.8,
+                    initial_flex_b: 0.2,
+                    container_size: 300.0,
+                });
+                workspace.pane_tab_drop_target = Some(PaneTabDropTarget {
+                    pane_id: PaneId(3),
+                    zone: PaneTabDropZone::Center,
+                });
+                workspace.pane_split_animation = Some(PaneSplitAnimation {
+                    kind: if closing {
+                        PaneSplitAnimationKind::Closing
+                    } else {
+                        PaneSplitAnimationKind::Opening
+                    },
+                    path: vec![1],
+                    child_index: 0,
+                    new_child_index: 1,
+                    axis: SplitAxis::Vertical,
+                    from_flex_a: 0.8,
+                    from_flex_b: 0.2,
+                    to_flex_a: target_flexes.0,
+                    to_flex_b: target_flexes.1,
+                    started_at,
+                    duration,
+                    pending_close: closing.then_some(PaneCloseAnimation {
+                        removed_pane_id: PaneId(3),
+                        hidden_tab_id: Some(hidden_tab),
+                    }),
+                });
+
+                workspace.rebind_window(cx);
+
+                assert_eq!(workspace.active_tab, Some(active_tab));
+                assert_eq!(workspace.active_pane_id, PaneId(2));
+                assert_eq!(workspace.next_pane_id, 4);
+                assert!(workspace.active_pane.terminal_focus != active_focus);
+                assert!(workspace.active_pane.terminal_bounds.is_none());
+                assert!(workspace.active_pane.terminal_ime_anchor.is_none());
+                assert!(workspace.active_pane.terminal_mouse_gesture.is_none());
+                assert_eq!(
+                    workspace.active_pane.terminal_keyboard.pressed_target("a"),
+                    None
+                );
+                assert!(
+                    !workspace
+                        .active_pane
+                        .terminal_keyboard
+                        .consume_release("escape")
+                );
+                assert!(workspace.active_pane.terminal_pointer_target.is_none());
+                assert!(workspace.active_pane.terminal_pointer_position.is_none());
+                assert!(workspace.active_pane.terminal_scrollbar_drag.is_none());
+                assert!(
+                    workspace
+                        .active_pane
+                        .terminal_scrollbar_last_interaction_at
+                        .is_none()
+                );
+                assert_eq!(workspace.parked_panes.len(), 2);
+                for (pane_id, tab_id) in [(PaneId(1), TabId::new(10)), (PaneId(3), hidden_tab)] {
+                    let pane = workspace.parked_panes.get_mut(&pane_id).unwrap();
+                    assert_eq!(pane.active_tab, Some(tab_id));
+                    assert!(pane.terminal_focus != parked_focuses[&pane_id]);
+                    assert!(pane.terminal_focus != workspace.active_pane.terminal_focus);
+                    assert!(pane.terminal_bounds.is_none());
+                    assert!(pane.terminal_mouse_gesture.is_none());
+                    assert_eq!(pane.terminal_keyboard.pressed_target("a"), None);
+                    assert!(!pane.terminal_keyboard.consume_release("escape"));
+                    assert!(pane.terminal_pointer_target.is_none());
+                    assert!(pane.terminal_pointer_position.is_none());
+                    assert!(pane.terminal_scrollbar_drag.is_none());
+                    assert!(pane.terminal_scrollbar_last_interaction_at.is_none());
+                }
+                assert!(workspace.pane_split_drag.is_none());
+                assert!(workspace.pane_tab_drop_target.is_none());
+                let mut pane_ids = Vec::new();
+                workspace.pane_layout.collect_pane_ids(&mut pane_ids);
+                assert_eq!(pane_ids, vec![PaneId(1), PaneId(2), PaneId(3)]);
+                let PaneLayout::Split { flexes, .. } =
+                    workspace.pane_layout.split_at_path_mut(&[1]).unwrap()
+                else {
+                    unreachable!()
+                };
+                assert_eq!(flexes.as_slice(), &[0.8, 0.2]);
+                let animation = workspace
+                    .pane_split_animation
+                    .as_ref()
+                    .expect("destination must resume the layout transition");
+                assert_eq!(animation.path, vec![1]);
+                assert_eq!(animation.child_index, 0);
+                assert_eq!(animation.new_child_index, 1);
+                assert_eq!(animation.axis, SplitAxis::Vertical);
+                assert_eq!(animation.started_at, started_at);
+                assert_eq!(animation.duration, duration);
+                assert_eq!((animation.to_flex_a, animation.to_flex_b), target_flexes);
+                assert_eq!(
+                    matches!(animation.kind, PaneSplitAnimationKind::Closing),
+                    closing
+                );
+                if closing {
+                    let close = animation.pending_close.as_ref().unwrap();
+                    assert_eq!(close.removed_pane_id, PaneId(3));
+                    assert_eq!(close.hidden_tab_id, Some(hidden_tab));
+                } else {
+                    assert!(animation.pending_close.is_none());
+                }
+            }
+        });
+    }
 
     fn tab(id: usize, placement: TabPlacement) -> TabState {
         tab_with_kind(id, placement, TabKindTag::Session)
@@ -1234,28 +1474,26 @@ mod tests {
         profile_id: &str,
     ) -> (
         TabRegistry,
-        HashMap<TabId, SessionTabState>,
-        HashMap<TabId, SftpTabState>,
+        HashMap<TabId, String>,
+        HashMap<TabId, String>,
         TabId,
         TabId,
     ) {
         let profile = test_profile(profile_id);
         let session_id = TabId::new(1);
-        let (session_tab, session) = SessionController::build_pending_tab(
+        let session_tab = TabState::new(
             session_id,
-            profile.clone(),
-            miaominal_terminal::TerminalState::default(),
-            false,
+            profile.name.clone(),
+            String::new(),
+            TabKindTag::Session,
+            TabPlacement::TopLevel,
         );
+        let session = profile.id.clone();
         let sftp_id = TabId::new(2);
         let sftp_tab = TabState::new_sftp(sftp_id, &profile);
-        let sftp = SftpTabState::new(&profile);
+        let sftp = profile.id.clone();
         (
-            TabRegistry::from_tabs([
-                TabState::new_hosts(TabId::new(0)),
-                session_tab.into(),
-                sftp_tab,
-            ]),
+            TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), session_tab, sftp_tab]),
             HashMap::from([(session_id, session)]),
             HashMap::from([(sftp_id, sftp)]),
             session_id,
@@ -1295,13 +1533,11 @@ mod tests {
         tabs.push(moved);
 
         assert_eq!(
-            session_tabs
-                .get(&session_id)
-                .map(|tab| tab.profile_id.as_str()),
+            session_tabs.get(&session_id).map(String::as_str),
             Some("stable-profile")
         );
         assert_eq!(
-            sftp_tabs.get(&sftp_id).map(|tab| tab.profile_id.as_str()),
+            sftp_tabs.get(&sftp_id).map(String::as_str),
             Some("stable-profile")
         );
         assert_eq!(tabs.get(session_id).map(|tab| tab.id), Some(session_id));
@@ -1313,25 +1549,29 @@ mod tests {
         let profile = test_profile("reopen-profile");
         let mut next_tab_id = TabId::new(1);
         let old_id = take_next_tab_id(&mut next_tab_id);
-        let (old_tab, old_session) = SessionController::build_pending_tab(
+        let old_tab = TabState::new(
             old_id,
-            profile.clone(),
-            miaominal_terminal::TerminalState::default(),
-            false,
+            profile.name.clone(),
+            String::new(),
+            TabKindTag::Session,
+            TabPlacement::TopLevel,
         );
-        let mut tabs = TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), old_tab.into()]);
+        let old_session = profile.id.clone();
+        let mut tabs = TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), old_tab]);
         let mut session_tabs = HashMap::from([(old_id, old_session)]);
         tabs.remove_id(old_id).expect("old tab exists");
         session_tabs.remove(&old_id).expect("old payload exists");
 
         let reopened_id = take_next_tab_id(&mut next_tab_id);
-        let (reopened_tab, reopened_session) = SessionController::build_pending_tab(
+        let reopened_tab = TabState::new(
             reopened_id,
-            profile,
-            miaominal_terminal::TerminalState::default(),
-            false,
+            profile.name.clone(),
+            String::new(),
+            TabKindTag::Session,
+            TabPlacement::TopLevel,
         );
-        tabs.push(reopened_tab.into());
+        let reopened_session = profile.id.clone();
+        tabs.push(reopened_tab);
         session_tabs.insert(reopened_id, reopened_session);
 
         assert_ne!(old_id, reopened_id);
@@ -1459,8 +1699,8 @@ mod tests {
             tab_with_kind(standalone.raw(), TabPlacement::TopLevel, TabKindTag::Sftp),
         ]);
         let mut payloads = HashMap::from([
-            (owned, SftpTabState::new(&profile)),
-            (standalone, SftpTabState::new(&profile)),
+            (owned, profile.id.clone()),
+            (standalone, profile.id.clone()),
         ]);
 
         for tab_id in [owned, standalone] {
@@ -1484,8 +1724,8 @@ mod tests {
             TabPlacement::TopLevel,
             TabKindTag::Sftp,
         ));
-        payloads.insert(reopened_owned, SftpTabState::new(&profile));
-        payloads.insert(reopened_standalone, SftpTabState::new(&profile));
+        payloads.insert(reopened_owned, profile.id.clone());
+        payloads.insert(reopened_standalone, profile.id.clone());
 
         assert_ne!(owned, reopened_owned);
         assert_ne!(standalone, reopened_standalone);
@@ -1710,41 +1950,5 @@ mod tests {
             .close_animation_target(PaneId(2))
             .expect("expected animation target for pane 2");
         assert_eq!(target.axis, SplitAxis::Horizontal);
-    }
-}
-
-impl From<SessionTabDescriptor> for TabState {
-    fn from(value: SessionTabDescriptor) -> Self {
-        Self::new(
-            value.id(),
-            value.title().to_owned(),
-            value.status().to_owned(),
-            value.kind(),
-            value.placement(),
-        )
-    }
-}
-
-impl TabState {
-    pub(crate) fn session_descriptor(&self) -> SessionTabDescriptor {
-        SessionTabDescriptor::new(
-            self.id,
-            self.title.clone(),
-            self.status.clone(),
-            self.kind,
-            self.placement,
-        )
-    }
-}
-
-impl TabState {
-    pub(in crate::ui) fn new_sftp(id: TabId, profile: &SessionProfile) -> Self {
-        Self::new(
-            id,
-            profile.connection_label(),
-            i18n::string("tabs.initial.sftp_connecting"),
-            TabKindTag::Sftp,
-            TabPlacement::TopLevel,
-        )
     }
 }

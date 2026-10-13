@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ui::contracts::session::SessionTabSnapshot;
 use crate::ui::i18n;
 use gpui_kit::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
 use std::time::{Duration, Instant};
@@ -103,17 +104,11 @@ fn topbar_tab_icon(kind: TopbarTabVisualKind) -> Option<AppIcon> {
     }
 }
 
-fn connection_state_is_error(session: &SessionTabState) -> bool {
-    match &session.connection_state {
-        SessionConnectionState::Failed { .. } | SessionConnectionState::Disconnected => true,
-        SessionConnectionState::Exited { exit_code, signal } => *exit_code != 0 || signal.is_some(),
-        SessionConnectionState::Connecting
-        | SessionConnectionState::Ready
-        | SessionConnectionState::Reconnecting { .. } => false,
-    }
+fn connection_state_is_error(session: &SessionTabSnapshot) -> bool {
+    session.connection_error()
 }
 
-fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabState>) -> bool {
+fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabSnapshot>) -> bool {
     match tab.kind {
         TabKindTag::Session => session.is_some_and(connection_state_is_error),
         TabKindTag::Sftp => {
@@ -126,17 +121,17 @@ fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabState>) -
     }
 }
 
-fn tab_needs_attention(session: Option<&SessionTabState>) -> bool {
-    session.is_some_and(|session| session.pending_host_key.is_some())
+fn tab_needs_attention(session: Option<&SessionTabSnapshot>) -> bool {
+    session.is_some_and(|session| session.needs_attention())
 }
 
-fn tab_is_connected_status(session: Option<&SessionTabState>) -> bool {
-    session.is_some_and(|session| matches!(session.connection_state, SessionConnectionState::Ready))
+fn tab_is_connected_status(session: Option<&SessionTabSnapshot>) -> bool {
+    session.is_some_and(|session| session.connected())
 }
 
 pub(in crate::ui::shell) fn tab_status_indicator_color(
     tab: &TabDescriptor,
-    session: Option<&SessionTabState>,
+    session: Option<&SessionTabSnapshot>,
     has_activity: bool,
 ) -> Option<u32> {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -150,7 +145,7 @@ pub(in crate::ui::shell) fn tab_status_indicator_color(
     }
 }
 
-pub(super) fn tab_status_color(tab: &TabDescriptor, session: Option<&SessionTabState>) -> u32 {
+pub(super) fn tab_status_color(tab: &TabDescriptor, session: Option<&SessionTabSnapshot>) -> u32 {
     let roles = miaominal_settings::current_theme().material.roles;
 
     if tab_is_error_status(tab, session) {
@@ -240,7 +235,10 @@ impl TopbarHost for AppView {
         cx: &mut Context<Self>,
     ) {
         match action {
-            TopbarAction::OpenHosts => self.open_hosts_tab(cx),
+            TopbarAction::OpenHosts => {
+                self.open_hosts_tab(cx);
+                self.sync_window_overlays(window, cx);
+            }
             TopbarAction::Activate(tab_id) => {
                 if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
                     self.activate_tab(index, window, cx);
@@ -634,8 +632,8 @@ impl ChromeAppViewExt for AppView {
             .map(|(visible_index, (tab_index, tab))| {
                 let session = self.session_tab(tab.id, cx);
                 let has_activity = session
-                    .as_deref()
-                    .is_some_and(|session| session.has_activity)
+                    .as_ref()
+                    .is_some_and(|session| session.has_activity())
                     && current_active_tab_id != Some(tab.id);
                 let kind = match tab.kind {
                     TabKindTag::Hosts => TopbarTabVisualKind::Hosts,
@@ -653,7 +651,7 @@ impl ChromeAppViewExt for AppView {
                         kind,
                         status_color: tab_status_indicator_color(
                             &tab,
-                            session.as_deref(),
+                            session.as_ref(),
                             has_activity,
                         ),
                     },
@@ -1448,10 +1446,13 @@ impl ChromeAppViewExt for AppView {
         let active_session = active_session_tab.and_then(|tab| self.session_tab(tab.id, cx));
         let is_local_terminal_tab = active_session_tab.is_some_and(|tab| tab.is_local_terminal());
         let panel_session = active_session.is_some() && !is_local_terminal_tab;
-        let active_sftp = self
-            .workspace
-            .active_topbar_tab
-            .and_then(|tab_id| self.sftp_tab(tab_id, cx).map(|sftp| (tab_id, sftp)));
+        let active_sftp = self.workspace.active_topbar_tab.and_then(|tab_id| {
+            self.controllers
+                .sftp
+                .read(cx)
+                .chrome_snapshot(tab_id)
+                .map(|sftp| (tab_id, sftp))
+        });
 
         let active_sftp_tab = self
             .workspace
@@ -1460,7 +1461,7 @@ impl ChromeAppViewExt for AppView {
             .filter(|tab| tab.is_sftp());
         let (connection_label, connection_color) = active_session_tab
             .map(|tab| {
-                let session = active_session.as_deref();
+                let session = active_session.as_ref();
                 let status = tab.status.as_str();
                 let label = if tab_is_connected_status(session) {
                     i18n::string("session.footer.connected")
@@ -1512,22 +1513,18 @@ impl ChromeAppViewExt for AppView {
             })
             .unwrap_or_else(|| ("--".into(), "--".into()));
 
-        let pty_label = active_session.as_deref().map(|session| {
-            format!(
-                "{}x{}",
-                session.terminal.columns(),
-                session.terminal.screen_lines()
-            )
-        });
+        let pty_label = active_session
+            .as_ref()
+            .map(|session| format!("{}x{}", session.columns(), session.screen_lines()));
         let traffic_label = active_session
-            .as_deref()
+            .as_ref()
             .filter(|_| !is_local_terminal_tab)
             .map(|session| {
                 i18n::string_args(
                     "session.footer.traffic",
                     &[
-                        ("upload", &format_bytes(session.bytes_out)),
-                        ("download", &format_bytes(session.bytes_in)),
+                        ("upload", &format_bytes(session.bytes_out())),
+                        ("download", &format_bytes(session.bytes_in())),
                     ],
                 )
             });
@@ -1546,15 +1543,15 @@ impl ChromeAppViewExt for AppView {
         let favorites_controller = self.controllers.sftp.clone();
         let favorites_panel_toggle = active_sftp
             .as_ref()
-            .map(|(tab_id, sftp)| (*tab_id, sftp.layout.favorites_panel_visible));
+            .map(|(tab_id, sftp)| (*tab_id, sftp.favorites_panel_visible()));
         let active_sftp_tab_id = active_sftp.as_ref().map(|(tab_id, _)| *tab_id);
         let progress_center_open = active_sftp
             .as_ref()
-            .map(|(_, sftp)| sftp.layout.progress_center_visible)
+            .map(|(_, sftp)| sftp.progress_center_visible())
             .unwrap_or_else(|| {
                 active_session
                     .as_ref()
-                    .is_some_and(|session| session.sftp_progress_layout.visible())
+                    .is_some_and(|session| session.sftp_progress_visible())
             });
         let progress_center_tooltip = if progress_center_open {
             i18n::string("sftp.tooltips.hide_progress_center")
@@ -1770,12 +1767,10 @@ impl ChromeAppViewExt for AppView {
                                                 cx,
                                                 |controller, cx| {
                                                     let changed = controller
-                                                        .tab_mut(tab_id)
-                                                        .is_some_and(|mut session| {
-                                                            session
-                                                                .sftp_progress_layout
-                                                                .set_visible(!progress_center_open)
-                                                        });
+                                                        .set_sftp_progress_visible(
+                                                            tab_id,
+                                                            !progress_center_open,
+                                                        );
                                                     if changed {
                                                         cx.notify();
                                                     }

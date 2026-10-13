@@ -2,9 +2,22 @@ use super::components::{
     HostCardBadgeChip, HostCardGroupBadge, HostCardMetadata, HostCardTags, group_card,
     host_card_with_action, host_list_row,
 };
+use crate::ui::assets::AppIcon;
+use crate::ui::components::empty_state::{empty_page, empty_state};
+use crate::ui::components::group_accent::{GroupAccentPalette, group_accent_palette};
+use crate::ui::components::metrics::HOST_CARD_WIDTH;
+use crate::ui::components::{
+    SearchInputStyle, page_section_title, page_view_mode_toolbar_item, search_filter_input,
+};
+use crate::ui::contracts::navigation::ProfileViewMode;
+use crate::ui::features::hosts::HostsController;
 use crate::ui::i18n;
-use crate::ui::shell::pages::empty_state::{shell_empty_page, shell_empty_state};
-use crate::ui::shell::*;
+use crate::ui::utils::truncate_with_ellipsis;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, SharedString, Window, div, px};
 use miaominal_core::profile::SessionProfile;
 use std::{collections::BTreeMap, rc::Rc};
 
@@ -416,7 +429,7 @@ fn render_host_profile_item(
 }
 
 impl HostsController {
-    pub(in crate::ui::shell) fn render_hosts_page(
+    pub(in crate::ui) fn render_hosts_page(
         &self,
         controller: Entity<Self>,
         on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
@@ -488,7 +501,7 @@ impl HostsController {
         };
 
         if profiles.is_empty() {
-            return shell_empty_page(AppIcon::Computer, i18n::string("hosts.empty.no_profiles"))
+            return empty_page(AppIcon::Computer, i18n::string("hosts.empty.no_profiles"))
                 .into_any_element();
         }
 
@@ -655,7 +668,7 @@ impl HostsController {
                     };
 
                     if remote_sessions.is_empty() {
-                        connections = connections.child(shell_empty_state(
+                        connections = connections.child(empty_state(
                             AppIcon::Computer,
                             i18n::string("hosts.empty.no_filter_matches"),
                         ));

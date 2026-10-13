@@ -333,30 +333,10 @@ impl AppView {
         if self.applying_application_snapshot {
             return;
         }
-        let (settings_store, proxies, sync_engine) = {
-            let controller = self.controllers.settings.read(cx);
-            (
-                controller.settings_store(),
-                controller.proxies().to_vec(),
-                controller.sync_engine().clone(),
-            )
-        };
-
         application_state(cx).update(cx, |application, cx| {
-            application.publish_settings(settings_store, proxies, sync_engine, cx);
-        });
-    }
-
-    pub(in crate::ui::shell) fn publish_managed_keys_application_state(
-        &self,
-        cx: &mut Context<Self>,
-    ) {
-        if self.applying_application_snapshot {
-            return;
-        }
-        let managed_keys = self.controllers.keychain.read(cx).managed_keys().to_vec();
-        application_state(cx).update(cx, |application, cx| {
-            application.publish_managed_keys(managed_keys, cx);
+            if let Err(error) = application.refresh_persisted_settings(cx) {
+                log::warn!("failed to refresh persisted settings for application: {error:?}");
+            }
         });
     }
 

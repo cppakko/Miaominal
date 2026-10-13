@@ -1,9 +1,24 @@
-use super::*;
+use super::import_labels::{
+    localized_profile_import_issue_kind, localized_profile_import_issue_reason,
+    localized_profile_import_source_label,
+};
+use crate::ui::components::animation::render_basic_dialog;
+use crate::ui::components::{BasicDialogActionTone, basic_dialog_action_button};
+use crate::ui::contracts::commands::AppCommand;
+use crate::ui::features::hosts::{
+    HostsController, PendingProfileDeleteState, PendingProfileImportResultState,
+};
+use crate::ui::i18n;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{Context, Entity, SharedString, Window, div, px, rgb};
 
 impl HostsController {
-    pub(in crate::ui::shell) fn render_profile_delete_prompt(
+    pub(in crate::ui::features::hosts) fn render_profile_delete_prompt(
         controller: Entity<Self>,
         prompt: &PendingProfileDeleteState,
+        revision: u64,
         exit_progress: Option<f32>,
     ) -> gpui_kit::AnyElement {
         let profile_name = if prompt.profile_name.trim().is_empty() {
@@ -30,7 +45,14 @@ impl HostsController {
                 )
                 .on_click(move |_, _, cx| {
                     controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_profile_delete(cx);
+                        if controller
+                            .overlay_revisions
+                            .borrow()
+                            .current("profile-delete")
+                            == revision
+                        {
+                            controller.cancel_profile_delete(cx);
+                        }
                     });
                 }),
             )
@@ -42,7 +64,9 @@ impl HostsController {
                 )
                 .on_click(move |_, window, cx| {
                     entity_confirm.update(cx, |this, cx| {
-                        this.confirm_profile_delete(window, cx);
+                        if this.overlay_revisions.borrow().current("profile-delete") == revision {
+                            this.confirm_profile_delete(window, cx);
+                        }
                     });
                 }),
             );
@@ -57,9 +81,10 @@ impl HostsController {
         )
     }
 
-    pub(in crate::ui::shell) fn render_profile_import_result(
+    pub(in crate::ui::features::hosts) fn render_profile_import_result(
         controller: Entity<Self>,
         prompt: &PendingProfileImportResultState,
+        revision: u64,
         exit_progress: Option<f32>,
     ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
@@ -156,7 +181,14 @@ impl HostsController {
             )
             .on_click(move |_, _, cx| {
                 controller.update(cx, |controller, cx| {
-                    controller.dismiss_profile_import_result(cx);
+                    if controller
+                        .overlay_revisions
+                        .borrow()
+                        .current("profile-import-result")
+                        == revision
+                    {
+                        controller.dismiss_profile_import_result(cx);
+                    }
                 });
             }),
         );
@@ -171,10 +203,15 @@ impl HostsController {
         )
     }
 
-    fn confirm_profile_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::ui::features::hosts) fn confirm_profile_delete(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(pending) = self.pending_profile_delete() else {
             return;
         };
+        let snapshot = self.profile_delete_overlay(cx.entity());
         let options = self.managed_key_options.borrow().clone();
         if self.delete_profile_by_id(
             &pending.profile_id,
@@ -185,9 +222,9 @@ impl HostsController {
             cx,
         ) {
             self.take_pending_profile_delete();
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::ProfileDelete(pending),
-            ));
+            if let Some(snapshot) = snapshot {
+                cx.emit(AppCommand::OverlayDismissed(snapshot));
+            }
         }
     }
 }

@@ -13,7 +13,7 @@ use crate::ui::features::session::{
 };
 use crate::ui::i18n;
 use gpui_kit::component::Disableable;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{Context, IntoElement, SharedString, Styled, div, prelude::*, px, rgb};
 use miaominal_core::profile::SessionProfile;
 

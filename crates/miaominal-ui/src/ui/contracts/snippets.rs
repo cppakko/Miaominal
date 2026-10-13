@@ -75,3 +75,17 @@ impl SnippetCatalogPort {
         self.0.commit(cx, Box::new(operation))
     }
 }
+#[derive(Clone, Debug, Default)]
+pub(in crate::ui) struct TransferredSnippetsUi {
+    filter: String,
+    package: Option<String>,
+}
+
+impl TransferredSnippetsUi {
+    pub(in crate::ui) fn new(filter: String, package: Option<String>) -> Self {
+        Self { filter, package }
+    }
+    pub(in crate::ui) fn into_parts(self) -> (String, Option<String>) {
+        (self.filter, self.package)
+    }
+}

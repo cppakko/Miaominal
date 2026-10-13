@@ -3,83 +3,41 @@ use std::{cell::RefCell, rc::Rc};
 use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Window};
 
 use super::{
-    AppView, AuthMethod, DialogOverlaySnapshot, LocalVaultPassphrasePopupMode, LocalVaultStatus,
-    ManagedKeySelectItem, PageEditorSidebarKind, PaneId, SecretRevealTarget, SessionProfile,
-    SftpBrowserSide, SidebarSection, SplitDirection, SyncProvider, TabId, TabPlacement, TabState,
+    AppView, AuthMethod, LocalVaultPassphrasePopupMode, LocalVaultStatus, ManagedKeySelectItem,
+    SessionProfile, SidebarSection, SyncProvider, TabId, TabPlacement, TabState,
     WorkspaceTerminalInputExt, terminal_cell_width_default, terminal_line_height_default,
 };
 use crate::ui::i18n;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_secrets::SecretStore;
-use miaominal_services::SyncTaskResult;
 use miaominal_settings::AppSettings;
 
-pub(in crate::ui::shell) use super::hosts::{
-    PendingProfileDeleteState, PendingProfileImportResultState,
-};
-
-mod agent;
-mod keychain;
+use crate::ui::features::{agent, keychain, settings, sftp};
 mod local_vault_root;
 mod root;
-pub(in crate::ui::shell) use crate::ui::features::session;
-pub(in crate::ui) mod settings;
-pub(in crate::ui) mod sftp;
 
 pub(in crate::ui::shell) use crate::ui::contracts::session::{
     ClosedSessionTabState, SessionEventOutcome, SessionEventTabRemoval, SessionNotificationRequest,
     SessionNotificationTone,
 };
-pub(in crate::ui::shell) use crate::ui::features::session::{
-    MonitorChartPoint, PortForwardSessionStart, SessionConnectionState, SessionController,
-    SessionControllerArgs, SessionFailureStatus, SessionPortSession, SessionPortSnapshot,
-    SessionPurpose, SessionQueryPort, SessionSidePanelView, SessionTabState, SessionTerminalPort,
-    SessionTerminalTarget, TerminalLease, TerminalLeaseError, TerminalLeaseGrant,
-    TransferredSessionTab, TransferredSessionWorkspaceUi,
+pub(in crate::ui::shell) use crate::ui::contracts::settings::LocalVaultActionRequest;
+pub(in crate::ui::shell) use crate::ui::contracts::sftp::{
+    TransferredSftpTab, TransferredSftpWindowUi,
 };
-#[cfg(test)]
 pub(in crate::ui::shell) use crate::ui::features::session::{
-    SESSION_MONITOR_HISTORY_LIMIT, SessionMonitoringState,
+    PortForwardSessionStart, SessionController, SessionControllerArgs, SessionPortSnapshot,
+    SessionPurpose, SessionSidePanelView, TransferredSessionTab, TransferredSessionWorkspaceUi,
 };
 pub(in crate::ui::shell) use agent::{
-    AgentApprovedToolTask, AgentContinuationPreparation, AgentController, AgentControllerArgs,
-    AgentExecMode, AgentFinishStreamOutcome, AgentPromptDraft, AgentPromptDraftOutcome,
-    AgentPromptRequestPreparation, AgentStreamTask, AgentStreamTaskRequest,
-    AgentToolApprovalCommit, AgentToolContinuation, ChatPanelView, PendingChatSessionDeleteState,
-    PendingChatSessionRenameState, PromptHistoryDirection, SessionAgentBackgroundNotificationKind,
-    SessionAgentMessage, SessionAgentMessageMotion, SessionAgentMessageRole,
-    SessionAgentPanelDragState, SessionAgentTargetCandidate, SessionAgentToolCall,
-    SessionAgentToolStatus, split_message_into_blocks,
+    AgentController, AgentControllerArgs, PromptHistoryDirection,
 };
-#[cfg(test)]
-pub(in crate::ui::shell) use agent::{
-    SessionAgentExecutionContext, SessionAgentState, chat_record_from_session_agent_message,
-    restored_tool_status_and_note, session_agent_message_from_record, tool_status_as_str,
-};
-pub(in crate::ui::shell) use keychain::{
-    KeychainController, KeychainControllerArgs, KeychainEditorMode, KeychainPageView,
-    PendingManagedKeyDeleteState, PendingManagedKeyRenameState,
-};
+pub(in crate::ui::shell) use keychain::{KeychainController, KeychainControllerArgs};
 pub(in crate::ui::shell) use local_vault_root::LocalVaultRootExt;
 pub(in crate::ui::shell) use settings::{
-    AiProviderSaveDraft, KeyBindingSlot, LocalVaultActionRequest, LocalVaultChangePassphraseResult,
-    LocalVaultEnableResult, LocalVaultOperationResult, LocalVaultUnlockResult, OnboardingState,
-    OnboardingStep, OnboardingStepTransition, OnboardingStepTransitionPhase,
-    PendingAiProviderPopupState, PendingLocalDataResetConfirmState,
-    PendingLocalDataResetConfirmationPopupState, PendingLocalVaultDisableConfirmState,
-    PendingProxyConfigPopupState, PendingSshBridgePolicyDowngradeState, PendingSyncDirectionState,
-    PendingSyncPassphraseClearConfirmPopupState, PendingSyncPassphrasePopupState,
-    PendingSyncProviderConfigPopupState, PendingSyncPullConfirmState,
-    PendingSyncUnsafeWriteConsentState, PendingWebSearchConfigPopupState, ProxySaveDraft,
-    SettingsController, SettingsControllerArgs, SettingsForms, SyncProviderConfigSaveDraft,
-    SyncPullConfirmReason, WebSearchSaveDraft,
+    LocalVaultChangePassphraseResult, LocalVaultEnableResult, LocalVaultOperationResult,
+    LocalVaultUnlockResult, SettingsController, SettingsControllerArgs,
 };
-pub(in crate::ui::shell) use sftp::{
-    LocalSftpEntry, SessionSftpProgressCenterDragState, SessionSftpProgressLayoutState,
-    SftpController, SftpControllerArgs, SftpDragSelectionState, SftpPromptKind, SftpPromptState,
-    SftpSplitDivider, SftpSplitDragState, SftpTabState, SftpTransferChildStatus, SftpTransferRow,
-    SftpTransferStatus, TransferredSftpTab, TransferredSftpWindowUi,
-};
+pub(in crate::ui::shell) use sftp::{SftpController, SftpControllerArgs};
 
 pub(in crate::ui::shell) use crate::ui::contracts::commands::*;
 fn clear_managed_key_profile_references(profiles: &mut [SessionProfile], key_id: &str) -> bool {
@@ -234,9 +192,14 @@ impl ControllerSet {
         let mut subscriptions = Vec::with_capacity(10);
         macro_rules! connect {
             ($controller:expr) => {{
-                subscriptions.push(cx.observe($controller, |_this, _controller, cx| {
-                    cx.notify();
-                }));
+                subscriptions.push(cx.observe_in(
+                    $controller,
+                    window,
+                    |this, _controller, window, cx| {
+                        this.sync_window_overlays(window, cx);
+                        cx.notify();
+                    },
+                ));
                 subscriptions.push(cx.subscribe_in(
                     $controller,
                     window,
@@ -247,9 +210,14 @@ impl ControllerSet {
             }};
         }
 
-        subscriptions.push(cx.observe(&self.session, |_this, _controller, cx| {
-            cx.notify();
-        }));
+        subscriptions.push(cx.observe_in(
+            &self.session,
+            window,
+            |this, _controller, window, cx| {
+                this.sync_window_overlays(window, cx);
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &self.session,
             window,
@@ -257,10 +225,13 @@ impl ControllerSet {
                 this.handle_app_command_in_window(command, window, cx);
             },
         ));
-        subscriptions.push(cx.observe(&self.agent, |this, _controller, cx| {
-            this.publish_chat_application_state(cx);
-            cx.notify();
-        }));
+        subscriptions.push(
+            cx.observe_in(&self.agent, window, |this, _controller, window, cx| {
+                this.sync_window_overlays(window, cx);
+                this.publish_chat_application_state(cx);
+                cx.notify();
+            }),
+        );
         subscriptions.push(cx.subscribe_in(
             &self.agent,
             window,
@@ -274,27 +245,32 @@ impl ControllerSet {
         connect!(&self.forwarding);
         connect!(&self.sftp);
         let observed_settings = Rc::new(RefCell::new(self.settings.read(cx).settings().clone()));
-        subscriptions.push(cx.observe(&self.settings, move |this, controller, cx| {
-            let next_settings = controller.read(cx).settings().clone();
-            let mut previous_settings = observed_settings.borrow_mut();
-            let metrics_changed = terminal_metrics_changed(&previous_settings, &next_settings);
-            let free_type_disabled =
-                previous_settings.terminal_free_type_mode && !next_settings.terminal_free_type_mode;
-            *previous_settings = next_settings;
-            drop(previous_settings);
-            if metrics_changed {
-                this.invalidate_terminal_metrics();
-            }
-            if free_type_disabled {
-                this.clear_terminal_free_type_interactions(cx);
-                this.controllers
-                    .session
-                    .read(cx)
-                    .clear_all_terminal_free_type_selections();
-            }
-            this.publish_settings_application_state(cx);
-            cx.notify();
-        }));
+        subscriptions.push(cx.observe_in(
+            &self.settings,
+            window,
+            move |this, controller, window, cx| {
+                this.sync_window_overlays(window, cx);
+                let next_settings = controller.read(cx).settings().clone();
+                let mut previous_settings = observed_settings.borrow_mut();
+                let metrics_changed = terminal_metrics_changed(&previous_settings, &next_settings);
+                let free_type_disabled = previous_settings.terminal_free_type_mode
+                    && !next_settings.terminal_free_type_mode;
+                *previous_settings = next_settings;
+                drop(previous_settings);
+                if metrics_changed {
+                    this.invalidate_terminal_metrics();
+                }
+                if free_type_disabled {
+                    this.clear_terminal_free_type_interactions(cx);
+                    this.controllers
+                        .session
+                        .read(cx)
+                        .clear_all_terminal_free_type_selections();
+                }
+                this.publish_settings_application_state(cx);
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &self.settings,
             window,
@@ -302,14 +278,19 @@ impl ControllerSet {
                 this.handle_app_command_in_window(command, window, cx);
             },
         ));
-        subscriptions.push(cx.observe(&self.keychain, |this, controller, cx| {
-            let status_message = controller.read(cx).status_message();
-            if !status_message.is_empty() {
-                this.shell.status_message = status_message.to_string();
-            }
-            this.publish_managed_keys_application_state(cx);
-            cx.notify();
-        }));
+        subscriptions.push(cx.observe_in(
+            &self.keychain,
+            window,
+            |this, controller, window, cx| {
+                this.sync_window_overlays(window, cx);
+                let status_message = controller.read(cx).status_message();
+                if !status_message.is_empty() {
+                    this.shell.status_message = status_message.to_string();
+                }
+
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &self.keychain,
             window,

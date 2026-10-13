@@ -1,24 +1,34 @@
-use crate::ui::shell::*;
+use crate::ui::assets::AppIcon;
+use crate::ui::components::group_accent::GroupAccentPalette;
+use crate::ui::components::metrics::{
+    GROUP_CARD_HEIGHT, GROUP_CARD_WIDTH, HOST_CARD_HEIGHT, HOST_CARD_WIDTH,
+};
+use crate::ui::components::{
+    IconTileTone, badge, card_surface, icon_button, icon_tile, list_item_card,
+};
+use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, MouseButton, SharedString, Window, div, px, rgb};
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::hosts) struct HostCardBadgeChip {
+pub(in crate::ui::features::hosts) struct HostCardBadgeChip {
     pub label: SharedString,
     pub tooltip: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::hosts) struct HostCardGroupBadge {
+pub(in crate::ui::features::hosts) struct HostCardGroupBadge {
     pub badge: HostCardBadgeChip,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::hosts) struct HostCardTags {
+pub(in crate::ui::features::hosts) struct HostCardTags {
     pub visible: Vec<HostCardBadgeChip>,
     pub overflow: Option<HostCardBadgeChip>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::hosts) struct HostCardMetadata {
+pub(in crate::ui::features::hosts) struct HostCardMetadata {
     pub group: Option<HostCardGroupBadge>,
     pub local_terminal: bool,
     pub tags: HostCardTags,
@@ -47,7 +57,7 @@ fn host_card_badge(
         .into_any_element()
 }
 
-pub(in crate::ui::shell::hosts) fn group_card(
+pub(in crate::ui::features::hosts) fn group_card(
     icon: impl Into<SharedString>,
     count: impl Into<SharedString>,
     title: impl Into<SharedString>,
@@ -133,7 +143,7 @@ pub(in crate::ui::shell::hosts) fn group_card(
     )
 }
 
-pub(in crate::ui::shell::hosts) fn host_card_with_action(
+pub(in crate::ui::features::hosts) fn host_card_with_action(
     title: impl Into<SharedString>,
     metadata: HostCardMetadata,
     badge_id_prefix: impl Into<SharedString>,
@@ -278,7 +288,7 @@ pub(in crate::ui::shell::hosts) fn host_card_with_action(
         )
 }
 
-pub(in crate::ui::shell::hosts) fn host_list_row(
+pub(in crate::ui::features::hosts) fn host_list_row(
     title: SharedString,
     subtitle: Option<SharedString>,
     local_terminal: bool,

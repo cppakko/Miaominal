@@ -5,27 +5,6 @@ use crate::ui::shell::bootstrap_subscriptions::{AppViewSubscriptionsArgs, build_
 use gpui_kit::component::WindowExt as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SubmitOverlayTarget {
-    LocalVault(LocalVaultPassphrasePopupMode),
-    AiProvider,
-    WebSearch,
-    SyncProvider,
-}
-
-fn submit_overlay_target(
-    local_vault: Option<LocalVaultPassphrasePopupMode>,
-    ai_provider: bool,
-    web_search: bool,
-    sync_provider: bool,
-) -> Option<SubmitOverlayTarget> {
-    local_vault
-        .map(SubmitOverlayTarget::LocalVault)
-        .or(ai_provider.then_some(SubmitOverlayTarget::AiProvider))
-        .or(web_search.then_some(SubmitOverlayTarget::WebSearch))
-        .or(sync_provider.then_some(SubmitOverlayTarget::SyncProvider))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LocaleRefreshDomain {
     Session,
     Agent,
@@ -47,8 +26,28 @@ const fn locale_refresh_domains() -> [LocaleRefreshDomain; 5] {
 fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
     let weak = cx.weak_entity();
     cx.intercept_keystrokes(move |event, window, cx| {
+        if let Some(view) = weak.upgrade() {
+            view.update(cx, |this, cx| {
+                this.remember_overlay_trigger_focus(window, cx)
+            });
+        }
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
+        if !modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.shift {
+            let consumed = weak.upgrade().is_some_and(|view| {
+                view.update(cx, |this, cx| {
+                    let consumed = this.shell.overlay_state.handle_plain_key(key, window, cx);
+                    if consumed {
+                        this.sync_window_overlays(window, cx);
+                    }
+                    consumed
+                })
+            });
+            if consumed {
+                cx.stop_propagation();
+                return;
+            }
+        }
         if key == "escape"
             && !modifiers.control
             && !modifiers.alt
@@ -175,51 +174,6 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
             return;
         }
 
-        if key == "enter"
-            && !modifiers.control
-            && !modifiers.alt
-            && !modifiers.platform
-            && !modifiers.shift
-        {
-            let mut submitted_popup = false;
-            view.update(cx, |this, cx| {
-                let target = submit_overlay_target(
-                    this.pending_local_vault_passphrase_popup(cx),
-                    this.pending_ai_provider_popup(cx).is_some(),
-                    this.pending_web_search_config_popup(cx).is_some(),
-                    this.pending_sync_provider_config_popup(cx).is_some(),
-                );
-                match target {
-                    Some(SubmitOverlayTarget::LocalVault(mode)) => {
-                        this.controllers.settings.update(cx, |controller, cx| {
-                            controller.submit_local_vault_passphrase_popup_action(mode, window, cx);
-                        });
-                    }
-                    Some(SubmitOverlayTarget::AiProvider) => {
-                        this.controllers.settings.update(cx, |controller, cx| {
-                            controller.submit_ai_provider_save(window, cx);
-                        });
-                    }
-                    Some(SubmitOverlayTarget::WebSearch) => {
-                        this.controllers.settings.update(cx, |controller, cx| {
-                            controller.submit_web_search_settings_save(window, cx);
-                        });
-                    }
-                    Some(SubmitOverlayTarget::SyncProvider) => {
-                        this.controllers.settings.update(cx, |controller, cx| {
-                            controller.submit_sync_provider_config_popup_action(cx);
-                        });
-                    }
-                    None => return,
-                }
-                submitted_popup = true;
-            });
-            if submitted_popup {
-                cx.stop_propagation();
-                return;
-            }
-        }
-
         let mut handled_global_shortcut = false;
         view.update(cx, |this, cx| {
             handled_global_shortcut = this.handle_global_shortcut(&event.keystroke, window, cx);
@@ -274,6 +228,33 @@ impl AppView {
     }
 
     fn bootstrap(window_role: AppWindowRole, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::ui::components::notifications::set_notification_action_handler(
+            cx,
+            |action, window, cx| match action {
+                AppNotificationAction::OpenSyncSettings => {
+                    let Some(main_view) = crate::ui::system_tray::main_window_view(cx) else {
+                        log::warn!(
+                            "cannot open sync settings because the main AppView is unavailable"
+                        );
+                        return;
+                    };
+                    if !crate::ui::system_tray::is_main_window(window, cx) {
+                        crate::ui::restore_main_window(cx);
+                    }
+                    let Some(main_window) = crate::ui::system_tray::main_window_handle(cx) else {
+                        return;
+                    };
+                    if let Err(error) = main_window.update(cx, |_, window, cx| {
+                        main_view.update(cx, |view, cx| {
+                            view.navigate_to_settings_destination(SettingsDestination::Sync, cx);
+                            view.sync_window_overlays(window, cx);
+                        });
+                    }) {
+                        log::warn!("cannot open sync settings in the main window: {error:?}");
+                    }
+                }
+            },
+        );
         let terminal_focus = cx.focus_handle();
         let application = crate::ui::application::application_state(cx);
         let ApplicationBootstrapSnapshot {
@@ -400,6 +381,12 @@ impl AppView {
                         .clone(),
                 },
                 keychain: KeychainControllerArgs {
+                    managed_key_query: crate::ui::application::ApplicationState::managed_key_ports(
+                        &application,
+                    )
+                    .0,
+                    managed_key_commit:
+                        crate::ui::application::ApplicationState::managed_key_ports(&application).1,
                     managed_keys,
                     runtime: services.runtime.clone(),
                     keychain_store: services.keychain_store.clone(),
@@ -408,6 +395,17 @@ impl AppView {
                     local_vault_status,
                 },
                 settings: SettingsControllerArgs {
+                    persistence:
+                        crate::ui::application::ApplicationState::settings_persistence_port(
+                            &application,
+                        ),
+                    auto_sync_control:
+                        crate::ui::application::ApplicationState::auto_sync_control_port(
+                            &application,
+                        ),
+                    proxy_commit: crate::ui::application::ApplicationState::proxy_commit_port(
+                        &application,
+                    ),
                     runtime: services.runtime.clone(),
                     proxy_store: services.proxy_store.clone(),
                     proxies: proxies.clone(),
@@ -460,9 +458,10 @@ impl AppView {
             controllers,
             workspace,
             shell: ShellUiState {
+                pane_animation_frame_pending: false,
                 workspace_forms,
                 shell_state: ShellState::default(),
-                exiting_dialogs: Vec::new(),
+                overlay_state: super::overlays::WindowOverlayState::default(),
                 status_message,
                 deferred_app_command: None,
             },
@@ -556,28 +555,6 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn overlay_submit_priority_is_vault_then_ai_then_web_then_sync() {
-        let vault = LocalVaultPassphrasePopupMode::PrimaryAction;
-        assert_eq!(
-            submit_overlay_target(Some(vault), true, true, true),
-            Some(SubmitOverlayTarget::LocalVault(vault))
-        );
-        assert_eq!(
-            submit_overlay_target(None, true, true, true),
-            Some(SubmitOverlayTarget::AiProvider)
-        );
-        assert_eq!(
-            submit_overlay_target(None, false, true, true),
-            Some(SubmitOverlayTarget::WebSearch)
-        );
-        assert_eq!(
-            submit_overlay_target(None, false, false, true),
-            Some(SubmitOverlayTarget::SyncProvider)
-        );
-        assert_eq!(submit_overlay_target(None, false, false, false), None);
-    }
 
     #[test]
     fn locale_refresh_broadcast_covers_all_controller_domains() {

@@ -15,7 +15,6 @@ pub(in crate::ui) enum LocalVaultPassphrasePopupMode {
 pub(in crate::ui) enum SecretRevealTarget {
     SyncGithubToken,
     SyncWebdavPassword,
-    HostPassword,
     SyncPassphrase,
     SyncPassphraseConfirmation,
     LocalVaultCurrentPassphrase,
@@ -31,7 +30,6 @@ impl SecretRevealTarget {
             self,
             Self::SyncGithubToken
                 | Self::SyncWebdavPassword
-                | Self::HostPassword
                 | Self::AiProviderApiKey(_)
                 | Self::WebSearchApiKey
         )

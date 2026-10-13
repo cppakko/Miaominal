@@ -1,3 +1,4 @@
+use crate::ui::workspace::transfer::WorkspaceTransferExt;
 use gpui_kit::component::Root;
 use gpui_kit::{AnyWindowHandle, App, Entity, Global, WeakEntity, Window};
 use miaominal_settings::WindowCloseBehavior;
@@ -216,6 +217,11 @@ pub(crate) fn main_window_view(cx: &App) -> Option<Entity<AppView>> {
     cx.try_global::<SystemTrayState>()
         .and_then(|state| state.main_view.as_ref())
         .and_then(WeakEntity::upgrade)
+}
+
+pub(crate) fn main_window_handle(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<SystemTrayState>()
+        .map(|state| state.main_window)
 }
 
 pub(crate) fn is_main_window(window: &Window, cx: &App) -> bool {
@@ -692,4 +698,3 @@ mod tests {
         );
     }
 }
-use crate::ui::workspace::transfer::WorkspaceTransferExt;

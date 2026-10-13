@@ -386,23 +386,23 @@ impl WorkspacePanesAppViewExt for AppView {
             .map(|tab| {
                 let session = self.session_tab(tab.id, cx);
                 let label = session
-                    .as_deref()
+                    .as_ref()
                     .and_then(|session| {
                         self.controllers
                             .session
                             .read(cx)
                             .profiles()
                             .iter()
-                            .find(|p| p.id == session.profile_id)
+                            .find(|p| p.id == session.profile_id())
                             .map(|p| p.name.clone())
                     })
                     .unwrap_or_else(|| tab.title.to_string());
                 let has_activity = session
-                    .as_deref()
-                    .is_some_and(|session| session.has_activity);
+                    .as_ref()
+                    .is_some_and(|session| session.has_activity());
                 (
                     label,
-                    tab_status_indicator_color(&tab, session.as_deref(), has_activity),
+                    tab_status_indicator_color(&tab, session.as_ref(), has_activity),
                 )
             })
             .unwrap_or_else(|| (i18n::string("session.workspace.empty_tab_label"), None));
@@ -735,8 +735,12 @@ impl WorkspacePanesAppViewExt for AppView {
                             .parked_panes
                             .get(&pane_id)
                             .and_then(|parked| parked.active_tab)
-                            .and_then(|tab_id| view.session_tab(tab_id, cx))
-                            .is_some_and(|session| session.terminal.has_selection());
+                            .is_some_and(|tab_id| {
+                                view.controllers
+                                    .session
+                                    .read(cx)
+                                    .terminal_has_selection(tab_id)
+                            });
                         let command_source = view.controllers.session.clone();
                         let active_tab_is_local = view
                             .workspace
@@ -846,81 +850,32 @@ impl WorkspacePanesAppViewExt for AppView {
                     .when(!embedded_in_split, |this| this.pt_4())
                     .bg(rgb(roles.background))
                     .text_color(rgb(roles.on_surface))
-                    .when(show_link_cursor, |this| this.cursor_pointer())
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        this.handle_terminal_hover(*hovered, cx);
-                    }))
-                    .on_modifiers_changed(cx.listener(
-                        move |this, event: &ModifiersChangedEvent, _, cx| {
-                            this.handle_terminal_modifiers_changed(event, cx);
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            window.focus(&this.workspace.workspace.active_pane.terminal_focus, cx);
-                            this.handle_terminal_mouse_down(event, cx);
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
-                        this.handle_terminal_mouse_move(event, cx);
-                    }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &MouseUpEvent, _, cx| {
-                            this.handle_terminal_mouse_up(event, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Middle,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            this.handle_terminal_mouse_down(event, cx);
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Middle,
-                        cx.listener(move |this, event: &MouseUpEvent, _, cx| {
-                            this.handle_terminal_mouse_up(event, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            window.focus(&this.workspace.workspace.active_pane.terminal_focus, cx);
-                            this.handle_terminal_mouse_down(event, cx);
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseUpEvent, _, cx| {
-                            this.handle_terminal_mouse_up(event, cx);
-                        }),
-                    )
-                    .on_key_down(cx.listener(Self::handle_terminal_key_down))
-                    .on_key_up(cx.listener(Self::handle_terminal_key_up))
-                    .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
-                        this.handle_terminal_scroll_wheel(event, line_height, cx);
-                    }))
-                    .child(render_terminal_canvas_for_pane(
-                        hovered_link,
-                        cell_width,
-                        line_height,
-                        weak,
-                        active_pane_id,
-                        show_scrollbar,
-                    ))
-                    .when_some(
-                        super::workspace_terminal_search::advance_terminal_search_overlay(
-                            self, window, cx,
-                        ),
-                        |this, visibility| {
-                            this.child(
-                                super::workspace_terminal_search::render_terminal_search_overlay(
-                                    self, visibility, cx,
-                                ),
-                            )
-                        },
-                    );
+                    .when(show_link_cursor, |this| this.cursor_pointer());
+                let terminal_surface = crate::ui::features::session::bind_terminal_input_handlers(
+                    terminal_surface,
+                    line_height,
+                    cx,
+                )
+                .child(render_terminal_canvas_for_pane(
+                    hovered_link,
+                    cell_width,
+                    line_height,
+                    weak,
+                    active_pane_id,
+                    show_scrollbar,
+                ))
+                .when_some(
+                    super::workspace_terminal_search::advance_terminal_search_overlay(
+                        self, window, cx,
+                    ),
+                    |this, visibility| {
+                        this.child(
+                            super::workspace_terminal_search::render_terminal_search_overlay(
+                                self, visibility, cx,
+                            ),
+                        )
+                    },
+                );
 
                 let terminal_stack = div()
                     .flex_1()
@@ -1000,12 +955,13 @@ impl WorkspacePanesAppViewExt for AppView {
                         }
 
                         let view = entity.read(cx);
-                        let has_selection = view
-                            .workspace
-                            .workspace
-                            .active_tab
-                            .and_then(|tab_id| view.session_tab(tab_id, cx))
-                            .is_some_and(|session| session.terminal.has_selection());
+                        let has_selection =
+                            view.workspace.workspace.active_tab.is_some_and(|tab_id| {
+                                view.controllers
+                                    .session
+                                    .read(cx)
+                                    .terminal_has_selection(tab_id)
+                            });
                         let command_source = view.controllers.session.clone();
                         let active_tab_is_local = view
                             .workspace

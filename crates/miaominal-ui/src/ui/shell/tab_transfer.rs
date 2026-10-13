@@ -1,6 +1,7 @@
 //! Physical detached-window operations and feature-port wiring. Workspace owns
 //! resource extraction, installation, rollback and source completion.
 use super::*;
+use crate::ui::contracts::snippets::TransferredSnippetsUi;
 use crate::ui::workspace::transaction::{TransferPhase, TransferTransaction};
 use crate::ui::workspace::transfer::{WorkspaceTransferExt, WorkspaceTransferHost};
 use std::{cell::RefCell, rc::Rc};
@@ -28,7 +29,7 @@ impl AppView {
             return;
         };
         let source = bundle.source();
-        let transaction = Rc::new(RefCell::new(TransferTransaction::prepare(bundle)));
+        let transaction = Rc::new(RefCell::new(TransferTransaction::prepare(Box::new(bundle))));
         let target_transaction = transaction.clone();
         let (target_window, target_view) = target.into_parts();
         // WindowHandle::update rejects a closed/type-changed window before
@@ -38,7 +39,7 @@ impl AppView {
             target_view.update(cx, |target, cx| {
                 target_transaction.borrow_mut().install(|bundle| {
                     target
-                        .install_detached_tab_bundle(bundle, target_window, cx)
+                        .install_detached_tab_bundle(*bundle, target_window, cx)
                         .map_err(|bundle| {
                             (
                                 "destination window contains live resources".to_string(),
@@ -57,7 +58,7 @@ impl AppView {
         };
         if let Some(error) = error {
             if let Some(bundle) = transaction.borrow_mut().rollback() {
-                self.restore_detached_tab_bundle(bundle, window, cx);
+                self.restore_detached_tab_bundle(*bundle, window, cx);
             }
             self.report_transfer_failure(error, cx);
             let _ = target_window.update(cx, |_, target_window, _| target_window.remove_window());
@@ -89,15 +90,16 @@ impl WorkspaceTransferHost for AppView {
         self.controllers.session.read(cx).tab_purpose(id)
     }
     fn transfer_has_session(&self, id: TabId, cx: &App) -> bool {
-        self.controllers.session.read(cx).tab(id).is_some()
+        self.controllers.session.read(cx).contains_tab(id)
     }
     fn transfer_has_sftp(&self, id: TabId, cx: &App) -> bool {
-        self.controllers.sftp.read(cx).tab(id).is_some()
+        self.controllers.sftp.read(cx).contains_tab(id)
     }
     fn transfer_terminal_monitor_profile(&self, id: TabId, cx: &App) -> Option<String> {
-        let controller = self.controllers.session.read(cx);
-        let tab = controller.tab(id)?;
-        (tab.purpose == SessionPurpose::Terminal).then(|| tab.profile_id.clone())
+        self.controllers
+            .session
+            .read(cx)
+            .terminal_monitor_profile(id)
     }
     fn transfer_visible_sftp_sidecar(&self, root: TabId, cx: &App) -> Option<TabId> {
         let session = self.controllers.session.read(cx);
@@ -147,6 +149,25 @@ impl WorkspaceTransferHost for AppView {
         self.controllers.session.update(cx, |controller, cx| {
             controller.take_workspace_ui_for_transfer(window, cx)
         })
+    }
+    fn transfer_take_snippets_ui(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TransferredSnippetsUi {
+        self.controllers.snippets.update(cx, |owner, cx| {
+            owner.take_workspace_ui_for_transfer(window, cx)
+        })
+    }
+    fn transfer_restore_snippets_ui(
+        &mut self,
+        ui: TransferredSnippetsUi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.controllers.snippets.update(cx, |owner, cx| {
+            owner.restore_workspace_ui_after_transfer(ui, window, cx)
+        });
     }
     fn transfer_take_sftp_ui(
         &mut self,
@@ -270,6 +291,7 @@ impl WorkspaceTransferHost for AppView {
         cx: &mut Context<Self>,
     ) {
         self.sync_terminal_focus_reporting(window, cx);
+        self.sync_window_overlays(window, cx);
     }
     fn transfer_sync_session_port_snapshot(&self, cx: &App) {
         self.sync_session_port_snapshot(cx);

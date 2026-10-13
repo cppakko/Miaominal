@@ -1,0 +1,1471 @@
+use super::*;
+use crate::ui::i18n;
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
+use miaominal_services::KeychainService;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn keychain_managed_key_noun(count: usize) -> String {
+    i18n::string(if count == 1 {
+        "keychain.messages.managed_key_noun_one"
+    } else {
+        "keychain.messages.managed_key_noun_other"
+    })
+}
+
+fn keychain_agent_identity_noun(count: usize) -> String {
+    i18n::string(if count == 1 {
+        "keychain.messages.agent_identity_noun_one"
+    } else {
+        "keychain.messages.agent_identity_noun_other"
+    })
+}
+
+fn managed_key_name_exists(keys: &[ManagedKeyRecord], candidate: &str) -> bool {
+    keys.iter()
+        .any(|key| key.name.trim().eq_ignore_ascii_case(candidate.trim()))
+}
+
+fn unique_managed_key_name(keys: &[ManagedKeyRecord], base: &str, always_numbered: bool) -> String {
+    let base = base.trim();
+    if !always_numbered && !managed_key_name_exists(keys, base) {
+        return base.to_string();
+    }
+
+    let mut suffix = if always_numbered { 1 } else { 2 };
+    loop {
+        let candidate = format!("{base} {suffix}");
+        if !managed_key_name_exists(keys, &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn resolve_managed_key_import_name(
+    keys: &[ManagedKeyRecord],
+    requested_name: &str,
+    import_path: &str,
+    has_pasted_private_key: bool,
+    source: ManagedKeySource,
+    imported_default_name: &str,
+    generated_default_name: &str,
+) -> String {
+    let requested_name = requested_name.trim();
+    if !requested_name.is_empty() {
+        return requested_name.to_string();
+    }
+
+    if !has_pasted_private_key {
+        let file_name = Path::new(import_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::trim)
+            .filter(|stem| !stem.is_empty());
+        if let Some(file_name) = file_name {
+            return unique_managed_key_name(keys, file_name, false);
+        }
+    }
+
+    let default_name = match source {
+        ManagedKeySource::Generated => generated_default_name,
+        ManagedKeySource::Imported => imported_default_name,
+    };
+    unique_managed_key_name(keys, default_name, true)
+}
+
+fn apply_managed_key_rename(
+    keys: &mut [ManagedKeyRecord],
+    key_id: &str,
+    new_name: &str,
+) -> Option<(usize, String)> {
+    let index = keys.iter().position(|key| key.id == key_id)?;
+    let old_name = std::mem::replace(&mut keys[index].name, new_name.to_string());
+    Some((index, old_name))
+}
+
+fn keychain_deploy_exec_command(
+    template: &str,
+    location: &str,
+    filename: &str,
+    public_key: &str,
+) -> String {
+    KeychainService::deploy_command(template, location, filename, public_key)
+}
+
+fn managed_key_generation_result_for_editor(
+    editor_open: bool,
+    editor_mode: KeychainEditorMode,
+    result: Result<(String, String)>,
+) -> Result<Option<(String, String)>> {
+    if !editor_open || editor_mode != KeychainEditorMode::Import {
+        return Ok(None);
+    }
+
+    result.map(Some)
+}
+
+struct PreparedManagedKeyImport {
+    private_key_material: String,
+    public_key_material: String,
+}
+
+impl KeychainController {
+    fn keychain_service(&self) -> Option<KeychainService> {
+        self.keychain_store.clone().map(|store| {
+            KeychainService::new(
+                self.runtime.clone(),
+                store,
+                self.secrets.clone(),
+                self.known_hosts.clone(),
+            )
+        })
+    }
+
+    fn profile_requires_local_vault_unlock(&self, profile: &SessionProfile) -> bool {
+        if self.local_vault_status != LocalVaultStatus::Locked {
+            return false;
+        }
+
+        match profile.effective_auth_method() {
+            AuthMethod::Password => profile.password.is_empty() && profile.has_stored_password,
+            AuthMethod::KeyFile => profile.passphrase.is_empty() && profile.has_stored_passphrase,
+            AuthMethod::ManagedKey => !profile.managed_key_id.trim().is_empty(),
+            AuthMethod::Agent | AuthMethod::KeyboardInteractive => false,
+        }
+    }
+
+    fn notify_validation_failure_in_window(
+        &mut self,
+        window: &mut Window,
+        kind: ValidationNotificationKind,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let message = message.into();
+        self.status_message = message.clone();
+        crate::ui::components::notifications::push_app_notification(
+            window,
+            validation_notification(kind, message),
+            cx,
+        );
+        cx.notify();
+    }
+
+    fn with_active_window(
+        &mut self,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) {
+        let Some(window_handle) = cx.active_window() else {
+            return;
+        };
+        let _ = window_handle.update(cx, move |_, window, cx| {
+            update(window, cx);
+        });
+    }
+
+    fn keychain_deploy_profile_items(sessions: &[SessionProfile]) -> Vec<ProfileSelectItem> {
+        let mut items = sessions
+            .iter()
+            .filter(|profile| Self::keychain_profile_supports_deploy(profile))
+            .map(ProfileSelectItem::new)
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.title()
+                .as_ref()
+                .to_ascii_lowercase()
+                .cmp(&right.title().as_ref().to_ascii_lowercase())
+                .then_with(|| left.value().cmp(right.value()))
+        });
+
+        items
+    }
+
+    pub(in crate::ui) fn keychain_profile_supports_deploy(profile: &SessionProfile) -> bool {
+        KeychainService::profile_supports_deploy(profile)
+    }
+
+    pub(in crate::ui) fn keychain_deploy_profile_options(
+        sessions: &[SessionProfile],
+    ) -> SearchableVec<ProfileSelectItem> {
+        SearchableVec::new(Self::keychain_deploy_profile_items(sessions))
+    }
+
+    pub(in crate::ui) fn sync_keychain_deploy_profile_select(
+        &mut self,
+        selected_profile_id: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profiles = self.catalog.profiles();
+        let items = Self::keychain_deploy_profile_items(&profiles);
+        let selected_profile_id = selected_profile_id.map(str::to_string).or_else(|| {
+            self.forms
+                .deploy_profile_select
+                .read(cx)
+                .selected_value()
+                .cloned()
+        });
+        let has_selected_profile =
+            selected_profile_id
+                .as_ref()
+                .is_some_and(|selected_profile_id| {
+                    items.iter().any(|item| item.value() == selected_profile_id)
+                });
+        let options = SearchableVec::new(items);
+
+        self.forms.deploy_profile_select.update(cx, |select, cx| {
+            select.set_items(options, window, cx);
+            if has_selected_profile {
+                if let Some(selected_profile_id) = selected_profile_id.as_ref() {
+                    select.set_selected_value(selected_profile_id, window, cx);
+                }
+            } else {
+                select.set_selected_index(None, window, cx);
+            }
+        });
+    }
+
+    pub(in crate::ui) fn keychain_selected_deploy_key(&self) -> Option<&ManagedKeyRecord> {
+        self.deploy_key_id.as_deref().and_then(|key_id| {
+            self.managed_keys
+                .iter()
+                .find(|key| key.id.as_str() == key_id)
+        })
+    }
+
+    pub(in crate::ui) fn open_keychain_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_keychain_inputs(window, cx);
+        self.editor_mode = KeychainEditorMode::Import;
+        self.editor_open = true;
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Keychain,
+        )));
+        self.status_message = i18n::string("keychain.messages.preparing_new_managed_key");
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn open_keychain_deploy_editor(
+        &mut self,
+        key_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((target_key_id, summary)) = self
+            .managed_keys
+            .iter()
+            .find(|candidate| candidate.id == key_id)
+            .map(|key| (key.id.clone(), key.summary()))
+        else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+
+        self.clear_keychain_inputs(window, cx);
+        self.editor_mode = KeychainEditorMode::Deploy;
+        self.deploy_key_id = Some(target_key_id);
+        self.editor_open = true;
+        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
+            PageEditorSidebarKind::Keychain,
+        )));
+        self.status_message = i18n::string_args(
+            "keychain.messages.preparing_deploy",
+            &[("summary", &summary)],
+        );
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn close_keychain_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.editor_open {
+            return;
+        }
+
+        self.editor_revision = self.editor_revision.wrapping_add(1);
+        self.import_picker_task = None;
+        self.editor_open = false;
+        self.editor_mode = KeychainEditorMode::Import;
+        self.deploy_key_id = None;
+        self.generation_task = None;
+        self.generation_in_progress = false;
+        cx.emit(AppCommand::SidebarEditorStateChanged(None));
+        self.status_message = i18n::string("keychain.messages.closed_sidebar");
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn clear_keychain_inputs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_revision = self.editor_revision.wrapping_add(1);
+        self.import_picker_task = None;
+        self.generation_task = None;
+        self.generation_in_progress = false;
+        self.editor_draft_source = None;
+        self.editor_mode = KeychainEditorMode::Import;
+        self.deploy_key_id = None;
+        set_input_value(&self.forms.name_input, "", window, cx);
+        set_input_value(&self.forms.import_path_input, "", window, cx);
+        set_editor_value(&self.forms.import_private_key_input, "", window, cx);
+        set_editor_value(&self.forms.import_public_key_input, "", window, cx);
+        set_input_value(&self.forms.import_passphrase_input, "", window, cx);
+        set_input_value(
+            &self.forms.deploy_location_input,
+            KEYCHAIN_DEPLOY_DEFAULT_LOCATION,
+            window,
+            cx,
+        );
+        set_input_value(
+            &self.forms.deploy_filename_input,
+            KEYCHAIN_DEPLOY_DEFAULT_FILENAME,
+            window,
+            cx,
+        );
+        set_editor_value(
+            &self.forms.deploy_command_input,
+            KEYCHAIN_DEPLOY_DEFAULT_COMMAND,
+            window,
+            cx,
+        );
+        self.sync_keychain_deploy_profile_select(None, window, cx);
+    }
+
+    pub(in crate::ui) fn set_managed_key_import_file_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_draft_source = Some(ManagedKeySource::Imported);
+        set_input_value(
+            &self.forms.import_path_input,
+            path.display().to_string(),
+            window,
+            cx,
+        );
+        set_editor_value(&self.forms.import_private_key_input, "", window, cx);
+        let path = path.display().to_string();
+        self.status_message =
+            i18n::string_args("keychain.messages.selected_import_file", &[("path", &path)]);
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn refresh_keychain_data(&mut self, cx: &mut Context<Self>) {
+        if let Some(service) = self.keychain_service() {
+            match service.refresh_data() {
+                Ok(snapshot) => {
+                    self.managed_keys = snapshot.managed_keys;
+                    self.agent_identities = snapshot.agent_identities;
+                    if let Some(error) = snapshot.agent_scan_error {
+                        let managed_count = self.managed_keys.len().to_string();
+                        let managed_keys_label = keychain_managed_key_noun(self.managed_keys.len());
+                        self.status_message = i18n::string_args(
+                            "keychain.messages.loaded_agent_scan_failed",
+                            &[
+                                ("managed_count", &managed_count),
+                                ("managed_keys_label", &managed_keys_label),
+                                ("error", &error),
+                            ],
+                        );
+                    } else {
+                        let managed_count = self.managed_keys.len().to_string();
+                        let managed_keys_label = keychain_managed_key_noun(self.managed_keys.len());
+                        let agent_count = self.agent_identities.len().to_string();
+                        let agent_identities_label =
+                            keychain_agent_identity_noun(self.agent_identities.len());
+                        self.status_message = i18n::string_args(
+                            "keychain.messages.loaded",
+                            &[
+                                ("managed_count", &managed_count),
+                                ("managed_keys_label", &managed_keys_label),
+                                ("agent_count", &agent_count),
+                                ("agent_identities_label", &agent_identities_label),
+                            ],
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.managed_keys.clear();
+                    self.agent_identities.clear();
+                    let error = error.to_string();
+                    self.status_message =
+                        i18n::string_args("keychain.messages.load_failed", &[("error", &error)]);
+                    cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            self.managed_keys.clear();
+            match self
+                .runtime
+                .block_on(miaominal_ssh::list_local_agent_identities())
+            {
+                Ok(identities) => {
+                    self.agent_identities = identities;
+                    let agent_count = self.agent_identities.len().to_string();
+                    let agent_identities_label =
+                        keychain_agent_identity_noun(self.agent_identities.len());
+                    self.status_message = i18n::string_args(
+                        "keychain.messages.loaded",
+                        &[
+                            ("managed_count", "0"),
+                            ("managed_keys_label", &keychain_managed_key_noun(0)),
+                            ("agent_count", &agent_count),
+                            ("agent_identities_label", &agent_identities_label),
+                        ],
+                    );
+                }
+                Err(error) => {
+                    self.agent_identities.clear();
+                    self.status_message = i18n::string_args(
+                        "keychain.messages.loaded_agent_scan_failed",
+                        &[
+                            ("managed_count", "0"),
+                            ("managed_keys_label", &keychain_managed_key_noun(0)),
+                            ("error", &error.to_string()),
+                        ],
+                    );
+                }
+            }
+        }
+
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn request_managed_key_delete(
+        &mut self,
+        key_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(key) = self.managed_keys.iter().find(|key| key.id == key_id) else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+
+        self.overlay_revisions.begin("managed-key-delete");
+
+        self.pending_managed_key_delete = Some(PendingManagedKeyDeleteState {
+            key_id: key.id.clone(),
+            key_name: key.name.clone(),
+        });
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn request_managed_key_rename(
+        &mut self,
+        key_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(key) = self.managed_keys.iter().find(|key| key.id == key_id) else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+
+        let current_name = key.name.clone();
+        self.forms.rename_name_input = new_input_state(
+            i18n::string("dialogs.managed_key_rename.name_label"),
+            "",
+            false,
+            window,
+            cx,
+        );
+        set_input_value(&self.forms.rename_name_input, &current_name, window, cx);
+        self.forms
+            .rename_name_input
+            .update(cx, |input, cx| input.focus(window, cx));
+        self.overlay_revisions.begin("managed-key-rename");
+        self.pending_managed_key_rename = Some(PendingManagedKeyRenameState {
+            key_id: key.id.clone(),
+            current_name,
+        });
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn cancel_managed_key_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_managed_key_rename.take() {
+            cx.emit(AppCommand::OverlayDismissed(self.overlay_snapshot(
+                KeychainOverlay::ManagedKeyRename(pending),
+                cx.entity(),
+                cx,
+            )));
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui) fn confirm_managed_key_rename(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.pending_managed_key_rename.clone() else {
+            return;
+        };
+        let new_name = self
+            .forms
+            .rename_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if new_name.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.rename_name_required"),
+                cx,
+            );
+            return;
+        }
+
+        let current_keys = self.managed_key_query.keys(cx);
+        let Some(key) = current_keys.iter().find(|key| key.id == pending.key_id) else {
+            self.cancel_managed_key_rename(cx);
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+        if key.name == new_name {
+            self.cancel_managed_key_rename(cx);
+            self.status_message = i18n::string("keychain.messages.rename_unchanged");
+            cx.notify();
+            return;
+        }
+        let Some(service) = self.keychain_service() else {
+            self.status_message = i18n::string("keychain.messages.storage_unavailable");
+            cx.notify();
+            return;
+        };
+        let key_id = pending.key_id.clone();
+        let new_name_for_commit = new_name.clone();
+        match self.managed_key_commit.commit(cx, move |mut keys| {
+            apply_managed_key_rename(&mut keys, &key_id, &new_name_for_commit)
+                .ok_or_else(|| anyhow!("managed key not found"))?;
+            service.persist_keys(&keys)?;
+            Ok(keys)
+        }) {
+            Ok(keys) => self.managed_keys = keys,
+            Err(error) => {
+                let message = i18n::string_args(
+                    "keychain.messages.rename_failed",
+                    &[("error", &error.to_string())],
+                );
+                self.notify_validation_failure_in_window(
+                    window,
+                    ValidationNotificationKind::InvalidInput,
+                    message,
+                    cx,
+                );
+                return;
+            }
+        }
+
+        self.pending_managed_key_rename = None;
+        cx.emit(AppCommand::OverlayDismissed(self.overlay_snapshot(
+            KeychainOverlay::ManagedKeyRename(pending),
+            cx.entity(),
+            cx,
+        )));
+        self.status_message =
+            i18n::string_args("keychain.messages.renamed", &[("name", &new_name)]);
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Reloaded));
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn generate_managed_key(
+        &mut self,
+        algorithm: ManagedKeyGenerationAlgorithm,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generation_in_progress {
+            return;
+        }
+
+        let algorithm_label = i18n::string(match algorithm {
+            ManagedKeyGenerationAlgorithm::Ed25519 => "keychain.generation_algorithm.ed25519",
+            ManagedKeyGenerationAlgorithm::Rsa4096 => "keychain.generation_algorithm.rsa_4096",
+        });
+        self.generation_in_progress = true;
+        self.status_message = i18n::string_args(
+            "keychain.messages.generating",
+            &[("algorithm", &algorithm_label)],
+        );
+        cx.notify();
+
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let worker_name = match algorithm {
+            ManagedKeyGenerationAlgorithm::Ed25519 => "generate-managed-ed25519-key",
+            ManagedKeyGenerationAlgorithm::Rsa4096 => "generate-managed-rsa-4096-key",
+        };
+        let spawn_result = std::thread::Builder::new()
+            .name(worker_name.to_string())
+            .spawn(move || {
+                tx.send(KeychainService::generate_material(algorithm)).ok();
+            });
+
+        if let Err(error) = spawn_result {
+            self.generation_in_progress = false;
+            let error = error.to_string();
+            self.status_message = i18n::string_args(
+                "keychain.messages.generation_failed",
+                &[("algorithm", &algorithm_label), ("error", &error)],
+            );
+            cx.notify();
+            return;
+        }
+
+        let editor_revision = self.editor_revision;
+        let active_window = cx.active_window();
+        self.generation_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    rx.recv()
+                        .unwrap_or_else(|_| Err(anyhow!("managed key generation task cancelled")))
+                })
+                .await;
+
+            let Some(window_handle) = active_window else {
+                this.update(cx, move |this, cx| {
+                    this.generation_task = None;
+                    this.generation_in_progress = false;
+                    let error = "active window is unavailable";
+                    this.status_message = i18n::string_args(
+                        "keychain.messages.generation_failed",
+                        &[("algorithm", &algorithm_label), ("error", error)],
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
+            let result = std::rc::Rc::new(std::cell::RefCell::new(Some(result)));
+            let result_for_window = result.clone();
+            let this_for_window = this.clone();
+            let algorithm_label_for_window = algorithm_label.clone();
+            let update_result = window_handle.update(cx, move |_, window, cx| {
+                let Some(result) = result_for_window.borrow_mut().take() else {
+                    return;
+                };
+                this_for_window
+                    .update(cx, move |this, cx| {
+                        if editor_revision != this.editor_revision {
+                            return;
+                        }
+                        this.generation_task = None;
+                        this.generation_in_progress = false;
+
+                        match managed_key_generation_result_for_editor(
+                            this.editor_open,
+                            this.editor_mode,
+                            result,
+                        ) {
+                            Ok(Some((private_key_material, public_key_material))) => {
+                                this.editor_draft_source = Some(ManagedKeySource::Generated);
+                                set_input_value(&this.forms.import_path_input, "", window, cx);
+                                set_editor_value(
+                                    &this.forms.import_private_key_input,
+                                    &private_key_material,
+                                    window,
+                                    cx,
+                                );
+                                set_editor_value(
+                                    &this.forms.import_public_key_input,
+                                    &public_key_material,
+                                    window,
+                                    cx,
+                                );
+                                set_input_value(
+                                    &this.forms.import_passphrase_input,
+                                    "",
+                                    window,
+                                    cx,
+                                );
+                                this.status_message = i18n::string_args(
+                                    "keychain.messages.generated",
+                                    &[("algorithm", &algorithm_label_for_window)],
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let error = error.to_string();
+                                this.status_message = i18n::string_args(
+                                    "keychain.messages.generation_failed",
+                                    &[
+                                        ("algorithm", &algorithm_label_for_window),
+                                        ("error", &error),
+                                    ],
+                                );
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            });
+
+            if let Err(error) = update_result {
+                log::debug!("failed to apply managed key generation result: {error:?}");
+                this.update(cx, |this, cx| {
+                    this.generation_task = None;
+                    this.generation_in_progress = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        }));
+    }
+
+    pub(in crate::ui) fn open_import_file_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.keychain_store.is_none()
+            || !self.editor_open
+            || self.editor_mode != KeychainEditorMode::Import
+        {
+            return;
+        }
+        self.import_picker_revision = self.import_picker_revision.wrapping_add(1);
+        let picker_revision = self.import_picker_revision;
+        let editor_revision = self.editor_revision;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_parent(window)
+            .set_title(i18n::string("keychain.editor.select_private_key_to_import"));
+        let window_handle = window.window_handle();
+        self.import_picker_task = Some(cx.spawn(async move |this, cx| {
+            let path = dialog
+                .pick_file()
+                .await
+                .map(|file| file.path().to_path_buf());
+            let _ = window_handle.update(cx, move |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    if this.import_picker_revision != picker_revision
+                        || !this
+                            .editor_matches_revision(editor_revision, KeychainEditorMode::Import)
+                    {
+                        return;
+                    }
+                    this.import_picker_task = None;
+                    if let Some(path) = path {
+                        this.set_managed_key_import_file_path(path, window, cx);
+                    }
+                });
+            });
+        }));
+    }
+
+    fn editor_matches_revision(&self, revision: u64, mode: KeychainEditorMode) -> bool {
+        self.editor_open && self.editor_mode == mode && self.editor_revision == revision
+    }
+
+    pub(in crate::ui) fn import_managed_key(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.import_task.is_some() {
+            return;
+        }
+        let Some(request) = self.build_managed_key_import_request(window, cx) else {
+            return;
+        };
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::ImportManagedKey(request),
+            )));
+            return;
+        }
+        self.start_managed_key_import(request, window, cx);
+    }
+
+    fn build_managed_key_import_request(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<ManagedKeyImportRequest> {
+        let import_path = self
+            .forms
+            .import_path_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let private_key = self
+            .forms
+            .import_private_key_input
+            .read(cx)
+            .value()
+            .to_string();
+        let public_key = self
+            .forms
+            .import_public_key_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let passphrase = self
+            .forms
+            .import_passphrase_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if import_path.is_empty() && private_key.trim().is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.import_private_key_required"),
+                cx,
+            );
+            return None;
+        }
+        Some(ManagedKeyImportRequest::new(
+            self.editor_revision,
+            self.forms.name_input.read(cx).value().to_string(),
+            self.editor_draft_source
+                .unwrap_or(ManagedKeySource::Imported),
+            (!import_path.is_empty()).then_some(import_path),
+            (!private_key.trim().is_empty()).then_some(private_key),
+            (!public_key.is_empty()).then_some(public_key),
+            (!passphrase.is_empty()).then_some(passphrase),
+            i18n::string("keychain.messages.imported_key_default_name"),
+            i18n::string("keychain.messages.generated_key_default_name"),
+        ))
+    }
+
+    pub(in crate::ui) fn continue_import_managed_key_after_unlock(
+        &mut self,
+        request: ManagedKeyImportRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editor_matches_revision(request.editor_revision(), KeychainEditorMode::Import)
+            || self.import_task.is_some()
+        {
+            return;
+        }
+        if self.local_vault_status == LocalVaultStatus::Locked {
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::ImportManagedKey(request),
+            )));
+            return;
+        }
+        self.start_managed_key_import(request, window, cx);
+    }
+
+    fn start_managed_key_import(
+        &mut self,
+        request: ManagedKeyImportRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(store) = self.keychain_store.clone() else {
+            self.status_message = i18n::string("keychain.messages.storage_unavailable");
+            cx.notify();
+            return;
+        };
+        let request_for_worker = request.clone();
+        // The worker only reads and normalizes. Durable writes run against the
+        // application's current catalog on the GPUI commit path.
+        let worker = cx.background_executor().spawn(async move {
+            let material = match request_for_worker.private_key_material() {
+                Some(material) => material.to_string(),
+                None => fs::read_to_string(request_for_worker.import_path().unwrap_or_default())?,
+            };
+            let (record, private_key_material) = store.import_private_key(
+                &[],
+                "",
+                request_for_worker.source(),
+                &material,
+                request_for_worker.public_key_material(),
+                request_for_worker.passphrase(),
+            )?;
+            Ok(PreparedManagedKeyImport {
+                private_key_material,
+                public_key_material: record.public_key,
+            })
+        });
+        let notification_window = window.window_handle();
+        self.import_task = Some(cx.spawn(async move |this, cx| {
+            let result: Result<PreparedManagedKeyImport> = worker.await;
+            let result = std::rc::Rc::new(std::cell::RefCell::new(Some(result)));
+            let result_for_window = result.clone();
+            let request_without_window = request.clone();
+            let this_for_window = this.clone();
+            let update_result = notification_window.update(cx, move |_, window, cx| {
+                if let Some(result) = result_for_window.borrow_mut().take() {
+                    let _ = this_for_window.update(cx, |this, cx| {
+                        this.finish_managed_key_import(request, result, Some(window), cx);
+                    });
+                }
+            });
+            if update_result.is_err()
+                && let Some(result) = result.borrow_mut().take()
+            {
+                let _ = this.update(cx, |this, cx| {
+                    this.finish_managed_key_import(request_without_window, result, None, cx);
+                });
+            }
+        }));
+    }
+
+    fn finish_managed_key_import(
+        &mut self,
+        request: ManagedKeyImportRequest,
+        result: Result<PreparedManagedKeyImport>,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        self.import_task = None;
+        let result = result.and_then(|prepared| {
+            let service = self
+                .keychain_service()
+                .ok_or_else(|| anyhow!("managed key storage unavailable"))?;
+            let imported_record = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let record_for_commit = imported_record.clone();
+            let request_for_commit = request.clone();
+            let next = self.managed_key_commit.commit(cx, move |mut keys| {
+                let name = resolve_managed_key_import_name(
+                    &keys,
+                    request_for_commit.requested_name(),
+                    request_for_commit.import_path().unwrap_or_default(),
+                    request_for_commit.private_key_material().is_some(),
+                    request_for_commit.source(),
+                    request_for_commit.default_import_name(),
+                    request_for_commit.default_generated_name(),
+                );
+                let imported = service.import_and_persist_key(
+                    &keys,
+                    name,
+                    request_for_commit.source(),
+                    &prepared.private_key_material,
+                    Some(&prepared.public_key_material),
+                    None,
+                )?;
+                *record_for_commit.borrow_mut() = Some(imported.record.clone());
+                keys.push(imported.record);
+                Ok(keys)
+            })?;
+            self.managed_keys = next;
+            let record = imported_record
+                .borrow_mut()
+                .take()
+                .ok_or_else(|| anyhow!("managed key import returned no record"))?;
+            Ok(record)
+        });
+        match result {
+            Ok(record) => {
+                if self
+                    .editor_matches_revision(request.editor_revision(), KeychainEditorMode::Import)
+                {
+                    if let Some(window) = window {
+                        self.clear_keychain_inputs(window, cx);
+                    }
+                    self.editor_open = false;
+                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
+                }
+                self.status_message = i18n::string_args(
+                    "keychain.messages.imported",
+                    &[("summary", &record.summary())],
+                );
+                cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Added));
+            }
+            Err(error) => {
+                let message = i18n::string_args(
+                    "keychain.messages.import_failed",
+                    &[("error", &error.to_string())],
+                );
+                if let Some(window) = window {
+                    self.notify_validation_failure_in_window(
+                        window,
+                        ValidationNotificationKind::InvalidInput,
+                        message,
+                        cx,
+                    );
+                } else {
+                    self.status_message = message.clone();
+                    cx.emit(AppCommand::Feedback(message));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn deploy_managed_key(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((key_summary, key_public_key)) = self
+            .keychain_selected_deploy_key()
+            .map(|key| (key.summary(), key.public_key.trim().to_string()))
+        else {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.deploy.key_missing"),
+                cx,
+            );
+            return;
+        };
+
+        if key_public_key.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::InvalidInput,
+                i18n::string("keychain.messages.deploy_public_key_missing"),
+                cx,
+            );
+            return;
+        }
+
+        let Some(selected_profile_id) = self
+            .forms
+            .deploy_profile_select
+            .read(cx)
+            .selected_value()
+            .cloned()
+        else {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.deploy_profile_required"),
+                cx,
+            );
+            return;
+        };
+
+        let location = self
+            .forms
+            .deploy_location_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if location.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.deploy_location_required"),
+                cx,
+            );
+            return;
+        }
+
+        let filename = self
+            .forms
+            .deploy_filename_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if filename.is_empty() {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::RequiredInputMissing,
+                i18n::string("keychain.messages.deploy_filename_required"),
+                cx,
+            );
+            return;
+        }
+
+        let command_template = self
+            .forms
+            .deploy_command_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let command_template = if command_template.is_empty() {
+            KEYCHAIN_DEPLOY_DEFAULT_COMMAND.to_string()
+        } else {
+            command_template
+        };
+
+        let profiles = self.catalog.profiles();
+        let Some(profile) = profiles
+            .iter()
+            .find(|profile| profile.id == selected_profile_id)
+            .cloned()
+        else {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::InvalidInput,
+                i18n::string("keychain.messages.deploy_profile_not_found"),
+                cx,
+            );
+            return;
+        };
+
+        if !Self::keychain_profile_supports_deploy(&profile) {
+            self.notify_validation_failure_in_window(
+                window,
+                ValidationNotificationKind::InvalidInput,
+                i18n::string("keychain.messages.deploy_profile_unsupported"),
+                cx,
+            );
+            return;
+        }
+
+        let command =
+            keychain_deploy_exec_command(&command_template, &location, &filename, &key_public_key);
+        let request = ManagedKeyDeployRequest::new(
+            self.editor_revision,
+            key_summary,
+            profile,
+            profiles,
+            self.catalog.proxies(),
+            command,
+        );
+        if self.profile_requires_local_vault_unlock(request.profile()) {
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::DeployManagedKey(Box::new(request)),
+            )));
+            return;
+        }
+        self.start_managed_key_deploy(request, cx);
+    }
+
+    pub(in crate::ui) fn continue_deploy_managed_key_after_unlock(
+        &mut self,
+        request: ManagedKeyDeployRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editor_matches_revision(request.editor_revision(), KeychainEditorMode::Deploy)
+            || self.deploy_in_progress
+        {
+            return;
+        }
+        if self.profile_requires_local_vault_unlock(request.profile()) {
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Keychain(
+                KeychainDeferredCommand::DeployManagedKey(Box::new(request)),
+            )));
+            return;
+        }
+        self.start_managed_key_deploy(request, cx);
+    }
+
+    fn start_managed_key_deploy(
+        &mut self,
+        request: ManagedKeyDeployRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if self.deploy_in_progress {
+            return;
+        }
+        let key_summary = request.key_summary().to_string();
+        let profile_label = request.profile().connection_label();
+        let selected_profile_id = request.profile().id.clone();
+        let (profile, all_profiles, all_proxies, command) = request.into_execution();
+        let runtime = self.runtime.clone();
+        let Some(service) = self.keychain_service() else {
+            self.status_message = i18n::string("keychain.messages.storage_unavailable");
+            cx.notify();
+            return;
+        };
+        let start_summary = key_summary.clone();
+        let start_profile = profile_label.clone();
+        self.deploy_in_progress = true;
+        self.status_message = i18n::string_args(
+            "keychain.messages.deploy_started",
+            &[("summary", &start_summary), ("profile", &start_profile)],
+        );
+        cx.notify();
+
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name(format!("key-deploy-{}", selected_profile_id))
+            .spawn(move || {
+                let outcome = runtime.block_on(service.execute_deploy(
+                    profile,
+                    all_profiles,
+                    all_proxies,
+                    command,
+                ));
+                tx.send(outcome).ok();
+            })
+            .expect("failed to spawn key deploy thread");
+
+        let success_summary = key_summary.clone();
+        let success_profile = profile_label.clone();
+        self.deploy_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    rx.recv()
+                        .unwrap_or_else(|_| Err(anyhow!("key deployment task cancelled")))
+                })
+                .await;
+
+            this.update(cx, |this, cx| {
+                this.deploy_in_progress = false;
+                match result {
+                    Ok(_) => {
+                        let message = i18n::string_args(
+                            "keychain.messages.deployed",
+                            &[("summary", &success_summary), ("profile", &success_profile)],
+                        );
+                        let notification = success_notification(
+                            i18n::string("keychain.notifications.deploy_succeeded_title"),
+                            message.clone(),
+                        );
+                        this.status_message = message;
+                        this.with_active_window(cx, move |window, cx| {
+                            crate::ui::components::notifications::push_app_notification(
+                                window,
+                                notification,
+                                cx,
+                            );
+                        });
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        let message = i18n::string_args(
+                            "keychain.messages.deploy_failed",
+                            &[
+                                ("summary", &success_summary),
+                                ("profile", &success_profile),
+                                ("error", &error),
+                            ],
+                        );
+                        let notification = error_notification(
+                            i18n::string("keychain.notifications.deploy_failed_title"),
+                            message.clone(),
+                        );
+                        this.status_message = message;
+                        this.with_active_window(cx, move |window, cx| {
+                            crate::ui::components::notifications::push_app_notification(
+                                window,
+                                notification,
+                                cx,
+                            );
+                        });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    pub(in crate::ui) fn delete_managed_key(
+        &mut self,
+        key_id: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(service) = self.keychain_service() else {
+            self.status_message = i18n::string("keychain.messages.storage_unavailable");
+            cx.notify();
+            return;
+        };
+
+        let removed_record = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let removed_for_commit = removed_record.clone();
+        let key_id = key_id.to_string();
+        match self.managed_key_commit.commit(cx, move |mut keys| {
+            *removed_for_commit.borrow_mut() =
+                service.delete_and_persist_key(&mut keys, &key_id)?;
+            Ok(keys)
+        }) {
+            Ok(keys) => self.managed_keys = keys,
+            Err(error) => {
+                self.status_message = i18n::string_args(
+                    "keychain.messages.removed_locally_save_failed",
+                    &[("error", &error.to_string())],
+                );
+                cx.notify();
+                return;
+            }
+        }
+        let Some(removed) = removed_record.borrow_mut().take() else {
+            self.status_message = i18n::string("keychain.messages.not_found");
+            cx.notify();
+            return;
+        };
+        let removed_id = removed.id.clone();
+
+        if self.deploy_key_id.as_deref() == Some(removed.id.as_str()) {
+            self.deploy_key_id = None;
+            self.editor_mode = KeychainEditorMode::Import;
+            self.editor_open = false;
+            cx.emit(AppCommand::SidebarEditorStateChanged(None));
+        }
+
+        let summary = removed.summary();
+        self.status_message =
+            i18n::string_args("keychain.messages.removed", &[("summary", &summary)]);
+        cx.emit(AppCommand::ManagedKeysChanged(ManagedKeysChange::Removed {
+            key_id: removed_id,
+        }));
+        cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn managed_key(name: &str) -> ManagedKeyRecord {
+        ManagedKeyRecord {
+            id: format!("managed-key-{name}"),
+            name: name.to_string(),
+            algorithm: "ssh-ed25519".to_string(),
+            public_key: "ssh-ed25519 AAAA".to_string(),
+            source: ManagedKeySource::Imported,
+        }
+    }
+
+    #[test]
+    fn deploy_exec_command_uses_positional_arguments() {
+        let command = KeychainService::deploy_command(
+            "echo $1/$2/$3",
+            ".ssh",
+            "authorized_keys",
+            "ssh-ed25519 AAAA",
+        );
+
+        assert_eq!(
+            command,
+            "sh -lc 'echo $1/$2/$3' gpui-keychain-deploy '.ssh' 'authorized_keys' 'ssh-ed25519 AAAA'"
+        );
+    }
+
+    #[test]
+    fn deploy_exec_command_escapes_single_quotes() {
+        let command =
+            KeychainService::deploy_command("echo '$3'", "/tmp/o'clock", "keys", "ssh 'key'");
+
+        assert!(command.contains("'echo '\"'\"'$3'\"'\"''"));
+        assert!(command.contains("'/tmp/o'\"'\"'clock'"));
+        assert!(command.contains("'ssh '\"'\"'key'\"'\"''"));
+    }
+
+    #[test]
+    fn pasted_import_default_name_uses_first_available_number() {
+        let keys = vec![managed_key("Imported key 1"), managed_key("Imported key 3")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "",
+            true,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Imported key 2");
+    }
+
+    #[test]
+    fn generated_key_uses_generated_default_name() {
+        let keys = vec![managed_key("Generated key 1")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "",
+            true,
+            ManagedKeySource::Generated,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Generated key 2");
+    }
+
+    #[test]
+    fn generated_material_is_ignored_after_editor_closes_or_changes_mode() {
+        let closed = managed_key_generation_result_for_editor(
+            false,
+            KeychainEditorMode::Import,
+            Ok(("private".into(), "public".into())),
+        )
+        .expect("closed editor should ignore generated material");
+        let deploy = managed_key_generation_result_for_editor(
+            true,
+            KeychainEditorMode::Deploy,
+            Ok(("private".into(), "public".into())),
+        )
+        .expect("deploy editor should ignore generated material");
+
+        assert_eq!(closed, None);
+        assert_eq!(deploy, None);
+    }
+
+    #[test]
+    fn generation_failure_produces_no_editor_material() {
+        let result = managed_key_generation_result_for_editor(
+            true,
+            KeychainEditorMode::Import,
+            Err(anyhow!("generation failed")),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_import_uses_unique_file_stem() {
+        let keys = vec![managed_key("id_ed25519")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "",
+            "C:/Users/akko/.ssh/id_ed25519",
+            false,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "id_ed25519 2");
+    }
+
+    #[test]
+    fn explicit_name_is_trimmed_and_may_duplicate_existing_name() {
+        let keys = vec![managed_key("Production")];
+
+        let name = resolve_managed_key_import_name(
+            &keys,
+            "  Production  ",
+            "",
+            true,
+            ManagedKeySource::Imported,
+            "Imported key",
+            "Generated key",
+        );
+
+        assert_eq!(name, "Production");
+    }
+
+    #[test]
+    fn renaming_changes_only_the_managed_key_name() {
+        let original = managed_key("Production");
+        let mut keys = vec![original.clone()];
+
+        let (_, old_name) =
+            apply_managed_key_rename(&mut keys, original.id.as_str(), "Production deploy key")
+                .expect("managed key should be renamed");
+
+        assert_eq!(old_name, "Production");
+        assert_eq!(keys[0].name, "Production deploy key");
+        assert_eq!(keys[0].id, original.id);
+        assert_eq!(keys[0].algorithm, original.algorithm);
+        assert_eq!(keys[0].public_key, original.public_key);
+        assert_eq!(keys[0].source, original.source);
+    }
+}

@@ -1,10 +1,16 @@
-use super::*;
+use crate::ui::components::animation::render_basic_dialog;
+use crate::ui::components::{BasicDialogActionTone, basic_dialog_action_button};
+use crate::ui::features::forwarding::{ForwardingController, PendingPortForwardRuleDeleteState};
+use crate::ui::i18n;
+use gpui_kit::Entity;
+use gpui_kit::component::h_flex;
+use gpui_kit::prelude::*;
 
 impl ForwardingController {
-    pub(in crate::ui::shell) fn render_port_forward_rule_delete_prompt(
-        &self,
+    pub(in crate::ui::features::forwarding) fn render_port_forward_rule_delete_prompt(
         controller: Entity<Self>,
         prompt: &PendingPortForwardRuleDeleteState,
+        revision: u64,
         exit_progress: Option<f32>,
     ) -> gpui_kit::AnyElement {
         let subtitle = i18n::string_args(
@@ -29,7 +35,14 @@ impl ForwardingController {
                 )
                 .on_click(move |_, _, cx| {
                     controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_port_forward_rule_removal(cx);
+                        if controller
+                            .overlay_revisions
+                            .borrow()
+                            .current("forwarding-delete")
+                            == revision
+                        {
+                            controller.cancel_port_forward_rule_removal(cx);
+                        }
                     });
                 }),
             )
@@ -41,7 +54,14 @@ impl ForwardingController {
                 )
                 .on_click(move |_, _, cx| {
                     controller_confirm.update(cx, |controller, cx| {
-                        controller.confirm_port_forward_rule_removal(cx);
+                        if controller
+                            .overlay_revisions
+                            .borrow()
+                            .current("forwarding-delete")
+                            == revision
+                        {
+                            controller.confirm_port_forward_rule_removal(cx);
+                        }
                     });
                 }),
             );

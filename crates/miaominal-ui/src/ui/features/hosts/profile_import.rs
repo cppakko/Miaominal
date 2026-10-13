@@ -1,8 +1,11 @@
-use super::*;
-use crate::ui::shell::{
-    PendingProfileImportResultState, ValidationNotificationKind,
-    localized_profile_import_source_label, success_notification, warning_notification,
+use super::import_labels::localized_profile_import_source_label;
+use crate::ui::components::notifications::{
+    ValidationNotificationKind, success_notification, validation_notification, warning_notification,
 };
+use crate::ui::contracts::commands::AppCommand;
+use crate::ui::features::hosts::{HostsController, PendingProfileImportResultState};
+use crate::ui::i18n;
+use gpui_kit::{Context, Window};
 use miaominal_core::profile::{ImportSourceKind, ImportedBatch};
 use miaominal_services::ImportedProfilesResult;
 use miaominal_storage::config_store::import::import_profiles_from_path;
@@ -30,7 +33,7 @@ fn profile_import_presentation(
 }
 
 impl HostsController {
-    pub(in crate::ui::shell) fn import_profiles_from_source(
+    pub(in crate::ui) fn import_profiles_from_source(
         &self,
         source: ImportSourceKind,
         window: &mut Window,
@@ -175,7 +178,7 @@ impl HostsController {
         };
         cx.emit(AppCommand::Feedback(message.clone()));
         let presentation = profile_import_presentation(imported_count_value, warning_count);
-        crate::ui::shell::push_app_notification(
+        crate::ui::components::notifications::push_app_notification(
             window,
             if matches!(presentation, ProfileImportPresentation::Success) {
                 success_notification(
@@ -207,7 +210,7 @@ impl HostsController {
         cx: &mut Context<Self>,
     ) {
         cx.emit(AppCommand::Feedback(message.clone()));
-        crate::ui::shell::push_app_notification(
+        crate::ui::components::notifications::push_app_notification(
             window,
             validation_notification(ValidationNotificationKind::InvalidInput, message),
             cx,

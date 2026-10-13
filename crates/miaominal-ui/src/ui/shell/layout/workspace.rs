@@ -7,8 +7,6 @@ use gpui_kit::component::ElementExt as _;
 use std::{cell::RefCell, rc::Rc};
 
 const SESSION_SFTP_BOTTOM_PROGRESS_GAP: f32 = 8.0;
-const SESSION_SFTP_PROGRESS_MIN_HEIGHT: f32 = 220.0;
-const SESSION_WORKSPACE_MIN_HEIGHT: f32 = 240.0;
 const SESSION_SFTP_MIN_SPLIT_FLEX: f32 = 0.05;
 
 #[derive(Clone, Copy)]
@@ -18,34 +16,6 @@ impl Render for SessionSftpProgressResizeMarker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div().size(px(1.0))
     }
-}
-
-fn session_sftp_usable_height(container_height: Pixels) -> f32 {
-    (container_height.as_f32() - SESSION_SFTP_BOTTOM_PROGRESS_GAP).max(1.0)
-}
-
-fn clamp_session_sftp_progress_flex(container_height: Pixels, requested: f32) -> f32 {
-    let available = session_sftp_usable_height(container_height);
-    let min =
-        (SESSION_SFTP_PROGRESS_MIN_HEIGHT / available).clamp(SESSION_SFTP_MIN_SPLIT_FLEX, 0.95);
-    let max = (1.0
-        - (SESSION_WORKSPACE_MIN_HEIGHT / available).clamp(SESSION_SFTP_MIN_SPLIT_FLEX, 0.95))
-    .clamp(0.05, 0.95);
-
-    if max <= min {
-        return 0.5;
-    }
-
-    requested.clamp(min, max)
-}
-
-fn resized_session_sftp_progress_flex(
-    container_height: Pixels,
-    initial_flex: f32,
-    pointer_delta: f32,
-) -> f32 {
-    let requested = initial_flex - pointer_delta / session_sftp_usable_height(container_height);
-    clamp_session_sftp_progress_flex(container_height, requested)
 }
 
 fn render_session_sftp_progress_resize_handle(
@@ -70,22 +40,17 @@ fn render_session_sftp_progress_resize_handle(
                 else {
                     return;
                 };
+                if !this
+                    .controllers
+                    .session
+                    .read(cx)
+                    .begin_sftp_progress_resize(
+                        session_tab_id,
+                        f32::from(event.position.y),
+                        container_height,
+                    )
                 {
-                    let session_controller = this.controllers.session.read(cx);
-                    let Some(mut session) = session_controller.tab_mut(session_tab_id) else {
-                        return;
-                    };
-                    let stored_flex = session.sftp_progress_layout.flex();
-                    let initial_flex =
-                        clamp_session_sftp_progress_flex(container_height, stored_flex);
-                    session.sftp_progress_layout.set_flex(initial_flex);
-                    session.sftp_progress_layout.set_drag(Some(
-                        SessionSftpProgressCenterDragState {
-                            initial_pointer: f32::from(event.position.y),
-                            initial_flex,
-                            container_height,
-                        },
-                    ));
+                    return;
                 }
                 cx.stop_propagation();
                 cx.notify();
@@ -118,13 +83,11 @@ fn finish_session_sftp_progress_resize(app: &mut AppView, cx: &mut Context<AppVi
     else {
         return false;
     };
-    let finished = {
-        let session_controller = app.controllers.session.read(cx);
-        let Some(mut session) = session_controller.tab_mut(session_tab_id) else {
-            return false;
-        };
-        session.sftp_progress_layout.take_drag().is_some()
-    };
+    let finished = app
+        .controllers
+        .session
+        .read(cx)
+        .finish_sftp_progress_resize(session_tab_id);
     if !finished {
         return false;
     }
@@ -138,7 +101,6 @@ pub(in crate::ui::shell) fn render_workspace_surface(
     window: &mut Window,
     cx: &mut Context<AppView>,
 ) -> gpui_kit::AnyElement {
-    app.advance_pane_split_animation(window, cx);
     let workspace_height = Rc::new(RefCell::new(px(0.0)));
 
     // Snapshot the layout so the renderer can borrow the app mutably while walking it.
@@ -177,11 +139,6 @@ pub(in crate::ui::shell) fn render_workspace_surface(
             transition,
         )
     };
-    if !desired_agent_panel_visible {
-        app.controllers.agent.update(cx, |controller, cx| {
-            controller.finish_text_drag(cx);
-        });
-    }
     let show_agent_panel = workspace_side_panel_render_state(
         desired_agent_panel_visible,
         &mut agent_panel_visible,
@@ -192,13 +149,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         .agent
         .read(cx)
         .set_panel_transition_state(agent_panel_visible, agent_panel_transition);
-    if !desired_agent_panel_visible && show_agent_panel.is_none() {
-        app.controllers.agent.update(cx, |controller, cx| {
-            controller.finish_text_drag(cx);
-            controller.release_conversation_view(cx);
-        });
-    }
-    let agent_panel_width = super::session_agent_panel::clamp_session_agent_panel_width(
+    let agent_panel_width = crate::ui::features::agent::clamp_session_agent_panel_width(
         app.controllers.agent.read(cx).panel_width(),
     );
     app.controllers
@@ -207,13 +158,12 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         .set_panel_width(agent_panel_width);
     let side_panel = show_side_panel.and_then(|visibility| {
         let session_tab_id = session_tab_id?;
-        let session = app.session_tab(session_tab_id, cx)?;
+        app.session_tab(session_tab_id, cx)?;
         Some(render_workspace_side_panel(
             super::workspace_side_panel::render_session_workspace_side_panel(
                 app,
                 app.controllers.session.clone(),
                 session_tab_id,
-                &session,
                 cx,
             ),
             SESSION_MONITOR_PANEL_WIDTH,
@@ -229,7 +179,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         .map(|visibility| {
             let controller = app.controllers.agent.clone();
             let render_controller = controller.clone();
-            let settings = app.controllers.settings.clone();
+            let settings = SettingsController::agent_preferences_port(&app.controllers.settings);
             let terminal_selection_drag_active = app.terminal_originated_selection_drag_active();
             let panel = controller.update(cx, |controller, cx| {
                 controller.render_session_agent_sidebar(
@@ -254,12 +204,10 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         .unwrap_or(0.0);
     let (stored_sftp_progress_flex, is_sftp_progress_dragging) = session_tab_id
         .and_then(|tab_id| {
-            app.controllers.session.read(cx).tab(tab_id).map(|session| {
-                (
-                    session.sftp_progress_layout.flex(),
-                    session.sftp_progress_layout.drag().is_some(),
-                )
-            })
+            app.controllers
+                .session
+                .read(cx)
+                .sftp_progress_layout_snapshot(tab_id)
         })
         .unwrap_or((SESSION_SFTP_PROGRESS_DEFAULT_FLEX, false));
     let sftp_progress_flex = if stored_sftp_progress_flex.is_finite() {
@@ -286,7 +234,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
 
                 let pointer = f32::from(event.position.x);
                 let delta = pointer - drag.initial_pointer;
-                let next_width = super::session_agent_panel::clamp_session_agent_panel_width(
+                let next_width = crate::ui::features::agent::clamp_session_agent_panel_width(
                     drag.initial_width - delta,
                 );
                 if (this.controllers.agent.read(cx).panel_width() - next_width).abs() > f32::EPSILON
@@ -347,23 +295,10 @@ pub(in crate::ui::shell) fn render_workspace_surface(
                         .active_terminal_session_index(cx)
                         .and_then(|index| this.workspace.tabs.id_at(index));
                     let session_controller = this.controllers.session.read(cx);
-                    active_session_tab_id
-                        .and_then(|tab_id| session_controller.tab_mut(tab_id))
-                        .and_then(|mut session| {
-                            let drag = session.sftp_progress_layout.drag()?;
-                            let pointer_delta = f32::from(event.position.y) - drag.initial_pointer;
-                            let next_flex = resized_session_sftp_progress_flex(
-                                drag.container_height,
-                                drag.initial_flex,
-                                pointer_delta,
-                            );
-                            let current_flex = session.sftp_progress_layout.flex();
-                            let changed = (current_flex - next_flex).abs() > f32::EPSILON;
-                            if changed {
-                                session.sftp_progress_layout.set_flex(next_flex);
-                            }
-                            Some(changed)
-                        })
+                    active_session_tab_id.and_then(|tab_id| {
+                        session_controller
+                            .update_sftp_progress_resize(tab_id, f32::from(event.position.y))
+                    })
                 } else {
                     None
                 };
@@ -440,14 +375,12 @@ fn render_session_workspace_sftp_progress_panel(
     let session_tab_id = app
         .active_terminal_session_index(cx)
         .and_then(|index| app.workspace.tabs.id_at(index))?;
-    let visibility = {
-        let session_controller = app.controllers.session.read(cx);
-        let mut session = session_controller.tab_mut(session_tab_id)?;
-        session
-            .sftp_progress_layout
-            .render_visibility(window)
-            .unwrap_or(0.0)
-    };
+    let visibility = app
+        .controllers
+        .session
+        .read(cx)
+        .sample_sftp_progress_visibility(session_tab_id, window)
+        .unwrap_or(0.0);
     if visibility <= 0.0 {
         return None;
     }
@@ -691,28 +624,5 @@ mod tests {
 
         cx.simulate_mouse_up(outside_window, MouseButton::Left, modifiers);
         assert!(!dragging.get());
-    }
-
-    #[test]
-    fn session_sftp_progress_resize_moves_in_the_expected_direction() {
-        let height = px(1000.0);
-        let initial = SESSION_SFTP_PROGRESS_DEFAULT_FLEX;
-
-        assert!(resized_session_sftp_progress_flex(height, initial, -100.0) > initial);
-        assert!(resized_session_sftp_progress_flex(height, initial, 100.0) < initial);
-    }
-
-    #[test]
-    fn session_sftp_progress_resize_preserves_minimum_panel_heights() {
-        let height = px(1000.0);
-        let available = session_sftp_usable_height(height);
-        let minimum_progress = SESSION_SFTP_PROGRESS_MIN_HEIGHT / available;
-        let maximum_progress = 1.0 - SESSION_WORKSPACE_MIN_HEIGHT / available;
-
-        let smallest = resized_session_sftp_progress_flex(height, 0.5, 10_000.0);
-        let largest = resized_session_sftp_progress_flex(height, 0.5, -10_000.0);
-
-        assert!((smallest - minimum_progress).abs() < 0.001);
-        assert!((largest - maximum_progress).abs() < 0.001);
     }
 }

@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::ui::features::session::view::canvas::{TerminalCanvasHost, TerminalCanvasPrepaint};
+use crate::ui::features::session::{TerminalCanvasHost, TerminalCanvasPrepaint};
 
 impl TerminalCanvasHost for AppView {
     fn prepare_terminal_canvas_prepaint(
@@ -25,7 +25,7 @@ impl TerminalCanvasHost for AppView {
         }
         let pane = &self.workspace.workspace.active_pane;
         if pane.terminal_mouse_gesture.is_some()
-            || pane.terminal_mouse_reporting_active
+            || pane.terminal_mouse_reporting.is_active()
             || pane.terminal_scrollbar_drag.is_some()
         {
             self.handle_terminal_mouse_move(event, cx);
@@ -43,7 +43,7 @@ impl TerminalCanvasHost for AppView {
         }
         let pane = &self.workspace.workspace.active_pane;
         if pane.terminal_mouse_gesture.is_some()
-            || pane.terminal_mouse_reporting_active
+            || pane.terminal_mouse_reporting.is_active()
             || pane.terminal_scrollbar_drag.is_some()
         {
             self.handle_terminal_mouse_up(event, cx);
@@ -101,8 +101,9 @@ fn prepare_terminal_canvas_prepaint(
 
     let drop_target = this
         .workspace
-        .terminal_free_type_drop_target
-        .filter(|drop| drop.pane_id == pane_id)
+        .terminal_drag
+        .drop_target
+        .filter(|drop| drop.pane_id == pane_id && Some(drop.tab_id) == active_tab_id)
         .map(|drop| drop.target)
         .or(local_drop_target);
 

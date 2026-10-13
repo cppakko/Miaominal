@@ -1,20 +1,16 @@
+use crate::ui::contracts::keychain::{ManagedKeyDeployRequest, ManagedKeyImportRequest};
 use crate::ui::contracts::navigation::{PageEditorSidebarKind, SidebarSection};
-use crate::ui::contracts::security::SecretRevealTarget;
+use crate::ui::contracts::overlay::OverlaySnapshot;
+use crate::ui::contracts::preferences::SftpBrowserSide;
 use crate::ui::contracts::session::{SessionEventOutcome, SessionNotificationRequest};
-use crate::ui::contracts::snippets::SnippetSaveSubmission;
+use crate::ui::contracts::settings::{
+    AiProviderSaveDraft, LocalVaultActionRequest, ProxySaveDraft, SecretRevealRequest,
+    SyncPassphraseSaveDraft, SyncProviderConfigSaveDraft, WebSearchSaveDraft,
+};
 use crate::ui::contracts::workspace::{PaneId, SplitDirection, TabId};
-use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
-use miaominal_core::snippet::SnippetRecord;
 use miaominal_services::SyncTaskResult;
 use miaominal_sync::SyncProvider;
-// Transitional Settings/SFTP/overlay types switch to their pure/opaque contracts in Stage 4.
-use crate::ui::shell::controllers::settings::{
-    AiProviderSaveDraft, LocalVaultActionRequest, ProxySaveDraft, SyncProviderConfigSaveDraft,
-    WebSearchSaveDraft,
-};
-use crate::ui::shell::sftp_browser::SftpBrowserSide;
-use crate::ui::shell::state::DialogOverlaySnapshot;
 #[derive(Clone, Debug)]
 pub(in crate::ui) enum AppCommand {
     OpenTab(TabOpenRequest),
@@ -32,11 +28,11 @@ pub(in crate::ui) enum AppCommand {
     ImportProfilesRequested(miaominal_core::profile::ImportSourceKind),
     Feedback(String),
     KnownHostsChanged,
-    OverlayDismissed(DialogOverlaySnapshot),
+    OverlayDismissed(OverlaySnapshot),
     VaultUnlockRequested(Option<DeferredAppCommand>),
     CredentialsChanged,
     ManualSyncCompleted(Box<SyncTaskResult>),
-    ProxiesChanged(Vec<miaominal_core::proxy::ProxyProfile>),
+    ProxiesChanged,
     ManagedKeysChanged(ManagedKeysChange),
     SessionMonitoringPreferenceChanged(bool),
     AgentModePreferenceChanged(miaominal_settings::AiAgentMode),
@@ -64,6 +60,7 @@ pub(in crate::ui) enum AppCommand {
     },
     LocaleRefresh,
     RebuildApplication,
+    ChatHistoryReopenRequested,
 }
 
 impl AppCommand {
@@ -111,6 +108,7 @@ pub(in crate::ui) enum TabOpenRequest {
 #[derive(Clone, Debug)]
 pub(in crate::ui) enum DeferredAppCommand {
     SaveHostProfile,
+    RevealHostPassword(u64),
     SaveSnippet,
     SavePortForwardRule,
     Session(SessionDeferredCommand),
@@ -142,7 +140,7 @@ pub(in crate::ui) enum SftpDeferredCommand {
 pub(in crate::ui) enum SettingsDeferredCommand {
     CheckAutoSync(bool),
     ResumeSync,
-    SaveSyncPassphrase(String),
+    SaveSyncPassphrase(SyncPassphraseSaveDraft),
     OpenSyncProviderConfig(SyncProvider),
     SaveSyncProviderConfig(SyncProviderConfigSaveDraft),
     OpenAiProvider(String),
@@ -150,14 +148,14 @@ pub(in crate::ui) enum SettingsDeferredCommand {
     OpenWebSearchConfig,
     SaveWebSearch(WebSearchSaveDraft),
     SaveProxy(ProxySaveDraft),
-    ClearSyncPassphrase,
-    RevealSecret(SecretRevealTarget),
+    ClearSyncPassphrase(u64),
+    RevealSecret(SecretRevealRequest),
 }
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) enum KeychainDeferredCommand {
-    ImportManagedKey,
-    DeployManagedKey,
+    ImportManagedKey(ManagedKeyImportRequest),
+    DeployManagedKey(Box<ManagedKeyDeployRequest>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

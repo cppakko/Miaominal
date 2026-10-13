@@ -584,9 +584,9 @@ impl SessionController {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{SessionMonitoringState, SessionTabState};
     use super::*;
     use crate::ui::features::session::SessionSftpProgressLayoutState;
-    use crate::ui::features::session::{SessionMonitoringState, SessionTabState};
     use miaominal_terminal::TerminalState;
     use tokio::sync::mpsc;
 

@@ -1,7 +1,16 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::empty_state::empty_state;
+use crate::ui::components::group_accent::group_accent_palette;
+use crate::ui::components::{SearchInputStyle, card_surface, icon_button, search_filter_input};
+use crate::ui::contracts::TabId;
+use crate::ui::contracts::session::SessionTerminalPort;
+use crate::ui::features::snippets::SnippetsController;
 use crate::ui::i18n;
-
-use crate::ui::shell::pages::shell_empty_state;
-use crate::ui::shell::*;
+use crate::ui::utils::truncate_with_ellipsis;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, MouseButton, SharedString, Window, div, px, rgb};
 
 fn session_snippet_package_card(
     title: String,
@@ -94,19 +103,18 @@ fn session_snippet_package_card(
 }
 
 impl SnippetsController {
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the workspace supplies its filter state and terminal access without exposing mutable session state"
-    )]
-    pub(in crate::ui::shell) fn render_workspace_panel(
+    pub(in crate::ui) fn render_workspace_panel(
         &self,
-        snippets_filter_input: Entity<InputState>,
-        selected_package_filter: Option<String>,
+        controller: Entity<Self>,
         terminal_port: SessionTerminalPort,
-        on_package_toggle: impl Fn(String, &mut App) + Clone + 'static,
         terminal_tab_id: Option<TabId>,
         cx: &App,
     ) -> gpui_kit::AnyElement {
+        let snippets_filter_input = self.workspace_filter_input.clone();
+        let selected_package_filter = self.workspace_package_filter.borrow().clone();
+        let on_package_toggle = move |package, cx: &mut App| {
+            controller.update(cx, |owner, cx| owner.toggle_workspace_package(package, cx));
+        };
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let text_muted = crate::ui::theme::palette_tone_rgb(
@@ -161,7 +169,7 @@ impl SnippetsController {
         });
 
         let content = if snippets.is_empty() {
-            shell_empty_state(
+            empty_state(
                 AppIcon::Notebook,
                 i18n::string("workspace.panel.snippets.empty"),
             )

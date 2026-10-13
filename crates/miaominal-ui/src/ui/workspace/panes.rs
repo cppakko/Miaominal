@@ -1,10 +1,10 @@
 use crate::ui::contracts::{PaneId, SplitAxis, TabId};
 use crate::ui::features::session::{
-    TerminalHoveredLink, TerminalLinkQuery, TerminalMouseGesture, TerminalScrollbarDrag,
+    TerminalHoveredLink, TerminalKeyboardState, TerminalLinkQuery, TerminalMouseGesture,
+    TerminalMouseReportingState, TerminalScrollbarDrag,
 };
 use gpui_kit::{Bounds, FocusHandle, Pixels, Point};
 use miaominal_terminal::{terminal_cell_width_default, terminal_line_height_default};
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -87,9 +87,9 @@ pub(crate) struct ParkedPane {
     pub terminal_cell_width: f32,
     pub terminal_line_height: f32,
     pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
-    pub terminal_suppressed_key_releases: HashSet<String>,
-    pub terminal_mouse_reporting_active: bool,
-    pub last_reported_mouse_cell: Option<(usize, usize)>,
+    pub terminal_keyboard: TerminalKeyboardState,
+    pub terminal_mouse_reporting: TerminalMouseReportingState,
+    pub terminal_pointer_target: Option<TabId>,
     pub terminal_pointer_position: Option<Point<Pixels>>,
     pub terminal_link_query: Option<TerminalLinkQuery>,
     pub terminal_hovered_link: Option<TerminalHoveredLink>,
@@ -108,9 +108,9 @@ impl ParkedPane {
             terminal_cell_width: terminal_cell_width_default(),
             terminal_line_height: terminal_line_height_default(),
             terminal_mouse_gesture: None,
-            terminal_suppressed_key_releases: HashSet::new(),
-            terminal_mouse_reporting_active: false,
-            last_reported_mouse_cell: None,
+            terminal_keyboard: TerminalKeyboardState::default(),
+            terminal_mouse_reporting: TerminalMouseReportingState::default(),
+            terminal_pointer_target: None,
             terminal_pointer_position: None,
             terminal_link_query: None,
             terminal_hovered_link: None,

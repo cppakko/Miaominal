@@ -144,7 +144,6 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
     app: &AppView,
     session_controller: Entity<SessionController>,
     session_tab_id: TabId,
-    session: &SessionTabState,
     cx: &App,
 ) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -194,29 +193,20 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
         SessionSidePanelView::Monitor => {
             let settings = app.controllers.settings.read(cx);
             let history_duration = settings.settings().monitor_history_duration;
-            let history_select = settings.forms().monitor_history_select;
+            let history_select = settings.render_monitor_history_select();
             session_controller.read(cx).render_session_monitor_panel(
                 session_controller.clone(),
-                session,
+                session_tab_id,
                 history_duration,
                 history_select,
             )
         }
         SessionSidePanelView::Snippets => {
             let controller = session_controller.read(cx);
-            let filter_input = controller.workspace_snippets_filter_input();
-            let selected_package = controller.workspace_snippets_selected_package_filter();
             let terminal_port = controller.terminal_port();
-            let filter_controller = session_controller.clone();
             app.controllers.snippets.read(cx).render_workspace_panel(
-                filter_input,
-                selected_package,
+                app.controllers.snippets.clone(),
                 terminal_port,
-                move |package, cx| {
-                    filter_controller.update(cx, |controller, cx| {
-                        controller.handle_workspace_snippets_package_filter_toggle(package, cx)
-                    });
-                },
                 app.workspace.workspace.active_tab,
                 cx,
             )
@@ -269,7 +259,9 @@ fn render_session_sftp_panel(
     if let Some(tab_id) = app.session_side_panel_sftp_tab_id(cx) {
         let controller = app.controllers.sftp.clone();
         let sftp_controller = controller.read(cx);
-        if let Some(sftp_tab) = sftp_controller.tab(tab_id) {
+        if let Some(content) =
+            sftp_controller.render_remote_browser_panel(controller.clone(), tab_id)
+        {
             return div()
                 .id("session-sftp-panel-content")
                 .size_full()
@@ -277,11 +269,7 @@ fn render_session_sftp_panel(
                 .min_h(px(0.0))
                 .px_3()
                 .pb_3()
-                .child(sftp_controller.render_sftp_remote_browser_panel(
-                    controller.clone(),
-                    tab_id,
-                    &sftp_tab,
-                ))
+                .child(content)
                 .into_any_element();
         }
     }

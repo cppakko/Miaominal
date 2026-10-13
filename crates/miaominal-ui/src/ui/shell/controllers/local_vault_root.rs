@@ -66,8 +66,6 @@ pub(in crate::ui::shell) trait LocalVaultRootExt: Sized {
         cx: &mut Context<Self>,
     );
 
-    fn close_local_vault_passphrase_popup(&mut self, window: &mut Window, cx: &mut Context<Self>);
-
     fn handle_local_vault_action_request(
         &mut self,
         request: LocalVaultActionRequest,
@@ -191,6 +189,11 @@ impl LocalVaultRootExt for AppView {
         cx: &mut Context<Self>,
     ) {
         match follow_up {
+            DeferredAppCommand::RevealHostPassword(revision) => {
+                self.controllers.hosts.update(cx, |controller, cx| {
+                    controller.continue_reveal_password_after_unlock(revision, window, cx)
+                });
+            }
             DeferredAppCommand::SavePortForwardRule => {
                 self.controllers.forwarding.update(cx, |controller, cx| {
                     controller.continue_save_port_forward_rule_after_unlock(window, cx);
@@ -262,21 +265,15 @@ impl LocalVaultRootExt for AppView {
                         controller.continue_save_proxy_after_unlock(draft, window, cx);
                     });
                 }
-                SettingsDeferredCommand::ClearSyncPassphrase => {
+                SettingsDeferredCommand::ClearSyncPassphrase(revision) => {
                     self.controllers.settings.update(cx, |controller, cx| {
-                        controller.continue_clear_sync_passphrase_after_unlock(cx);
+                        controller.continue_clear_sync_passphrase_after_unlock(revision, cx);
                     });
                 }
-                SettingsDeferredCommand::RevealSecret(target) => {
-                    if target == SecretRevealTarget::HostPassword {
-                        self.controllers.hosts.update(cx, |controller, cx| {
-                            controller.reveal_host_password_input(window, cx);
-                        });
-                    } else {
-                        self.controllers.settings.update(cx, |controller, cx| {
-                            controller.continue_reveal_secret_after_unlock(target, window, cx);
-                        });
-                    }
+                SettingsDeferredCommand::RevealSecret(request) => {
+                    self.controllers.settings.update(cx, |controller, cx| {
+                        controller.continue_reveal_secret_after_unlock(request, window, cx);
+                    });
                 }
             },
             DeferredAppCommand::Agent(AgentDeferredCommand::ResumeRequest) => {
@@ -360,10 +357,6 @@ impl LocalVaultRootExt for AppView {
             return;
         }
 
-        let stable_key = DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode).stable_key();
-        self.shell
-            .exiting_dialogs
-            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
         let controller = self.controllers.settings.clone();
         controller.update(cx, |controller, cx| {
             controller.open_local_vault_passphrase_popup(mode, window, cx);
@@ -378,22 +371,10 @@ impl LocalVaultRootExt for AppView {
             return;
         }
 
-        let stable_key = DialogOverlaySnapshot::LocalVaultPassphrasePopup(mode).stable_key();
-        self.shell
-            .exiting_dialogs
-            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
         let controller = self.controllers.settings.clone();
         controller.update(cx, |controller, cx| {
             controller.open_local_vault_passphrase_popup_in_active_window(mode, cx);
         });
-    }
-    fn close_local_vault_passphrase_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let controller = self.controllers.settings.clone();
-        if controller.update(cx, |controller, cx| {
-            controller.close_local_vault_passphrase_popup(window, cx)
-        }) {
-            self.shell.deferred_app_command = None;
-        }
     }
     fn handle_local_vault_action_request(
         &mut self,
@@ -405,14 +386,14 @@ impl LocalVaultRootExt for AppView {
             return;
         }
 
-        match request {
-            LocalVaultActionRequest::Enable { passphrase } => {
-                self.spawn_local_vault_enable(passphrase, cx)
-            }
-            LocalVaultActionRequest::Unlock { passphrase } => {
-                self.spawn_local_vault_unlock(passphrase, cx)
-            }
-            LocalVaultActionRequest::Lock => {
+        use crate::ui::contracts::settings::LocalVaultActionKind;
+        let (kind, passphrase, new_passphrase) = request.into_parts();
+        match kind {
+            LocalVaultActionKind::Enable => self
+                .spawn_local_vault_enable(passphrase.expect("enable request owns passphrase"), cx),
+            LocalVaultActionKind::Unlock => self
+                .spawn_local_vault_unlock(passphrase.expect("unlock request owns passphrase"), cx),
+            LocalVaultActionKind::Lock => {
                 if let Err(error) = self.lock_local_vault(window, cx) {
                     let action = self.local_vault_primary_action_label(cx);
                     let settings = self.controllers.settings.clone();
@@ -422,11 +403,12 @@ impl LocalVaultRootExt for AppView {
                     cx.notify();
                 }
             }
-            LocalVaultActionRequest::Disable => self.spawn_local_vault_disable(cx),
-            LocalVaultActionRequest::ChangePassphrase {
-                current_passphrase,
-                new_passphrase,
-            } => self.spawn_local_vault_change_passphrase(current_passphrase, new_passphrase, cx),
+            LocalVaultActionKind::Disable => self.spawn_local_vault_disable(cx),
+            LocalVaultActionKind::ChangePassphrase => self.spawn_local_vault_change_passphrase(
+                passphrase.expect("change request owns old passphrase"),
+                new_passphrase.expect("change request owns new passphrase"),
+                cx,
+            ),
         }
     }
     fn spawn_local_vault_unlock(

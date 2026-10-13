@@ -1,10 +1,28 @@
-use super::*;
+use crate::ui::assets::AppIcon;
+use crate::ui::components::forms::{
+    localized_secret_placeholder, new_input_state, set_code_editor_input_placeholder,
+    set_editor_value, set_input_masked, set_input_placeholder, set_input_value,
+};
+use crate::ui::components::notifications::{
+    ValidationFailure, error_notification, validation_notification,
+};
+use crate::ui::components::selection::{ManagedKeySelectItem, ProfileSelectItem, SelectOption};
+use crate::ui::contracts::commands::{AppCommand, DeferredAppCommand, TabOpenRequest};
+use crate::ui::contracts::navigation::{PageEditorSidebarKind, ProfileViewMode};
+use crate::ui::contracts::security::LocalVaultStatus;
+use gpui_kit::prelude::*;
+#[cfg(test)]
+use gpui_kit::{Bounds, div};
+#[cfg(test)]
+use miaominal_core::profile::{PortForwardKind, PortForwardRule};
+mod import_labels;
+use crate::ui::contracts::overlay::{OverlayRevisionState, OverlaySnapshot};
 use crate::ui::contracts::{CatalogQueryPort, ProfileCommitPort};
 use crate::ui::i18n;
 use crate::ui::utils::local_shell;
 use gpui_kit::component::{
     input::{EditorState, InputEvent, InputState, TabSize},
-    select::{SearchableVec, SelectEvent, SelectState},
+    select::{SearchableVec, SelectEvent, SelectItem, SelectState},
 };
 use gpui_kit::{App, Context, Entity, EventEmitter, ScrollHandle, Subscription, Window};
 use miaominal_core::{
@@ -30,67 +48,62 @@ mod dialogs;
 mod profile_import;
 #[path = "hosts/view.rs"]
 mod view;
-use super::bootstrap_loaders::initial_profile_selection;
-use super::controllers::TabOpenRequest;
-use super::support::set_input_masked;
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostEditorEnvironmentVariableRow {
-    pub(in crate::ui::shell) name_input: Entity<InputState>,
-    pub(in crate::ui::shell) value_input: Entity<InputState>,
+pub(in crate::ui) struct HostEditorEnvironmentVariableRow {
+    pub(in crate::ui) name_input: Entity<InputState>,
+    pub(in crate::ui) value_input: Entity<InputState>,
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostEditorForms {
-    pub(in crate::ui::shell) name_input: Entity<InputState>,
-    pub(in crate::ui::shell) group_input: Entity<InputState>,
-    pub(in crate::ui::shell) group_select: Entity<SelectState<SearchableVec<String>>>,
-    pub(in crate::ui::shell) managed_key_select:
-        Entity<SelectState<SearchableVec<ManagedKeySelectItem>>>,
-    pub(in crate::ui::shell) proxy_jump_select:
-        Entity<SelectState<SearchableVec<ProxyJumpCandidateSelectItem>>>,
-    pub(in crate::ui::shell) entry_proxy_select:
+pub(in crate::ui) struct HostEditorForms {
+    pub(in crate::ui) name_input: Entity<InputState>,
+    pub(in crate::ui) group_input: Entity<InputState>,
+    pub(in crate::ui) group_select: Entity<SelectState<SearchableVec<String>>>,
+    pub(in crate::ui) managed_key_select: Entity<SelectState<SearchableVec<ManagedKeySelectItem>>>,
+    pub(in crate::ui) proxy_jump_select: Entity<SelectState<SearchableVec<ProfileSelectItem>>>,
+    pub(in crate::ui) entry_proxy_select:
         Entity<SelectState<SearchableVec<SelectOption<Option<String>>>>>,
-    pub(in crate::ui::shell) charset_select: Entity<SelectState<SearchableVec<String>>>,
-    pub(in crate::ui::shell) creating_new_group: bool,
-    pub(in crate::ui::shell) tags_input: Entity<InputState>,
-    pub(in crate::ui::shell) host_input: Entity<InputState>,
-    pub(in crate::ui::shell) port_input: Entity<InputState>,
-    pub(in crate::ui::shell) username_input: Entity<InputState>,
-    pub(in crate::ui::shell) password_input: Entity<InputState>,
-    pub(in crate::ui::shell) private_key_input: Entity<InputState>,
-    pub(in crate::ui::shell) agent_identity_input: Entity<InputState>,
-    pub(in crate::ui::shell) certificate_input: Entity<InputState>,
-    pub(in crate::ui::shell) passphrase_input: Entity<InputState>,
-    pub(in crate::ui::shell) startup_command_input: Entity<EditorState>,
-    pub(in crate::ui::shell) proxy_jump_profile_ids: Vec<String>,
-    pub(in crate::ui::shell) selected_proxy_jump_hop: Option<usize>,
-    pub(in crate::ui::shell) environment_variable_rows: Vec<HostEditorEnvironmentVariableRow>,
-    pub(in crate::ui::shell) shell_type: ShellType,
-    pub(in crate::ui::shell) editing_auth_method: AuthMethod,
-    pub(in crate::ui::shell) agent_forwarding_enabled: bool,
-    pub(in crate::ui::shell) profile_kind: ProfileKind,
-    pub(in crate::ui::shell) local_shell_input: Entity<InputState>,
-    pub(in crate::ui::shell) local_shell_args_input: Entity<InputState>,
-    pub(in crate::ui::shell) local_working_directory_input: Entity<InputState>,
+    pub(in crate::ui) charset_select: Entity<SelectState<SearchableVec<String>>>,
+    pub(in crate::ui) creating_new_group: bool,
+    pub(in crate::ui) tags_input: Entity<InputState>,
+    pub(in crate::ui) host_input: Entity<InputState>,
+    pub(in crate::ui) port_input: Entity<InputState>,
+    pub(in crate::ui) username_input: Entity<InputState>,
+    pub(in crate::ui) password_input: Entity<InputState>,
+    pub(in crate::ui) private_key_input: Entity<InputState>,
+    pub(in crate::ui) agent_identity_input: Entity<InputState>,
+    pub(in crate::ui) certificate_input: Entity<InputState>,
+    pub(in crate::ui) passphrase_input: Entity<InputState>,
+    pub(in crate::ui) startup_command_input: Entity<EditorState>,
+    pub(in crate::ui) proxy_jump_profile_ids: Vec<String>,
+    pub(in crate::ui) selected_proxy_jump_hop: Option<usize>,
+    pub(in crate::ui) environment_variable_rows: Vec<HostEditorEnvironmentVariableRow>,
+    pub(in crate::ui) shell_type: ShellType,
+    pub(in crate::ui) editing_auth_method: AuthMethod,
+    pub(in crate::ui) agent_forwarding_enabled: bool,
+    pub(in crate::ui) profile_kind: ProfileKind,
+    pub(in crate::ui) local_shell_input: Entity<InputState>,
+    pub(in crate::ui) local_shell_args_input: Entity<InputState>,
+    pub(in crate::ui) local_working_directory_input: Entity<InputState>,
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostsForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
+pub(in crate::ui) struct HostsForms {
+    pub(in crate::ui) filter_input: Entity<InputState>,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingProfileDeleteState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) profile_name: String,
-    pub(in crate::ui::shell) reload_inputs_after_delete: bool,
+pub(in crate::ui) struct PendingProfileDeleteState {
+    pub(in crate::ui) profile_id: String,
+    pub(in crate::ui) profile_name: String,
+    pub(in crate::ui) reload_inputs_after_delete: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingProfileImportResultState {
-    pub(in crate::ui::shell) source: ImportSourceKind,
-    pub(in crate::ui::shell) imported_count: usize,
-    pub(in crate::ui::shell) issues: Vec<ImportIssue>,
+pub(in crate::ui) struct PendingProfileImportResultState {
+    pub(in crate::ui) source: ImportSourceKind,
+    pub(in crate::ui) imported_count: usize,
+    pub(in crate::ui) issues: Vec<ImportIssue>,
 }
 fn is_valid_environment_variable_name(name: &str) -> bool {
     let mut characters = name.chars();
@@ -106,41 +119,41 @@ fn is_valid_environment_variable_name(name: &str) -> bool {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostEditorState {
-    pub(in crate::ui::shell) host_editor_open: bool,
-    pub(in crate::ui::shell) host_editor_is_new: bool,
+pub(in crate::ui) struct HostEditorState {
+    pub(in crate::ui) host_editor_open: bool,
+    pub(in crate::ui) host_editor_is_new: bool,
 }
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostsCatalogViewState {
-    pub(in crate::ui::shell) hosts_view_mode: ProfileViewMode,
-    pub(in crate::ui::shell) hosts_group_filter: Option<String>,
+pub(in crate::ui) struct HostsCatalogViewState {
+    pub(in crate::ui) hosts_view_mode: ProfileViewMode,
+    pub(in crate::ui) hosts_group_filter: Option<String>,
 }
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostsPanelForms {
-    pub(in crate::ui::shell) hosts: HostsForms,
+pub(in crate::ui) struct HostsPanelForms {
+    pub(in crate::ui) hosts: HostsForms,
 }
 #[derive(Default)]
 struct HostsPendingDialogs {
     profile_delete: Option<PendingProfileDeleteState>,
     profile_import_result: Option<PendingProfileImportResultState>,
 }
-pub(in crate::ui::shell) struct HostsControllerArgs {
-    pub(in crate::ui::shell) catalog_query: CatalogQueryPort,
-    pub(in crate::ui::shell) profile_commit: ProfileCommitPort,
-    pub(in crate::ui::shell) session_store: Option<SessionStore>,
-    pub(in crate::ui::shell) secrets: SecretStore,
-    pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
-    pub(in crate::ui::shell) proxies: Vec<ProxyProfile>,
-    pub(in crate::ui::shell) selected_profile: Option<usize>,
-    pub(in crate::ui::shell) managed_keys: Vec<ManagedKeyRecord>,
-    pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
+pub(in crate::ui) struct HostsControllerArgs {
+    pub(in crate::ui) catalog_query: CatalogQueryPort,
+    pub(in crate::ui) profile_commit: ProfileCommitPort,
+    pub(in crate::ui) session_store: Option<SessionStore>,
+    pub(in crate::ui) secrets: SecretStore,
+    pub(in crate::ui) profiles: Vec<SessionProfile>,
+    pub(in crate::ui) proxies: Vec<ProxyProfile>,
+    pub(in crate::ui) selected_profile: Option<usize>,
+    pub(in crate::ui) managed_keys: Vec<ManagedKeyRecord>,
+    pub(in crate::ui) local_vault_status: LocalVaultStatus,
 }
 struct HostsServices {
     session_store: Option<SessionStore>,
     secrets: SecretStore,
     local_vault_status: LocalVaultStatus,
 }
-pub(in crate::ui::shell) struct HostsController {
+pub(in crate::ui) struct HostsController {
     services: HostsServices,
     catalog_query: CatalogQueryPort,
     profile_commit: ProfileCommitPort,
@@ -159,6 +172,7 @@ pub(in crate::ui::shell) struct HostsController {
     editor_state: RefCell<HostEditorState>,
     catalog_view: RefCell<HostsCatalogViewState>,
     pending_dialogs: RefCell<HostsPendingDialogs>,
+    overlay_revisions: RefCell<OverlayRevisionState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -445,7 +459,7 @@ impl HostsController {
         });
         let proxy_jump_select = cx.new(|cx| {
             SelectState::new(
-                SearchableVec::new(Vec::<ProxyJumpCandidateSelectItem>::new()),
+                SearchableVec::new(Vec::<ProfileSelectItem>::new()),
                 None,
                 window,
                 cx,
@@ -506,7 +520,7 @@ impl HostsController {
             local_working_directory_input,
         }
     }
-    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+    pub(in crate::ui) fn refresh_localized_placeholders(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -600,7 +614,7 @@ impl HostsController {
             cx,
         );
     }
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         args: HostsControllerArgs,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -667,10 +681,7 @@ impl HostsController {
             ),
             cx.subscribe(
                 &proxy_jump_select,
-                |controller,
-                 _,
-                 event: &SelectEvent<SearchableVec<ProxyJumpCandidateSelectItem>>,
-                 cx| {
+                |controller, _, event: &SelectEvent<SearchableVec<ProfileSelectItem>>, cx| {
                     let SelectEvent::Confirm(selected_profile_id) = event;
                     if let Some(selected_profile_id) = selected_profile_id.as_deref() {
                         controller.add_proxy_jump_profile(selected_profile_id, cx);
@@ -719,11 +730,12 @@ impl HostsController {
                 hosts_view_mode: ProfileViewMode::Grid,
                 hosts_group_filter: None,
             }),
+            overlay_revisions: RefCell::default(),
             pending_dialogs: RefCell::new(HostsPendingDialogs::default()),
             _subscriptions: subscriptions,
         }
     }
-    pub(in crate::ui::shell) fn current_host_editor_profile_id(&self) -> Option<String> {
+    pub(in crate::ui) fn current_host_editor_profile_id(&self) -> Option<String> {
         let index = self.selected_profile.get()?;
         self.profiles
             .borrow()
@@ -731,7 +743,7 @@ impl HostsController {
             .map(|profile| profile.id.clone())
     }
 
-    pub(in crate::ui::shell) fn available_proxy_jump_candidates(
+    pub(in crate::ui) fn available_proxy_jump_candidates(
         &self,
         target_profile_id: &str,
     ) -> Vec<SessionProfile> {
@@ -761,9 +773,7 @@ impl HostsController {
         candidates
     }
 
-    pub(in crate::ui::shell) fn collect_available_groups(
-        profiles: &[SessionProfile],
-    ) -> Vec<String> {
+    pub(in crate::ui) fn collect_available_groups(profiles: &[SessionProfile]) -> Vec<String> {
         let mut groups = profiles
             .iter()
             .filter_map(|profile| {
@@ -776,11 +786,11 @@ impl HostsController {
         groups
     }
 
-    pub(in crate::ui::shell) fn available_groups(&self) -> Vec<String> {
+    pub(in crate::ui) fn available_groups(&self) -> Vec<String> {
         Self::collect_available_groups(&self.profiles.borrow())
     }
 
-    pub(in crate::ui::shell) fn proxy_jump_chain_profiles(&self) -> Vec<SessionProfile> {
+    pub(in crate::ui) fn proxy_jump_chain_profiles(&self) -> Vec<SessionProfile> {
         let profile_ids = self.host_editor_forms().proxy_jump_profile_ids;
         let profiles = self.profiles.borrow();
         profile_ids
@@ -794,11 +804,7 @@ impl HostsController {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn set_auth_method(
-        &self,
-        auth_method: AuthMethod,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn set_auth_method(&self, auth_method: AuthMethod, cx: &mut Context<Self>) {
         self.host_editor_forms_mut().editing_auth_method = match auth_method {
             AuthMethod::KeyFile => AuthMethod::ManagedKey,
             _ => auth_method,
@@ -806,7 +812,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_agent_forwarding_enabled(
+    pub(in crate::ui) fn set_agent_forwarding_enabled(
         &self,
         enabled: bool,
         cx: &mut Context<Self>,
@@ -815,7 +821,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_host_editor_profile_kind(
+    pub(in crate::ui) fn set_host_editor_profile_kind(
         &self,
         kind: ProfileKind,
         cx: &mut Context<Self>,
@@ -827,7 +833,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_local_shell_path(
+    pub(in crate::ui) fn set_local_shell_path(
         &self,
         path: PathBuf,
         window: &mut Window,
@@ -838,7 +844,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_local_working_directory_path(
+    pub(in crate::ui) fn set_local_working_directory_path(
         &self,
         path: PathBuf,
         window: &mut Window,
@@ -859,20 +865,12 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn set_shell_type(
-        &self,
-        shell_type: ShellType,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn set_shell_type(&self, shell_type: ShellType, cx: &mut Context<Self>) {
         self.host_editor_forms_mut().shell_type = shell_type;
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_new_group(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn begin_new_group(&self, window: &mut Window, cx: &mut Context<Self>) {
         let forms = self.host_editor_forms();
         self.host_editor_forms_mut().creating_new_group = true;
         forms.group_select.update(cx, |select, cx| {
@@ -906,7 +904,7 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn host_editor_environment_variable_rows<T: 'static>(
+    pub(in crate::ui) fn host_editor_environment_variable_rows<T: 'static>(
         variables: &[SessionEnvironmentVariable],
         window: &mut Window,
         cx: &mut Context<T>,
@@ -930,7 +928,7 @@ impl HostsController {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn add_environment_variable_row(
+    pub(in crate::ui) fn add_environment_variable_row(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -942,7 +940,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn remove_environment_variable_row(
+    pub(in crate::ui) fn remove_environment_variable_row(
         &self,
         index: usize,
         window: &mut Window,
@@ -964,11 +962,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn select_proxy_jump_step(
-        &self,
-        step_index: usize,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn select_proxy_jump_step(&self, step_index: usize, cx: &mut Context<Self>) {
         let mut forms = self.host_editor_forms_mut();
         forms.selected_proxy_jump_hop = if step_index < forms.proxy_jump_profile_ids.len() {
             Some(step_index)
@@ -979,7 +973,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn move_selected_proxy_jump_hop_up(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn move_selected_proxy_jump_hop_up(&self, cx: &mut Context<Self>) {
         let mut forms = self.host_editor_forms_mut();
         let Some(selected_index) = forms.selected_proxy_jump_hop else {
             return;
@@ -995,7 +989,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn move_selected_proxy_jump_hop_down(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn move_selected_proxy_jump_hop_down(&self, cx: &mut Context<Self>) {
         let mut forms = self.host_editor_forms_mut();
         let Some(selected_index) = forms.selected_proxy_jump_hop else {
             return;
@@ -1011,7 +1005,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn remove_selected_proxy_jump_hop(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn remove_selected_proxy_jump_hop(&self, cx: &mut Context<Self>) {
         let mut forms = self.host_editor_forms_mut();
         let Some(selected_index) = forms.selected_proxy_jump_hop else {
             return;
@@ -1031,7 +1025,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn close_host_editor(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn close_host_editor(&self, cx: &mut Context<Self>) {
         if !self.editor_state().host_editor_open {
             return;
         }
@@ -1040,7 +1034,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn request_selected_profile_delete(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn request_selected_profile_delete(&self, cx: &mut Context<Self>) {
         let Some(index) = self.selected_profile() else {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "profile.messages.select_profile_to_delete",
@@ -1061,11 +1055,11 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn request_new_profile_editor(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn request_new_profile_editor(&self, cx: &mut Context<Self>) {
         cx.emit(AppCommand::OpenTab(TabOpenRequest::NewProfileEditor));
     }
 
-    pub(in crate::ui::shell) fn request_profile_editor_at_index(
+    pub(in crate::ui) fn request_profile_editor_at_index(
         &self,
         index: usize,
         cx: &mut Context<Self>,
@@ -1081,7 +1075,7 @@ impl HostsController {
         self.request_profile_editor(profile_id, false, cx);
     }
 
-    pub(in crate::ui::shell) fn request_profile_editor(
+    pub(in crate::ui) fn request_profile_editor(
         &self,
         profile_id: String,
         open_hosts_tab: bool,
@@ -1104,7 +1098,7 @@ impl HostsController {
         }));
     }
 
-    pub(in crate::ui::shell) fn request_profile_connection_test(
+    pub(in crate::ui) fn request_profile_connection_test(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1123,7 +1117,7 @@ impl HostsController {
                 if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
                     let message = validation.message.clone();
                     cx.emit(AppCommand::Feedback(message.clone()));
-                    crate::ui::shell::push_app_notification(
+                    crate::ui::components::notifications::push_app_notification(
                         window,
                         validation_notification(validation.kind, message),
                         cx,
@@ -1134,7 +1128,7 @@ impl HostsController {
                         "profile.messages.test_connection_failed",
                         &[("message", &message)],
                     )));
-                    crate::ui::shell::push_app_notification(
+                    crate::ui::components::notifications::push_app_notification(
                         window,
                         error_notification(
                             i18n::string("profile.messages.test_connection_failed_title"),
@@ -1148,7 +1142,7 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn request_profile_save(
+    pub(in crate::ui) fn request_profile_save(
         &mut self,
         sync_requires_unlock: bool,
         window: &mut Window,
@@ -1177,7 +1171,7 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn commit_profile_save_request(
+    pub(in crate::ui) fn commit_profile_save_request(
         &mut self,
         profile: SessionProfile,
         managed_key_options: Vec<ManagedKeySelectItem>,
@@ -1224,7 +1218,7 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn request_sftp_at_profile_index(
+    pub(in crate::ui) fn request_sftp_at_profile_index(
         &self,
         index: usize,
         cx: &mut Context<Self>,
@@ -1243,7 +1237,7 @@ impl HostsController {
         }));
     }
 
-    pub(in crate::ui::shell) fn request_session_at_profile_index(
+    pub(in crate::ui) fn request_session_at_profile_index(
         &self,
         index: usize,
         cx: &mut Context<Self>,
@@ -1259,7 +1253,7 @@ impl HostsController {
         cx.emit(AppCommand::OpenTab(TabOpenRequest::Session { profile_id }));
     }
 
-    pub(in crate::ui::shell) fn host_password_reveal_icon(&self) -> AppIcon {
+    pub(in crate::ui) fn host_password_reveal_icon(&self) -> AppIcon {
         if self.host_password_visible() {
             AppIcon::EyeOff
         } else {
@@ -1267,7 +1261,7 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn host_editor_auth_method(auth_method: AuthMethod) -> AuthMethod {
+    pub(in crate::ui) fn host_editor_auth_method(auth_method: AuthMethod) -> AuthMethod {
         match auth_method {
             AuthMethod::KeyFile => AuthMethod::ManagedKey,
             _ => auth_method,
@@ -1314,7 +1308,7 @@ impl HostsController {
         );
     }
 
-    pub(in crate::ui::shell) fn sync_managed_key_select(
+    pub(in crate::ui) fn sync_managed_key_select(
         &self,
         options: Vec<ManagedKeySelectItem>,
         selected_key_id: Option<&str>,
@@ -1357,7 +1351,7 @@ impl HostsController {
         });
     }
 
-    pub(in crate::ui::shell) fn refresh_entry_proxy_select(
+    pub(in crate::ui) fn refresh_entry_proxy_select(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1372,7 +1366,7 @@ impl HostsController {
         self.sync_entry_proxy_select(selected_proxy_id, window, cx);
     }
 
-    pub(in crate::ui::shell) fn sync_managed_key_select_in_active_window(
+    pub(in crate::ui) fn sync_managed_key_select_in_active_window(
         &self,
         options: Vec<ManagedKeySelectItem>,
         selected_key_id: Option<String>,
@@ -1415,7 +1409,7 @@ impl HostsController {
         let options = SearchableVec::new(
             self.available_proxy_jump_candidates(&target_profile_id)
                 .iter()
-                .map(ProxyJumpCandidateSelectItem::new)
+                .map(ProfileSelectItem::new)
                 .collect::<Vec<_>>(),
         );
         let selected_profile_id = selected_profile_id.map(str::to_string);
@@ -1431,7 +1425,7 @@ impl HostsController {
         });
     }
 
-    pub(in crate::ui::shell) fn set_host_password_visibility(
+    pub(in crate::ui) fn set_host_password_visibility(
         &mut self,
         visible: bool,
         focus: bool,
@@ -1443,7 +1437,7 @@ impl HostsController {
         set_input_masked(&password_input, !visible, focus, window, cx);
     }
 
-    pub(in crate::ui::shell) fn load_selected_profile_into_inputs(
+    pub(in crate::ui) fn load_selected_profile_into_inputs(
         &mut self,
         managed_key_options: Vec<ManagedKeySelectItem>,
         window: &mut Window,
@@ -1629,7 +1623,7 @@ impl HostsController {
         forms.profile_kind = ProfileKind::Ssh;
     }
 
-    pub(in crate::ui::shell) fn add_profile(
+    pub(in crate::ui) fn add_profile(
         &mut self,
         managed_key_options: Vec<ManagedKeySelectItem>,
         window: &mut Window,
@@ -1650,7 +1644,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn open_profile_editor(
+    pub(in crate::ui) fn open_profile_editor(
         &mut self,
         index: usize,
         managed_key_options: Vec<ManagedKeySelectItem>,
@@ -1732,7 +1726,7 @@ impl HostsController {
         true
     }
 
-    pub(in crate::ui::shell) fn load_selected_profile_password_input(
+    pub(in crate::ui) fn load_selected_profile_password_input(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1758,7 +1752,7 @@ impl HostsController {
         Ok(())
     }
 
-    pub(in crate::ui::shell) fn prepare_host_password_for_lock(
+    pub(in crate::ui) fn prepare_host_password_for_lock(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1795,7 +1789,7 @@ impl HostsController {
         self.set_host_password_visibility(false, false, window, cx);
     }
 
-    pub(in crate::ui::shell) fn reveal_host_password_input(
+    pub(in crate::ui) fn reveal_host_password_input(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1803,7 +1797,7 @@ impl HostsController {
         if let Err(error) = self.load_selected_profile_password_input(window, cx) {
             let message = error.to_string();
             cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
+            crate::ui::components::notifications::push_app_notification(
                 window,
                 error_notification(
                     i18n::string("settings.sync.vault.notifications.failed_title"),
@@ -1819,7 +1813,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn toggle_host_password_visibility(
+    pub(in crate::ui) fn toggle_host_password_visibility(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1844,15 +1838,24 @@ impl HostsController {
         }
 
         if self.services.local_vault_status == LocalVaultStatus::Locked {
-            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Settings(
-                super::SettingsDeferredCommand::RevealSecret(
-                    crate::ui::shell::SecretRevealTarget::HostPassword,
-                ),
-            )));
+            cx.emit(AppCommand::vault_unlock(
+                DeferredAppCommand::RevealHostPassword(self.editor_revision.get()),
+            ));
             return;
         }
 
         self.reveal_host_password_input(window, cx);
+    }
+
+    pub(in crate::ui) fn continue_reveal_password_after_unlock(
+        &mut self,
+        revision: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_revision.get() == revision && self.editor_state().host_editor_open {
+            self.reveal_host_password_input(window, cx);
+        }
     }
 
     fn import_profiles(
@@ -1975,7 +1978,7 @@ impl HostsController {
             .unwrap_or_else(|| self.next_profile_id())
     }
 
-    pub(in crate::ui::shell) fn next_profile_id(&self) -> String {
+    pub(in crate::ui) fn next_profile_id(&self) -> String {
         self.profile_service()
             .next_profile_id(&self.catalog_query.profiles())
     }
@@ -2300,7 +2303,7 @@ impl HostsController {
         })
     }
 
-    pub(in crate::ui::shell) fn read_profile_save_draft(
+    pub(in crate::ui) fn read_profile_save_draft(
         &self,
         cx: &App,
     ) -> anyhow::Result<SessionProfile> {
@@ -2352,7 +2355,7 @@ impl HostsController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
+            crate::ui::components::notifications::push_app_notification(
                 window,
                 validation_notification(validation.kind, message),
                 cx,
@@ -2367,7 +2370,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn continue_save_profile_after_unlock(
+    pub(in crate::ui) fn continue_save_profile_after_unlock(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2384,7 +2387,7 @@ impl HostsController {
         let options = SearchableVec::new(
             self.available_proxy_jump_candidates(&target_profile_id)
                 .iter()
-                .map(ProxyJumpCandidateSelectItem::new)
+                .map(ProfileSelectItem::new)
                 .collect::<Vec<_>>(),
         );
         let select = self.host_editor_forms().proxy_jump_select;
@@ -2469,7 +2472,7 @@ impl HostsController {
         options
     }
 
-    pub(in crate::ui::shell) fn request_profile_delete_at_index(
+    pub(in crate::ui) fn request_profile_delete_at_index(
         &self,
         index: usize,
         cx: &mut Context<Self>,
@@ -2486,11 +2489,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn duplicate_profile_at_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn duplicate_profile_at_index(&self, index: usize, cx: &mut Context<Self>) {
         let Some(original) = self.profiles.borrow().get(index).cloned() else {
             return;
         };
@@ -2529,11 +2528,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn toggle_profile_favorite(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn toggle_profile_favorite(&self, index: usize, cx: &mut Context<Self>) {
         let Some(original) = self.profiles.borrow().get(index).cloned() else {
             return;
         };
@@ -2590,7 +2585,7 @@ impl HostsController {
         self.host_editor_forms_state().borrow_mut()
     }
 
-    pub(in crate::ui::shell) fn host_editor_scroll_handle(&self) -> ScrollHandle {
+    pub(in crate::ui) fn host_editor_scroll_handle(&self) -> ScrollHandle {
         self.host_editor_scroll_handle.clone()
     }
 
@@ -2599,62 +2594,66 @@ impl HostsController {
             .set_offset(Default::default());
     }
 
-    pub(in crate::ui::shell) fn pending_profile_delete(&self) -> Option<PendingProfileDeleteState> {
+    pub(in crate::ui) fn pending_profile_delete(&self) -> Option<PendingProfileDeleteState> {
         self.pending_dialogs.borrow().profile_delete.clone()
     }
 
-    pub(in crate::ui::shell) fn set_pending_profile_delete(
+    pub(in crate::ui) fn set_pending_profile_delete(
         &self,
         pending: Option<PendingProfileDeleteState>,
     ) {
+        self.overlay_revisions.borrow_mut().begin("profile-delete");
         self.pending_dialogs.borrow_mut().profile_delete = pending;
     }
 
-    pub(in crate::ui::shell) fn take_pending_profile_delete(
-        &self,
-    ) -> Option<PendingProfileDeleteState> {
+    pub(in crate::ui) fn take_pending_profile_delete(&self) -> Option<PendingProfileDeleteState> {
         self.pending_dialogs.borrow_mut().profile_delete.take()
     }
 
-    pub(in crate::ui::shell) fn cancel_profile_delete(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_profile_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::ProfileDelete(pending),
-            ));
+    pub(in crate::ui) fn cancel_profile_delete(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.profile_delete_overlay(cx.entity());
+        if self.take_pending_profile_delete().is_some()
+            && let Some(snapshot) = snapshot
+        {
+            cx.emit(AppCommand::OverlayDismissed(snapshot));
         }
     }
 
-    pub(in crate::ui::shell) fn pending_profile_import_result(
+    pub(in crate::ui) fn pending_profile_import_result(
         &self,
     ) -> Option<PendingProfileImportResultState> {
         self.pending_dialogs.borrow().profile_import_result.clone()
     }
 
-    pub(in crate::ui::shell) fn set_pending_profile_import_result(
+    pub(in crate::ui) fn set_pending_profile_import_result(
         &self,
         pending: Option<PendingProfileImportResultState>,
     ) {
+        self.overlay_revisions
+            .borrow_mut()
+            .begin("profile-import-result");
         self.pending_dialogs.borrow_mut().profile_import_result = pending;
     }
 
-    pub(in crate::ui::shell) fn dismiss_profile_import_result(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self
+    pub(in crate::ui) fn dismiss_profile_import_result(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.profile_import_result_overlay(cx.entity());
+        if self
             .pending_dialogs
             .borrow_mut()
             .profile_import_result
             .take()
+            .is_some()
+            && let Some(snapshot) = snapshot
         {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::ProfileImportResult(pending),
-            ));
+            cx.emit(AppCommand::OverlayDismissed(snapshot));
         }
     }
 
-    pub(in crate::ui::shell) fn host_password_visible(&self) -> bool {
+    pub(in crate::ui) fn host_password_visible(&self) -> bool {
         self.host_password_visible
     }
 
-    pub(in crate::ui::shell) fn set_host_editor_state(&self, open: bool, is_new: bool) {
+    pub(in crate::ui) fn set_host_editor_state(&self, open: bool, is_new: bool) {
         self.pending_save.take();
         self.editor_revision
             .set(self.editor_revision.get().wrapping_add(1).max(1));
@@ -2669,7 +2668,7 @@ impl HostsController {
         state.host_editor_is_new = is_new;
     }
 
-    pub(in crate::ui::shell) fn set_hosts_view_mode(
+    pub(in crate::ui) fn set_hosts_view_mode(
         &mut self,
         mode: ProfileViewMode,
         cx: &mut Context<Self>,
@@ -2678,7 +2677,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn toggle_hosts_group_filter(
+    pub(in crate::ui) fn toggle_hosts_group_filter(
         &mut self,
         group: String,
         cx: &mut Context<Self>,
@@ -2695,7 +2694,7 @@ impl HostsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn remove_managed_key_from_editor(&self, key_id: &str, cx: &App) {
+    pub(in crate::ui) fn remove_managed_key_from_editor(&self, key_id: &str, cx: &App) {
         let forms = self.host_editor_forms();
         if forms
             .managed_key_select
@@ -2708,19 +2707,19 @@ impl HostsController {
         }
     }
 
-    pub(in crate::ui::shell) fn profile_index(&self, id: &str) -> Option<usize> {
+    pub(in crate::ui) fn profile_index(&self, id: &str) -> Option<usize> {
         resolve_profile_index(&self.profiles.borrow(), id)
     }
 
-    pub(in crate::ui::shell) fn profiles(&self) -> Ref<'_, Vec<SessionProfile>> {
+    pub(in crate::ui) fn profiles(&self) -> Ref<'_, Vec<SessionProfile>> {
         self.profiles.borrow()
     }
 
-    pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {
+    pub(in crate::ui) fn selected_profile(&self) -> Option<usize> {
         self.selected_profile.get()
     }
 
-    pub(in crate::ui::shell) fn set_selected_profile(&self, selected: Option<usize>) {
+    pub(in crate::ui) fn set_selected_profile(&self, selected: Option<usize>) {
         self.selected_profile.set(selected);
     }
 
@@ -2731,27 +2730,24 @@ impl HostsController {
         )
     }
 
-    pub(in crate::ui::shell) fn session_store_available(&self) -> bool {
+    pub(in crate::ui) fn session_store_available(&self) -> bool {
         self.services.session_store.is_some()
     }
 
-    pub(in crate::ui::shell) fn owner_window(&self) -> gpui_kit::AnyWindowHandle {
+    pub(in crate::ui) fn owner_window(&self) -> gpui_kit::AnyWindowHandle {
         self.window_handle
     }
 
-    pub(in crate::ui::shell) fn panel_forms(&self) -> HostsPanelForms {
+    pub(in crate::ui) fn panel_forms(&self) -> HostsPanelForms {
         self.panel_forms.clone()
     }
-    pub(in crate::ui::shell) fn editor_state(&self) -> HostEditorState {
+    pub(in crate::ui) fn editor_state(&self) -> HostEditorState {
         self.editor_state.borrow().clone()
     }
-    pub(in crate::ui::shell) fn catalog_view(&self) -> HostsCatalogViewState {
+    pub(in crate::ui) fn catalog_view(&self) -> HostsCatalogViewState {
         self.catalog_view.borrow().clone()
     }
-    pub(in crate::ui::shell) fn replace_profiles_from_application(
-        &self,
-        profiles: Vec<SessionProfile>,
-    ) {
+    pub(in crate::ui) fn replace_profiles_from_application(&self, profiles: Vec<SessionProfile>) {
         let selected_id = self.selected_profile().and_then(|ix| {
             self.profiles
                 .borrow()
@@ -2762,13 +2758,10 @@ impl HostsController {
             .set(selected_id.and_then(|id| profiles.iter().position(|profile| profile.id == id)));
         self.profiles.replace(profiles);
     }
-    pub(in crate::ui::shell) fn replace_proxies_from_application(
-        &self,
-        proxies: Vec<ProxyProfile>,
-    ) {
+    pub(in crate::ui) fn replace_proxies_from_application(&self, proxies: Vec<ProxyProfile>) {
         self.proxies.replace(proxies);
     }
-    pub(in crate::ui::shell) fn credentials_changed(
+    pub(in crate::ui) fn credentials_changed(
         &mut self,
         secrets: SecretStore,
         status: LocalVaultStatus,
@@ -2792,27 +2785,139 @@ impl ProfileInputPurpose {
         matches!(self, Self::Save)
     }
 }
-pub(in crate::ui::shell) struct HostConnectionTest {
-    pub(in crate::ui::shell) in_progress: bool,
+pub(in crate::ui) struct HostConnectionTest {
+    pub(in crate::ui) in_progress: bool,
     cancel: std::rc::Rc<dyn Fn(&mut App)>,
 }
 impl HostConnectionTest {
-    pub(in crate::ui::shell) fn new(
-        in_progress: bool,
-        cancel: impl Fn(&mut App) + 'static,
-    ) -> Self {
+    pub(in crate::ui) fn new(in_progress: bool, cancel: impl Fn(&mut App) + 'static) -> Self {
         Self {
             in_progress,
             cancel: std::rc::Rc::new(cancel),
         }
     }
-    pub(in crate::ui::shell) fn cancel(&self, cx: &mut App) {
+    pub(in crate::ui) fn cancel(&self, cx: &mut App) {
         (self.cancel)(cx);
     }
 }
 
 fn resolve_profile_index(profiles: &[SessionProfile], id: &str) -> Option<usize> {
     profiles.iter().position(|profile| profile.id == id)
+}
+
+impl HostsController {
+    pub(in crate::ui) fn current_overlay(
+        &self,
+        controller: Entity<Self>,
+    ) -> Option<OverlaySnapshot> {
+        self.profile_delete_overlay(controller.clone())
+            .or_else(|| self.profile_import_result_overlay(controller))
+    }
+
+    fn profile_delete_overlay(&self, controller: Entity<Self>) -> Option<OverlaySnapshot> {
+        let prompt = self.pending_profile_delete()?;
+        let revision = self.overlay_revisions.borrow().current("profile-delete");
+        let render_controller = controller.clone();
+        let dismiss_controller = controller.clone();
+        Some(
+            OverlaySnapshot::new(
+                format!("hosts:profile-delete:{}", prompt.profile_id),
+                revision,
+                move |progress, _, _| {
+                    Self::render_profile_delete_prompt(
+                        render_controller.clone(),
+                        &prompt,
+                        revision,
+                        progress,
+                    )
+                },
+                move |_, cx| {
+                    dismiss_controller.update(cx, |this, cx| {
+                        if this.overlay_revisions.borrow().current("profile-delete") == revision {
+                            this.cancel_profile_delete(cx);
+                        }
+                    });
+                },
+            )
+            .with_submit(move |window, cx| {
+                controller.update(cx, |this, cx| {
+                    if this.overlay_revisions.borrow().current("profile-delete") == revision {
+                        this.confirm_profile_delete(window, cx);
+                    }
+                });
+            }),
+        )
+    }
+
+    fn profile_import_result_overlay(&self, controller: Entity<Self>) -> Option<OverlaySnapshot> {
+        let prompt = self.pending_profile_import_result()?;
+        let revision = self
+            .overlay_revisions
+            .borrow()
+            .current("profile-import-result");
+        let render_controller = controller.clone();
+        Some(OverlaySnapshot::new(
+            "hosts:profile-import-result",
+            revision,
+            move |progress, _, _| {
+                Self::render_profile_import_result(
+                    render_controller.clone(),
+                    &prompt,
+                    revision,
+                    progress,
+                )
+            },
+            move |_, cx| {
+                controller.update(cx, |this, cx| {
+                    if this
+                        .overlay_revisions
+                        .borrow()
+                        .current("profile-import-result")
+                        == revision
+                    {
+                        this.dismiss_profile_import_result(cx);
+                    }
+                });
+            },
+        ))
+    }
+}
+
+pub(in crate::ui) fn initial_profile_selection(
+    profiles: &[SessionProfile],
+    selected_profile: Option<usize>,
+) -> InitialProfileSelection {
+    let selected_profile_data = selected_profile.and_then(|index| profiles.get(index).cloned());
+    let editing_auth_method = selected_profile_data
+        .as_ref()
+        .map(SessionProfile::effective_auth_method)
+        .map(HostsController::host_editor_auth_method)
+        .unwrap_or_default();
+    let available_groups = HostsController::collect_available_groups(profiles);
+    let selected_group = selected_profile_data
+        .as_ref()
+        .map(|profile| profile.group.trim().to_string())
+        .unwrap_or_default();
+    let selected_existing_group = available_groups
+        .iter()
+        .find(|group| group.eq_ignore_ascii_case(selected_group.as_str()))
+        .cloned();
+
+    InitialProfileSelection {
+        selected_profile_data,
+        editing_auth_method,
+        available_groups,
+        selected_group,
+        selected_existing_group,
+    }
+}
+
+pub(in crate::ui) struct InitialProfileSelection {
+    pub(in crate::ui) selected_profile_data: Option<SessionProfile>,
+    pub(in crate::ui) editing_auth_method: AuthMethod,
+    pub(in crate::ui) available_groups: Vec<String>,
+    pub(in crate::ui) selected_group: String,
+    pub(in crate::ui) selected_existing_group: Option<String>,
 }
 
 #[cfg(test)]

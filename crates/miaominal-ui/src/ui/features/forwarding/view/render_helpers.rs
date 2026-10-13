@@ -1,6 +1,14 @@
 use super::utils::rule_summary;
+use crate::ui::assets::AppIcon;
+use crate::ui::components::{TextInputSurface, surface_text_input};
+use crate::ui::features::forwarding::ForwardingController;
 use crate::ui::i18n;
-use crate::ui::shell::*;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, SharedString, div, px, rgb};
+use miaominal_core::profile::{PortForwardKind, PortForwardRule};
 
 #[derive(Clone)]
 pub(super) struct ForwardRuleActions {

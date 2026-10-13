@@ -1,7 +1,26 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::metrics::{
+    EDITOR_DRAWER_WIDTH, FORWARD_RULE_CARD_HEIGHT, FORWARD_RULE_CARD_WIDTH,
+};
+use crate::ui::components::tokens::color_with_alpha;
+use crate::ui::components::{
+    SearchInputStyle, TextInputSurface, badge, card_surface, editor_footer_actions, fab_button,
+    list_item_card, page_muted_icon_tile, page_section_title, page_view_mode_toolbar_item,
+    search_filter_input, surface_text_input_stack,
+};
 use crate::ui::components::{
     SectionCard, SegmentedSwitch, editor_button, md3_select, md3_spinner, md3_switch,
 };
+use crate::ui::contracts::navigation::ProfileViewMode;
+use crate::ui::features::forwarding::ForwardingController;
 use crate::ui::i18n;
+use gpui_kit::component::menu::ContextMenuExt as _;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, MouseButton, Window, div, px, rgb};
+use miaominal_core::profile::{PortForwardKind, PortForwardRule, SessionProfile};
 use miaominal_services::PortForwardRuntimeState;
 
 use super::{
@@ -11,8 +30,6 @@ use super::{
         render_forward_endpoint_editor, route_direction_icon, truncate_with_ellipsis,
     },
 };
-use crate::ui::shell::pages::empty_state::shell_empty_page;
-use crate::ui::shell::*;
 
 const FORWARD_RULE_CARD_ACTION_WIDTH: f32 = 52.0;
 const FORWARD_RULE_CARD_TITLE_MAX_CHARS: usize = 15;
@@ -489,10 +506,7 @@ impl ForwardingController {
         .into_any_element()
     }
 
-    pub(in crate::ui::shell) fn render_forward_fab(
-        &self,
-        controller: Entity<Self>,
-    ) -> impl IntoElement {
+    pub(in crate::ui) fn render_forward_fab(&self, controller: Entity<Self>) -> impl IntoElement {
         fab_button(move |window, cx| {
             controller.update(cx, |controller, cx| {
                 controller.open_port_forward_panel(window, cx);
@@ -500,7 +514,7 @@ impl ForwardingController {
         })
     }
 
-    pub(in crate::ui::shell) fn render_port_forward_editor_sidebar(
+    pub(in crate::ui) fn render_port_forward_editor_sidebar(
         &self,
         controller: Entity<Self>,
         on_save: impl Fn(&mut Window, &mut App) + 'static,
@@ -729,7 +743,7 @@ impl ForwardingController {
         .into_any_element()
     }
 
-    pub(in crate::ui::shell) fn render_forward_page(
+    pub(in crate::ui) fn render_forward_page(
         &self,
         controller: Entity<Self>,
         cx: &App,
@@ -743,7 +757,7 @@ impl ForwardingController {
             .sum::<usize>();
 
         if profiles.is_empty() {
-            return shell_empty_page(
+            return empty_page(
                 AppIcon::Forward,
                 i18n::string("forwarding.empty.no_host_profiles"),
             )
@@ -751,7 +765,7 @@ impl ForwardingController {
         }
 
         if total_rules == 0 {
-            return shell_empty_page(AppIcon::Forward, i18n::string("forwarding.empty.no_rules"))
+            return empty_page(AppIcon::Forward, i18n::string("forwarding.empty.no_rules"))
                 .into_any_element();
         }
 

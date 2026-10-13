@@ -1,11 +1,12 @@
+use crate::ui::contracts::snippets::TransferredSnippetsUi;
 use gpui_kit::{App, Context, Window};
 
 use super::model::{TabKindTag, TabPlacement, TabState, TabWorkspaceState, WorkspaceModel};
-use crate::ui::contracts::sftp::{TransferredSftpTab, TransferredSftpWindowUi};
-use crate::ui::contracts::{PaneId, TabId};
-use crate::ui::features::session::{
+use crate::ui::contracts::TabId;
+use crate::ui::contracts::session::{
     SessionPurpose, TransferredSessionTab, TransferredSessionWorkspaceUi,
 };
+use crate::ui::contracts::sftp::{TransferredSftpTab, TransferredSftpWindowUi};
 use crate::ui::i18n;
 
 enum DetachedTabPayload {
@@ -32,6 +33,7 @@ pub(crate) struct DetachedTabBundle {
     entries: Vec<DetachedTabEntry>,
     workspace: Option<TabWorkspaceState>,
     session_ui: Option<TransferredSessionWorkspaceUi>,
+    snippets_ui: Option<TransferredSnippetsUi>,
     sftp_ui: Option<TransferredSftpWindowUi>,
 }
 
@@ -98,6 +100,17 @@ pub(crate) trait WorkspaceTransferHost: Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> TransferredSessionWorkspaceUi;
+    fn transfer_take_snippets_ui(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TransferredSnippetsUi;
+    fn transfer_restore_snippets_ui(
+        &mut self,
+        ui: TransferredSnippetsUi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
     fn transfer_take_sftp_ui(
         &mut self,
         id: TabId,
@@ -170,7 +183,7 @@ pub(crate) trait WorkspaceTransferExt: WorkspaceTransferHost {
         bundle: DetachedTabBundle,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), DetachedTabBundle>;
+    ) -> Result<(), Box<DetachedTabBundle>>;
     fn restore_detached_tab_bundle(
         &mut self,
         bundle: DetachedTabBundle,
@@ -259,6 +272,8 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
             visible_sftp_tab_id.and_then(|tab_id| self.transfer_take_sftp_ui(tab_id, window, cx));
         let session_ui =
             (active_root && root_is_session).then(|| self.transfer_take_session_ui(window, cx));
+        let snippets_ui =
+            (active_root && root_is_session).then(|| self.transfer_take_snippets_ui(window, cx));
 
         let workspace = if root_is_session {
             if active_topbar_before == Some(root_id) {
@@ -317,6 +332,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
             entries: transferred,
             workspace,
             session_ui,
+            snippets_ui,
             sftp_ui,
         })
     }
@@ -340,9 +356,9 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         mut bundle: DetachedTabBundle,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), DetachedTabBundle> {
+    ) -> Result<(), Box<DetachedTabBundle>> {
         if !self.can_install_detached_tab_bundle(&bundle, cx) {
-            return Err(bundle);
+            return Err(Box::new(bundle));
         }
         // A detached view is freshly bootstrapped with only a resource-free Hosts tab. There are
         // no session or SFTP controller payloads to retire here, so dropping that metadata
@@ -394,6 +410,9 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
             self.transfer_reset_loaded_workspace(cx);
         }
 
+        if let Some(ui) = bundle.snippets_ui.take() {
+            self.transfer_restore_snippets_ui(ui, window, cx);
+        }
         if let Some(session_ui) = bundle.session_ui.take() {
             let active_tab_id = self.transfer_state().workspace.active_tab;
             self.transfer_restore_session_ui(session_ui, active_tab_id, window, cx);
@@ -457,6 +476,9 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         }
         self.transfer_state_mut().active_topbar_tab = bundle.source.active_topbar_before;
         self.transfer_restore_active_topbar_sidebar_section(cx);
+        if let Some(ui) = bundle.snippets_ui.take() {
+            self.transfer_restore_snippets_ui(ui, window, cx);
+        }
         if let Some(session_ui) = bundle.session_ui.take() {
             let active_tab_id = self.transfer_state().workspace.active_tab;
             self.transfer_restore_session_ui(session_ui, active_tab_id, window, cx);
@@ -547,7 +569,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
             }
         }
         for tab_id in tab_ids {
-            let _ = self.transfer_remove_tab_payload_and_metadata(tab_id, cx);
+            self.transfer_remove_tab_payload_and_metadata(tab_id, cx);
         }
         self.transfer_state_mut().active_topbar_tab = None;
         self.transfer_reset_loaded_workspace(cx);
@@ -558,6 +580,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::contracts::PaneId;
 
     #[test]
     fn detached_window_menu_only_accepts_terminal_workspaces_and_standalone_sftp() {

@@ -1,13 +1,25 @@
-use super::*;
+use crate::ui::components::forms::{new_input_state, set_input_placeholder, set_input_value};
+use crate::ui::components::notifications::{ValidationFailure, validation_notification};
+use crate::ui::components::selection::ProfileSelectItem;
+use crate::ui::contracts::commands::{AppCommand, DeferredAppCommand};
+use crate::ui::contracts::navigation::{PageEditorSidebarKind, ProfileViewMode};
+use crate::ui::contracts::overlay::{OverlayRevisionState, OverlaySnapshot};
+use crate::ui::contracts::security::LocalVaultStatus;
 use crate::ui::{
     contracts::{CatalogQueryPort, ForwardingRuntimePort, ProfileCommitPort},
     i18n,
 };
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{
     input::InputEvent,
     select::{SearchableVec, SelectEvent, SelectState},
 };
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Context, Entity, Window};
+#[cfg(test)]
+use gpui_kit::{Bounds, SharedString, div, px};
 use gpui_kit::{EventEmitter, Subscription};
+use miaominal_core::profile::{AuthMethod, PortForwardKind, PortForwardRule, SessionProfile};
 use miaominal_secrets::SecretStore;
 use miaominal_services::{PortForwardManager, PortForwardRuntimeState, ProfileService};
 use miaominal_storage::config_store::store::SessionStore;
@@ -19,11 +31,11 @@ mod dialogs;
 mod view;
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingPortForwardRuleDeleteState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) rule_id: String,
-    pub(in crate::ui::shell) profile_label: String,
-    pub(in crate::ui::shell) rule_label: String,
+pub(in crate::ui) struct PendingPortForwardRuleDeleteState {
+    pub(in crate::ui) profile_id: String,
+    pub(in crate::ui) rule_id: String,
+    pub(in crate::ui) profile_label: String,
+    pub(in crate::ui) rule_label: String,
 }
 
 #[derive(Clone)]
@@ -40,7 +52,7 @@ struct PortForwardRuleInputValues {
 #[derive(Clone)]
 struct PortForwardingForms {
     filter_input: Entity<InputState>,
-    profile_select: Entity<SelectState<SearchableVec<ForwardProfileSelectItem>>>,
+    profile_select: Entity<SelectState<SearchableVec<ProfileSelectItem>>>,
     label_input: Entity<InputState>,
     listen_host_input: Entity<InputState>,
     listen_port_input: Entity<InputState>,
@@ -160,7 +172,7 @@ fn apply_forwarding_change(
     })
 }
 
-pub(in crate::ui::shell) struct ForwardingController {
+pub(in crate::ui) struct ForwardingController {
     catalog: CatalogQueryPort,
     profile_commit: ProfileCommitPort,
     store: Option<SessionStore>,
@@ -174,11 +186,12 @@ pub(in crate::ui::shell) struct ForwardingController {
     pending_delete: RefCell<Option<PendingPortForwardRuleDeleteState>>,
     pending_save: RefCell<Option<ForwardSaveDraft>>,
     editor_revision: Cell<u64>,
+    overlay_revisions: RefCell<OverlayRevisionState>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<AppCommand> for ForwardingController {}
 
-pub(in crate::ui::shell) struct ForwardingControllerArgs {
+pub(in crate::ui) struct ForwardingControllerArgs {
     pub catalog: CatalogQueryPort,
     pub profile_commit: ProfileCommitPort,
     pub store: Option<SessionStore>,
@@ -189,7 +202,7 @@ pub(in crate::ui::shell) struct ForwardingControllerArgs {
 }
 
 impl ForwardingController {
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         args: ForwardingControllerArgs,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -256,10 +269,7 @@ impl ForwardingController {
             }),
             cx.subscribe(
                 &forms.profile_select,
-                |controller,
-                 _,
-                 event: &SelectEvent<SearchableVec<ForwardProfileSelectItem>>,
-                 cx| {
+                |controller, _, event: &SelectEvent<SearchableVec<ProfileSelectItem>>, cx| {
                     let SelectEvent::Confirm(profile_id) = event;
                     if controller.editor_state().port_forward_editor_profile_id == *profile_id {
                         return;
@@ -287,11 +297,12 @@ impl ForwardingController {
             pending_delete: RefCell::new(None),
             pending_save: RefCell::new(None),
             editor_revision: Cell::new(0),
+            overlay_revisions: RefCell::default(),
             _subscriptions: subscriptions,
         }
     }
 
-    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+    pub(in crate::ui) fn refresh_localized_placeholders(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -320,7 +331,7 @@ impl ForwardingController {
         }
     }
 
-    pub(in crate::ui::shell) fn credentials_changed(
+    pub(in crate::ui) fn credentials_changed(
         &mut self,
         secrets: SecretStore,
         status: LocalVaultStatus,
@@ -331,7 +342,7 @@ impl ForwardingController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn adopt_catalog(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn adopt_catalog(&self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.editor_state().port_forward_editor_profile_id;
         self.sync_port_forward_profile_select(selected.as_deref(), window, cx);
         cx.notify();
@@ -339,7 +350,7 @@ impl ForwardingController {
     fn editor_state(&self) -> ForwardEditorState {
         self.editor_state.borrow().clone()
     }
-    pub(in crate::ui::shell) fn editor_open(&self) -> bool {
+    pub(in crate::ui) fn editor_open(&self) -> bool {
         self.editor_state.borrow().port_forward_editor_open
     }
     fn profiles(&self) -> Vec<SessionProfile> {
@@ -360,7 +371,7 @@ impl ForwardingController {
             .session(profile_id, rule_id)
             .map(|runtime| runtime.state.clone())
     }
-    pub(in crate::ui::shell) fn pending_port_forward_rule_delete(
+    pub(in crate::ui) fn pending_port_forward_rule_delete(
         &self,
     ) -> Option<PendingPortForwardRuleDeleteState> {
         self.pending_delete.borrow().clone()
@@ -369,6 +380,9 @@ impl ForwardingController {
         &self,
         pending: Option<PendingPortForwardRuleDeleteState>,
     ) {
+        self.overlay_revisions
+            .borrow_mut()
+            .begin("forwarding-delete");
         self.pending_delete.replace(pending);
     }
     fn take_pending_port_forward_rule_delete(&self) -> Option<PendingPortForwardRuleDeleteState> {
@@ -434,14 +448,12 @@ impl ForwardingController {
             })
     }
 
-    fn forward_profile_options(
-        profiles: &[SessionProfile],
-    ) -> SearchableVec<ForwardProfileSelectItem> {
+    fn forward_profile_options(profiles: &[SessionProfile]) -> SearchableVec<ProfileSelectItem> {
         SearchableVec::new(
             profiles
                 .iter()
                 .filter(|profile| !profile.is_local())
-                .map(ForwardProfileSelectItem::new)
+                .map(ProfileSelectItem::new)
                 .collect::<Vec<_>>(),
         )
     }
@@ -505,10 +517,11 @@ impl ForwardingController {
     }
 
     fn cancel_port_forward_rule_removal(&self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_port_forward_rule_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::PortForwardRuleDelete(pending),
-            ));
+        let snapshot = self.forwarding_delete_overlay(cx.entity());
+        if self.take_pending_port_forward_rule_delete().is_some()
+            && let Some(snapshot) = snapshot
+        {
+            cx.emit(AppCommand::OverlayDismissed(snapshot));
         }
     }
 
@@ -612,7 +625,7 @@ impl ForwardingController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
+            crate::ui::components::notifications::push_app_notification(
                 window,
                 validation_notification(validation.kind, message),
                 cx,
@@ -803,7 +816,7 @@ impl ForwardingController {
         state.port_forward_kind = kind;
     }
 
-    pub(in crate::ui::shell) fn clear_port_forward_editor(&self) {
+    pub(in crate::ui) fn clear_port_forward_editor(&self) {
         self.pending_save.take();
         self.editor_revision
             .set(self.editor_revision.get().wrapping_add(1).max(1));
@@ -894,7 +907,7 @@ impl ForwardingController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn save_port_forward_rule(
+    pub(in crate::ui) fn save_port_forward_rule(
         &self,
         requires_unlock: bool,
         window: &mut Window,
@@ -922,7 +935,7 @@ impl ForwardingController {
         }
     }
 
-    pub(in crate::ui::shell) fn continue_save_port_forward_rule_after_unlock(
+    pub(in crate::ui) fn continue_save_port_forward_rule_after_unlock(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1053,7 +1066,7 @@ impl ForwardingController {
             return;
         }
         cx.emit(AppCommand::OpenTab(
-            super::controllers::TabOpenRequest::PortForwarding {
+            crate::ui::contracts::TabOpenRequest::PortForwarding {
                 profile_id: profile_id.into(),
                 rule_id: rule_id.into(),
             },
@@ -1134,6 +1147,51 @@ impl ForwardingController {
         };
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
+    }
+}
+
+impl ForwardingController {
+    pub(in crate::ui) fn current_overlay(
+        &self,
+        controller: Entity<Self>,
+    ) -> Option<OverlaySnapshot> {
+        self.forwarding_delete_overlay(controller)
+    }
+
+    fn forwarding_delete_overlay(&self, controller: Entity<Self>) -> Option<OverlaySnapshot> {
+        let prompt = self.pending_port_forward_rule_delete()?;
+        let revision = self.overlay_revisions.borrow().current("forwarding-delete");
+        let render_controller = controller.clone();
+        let dismiss_controller = controller.clone();
+        Some(
+            OverlaySnapshot::new(
+                format!("forwarding:delete:{}:{}", prompt.profile_id, prompt.rule_id),
+                revision,
+                move |progress, _, _| {
+                    Self::render_port_forward_rule_delete_prompt(
+                        render_controller.clone(),
+                        &prompt,
+                        revision,
+                        progress,
+                    )
+                },
+                move |_, cx| {
+                    dismiss_controller.update(cx, |this, cx| {
+                        if this.overlay_revisions.borrow().current("forwarding-delete") == revision
+                        {
+                            this.cancel_port_forward_rule_removal(cx);
+                        }
+                    });
+                },
+            )
+            .with_submit(move |_, cx| {
+                controller.update(cx, |this, cx| {
+                    if this.overlay_revisions.borrow().current("forwarding-delete") == revision {
+                        this.confirm_port_forward_rule_removal(cx);
+                    }
+                });
+            }),
+        )
     }
 }
 

@@ -25,6 +25,8 @@ use super::contracts::{
 use super::i18n;
 
 mod catalog;
+mod managed_keys;
+mod proxies;
 mod runtime_persistence;
 mod snippets;
 use catalog::ConnectionCatalog;
@@ -477,6 +479,73 @@ impl ApplicationState {
         cx.notify();
     }
 
+    pub(in crate::ui) fn publish_proxies(
+        &mut self,
+        proxies: Vec<ProxyProfile>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.catalog.set_proxies(proxies) {
+            self.refresh_connection_catalog_services();
+            self.generations.catalogs = next_generation(self.generations.catalogs);
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui) fn refresh_persisted_settings(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let mut settings_store = self.settings_store.clone();
+        settings_store.reload_from_disk()?;
+        let proxies = self
+            .services
+            .proxy_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("proxy store unavailable"))?
+            .load(&self.services.secrets)?;
+        let mut sync_engine = self.sync_engine.clone();
+        sync_engine.config_store = miaominal_sync::SyncConfigStore::load_with_credentials(
+            self.services.secrets.credentials(),
+        )?;
+        self.publish_settings(settings_store, proxies, sync_engine, cx);
+        Ok(())
+    }
+
+    pub(in crate::ui) fn auto_sync_control_port(
+        entity: &Entity<Self>,
+    ) -> super::contracts::auto_sync::AutoSyncControlPort {
+        let request = entity.downgrade();
+        let cancel = request.clone();
+        super::contracts::auto_sync::AutoSyncControlPort::new(
+            move |cx, enable, consent| {
+                request
+                    .upgrade()
+                    .is_some_and(|entity| entity.read(cx).request_auto_sync_check(enable, consent))
+            },
+            move |cx| {
+                if let Some(entity) = cancel.upgrade() {
+                    entity.read(cx).cancel_auto_sync_check();
+                }
+            },
+        )
+    }
+
+    pub(in crate::ui) fn settings_persistence_port(
+        entity: &Entity<Self>,
+    ) -> super::contracts::settings::SettingsPersistencePort {
+        let application = entity.downgrade();
+        super::contracts::settings::SettingsPersistencePort::new(move |cx| {
+            if let Some(application) = application.upgrade() {
+                application.update(cx, |application, cx| {
+                    if let Err(error) = application.refresh_persisted_settings(cx) {
+                        log::warn!("failed to publish persisted Settings changes: {error:?}");
+                    }
+                });
+            }
+        })
+    }
+
     pub(crate) fn publish_chat_sessions(
         &mut self,
         chat_sessions: Vec<ChatSessionRecord>,
@@ -507,10 +576,10 @@ impl ApplicationState {
         if let Some(id) =
             newly_observed_capability_notice(&snapshot, &mut self.last_capability_notice_id)
         {
-            crate::ui::shell::publish_app_notification(
-                crate::ui::shell::AppNotification::new(
-                    crate::ui::shell::AppNotificationTone::Warning,
-                    crate::ui::shell::AppNotificationPriority::High,
+            crate::ui::components::notifications::publish_app_notification(
+                crate::ui::components::notifications::AppNotification::new(
+                    crate::ui::components::notifications::AppNotificationTone::Warning,
+                    crate::ui::components::notifications::AppNotificationPriority::High,
                     i18n::string(if snapshot.enabled {
                         "settings.sync.capability.paused"
                     } else {
@@ -520,7 +589,7 @@ impl ApplicationState {
                 )
                 .stable_id(format!("webdav-capability:{id}"))
                 .structured_action(
-                    crate::ui::shell::AppNotificationAction::OpenSyncSettings,
+                    crate::ui::components::notifications::AppNotificationAction::OpenSyncSettings,
                     i18n::string("notifications.auto_sync_conflict.open_sync"),
                 ),
                 cx,
@@ -550,16 +619,16 @@ impl ApplicationState {
                     "notifications.auto_sync_conflict.sync_configuration_changed"
                 }
             };
-            crate::ui::shell::publish_app_notification(
-                crate::ui::shell::AppNotification::new(
-                    crate::ui::shell::AppNotificationTone::Warning,
-                    crate::ui::shell::AppNotificationPriority::High,
+            crate::ui::components::notifications::publish_app_notification(
+                crate::ui::components::notifications::AppNotification::new(
+                    crate::ui::components::notifications::AppNotificationTone::Warning,
+                    crate::ui::components::notifications::AppNotificationPriority::High,
                     crate::ui::i18n::string("notifications.auto_sync_conflict.title"),
                     crate::ui::i18n::string(message_key),
                 )
                 .stable_id(format!("auto-sync-intervention:{}", intervention.id))
                 .structured_action(
-                    crate::ui::shell::AppNotificationAction::OpenSyncSettings,
+                    crate::ui::components::notifications::AppNotificationAction::OpenSyncSettings,
                     crate::ui::i18n::string("notifications.auto_sync_conflict.open_sync"),
                 ),
                 cx,
@@ -867,10 +936,10 @@ impl ApplicationState {
             Err(error) => {
                 log::warn!("failed to persist port-forward runtime state: {error:?}");
                 if self.runtime_persistence.failed() {
-                    crate::ui::shell::publish_app_notification(
-                        crate::ui::shell::AppNotification::new(
-                            crate::ui::shell::AppNotificationTone::Warning,
-                            crate::ui::shell::AppNotificationPriority::High,
+                    crate::ui::components::notifications::publish_app_notification(
+                        crate::ui::components::notifications::AppNotification::new(
+                            crate::ui::components::notifications::AppNotificationTone::Warning,
+                            crate::ui::components::notifications::AppNotificationPriority::High,
                             i18n::string("forwarding.messages.persistence_pending"),
                             i18n::string("forwarding.messages.persistence_retry"),
                         )

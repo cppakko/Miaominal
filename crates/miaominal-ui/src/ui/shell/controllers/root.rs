@@ -172,9 +172,9 @@ impl AppView {
                 .read(cx)
                 .profiles()
                 .iter()
-                .find(|profile| profile.id == session.profile_id)
+                .find(|profile| profile.id == session.profile_id())
                 .cloned()
-                .or_else(|| session.pending_profile.clone())
+                .or_else(|| session.pending_profile().cloned())
         })
     }
 
@@ -185,10 +185,14 @@ impl AppView {
         cx: &App,
     ) -> Option<TabId> {
         self.workspace.tabs.iter().find_map(|tab| {
-            let sftp = self.sftp_tab(tab.id, cx)?;
             let usable_owner = tab.is_top_level() || tab.owner() == Some(session_tab_id);
-            (sftp.profile_id == profile_id && usable_owner && sftp.commands.is_some())
-                .then_some(tab.id)
+            (usable_owner
+                && self
+                    .controllers
+                    .sftp
+                    .read(cx)
+                    .can_reuse_for_profile(tab.id, profile_id))
+            .then_some(tab.id)
         })
     }
 
@@ -198,7 +202,7 @@ impl AppView {
             .and_then(|index| self.workspace.tabs.id_at(index))
             .and_then(|tab_id| {
                 self.session_tab(tab_id, cx)
-                    .map(|session| (tab_id, session.profile_id.clone()))
+                    .map(|session| (tab_id, session.profile_id().to_string()))
             })?;
 
         self.reusable_sftp_tab_id_for_session(session_tab_id, &profile_id, cx)
@@ -256,6 +260,7 @@ impl AppView {
             "sftp.messages.opened_tab_for",
             &[("profile", &profile.name)],
         );
+        self.sync_session_port_snapshot(cx);
         cx.notify();
         Some(tab_id)
     }
@@ -304,6 +309,8 @@ impl AppView {
             "sftp.messages.opened_tab_for",
             &[("profile", &profile.name)],
         );
+        self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
         cx.notify();
     }
 
@@ -316,6 +323,8 @@ impl AppView {
         self.workspace.workspace.active_tab = None;
         self.restore_active_topbar_sidebar_section(cx);
         self.shell.status_message = i18n::string("navigation.messages.opened_new_hosts_tab");
+        self.sync_session_port_snapshot(cx);
+        self.sync_agent_surface_lifecycle(cx);
         cx.notify();
     }
 
@@ -340,6 +349,8 @@ impl AppView {
         }
         self.workspace.workspace.active_tab = None;
         self.apply_sidebar_section_effects(SidebarSectionTransition::Navigation, Some(section), cx);
+        self.sync_session_port_snapshot(cx);
+        self.sync_agent_surface_lifecycle(cx);
     }
 
     pub(in crate::ui::shell) fn open_terminal_search(
@@ -393,19 +404,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let controller = self.controllers.settings.clone();
-        if let Some(popup) = controller.update(cx, |controller, cx| {
-            controller.open_sync_provider_config_popup(provider, window, cx)
-        }) {
-            self.prepare_sync_overlay(DialogOverlaySnapshot::SyncProviderConfigPopup(popup), cx);
-        }
-    }
-
-    fn prepare_sync_overlay(&mut self, snapshot: DialogOverlaySnapshot, cx: &mut Context<Self>) {
-        let stable_key = snapshot.stable_key();
-        self.shell
-            .exiting_dialogs
-            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
-        cx.notify();
+        controller.update(cx, |controller, cx| {
+            controller.open_sync_provider_config_popup(provider, window, cx);
+        });
     }
 
     pub(in crate::ui::shell) fn edit_ai_provider(
@@ -415,23 +416,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let controller = self.controllers.settings.clone();
-        if let Some(popup) = controller.update(cx, |controller, cx| {
-            controller.edit_ai_provider(provider_id, window, cx)
-        }) {
-            self.prepare_ai_provider_popup_overlay(popup, cx);
-        }
-    }
-
-    fn prepare_ai_provider_popup_overlay(
-        &mut self,
-        popup: PendingAiProviderPopupState,
-        cx: &mut Context<Self>,
-    ) {
-        let stable_key = DialogOverlaySnapshot::AiProviderPopup(popup).stable_key();
-        self.shell
-            .exiting_dialogs
-            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
-        cx.notify();
+        controller.update(cx, |controller, cx| {
+            controller.edit_ai_provider(provider_id, window, cx);
+        });
     }
 
     pub(in crate::ui::shell) fn open_web_search_config_popup(
@@ -440,18 +427,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let controller = self.controllers.settings.clone();
-        let popup = controller.update(cx, |controller, cx| {
-            controller.open_web_search_config_popup(window, cx)
+        controller.update(cx, |controller, cx| {
+            controller.open_web_search_config_popup(window, cx);
         });
-        let Some(popup) = popup else {
-            return;
-        };
-
-        let stable_key = DialogOverlaySnapshot::WebSearchConfigPopup(popup).stable_key();
-        self.shell
-            .exiting_dialogs
-            .retain(|dialog| dialog.snapshot.stable_key() != stable_key);
-        cx.notify();
     }
 
     pub(in crate::ui::shell) fn set_auto_collect_session_monitoring(
@@ -523,7 +501,6 @@ impl AppView {
                 session_ids,
                 managed_key_ids,
                 ai_provider_ids,
-                agent_controller,
                 window,
                 cx,
             );
@@ -856,6 +833,15 @@ impl AppView {
             AppCommand::VaultActionRequested(request) => {
                 self.handle_local_vault_action_request(request.clone(), window, cx)
             }
+            AppCommand::ChatHistoryReopenRequested => {
+                if let Err(error) = self
+                    .controllers
+                    .agent
+                    .update(cx, |controller, cx| controller.reopen_chat_history(cx))
+                {
+                    log::warn!("failed to reopen chat history: {error:?}");
+                }
+            }
             AppCommand::LocalDataResetRequested => self.start_local_data_reset(window, cx),
             AppCommand::SaveSnippetRequested(snippet) => {
                 self.handle_snippet_save_request((**snippet).clone(), window, cx)
@@ -887,7 +873,8 @@ impl AppView {
                 }
                 self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
             }
-            AppCommand::ProxiesChanged(proxies) => {
+            AppCommand::ProxiesChanged => {
+                let proxies = application_state(cx).read(cx).catalog_query().proxies();
                 self.controllers.hosts.update(cx, |controller, cx| {
                     controller.replace_proxies_from_application(proxies.clone());
                     controller.refresh_entry_proxy_select(window, cx);
@@ -905,6 +892,7 @@ impl AppView {
             }
             _ => self.handle_app_command(command, cx),
         }
+        self.sync_window_overlays(window, cx);
     }
 
     fn handle_app_command(&mut self, command: &AppCommand, cx: &mut Context<Self>) {
@@ -933,11 +921,12 @@ impl AppView {
             | AppCommand::WindowActivationChanged { .. }
             | AppCommand::TerminalMenuRequested { .. }
             | AppCommand::VaultActionRequested(_)
+            | AppCommand::ChatHistoryReopenRequested
             | AppCommand::LocalDataResetRequested
             | AppCommand::SaveSnippetRequested(_)
             | AppCommand::ImportProfilesRequested(_)
             | AppCommand::SessionEventApplied { .. }
-            | AppCommand::ProxiesChanged(_)
+            | AppCommand::ProxiesChanged
             | AppCommand::ManualSyncCompleted(_) => {}
             AppCommand::ManagedKeysChanged(change) => self.handle_managed_keys_change(change, cx),
             AppCommand::SidebarSectionRequested(section) => self.set_sidebar_section(*section, cx),

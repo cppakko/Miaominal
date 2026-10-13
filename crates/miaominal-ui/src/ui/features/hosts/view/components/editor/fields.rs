@@ -1,5 +1,10 @@
-use super::super::super::super::super::*;
+use crate::ui::assets::AppIcon;
+use crate::ui::components::{TextInputSurface, icon_button, surface_text_input_stack};
 use crate::ui::i18n;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, SharedString, Window, div, px, rgb};
 
 pub(super) fn editor_static_field(
     label: impl Into<SharedString>,

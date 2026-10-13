@@ -1,8 +1,12 @@
+use crate::ui::components::badge;
 use crate::ui::i18n;
-use crate::ui::shell::*;
 use gpui_kit::InteractiveElement;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{MouseButton, div, px, rgb};
+use miaominal_core::profile::SessionProfile;
 
-pub(in crate::ui::shell::forwarding) fn draggable_profile_tile(
+pub(in crate::ui::features::forwarding) fn draggable_profile_tile(
     profile: &SessionProfile,
     online_sessions: usize,
 ) -> impl IntoElement {

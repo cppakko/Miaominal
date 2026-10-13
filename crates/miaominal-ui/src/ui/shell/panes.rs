@@ -1,21 +1,16 @@
 use super::AppView;
 use super::workspace::{
-    ClosePlan, PaneLayout, SplitAxis, SplitDirection, TabId, TabPlacement, TabRegistry,
-    TabWorkspaceState,
+    ClosePlan, PaneLayout, SplitDirection, TabId, TabPlacement, TabRegistry, TabWorkspaceState,
 };
 use crate::ui::i18n;
-use gpui_kit::{Bounds, Context, FocusHandle, Pixels, Point};
-use miaominal_terminal::{
-    TerminalFreeTypeTarget, terminal_cell_width_default, terminal_line_height_default,
-};
+use gpui_kit::Context;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 pub(in crate::ui::shell) use crate::ui::contracts::workspace::PaneId;
-use crate::ui::features::session::{PaneViewState, TerminalPaneFreeTypeDropTarget};
+use crate::ui::features::session::PaneViewState;
 pub(in crate::ui::shell) use crate::ui::workspace::panes::*;
 impl AppView {
     pub(in crate::ui::shell) fn active_pane_id(&self) -> PaneId {
@@ -44,25 +39,21 @@ impl AppView {
                     .active_pane
                     .terminal_mouse_gesture
                     .take(),
-                terminal_suppressed_key_releases: std::mem::take(
+                terminal_keyboard: std::mem::take(
+                    &mut self.workspace.workspace.active_pane.terminal_keyboard,
+                ),
+                terminal_mouse_reporting: std::mem::take(
                     &mut self
                         .workspace
                         .workspace
                         .active_pane
-                        .terminal_suppressed_key_releases,
+                        .terminal_mouse_reporting,
                 ),
-                terminal_mouse_reporting_active: std::mem::take(
-                    &mut self
-                        .workspace
-                        .workspace
-                        .active_pane
-                        .terminal_mouse_reporting_active,
-                ),
-                last_reported_mouse_cell: self
+                terminal_pointer_target: self
                     .workspace
                     .workspace
                     .active_pane
-                    .last_reported_mouse_cell
+                    .terminal_pointer_target
                     .take(),
                 terminal_pointer_position: self
                     .workspace
@@ -127,20 +118,14 @@ impl AppView {
         self.workspace.workspace.active_pane.terminal_ime_anchor = None;
         self.workspace.workspace.active_pane.terminal_mouse_gesture =
             workspace.active_pane.terminal_mouse_gesture;
+        self.workspace.workspace.active_pane.terminal_keyboard =
+            workspace.active_pane.terminal_keyboard;
         self.workspace
             .workspace
             .active_pane
-            .terminal_suppressed_key_releases =
-            workspace.active_pane.terminal_suppressed_key_releases;
-        self.workspace
-            .workspace
-            .active_pane
-            .terminal_mouse_reporting_active =
-            workspace.active_pane.terminal_mouse_reporting_active;
-        self.workspace
-            .workspace
-            .active_pane
-            .last_reported_mouse_cell = workspace.active_pane.last_reported_mouse_cell;
+            .terminal_mouse_reporting = workspace.active_pane.terminal_mouse_reporting;
+        self.workspace.workspace.active_pane.terminal_pointer_target =
+            workspace.active_pane.terminal_pointer_target;
         self.workspace
             .workspace
             .active_pane
@@ -176,40 +161,7 @@ impl AppView {
         workspace: &mut TabWorkspaceState,
         cx: &mut Context<Self>,
     ) {
-        workspace.active_pane.terminal_focus = cx.focus_handle();
-        workspace.active_pane.terminal_bounds = None;
-        workspace.active_pane.terminal_mouse_gesture = None;
-        workspace
-            .active_pane
-            .terminal_suppressed_key_releases
-            .clear();
-        workspace.active_pane.terminal_mouse_reporting_active = false;
-        workspace.active_pane.last_reported_mouse_cell = None;
-        workspace.active_pane.terminal_pointer_position = None;
-        workspace.active_pane.terminal_link_query = None;
-        workspace.active_pane.terminal_hovered_link = None;
-        workspace.active_pane.terminal_link_open_modifier = false;
-        workspace.active_pane.terminal_scrollbar_drag = None;
-        workspace.active_pane.terminal_scrollbar_last_interaction_at = None;
-
-        for pane in workspace.parked_panes.values_mut() {
-            pane.terminal_focus = cx.focus_handle();
-            pane.terminal_bounds = None;
-            pane.terminal_mouse_gesture = None;
-            pane.terminal_suppressed_key_releases.clear();
-            pane.terminal_mouse_reporting_active = false;
-            pane.last_reported_mouse_cell = None;
-            pane.terminal_pointer_position = None;
-            pane.terminal_link_query = None;
-            pane.terminal_hovered_link = None;
-            pane.terminal_link_open_modifier = false;
-            pane.terminal_scrollbar_drag = None;
-            pane.terminal_scrollbar_last_interaction_at = None;
-        }
-
-        workspace.pane_split_drag = None;
-        workspace.pane_split_animation = None;
-        workspace.pane_tab_drop_target = None;
+        workspace.rebind_window(cx);
     }
 
     pub(in crate::ui::shell) fn unload_active_topbar_workspace(&mut self, cx: &mut Context<Self>) {

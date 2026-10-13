@@ -1,5 +1,6 @@
 pub(crate) mod animation;
 pub(crate) mod host_key_prompt;
+pub(crate) mod system_file_icons;
 pub(crate) mod tokens;
 
 #[path = "components/badge.rs"]
@@ -83,3 +84,11 @@ pub(crate) use text_input::{
 
 pub(crate) mod forms;
 pub(crate) mod progress_panel;
+
+pub(in crate::ui) mod empty_state;
+pub(in crate::ui) mod group_accent;
+pub(in crate::ui) mod notifications;
+pub(in crate::ui) mod overlay_target;
+pub(in crate::ui) mod selection;
+
+pub(in crate::ui) mod metrics;

@@ -1,0 +1,9 @@
+pub(super) mod session_agent_composer;
+pub(super) mod session_agent_conversation;
+pub(super) mod session_agent_history;
+pub(super) mod session_agent_mentions;
+pub(super) mod session_agent_panel;
+pub(super) mod session_agent_tool_parse;
+pub(super) mod session_agent_tool_ui;
+pub(super) mod session_agent_tools;
+pub(super) mod session_agent_utils;

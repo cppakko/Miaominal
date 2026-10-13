@@ -1,7 +1,22 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::animation::render_basic_dialog;
+use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::metrics::{EDITOR_DRAWER_WIDTH, TRUSTED_CARD_WIDTH};
+use crate::ui::components::{
+    BasicDialogActionTone, EDITOR_FOOTER_ACTION_HEIGHT, SearchInputStyle, badge,
+    basic_dialog_action_button, card_surface, editor_button_with_id, editor_footer_actions,
+    fab_icon_button, icon_button, page_primary_icon_tile, page_section_title, search_filter_input,
+};
+use crate::ui::features::trusted_hosts::{
+    PendingKnownHostDeleteState, TrustedHostFilter, TrustedHostsController,
+};
 use crate::ui::i18n;
-use crate::ui::shell::pages::empty_state::shell_empty_page;
-use crate::ui::shell::*;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, FontWeight, MouseButton, SharedString, div, px, rgb};
 use miaominal_core::known_host::KnownHostEntry;
+use miaominal_core::profile::SessionProfile;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LinkedTrustedProfile {
@@ -538,10 +553,10 @@ fn trusted_detail_panel(
 }
 
 impl TrustedHostsController {
-    pub(in crate::ui::shell) fn render_trusted_known_host_delete_prompt(
-        &self,
+    pub(in crate::ui::features::trusted_hosts) fn render_trusted_known_host_delete_prompt(
         controller: Entity<Self>,
         prompt: &PendingKnownHostDeleteState,
+        revision: u64,
         exit_progress: Option<f32>,
     ) -> gpui_kit::AnyElement {
         let subtitle = i18n::string_args(
@@ -566,7 +581,14 @@ impl TrustedHostsController {
                 )
                 .on_click(move |_, _, cx| {
                     controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_trusted_known_host_removal(cx);
+                        if controller
+                            .overlay_revisions
+                            .borrow()
+                            .current("known-host-delete")
+                            == revision
+                        {
+                            controller.cancel_trusted_known_host_removal(cx);
+                        }
                     });
                 }),
             )
@@ -578,7 +600,14 @@ impl TrustedHostsController {
                 )
                 .on_click(move |_, _, cx| {
                     controller_confirm.update(cx, |controller, cx| {
-                        controller.confirm_trusted_known_host_removal(cx);
+                        if controller
+                            .overlay_revisions
+                            .borrow()
+                            .current("known-host-delete")
+                            == revision
+                        {
+                            controller.confirm_trusted_known_host_removal(cx);
+                        }
                     });
                 }),
             );
@@ -593,7 +622,7 @@ impl TrustedHostsController {
         )
     }
 
-    pub(in crate::ui::shell) fn render_trusted_page(
+    pub(in crate::ui) fn render_trusted_page(
         &self,
         controller: Entity<Self>,
         cx: &App,
@@ -607,7 +636,7 @@ impl TrustedHostsController {
         let orphaned = views.iter().filter(|view| view.is_orphaned()).count();
         let duplicated = views.iter().filter(|view| view.duplicate_count > 1).count();
         if views.is_empty() {
-            return shell_empty_page(AppIcon::FingerPrint, i18n::string("trusted.page.empty"))
+            return empty_page(AppIcon::FingerPrint, i18n::string("trusted.page.empty"))
                 .child(
                     div()
                         .max_w(px(460.0))
@@ -728,7 +757,7 @@ impl TrustedHostsController {
                         div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
                             div().size_full().overflow_y_scrollbar().child(
                                 if filtered.is_empty() {
-                                    shell_empty_page(
+                                    empty_page(
                                         AppIcon::FingerPrint,
                                         i18n::string("trusted.page.no_matches"),
                                     )
@@ -752,7 +781,7 @@ impl TrustedHostsController {
             .into_any_element()
     }
 
-    pub(in crate::ui::shell) fn render_known_hosts_refresh_fab(
+    pub(in crate::ui) fn render_known_hosts_refresh_fab(
         &self,
         controller: Entity<Self>,
     ) -> impl IntoElement {
@@ -763,7 +792,7 @@ impl TrustedHostsController {
         })
     }
 
-    pub(in crate::ui::shell) fn render_trusted_known_host_sidebar(
+    pub(in crate::ui) fn render_trusted_known_host_sidebar(
         &self,
         controller: Entity<Self>,
     ) -> impl IntoElement {
@@ -776,7 +805,7 @@ impl TrustedHostsController {
         selected_trusted_host(&views, selected_known_host.as_ref())
             .map(|view| trusted_detail_panel(controller, view, path).into_any_element())
             .unwrap_or_else(|| {
-                shell_empty_page(
+                empty_page(
                     AppIcon::FingerPrint,
                     i18n::string("trusted.page.no_matches"),
                 )

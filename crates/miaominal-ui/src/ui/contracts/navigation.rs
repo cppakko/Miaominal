@@ -72,3 +72,9 @@ pub(in crate::ui) enum SettingsDestination {
     SshBridgeSecurity,
     Sync,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui) enum ProfileViewMode {
+    Grid,
+    List,
+}

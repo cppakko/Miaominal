@@ -1,8 +1,23 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::empty_state::{empty_page, empty_state};
+use crate::ui::components::group_accent::group_accent_palette;
+use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
+use crate::ui::components::tokens::color_with_alpha;
 use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SectionCard, editor_button, md3_select};
+use crate::ui::components::{
+    SearchInputStyle, TextInputSurface, card_surface, editor_footer_actions, fab_button,
+    field_label, icon_button, list_item_card, page_primary_icon_tile, page_section_title,
+    page_view_mode_toolbar_item, search_filter_input, surface_text_editor_stack,
+    surface_text_input, surface_text_input_stack,
+};
+use crate::ui::contracts::navigation::ProfileViewMode;
+use crate::ui::features::snippets::SnippetsController;
 use crate::ui::i18n;
-
-use crate::ui::shell::pages::empty_state::{shell_empty_page, shell_empty_state};
-use crate::ui::shell::*;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Div, Entity, MouseButton, SharedString, Window, div, px, rgb};
+use miaominal_core::snippet::SnippetRecord;
 
 const SNIPPET_CARD_WIDTH: f32 = 332.0;
 const SNIPPET_EDITOR_HEIGHT: f32 = 240.0;
@@ -241,11 +256,11 @@ fn snippet_list_row(
 }
 
 fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
-    shell_empty_state(AppIcon::Notebook, message)
+    empty_state(AppIcon::Notebook, message)
 }
 
 impl SnippetsController {
-    pub(in crate::ui::shell) fn render_snippets_page(
+    pub(in crate::ui) fn render_snippets_page(
         &self,
         controller: Entity<Self>,
         on_open_existing: impl Fn(String, &mut Window, &mut App) + Clone + 'static,
@@ -302,7 +317,7 @@ impl SnippetsController {
         });
 
         if snippets.is_empty() {
-            return shell_empty_page(
+            return empty_page(
                 AppIcon::Notebook,
                 i18n::string("snippets.empty.no_snippets"),
             )
@@ -467,14 +482,14 @@ impl SnippetsController {
             .into_any_element()
     }
 
-    pub(in crate::ui::shell) fn render_snippets_fab(
+    pub(in crate::ui) fn render_snippets_fab(
         &self,
         on_open: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         fab_button(on_open)
     }
 
-    pub(in crate::ui::shell) fn render_snippets_editor_sidebar(
+    pub(in crate::ui) fn render_snippets_editor_sidebar(
         &self,
         controller: Entity<Self>,
         on_save: impl Fn(&mut Window, &mut App) + 'static,

@@ -270,7 +270,10 @@ impl SessionController {
         &self,
         tab_id: TabId,
         runtime: &miaominal_services::PortForwardRuntimeSnapshot,
-    ) -> Option<(SessionTabDescriptor, SessionTabState)> {
+    ) -> Option<(
+        SessionTabDescriptor,
+        crate::ui::contracts::session::PreparedSessionTab,
+    )> {
         let profile = self
             .profiles
             .borrow()

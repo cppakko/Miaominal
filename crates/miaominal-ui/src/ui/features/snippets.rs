@@ -1,10 +1,22 @@
-use super::*;
+use crate::ui::components::forms::{
+    new_input_state, set_code_editor_input_placeholder, set_editor_value, set_input_placeholder,
+    set_input_value,
+};
+use crate::ui::components::notifications::{ValidationFailure, validation_notification};
+use crate::ui::contracts::commands::AppCommand;
+use crate::ui::contracts::navigation::{PageEditorSidebarKind, ProfileViewMode};
+use crate::ui::contracts::overlay::{OverlayRevisionState, OverlaySnapshot};
 use crate::ui::contracts::snippets::{SnippetCatalogPort, SnippetSaveSubmission};
 use crate::ui::i18n;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{
     input::{EditorState, InputEvent, TabSize},
     select::{SearchableVec, SelectEvent, SelectState},
 };
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Context, Entity, Window};
+#[cfg(test)]
+use gpui_kit::{Bounds, SharedString, div, px};
 use gpui_kit::{EventEmitter, Subscription};
 use miaominal_core::snippet::SnippetRecord;
 use miaominal_storage::config_store::store::SnippetStore;
@@ -14,9 +26,9 @@ mod view;
 use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingSnippetDeleteState {
-    pub(in crate::ui::shell) snippet_id: String,
-    pub(in crate::ui::shell) snippet_description: String,
+pub(in crate::ui) struct PendingSnippetDeleteState {
+    pub(in crate::ui) snippet_id: String,
+    pub(in crate::ui) snippet_description: String,
 }
 
 #[derive(Clone)]
@@ -35,7 +47,12 @@ struct SnippetsCatalogViewState {
     snippets_package_filter: Option<String>,
 }
 
-pub(in crate::ui::shell) struct SnippetsController {
+#[path = "snippets/workspace_state.rs"]
+mod workspace_state;
+
+pub(in crate::ui) struct SnippetsController {
+    workspace_filter_input: Entity<InputState>,
+    workspace_package_filter: RefCell<Option<String>>,
     catalog: SnippetCatalogPort,
     store: Option<SnippetStore>,
     snippets: RefCell<Vec<SnippetRecord>>,
@@ -46,12 +63,13 @@ pub(in crate::ui::shell) struct SnippetsController {
     editor_revision: Cell<u64>,
     pending_delete: RefCell<Option<PendingSnippetDeleteState>>,
     catalog_view: RefCell<SnippetsCatalogViewState>,
+    overlay_revisions: RefCell<OverlayRevisionState>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<AppCommand> for SnippetsController {}
 
 impl SnippetsController {
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         catalog: SnippetCatalogPort,
         store: Option<SnippetStore>,
         selected: Option<usize>,
@@ -109,7 +127,19 @@ impl SnippetsController {
             creating_new_package: snippets.is_empty(),
             script_input: snippet_script_input,
         };
+        let workspace_filter_input = new_input_state(
+            i18n::string("placeholders.workspace.snippet_filter"),
+            "",
+            false,
+            window,
+            cx,
+        );
         let subscriptions = vec![
+            cx.subscribe(&workspace_filter_input, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe(&forms.filter_input, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -129,6 +159,8 @@ impl SnippetsController {
         let editor_id =
             selected.and_then(|index| snippets.get(index).map(|snippet| snippet.id.clone()));
         Self {
+            workspace_filter_input,
+            workspace_package_filter: RefCell::new(None),
             catalog,
             store,
             snippets: RefCell::new(snippets),
@@ -142,15 +174,22 @@ impl SnippetsController {
                 snippets_view_mode: ProfileViewMode::Grid,
                 snippets_package_filter: None,
             }),
+            overlay_revisions: RefCell::default(),
             _subscriptions: subscriptions,
         }
     }
 
-    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+    pub(in crate::ui) fn refresh_localized_placeholders(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        set_input_placeholder(
+            &self.workspace_filter_input,
+            i18n::string("placeholders.workspace.snippet_filter"),
+            window,
+            cx,
+        );
         let snippets = self.snippets_forms();
         for (input, key) in [
             (&snippets.filter_input, "placeholders.snippets.filter"),
@@ -174,7 +213,7 @@ impl SnippetsController {
         );
     }
 
-    pub(in crate::ui::shell) fn editor_open(&self) -> bool {
+    pub(in crate::ui) fn editor_open(&self) -> bool {
         self.editor_open.get()
     }
     fn catalog_view(&self) -> SnippetsCatalogViewState {
@@ -189,7 +228,7 @@ impl SnippetsController {
         self.snippets_forms_state().borrow().clone()
     }
 
-    pub(in crate::ui::shell) fn collect_available_snippet_packages(
+    pub(in crate::ui) fn collect_available_snippet_packages(
         snippets: &[SnippetRecord],
     ) -> Vec<String> {
         let mut packages = snippets
@@ -204,7 +243,7 @@ impl SnippetsController {
         packages
     }
 
-    pub(in crate::ui::shell) fn begin_new_snippet_package(
+    pub(in crate::ui) fn begin_new_snippet_package(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -218,12 +257,12 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn dismiss_editor(&self) {
+    pub(in crate::ui) fn dismiss_editor(&self) {
         self.set_snippets_editor_open(false);
         self.set_selected_snippet(None);
     }
 
-    pub(in crate::ui::shell) fn close_snippets_editor(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn close_snippets_editor(&self, cx: &mut Context<Self>) {
         if !self.editor_open.get() {
             return;
         }
@@ -236,7 +275,7 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn request_selected_snippet_delete(&self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn request_selected_snippet_delete(&self, cx: &mut Context<Self>) {
         let Some(index) = self.selected_snippet() else {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "snippets.messages.select_to_delete",
@@ -256,21 +295,21 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_snippets_creating_new_package(&self, creating: bool) {
+    pub(in crate::ui) fn set_snippets_creating_new_package(&self, creating: bool) {
         self.snippets_forms_state()
             .borrow_mut()
             .creating_new_package = creating;
     }
 
-    pub(in crate::ui::shell) fn snippets(&self) -> Vec<SnippetRecord> {
+    pub(in crate::ui) fn snippets(&self) -> Vec<SnippetRecord> {
         self.snippets.borrow().clone()
     }
 
-    pub(in crate::ui::shell) fn replace_snippets(&self, snippets: Vec<SnippetRecord>) {
+    pub(in crate::ui) fn replace_snippets(&self, snippets: Vec<SnippetRecord>) {
         *self.snippets.borrow_mut() = snippets;
     }
 
-    pub(in crate::ui::shell) fn selected_snippet(&self) -> Option<usize> {
+    pub(in crate::ui) fn selected_snippet(&self) -> Option<usize> {
         self.editor_id.borrow().as_ref().and_then(|id| {
             self.snippets
                 .borrow()
@@ -288,7 +327,7 @@ impl SnippetsController {
         }));
     }
 
-    pub(in crate::ui::shell) fn set_snippets_view_mode(
+    pub(in crate::ui) fn set_snippets_view_mode(
         &mut self,
         mode: ProfileViewMode,
         cx: &mut Context<Self>,
@@ -297,7 +336,7 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn toggle_snippets_package_filter(
+    pub(in crate::ui) fn toggle_snippets_package_filter(
         &mut self,
         package: String,
         cx: &mut Context<Self>,
@@ -327,7 +366,7 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn clear_snippets_package_filter(&self) {
+    pub(in crate::ui) fn clear_snippets_package_filter(&self) {
         self.catalog_view.borrow_mut().snippets_package_filter = None;
     }
 
@@ -339,35 +378,35 @@ impl SnippetsController {
         }
     }
 
-    pub(in crate::ui::shell) fn pending_snippet_delete(&self) -> Option<PendingSnippetDeleteState> {
+    pub(in crate::ui) fn pending_snippet_delete(&self) -> Option<PendingSnippetDeleteState> {
         self.pending_delete.borrow().clone()
     }
 
-    pub(in crate::ui::shell) fn set_pending_snippet_delete(
+    pub(in crate::ui) fn set_pending_snippet_delete(
         &self,
         pending: Option<PendingSnippetDeleteState>,
     ) {
+        self.overlay_revisions.borrow_mut().begin("snippet-delete");
         *self.pending_delete.borrow_mut() = pending;
     }
 
-    pub(in crate::ui::shell) fn take_pending_snippet_delete(
-        &self,
-    ) -> Option<PendingSnippetDeleteState> {
+    pub(in crate::ui) fn take_pending_snippet_delete(&self) -> Option<PendingSnippetDeleteState> {
         self.pending_delete.take()
     }
 
-    pub(in crate::ui::shell) fn confirm_snippet_delete(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn confirm_snippet_delete(&mut self, cx: &mut Context<Self>) {
         let Some(pending) = self.pending_snippet_delete() else {
             return;
         };
         self.delete_snippet_by_id(&pending.snippet_id, &pending.snippet_description, cx);
     }
 
-    pub(in crate::ui::shell) fn cancel_snippet_delete(&self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_snippet_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::SnippetDelete(pending),
-            ));
+    pub(in crate::ui) fn cancel_snippet_delete(&self, cx: &mut Context<Self>) {
+        let snapshot = self.snippet_delete_overlay(cx.entity());
+        if self.take_pending_snippet_delete().is_some()
+            && let Some(snapshot) = snapshot
+        {
+            cx.emit(AppCommand::OverlayDismissed(snapshot));
         }
     }
 
@@ -424,11 +463,7 @@ impl SnippetsController {
         }
     }
 
-    pub(in crate::ui::shell) fn open_snippets_editor(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn open_snippets_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_save.take();
         self.advance_editor_revision();
         self.set_selected_snippet(None);
@@ -443,7 +478,7 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn open_existing_snippet_editor(
+    pub(in crate::ui) fn open_existing_snippet_editor(
         &self,
         snippet_id: &str,
         window: &mut Window,
@@ -582,7 +617,7 @@ impl SnippetsController {
         if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
             let message = validation.message.clone();
             cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
+            crate::ui::components::notifications::push_app_notification(
                 window,
                 validation_notification(validation.kind, message),
                 cx,
@@ -596,11 +631,7 @@ impl SnippetsController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn request_save_snippet(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn request_save_snippet(&self, window: &mut Window, cx: &mut Context<Self>) {
         match self.read_snippet_from_inputs(self.current_snippet_id(), cx) {
             Ok(snippet) => cx.emit(AppCommand::SaveSnippetRequested(Box::new(
                 self.capture_submission(snippet),
@@ -626,7 +657,7 @@ impl SnippetsController {
         self.editor_open() && submission.editor_revision() == self.editor_revision.get()
     }
 
-    pub(in crate::ui::shell) fn commit_snippet_save_request(
+    pub(in crate::ui) fn commit_snippet_save_request(
         &self,
         submission: SnippetSaveSubmission,
         window: &mut Window,
@@ -670,7 +701,7 @@ impl SnippetsController {
         }
     }
 
-    pub(in crate::ui::shell) fn defer_save(&self, submission: SnippetSaveSubmission) -> bool {
+    pub(in crate::ui) fn defer_save(&self, submission: SnippetSaveSubmission) -> bool {
         if !self.submission_is_current(&submission) {
             return false;
         }
@@ -678,7 +709,7 @@ impl SnippetsController {
         true
     }
 
-    pub(in crate::ui::shell) fn continue_save_snippet_after_unlock(
+    pub(in crate::ui) fn continue_save_snippet_after_unlock(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -689,7 +720,7 @@ impl SnippetsController {
         }
     }
 
-    pub(in crate::ui::shell) fn delete_snippet_by_id(
+    pub(in crate::ui) fn delete_snippet_by_id(
         &self,
         snippet_id: &str,
         snippet_description: &str,
@@ -767,6 +798,50 @@ impl SnippetsController {
 
 #[path = "snippets/dialogs.rs"]
 mod dialogs;
+
+impl SnippetsController {
+    pub(in crate::ui) fn current_overlay(
+        &self,
+        controller: Entity<Self>,
+    ) -> Option<OverlaySnapshot> {
+        self.snippet_delete_overlay(controller)
+    }
+
+    fn snippet_delete_overlay(&self, controller: Entity<Self>) -> Option<OverlaySnapshot> {
+        let prompt = self.pending_snippet_delete()?;
+        let revision = self.overlay_revisions.borrow().current("snippet-delete");
+        let render_controller = controller.clone();
+        let dismiss_controller = controller.clone();
+        Some(
+            OverlaySnapshot::new(
+                format!("snippets:delete:{}", prompt.snippet_id),
+                revision,
+                move |progress, _, _| {
+                    Self::render_snippet_delete_prompt(
+                        render_controller.clone(),
+                        &prompt,
+                        revision,
+                        progress,
+                    )
+                },
+                move |_, cx| {
+                    dismiss_controller.update(cx, |this, cx| {
+                        if this.overlay_revisions.borrow().current("snippet-delete") == revision {
+                            this.cancel_snippet_delete(cx);
+                        }
+                    });
+                },
+            )
+            .with_submit(move |_, cx| {
+                controller.update(cx, |this, cx| {
+                    if this.overlay_revisions.borrow().current("snippet-delete") == revision {
+                        this.confirm_snippet_delete(cx);
+                    }
+                });
+            }),
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {

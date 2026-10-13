@@ -1,10 +1,25 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::animation::render_rounded_prompt_overlay;
+use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
 use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button, md3_spinner};
+use crate::ui::components::{
+    TextInputSurface, editor_footer_actions, icon_button, md3_select,
+    surface_secret_text_input_stack, surface_text_editor_stack, surface_text_input,
+    surface_text_input_action_stack, surface_text_input_stack,
+};
+use crate::ui::features::hosts::HostsController;
+use crate::ui::utils::truncate_with_ellipsis;
 use crate::ui::{
     components::{SectionCard, SegmentedSwitch},
     i18n,
 };
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::stepper::Stepper;
+use gpui_kit::component::{IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, Entity, SharedString, Window, div, px, rgb};
+use miaominal_core::profile::{AuthMethod, ProfileKind, ShellType};
 
-use crate::ui::shell::*;
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::Size;
 use rfd::AsyncFileDialog;
@@ -18,10 +33,10 @@ use fields::{editor_environment_variable_row, editor_static_field};
 use sections::{HostEditorKindLayout, proxy_jump_stepper_item};
 
 impl HostsController {
-    pub(in crate::ui::shell) fn render_hosts_editor_sidebar(
+    pub(in crate::ui) fn render_hosts_editor_sidebar(
         &self,
         controller: Entity<Self>,
-        connection_test: crate::ui::shell::hosts::HostConnectionTest,
+        connection_test: crate::ui::features::hosts::HostConnectionTest,
         on_test_connection: impl Fn(&mut Window, &mut App) + 'static,
         on_save: impl Fn(&mut Window, &mut App) + 'static,
         on_toggle_password: impl Fn(&mut Window, &mut App) + 'static,

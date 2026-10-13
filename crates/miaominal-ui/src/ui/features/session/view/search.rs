@@ -1,7 +1,7 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::{SearchInputStyle, icon_button, search_filter_input};
 use crate::ui::features::session::SessionController;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::h_flex;
 use gpui_kit::{Entity, FocusHandle, IntoElement, Styled, Window, div, prelude::*, px, rgb};
 use std::time::Instant;
 

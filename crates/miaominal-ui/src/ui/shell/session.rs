@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::contracts::session::PreparedSessionTab;
 use crate::ui::i18n;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,7 +218,7 @@ impl AppView {
         &mut self,
         profile: SessionProfile,
         cx: &App,
-    ) -> (TabState, SessionTabState) {
+    ) -> (TabState, PreparedSessionTab) {
         let auto_collect_monitoring = self
             .controllers
             .session
@@ -302,7 +303,7 @@ impl AppView {
             self.replace_with_session_tab(index, tab, session, cx);
             index
         } else {
-            self.insert_session_tab(tab.into(), session, cx);
+            self.insert_session_tab(tab, session, cx);
             self.workspace.tabs.len() - 1
         };
 
@@ -317,6 +318,8 @@ impl AppView {
         );
         window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
         self.sync_terminal_focus_reporting(window, cx);
+        self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
         cx.notify();
     }
 
@@ -410,15 +413,11 @@ impl AppView {
         match kind {
             TabKindTag::Hosts => Some(ClosedTabBundle::Hosts),
             TabKindTag::Sftp => {
-                let sftp = self.sftp_tab(tab_id, cx)?;
                 let profile = self
                     .controllers
-                    .session
+                    .sftp
                     .read(cx)
-                    .profiles()
-                    .iter()
-                    .find(|profile| profile.id == sftp.profile_id)
-                    .cloned()?;
+                    .reopen_profile_for_tab(tab_id, None)?;
                 Some(ClosedTabBundle::Sftp { profile })
             }
             TabKindTag::Session | TabKindTag::LocalTerminal => {
@@ -467,20 +466,11 @@ impl AppView {
                             return None;
                         }
                         let owner = tab.owner()?;
-                        let profile_id = self.sftp_tab(tab.id, cx)?.profile_id.clone();
                         let profile = self
                             .controllers
-                            .session
+                            .sftp
                             .read(cx)
-                            .profiles()
-                            .iter()
-                            .find(|profile| profile.id == profile_id)
-                            .cloned()
-                            .or_else(|| {
-                                self.session_tab(owner, cx)
-                                    .and_then(|session| session.pending_profile.clone())
-                                    .filter(|profile| profile.id == profile_id)
-                            })?;
+                            .reopen_profile_for_tab(tab.id, Some(owner))?;
                         Some(ClosedSftpTabState {
                             tab_id: tab.id,
                             owner,
@@ -623,7 +613,7 @@ impl AppView {
                         TabPlacement::TopLevel
                     };
                     let reopened_id = tab.id;
-                    self.insert_session_tab(tab.into(), session, cx);
+                    self.insert_session_tab(tab, session, cx);
                     reopened_indices.push(self.workspace.tabs.len() - 1);
                     reopened_ids.insert(closed_tab.tab_id, reopened_id);
                 }
@@ -694,6 +684,8 @@ impl AppView {
                 cx.notify();
             }
         }
+        self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
     }
 
     pub(in crate::ui::shell) fn handle_global_shortcut(
@@ -724,6 +716,7 @@ impl AppView {
         }
         if bindings.open_settings.matches_keystroke(keystroke) {
             self.set_sidebar_section(SidebarSection::Settings, cx);
+            self.sync_window_overlays(window, cx);
             return true;
         }
 
@@ -767,11 +760,8 @@ impl AppView {
                         if purpose == SessionPurpose::Terminal {
                             affected_monitor_profiles.insert(profile_id);
                         }
-                    } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id)
-                        && let Some(commands) = sftp.commands.as_ref()
-                        && let Err(error) = commands.close()
-                    {
-                        log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
+                    } else {
+                        sftp_controller.read(cx).close_tab(tab_id);
                     }
                 }
                 ClosePlanStep::Commit(tab_id) => {
@@ -842,6 +832,7 @@ impl AppView {
                     self.open_hosts_tab(cx);
                     self.rebind_terminal_focus_reporting(window, cx);
                     self.sync_terminal_focus_reporting(window, cx);
+                    self.sync_window_overlays(window, cx);
                 }
             }
             return;
@@ -850,6 +841,7 @@ impl AppView {
         self.rebind_terminal_focus_reporting(window, cx);
         self.sync_terminal_focus_reporting(window, cx);
         self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
         self.shell.status_message =
             i18n::string_args("session.messages.closed_tab", &[("title", &title)]);
         cx.notify();
@@ -909,6 +901,7 @@ impl AppView {
 
         self.sync_terminal_focus_reporting(window, cx);
         self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
         cx.notify();
     }
 
@@ -1064,11 +1057,8 @@ impl AppView {
                 if purpose == SessionPurpose::Terminal {
                     affected_monitor_profiles.insert(profile_id);
                 }
-            } else if let Some(sftp) = sftp_controller.read(cx).remove_tab_state(tab_id)
-                && let Some(commands) = sftp.commands.as_ref()
-                && let Err(error) = commands.close()
-            {
-                log::debug!("failed to close SFTP tab {} cleanly: {error:?}", tab_id);
+            } else {
+                sftp_controller.read(cx).close_tab(tab_id);
             }
         }
         for tab_id in remove_ids.into_iter().rev() {
@@ -1105,6 +1095,8 @@ impl AppView {
         self.workspace.renaming_tab = None;
         self.rebind_terminal_focus_reporting(window, cx);
         self.sync_terminal_focus_reporting(window, cx);
+        self.sync_session_port_snapshot(cx);
+        self.sync_window_overlays(window, cx);
         self.shell.status_message = i18n::string("session.messages.closed_other_tabs");
         cx.notify();
     }
