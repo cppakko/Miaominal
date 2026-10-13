@@ -28,7 +28,7 @@ mod catalog;
 mod runtime_persistence;
 mod snippets;
 use catalog::ConnectionCatalog;
-use runtime_persistence::{PendingRuntimePersistence, persisted_runtime_candidate};
+use runtime_persistence::PendingRuntimePersistence;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ApplicationGenerations {
@@ -568,8 +568,6 @@ impl ApplicationState {
         self.auto_sync_snapshot = snapshot.clone();
         if let Some(result) =
             newly_observed_auto_sync_result(&snapshot, &mut self.last_applied_auto_sync_result_id)
-            && result.updated_config.config_revision
-                >= self.sync_engine.config_store.config.config_revision
         {
             self.apply_sync_task_data(result, cx);
         }
@@ -578,14 +576,22 @@ impl ApplicationState {
     }
 
     fn apply_sync_task_data(&mut self, result: &SyncTaskResult, cx: &mut Context<Self>) {
-        let sync_changed = self.sync_engine.config_store.config != result.updated_config;
-        self.sync_engine.config_store.config = result.updated_config.clone();
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let sync_changed = result.updated_config.config_revision
+            >= self.sync_engine.config_store.config.config_revision
+            && self.sync_engine.config_store.config != result.updated_config;
+        if sync_changed {
+            self.sync_engine.config_store.config = result.updated_config.clone();
+        }
 
         let mut catalogs_changed = false;
         let mut routes_changed = false;
         let mut settings_changed = false;
         let mut auto_lock_duration_changed = false;
-        if let Some(reload) = &result.reload {
+        // The worker's snapshot may precede a newer window commit. Reload under
+        // the same gate as sync writes rather than replaying its stale payload.
+        if result.reload.is_some() {
+            let reload = self.latest_sync_catalogs();
             if let Ok(store) = &reload.settings {
                 settings_changed =
                     miaominal_settings::changed(self.settings_store.settings(), store.settings());
@@ -651,6 +657,45 @@ impl ApplicationState {
         }
         if auto_lock_duration_changed {
             self.sync_vault_auto_lock_task(cx);
+        }
+    }
+
+    fn latest_sync_catalogs(&self) -> miaominal_services::SyncReloadResult {
+        let unavailable = || "catalog storage unavailable".to_owned();
+        miaominal_services::SyncReloadResult {
+            settings: SettingsStore::load().map_err(|error| error.to_string()),
+            sessions: self
+                .services
+                .session_store
+                .as_ref()
+                .ok_or_else(unavailable)
+                .and_then(|store| {
+                    store
+                        .load(&self.services.secrets)
+                        .map_err(|error| error.to_string())
+                }),
+            proxies: self
+                .services
+                .proxy_store
+                .as_ref()
+                .ok_or_else(unavailable)
+                .and_then(|store| {
+                    store
+                        .load(&self.services.secrets)
+                        .map_err(|error| error.to_string())
+                }),
+            snippets: self
+                .services
+                .snippet_store
+                .as_ref()
+                .ok_or_else(unavailable)
+                .and_then(|store| store.load().map_err(|error| error.to_string())),
+            managed_keys: self
+                .services
+                .keychain_store
+                .as_ref()
+                .ok_or_else(unavailable)
+                .and_then(|store| store.load().map_err(|error| error.to_string())),
         }
     }
 
@@ -800,18 +845,20 @@ impl ApplicationState {
     }
 
     fn reconcile_runtime_persistence(&mut self, cx: &mut Context<Self>) -> bool {
-        let result = persisted_runtime_candidate(
-            &self.catalog.profiles(),
-            &self.port_forward_snapshot,
-            |profiles| {
-                let store = self
-                    .services
-                    .session_store
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("session storage unavailable"))?;
-                store.save(profiles)
-            },
-        );
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let result = (|| -> anyhow::Result<_> {
+            let store = self
+                .services
+                .session_store
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("session storage unavailable"))?;
+            runtime_persistence::durable_runtime_candidate(
+                store,
+                &self.services.secrets,
+                &self.port_forward_snapshot,
+            )
+            .map(Some)
+        })();
         match result {
             Ok(candidate) => {
                 self.runtime_persistence.resolved();
@@ -1157,7 +1204,13 @@ impl ProfileCommitter for ApplicationProfileCommitter {
         operation: ProfileCommitOperation,
     ) -> anyhow::Result<Vec<SessionProfile>> {
         self.state.update(cx, |application, cx| {
-            let profiles = operation(application.catalog.profiles())?;
+            let _sync_guard = miaominal_secrets::lock_sync_data();
+            let store = application
+                .services
+                .session_store
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("session storage unavailable"))?;
+            let profiles = operation(store.load(&application.services.secrets)?)?;
             application.publish_profiles(profiles.clone(), cx);
             Ok(profiles)
         })?

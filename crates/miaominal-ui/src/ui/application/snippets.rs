@@ -25,7 +25,13 @@ impl SnippetCatalog for ApplicationSnippetCatalog {
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("application catalog unavailable"))?;
         application.update(cx, |application, cx| {
-            let candidate = operation(application.snippets.clone())?;
+            let _sync_guard = miaominal_secrets::lock_sync_data();
+            let store = application
+                .services
+                .snippet_store
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("snippet storage unavailable"))?;
+            let candidate = operation(store.load()?)?;
             application.publish_snippets(candidate.clone(), cx);
             Ok(candidate)
         })

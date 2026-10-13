@@ -5,7 +5,19 @@
 //! may be adopted as committed configuration.
 
 use miaominal_core::profile::SessionProfile;
+use miaominal_secrets::SecretStore;
 use miaominal_services::PortForwardManagerSnapshot;
+use miaominal_storage::config_store::store::SessionStore;
+
+pub(super) fn durable_runtime_candidate(
+    store: &SessionStore,
+    secrets: &SecretStore,
+    runtime: &PortForwardManagerSnapshot,
+) -> anyhow::Result<Vec<SessionProfile>> {
+    let latest = store.load(secrets)?;
+    let candidate = persisted_runtime_candidate(&latest, runtime, |profiles| store.save(profiles))?;
+    Ok(candidate.unwrap_or(latest))
+}
 
 pub(super) fn retry_delay(attempt: usize) -> std::time::Duration {
     const DELAYS_MS: [u64; 5] = [250, 1_000, 4_000, 10_000, 30_000];
@@ -121,5 +133,44 @@ mod tests {
         })
         .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn retry_reads_a_sync_commit_that_has_not_reached_the_ui_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::with_path(directory.path().join("sessions.toml"));
+        let mut synced = profile();
+        synced.name = "latest sync name".into();
+        synced.remote_path_favorites.push("/synced".into());
+        store.save(&[synced.clone()]).unwrap();
+
+        let _sync_guard = miaominal_secrets::lock_sync_data();
+        let saved = durable_runtime_candidate(
+            &store,
+            &SecretStore::new_locked_vault(),
+            &PortForwardManagerSnapshot::default(),
+        )
+        .unwrap();
+        assert_eq!(saved[0].name, synced.name);
+        assert_eq!(saved[0].remote_path_favorites, synced.remote_path_favorites);
+        assert!(!saved[0].port_forwarding_rules[0].enabled);
+        assert_eq!(store.load(&SecretStore::new_locked_vault()).unwrap(), saved);
+    }
+
+    #[test]
+    fn unreadable_current_catalog_is_preserved_instead_of_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.toml");
+        std::fs::write(&path, "invalid = [").unwrap();
+        let store = SessionStore::with_path(path.clone());
+        assert!(
+            durable_runtime_candidate(
+                &store,
+                &SecretStore::new_locked_vault(),
+                &PortForwardManagerSnapshot::default()
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "invalid = [");
     }
 }
