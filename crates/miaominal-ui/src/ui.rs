@@ -2,6 +2,7 @@ mod application;
 pub mod assets;
 pub mod bridge_security_platform;
 pub(crate) mod components;
+pub(crate) mod contracts;
 pub mod i18n;
 pub(crate) mod licenses;
 mod shell;

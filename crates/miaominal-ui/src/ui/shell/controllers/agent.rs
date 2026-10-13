@@ -1,4 +1,5 @@
 use super::AppCommand;
+use crate::ui::contracts::CatalogQueryPort;
 use crate::ui::i18n;
 use crate::ui::shell::session_agent_view::SessionAgentConversationView;
 use crate::ui::shell::{
@@ -204,6 +205,7 @@ pub(in crate::ui::shell) struct AgentController {
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
     local_vault_status: LocalVaultStatus,
+    catalog_query: CatalogQueryPort,
     session_query: SessionQueryPort,
     session_terminal: SessionTerminalPort,
     forms: WorkspaceAgentForms,
@@ -325,6 +327,7 @@ impl AgentController {
 
     pub(in crate::ui::shell) fn new(
         args: AgentControllerArgs,
+        catalog_query: CatalogQueryPort,
         session_query: SessionQueryPort,
         session_terminal: SessionTerminalPort,
         window: &mut Window,
@@ -417,6 +420,7 @@ impl AgentController {
             secrets: args.secrets,
             known_hosts: args.known_hosts,
             local_vault_status: args.local_vault_status,
+            catalog_query,
             session_query,
             session_terminal,
             forms,

@@ -9,11 +9,11 @@ use miaominal_core::proxy::ProxyProfile;
 
 impl AgentController {
     pub(in crate::ui::shell) fn session_profiles(&self) -> Vec<SessionProfile> {
-        self.session_query.profiles()
+        self.catalog_query.profiles()
     }
 
     pub(in crate::ui::shell) fn session_proxies(&self) -> Vec<ProxyProfile> {
-        self.session_query.proxies()
+        self.catalog_query.proxies()
     }
 
     pub(in crate::ui::shell) fn terminal_targets(&self) -> Vec<SessionTerminalTarget> {
@@ -30,7 +30,7 @@ impl AgentController {
     pub(in crate::ui::shell) fn target_candidates(&self) -> Vec<SessionAgentTargetCandidate> {
         agent_target_candidates(
             self.session_agent().exec_mode,
-            &self.session_query.profiles(),
+            &self.catalog_query.profiles(),
             &self.session_terminal.targets(),
         )
     }
@@ -39,15 +39,15 @@ impl AgentController {
         &self,
     ) -> Option<SessionAgentExecutionContext> {
         match self.session_agent().exec_mode {
-            AgentExecMode::ExecChannel => {
-                self.session_query
-                    .active_profile()
-                    .map(|profile| SessionAgentExecutionContext {
-                        profile_id: profile.id,
-                        exec_mode: AgentExecMode::ExecChannel,
-                        terminal_tab_id: None,
-                    })
-            }
+            AgentExecMode::ExecChannel => self
+                .session_query
+                .active_profile_id()
+                .and_then(|id| self.catalog_query.profile(&id))
+                .map(|profile| SessionAgentExecutionContext {
+                    profile_id: profile.id,
+                    exec_mode: AgentExecMode::ExecChannel,
+                    terminal_tab_id: None,
+                }),
             AgentExecMode::Pty => {
                 self.session_terminal
                     .active_target()
@@ -64,7 +64,13 @@ impl AgentController {
         &self,
         context: &SessionAgentExecutionContext,
     ) -> Option<SessionProfile> {
-        self.session_query.profile(&context.profile_id)
+        match context.exec_mode {
+            AgentExecMode::ExecChannel => self.catalog_query.profile(&context.profile_id),
+            AgentExecMode::Pty => context.terminal_tab_id.and_then(|tab_id| {
+                self.session_query
+                    .resolved_profile_for_session(tab_id, &self.catalog_query)
+            }),
+        }
     }
 
     pub(in crate::ui::shell) fn terminal_target_marker_for_execution_context(

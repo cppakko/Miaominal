@@ -352,7 +352,6 @@ impl AppView {
             });
         SessionPortSnapshot::new(
             self.controllers.session.read(cx).profiles().clone(),
-            self.controllers.session.read(cx).proxies().clone(),
             sessions,
             active_profile_id,
             active_terminal_tab_id,

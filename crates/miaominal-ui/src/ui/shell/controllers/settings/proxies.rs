@@ -417,7 +417,7 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         let service = ProxyService::new(self.proxy_store.clone(), self.secrets.clone());
-        match service.delete(&mut self.proxies, proxy_id, &self.session_query.profiles()) {
+        match service.delete(&mut self.proxies, proxy_id, &self.catalog_query.profiles()) {
             Ok(_) => {
                 self.refresh_proxy_management_select(None, window, cx);
                 cx.emit(AppCommand::ProxiesChanged(self.proxies.clone()));

@@ -291,11 +291,9 @@ impl LocalVaultRootExt for AppView {
             DeferredAppCommand::Sftp(SftpDeferredCommand::OpenProfile { profile_id, owner }) => {
                 if let Some(owner) = owner {
                     self.ensure_session_side_panel_sftp_tab(owner, cx);
-                } else if let Some(profile) = self
-                    .controllers
-                    .session
+                } else if let Some(profile) = crate::ui::application::application_state(cx)
                     .read(cx)
-                    .query_port()
+                    .catalog_query()
                     .profile(&profile_id)
                 {
                     self.open_sftp_tab(profile, window, cx);

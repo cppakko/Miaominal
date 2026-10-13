@@ -1,4 +1,5 @@
-use super::{AppCommand, SessionQueryPort};
+use super::AppCommand;
+use crate::ui::contracts::CatalogQueryPort;
 use crate::ui::i18n;
 use crate::ui::shell::actions::ai_provider_kind_chat_supported;
 use crate::ui::shell::{
@@ -650,7 +651,7 @@ pub(in crate::ui::shell) struct SettingsController {
     runtime: TokioHandle,
     proxy_store: Option<ProxyStore>,
     proxies: Vec<ProxyProfile>,
-    session_query: SessionQueryPort,
+    catalog_query: CatalogQueryPort,
     editing_proxy_id: Option<String>,
     proxy_resolve_dns_through_proxy: bool,
     proxy_password_clear_requested: bool,
@@ -1656,7 +1657,7 @@ impl SettingsController {
 
     pub(in crate::ui::shell) fn new(
         args: SettingsControllerArgs,
-        session_query: SessionQueryPort,
+        catalog_query: CatalogQueryPort,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1952,7 +1953,7 @@ impl SettingsController {
             runtime: args.runtime,
             proxy_store: args.proxy_store,
             proxies: args.proxies,
-            session_query,
+            catalog_query,
             editing_proxy_id: None,
             proxy_resolve_dns_through_proxy: true,
             proxy_password_clear_requested: false,

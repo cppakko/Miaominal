@@ -498,7 +498,7 @@ impl KeychainController {
         let deploy_in_progress = self.deploy_in_progress;
         let selected_deploy_key = self.keychain_selected_deploy_key();
         let deployable_profile_count = self
-            .session_query
+            .catalog_query
             .profiles()
             .iter()
             .filter(|profile| Self::keychain_profile_supports_deploy(profile))

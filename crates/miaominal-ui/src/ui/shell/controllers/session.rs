@@ -1,3 +1,4 @@
+use crate::ui::contracts::CatalogQueryPort;
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet},
@@ -1541,7 +1542,6 @@ impl SessionController {
         subscriptions: Vec<Subscription>,
     ) -> Self {
         let port_profiles = profiles.clone();
-        let port_proxies = proxies.clone();
         Self {
             host_password_visible: false,
             services,
@@ -1583,13 +1583,7 @@ impl SessionController {
             panel: RefCell::new(SessionPanelState::default()),
             pending_dialogs: RefCell::new(SessionPendingDialogs::default()),
             ports: Rc::new(RefCell::new(SessionPortState {
-                snapshot: SessionPortSnapshot::new(
-                    port_profiles,
-                    port_proxies,
-                    Vec::new(),
-                    None,
-                    None,
-                ),
+                snapshot: SessionPortSnapshot::new(port_profiles, Vec::new(), None, None),
                 ..SessionPortState::default()
             })),
             terminal_focus_subscriptions: RefCell::new(None),
@@ -1697,7 +1691,6 @@ impl SessionController {
         proxies: Vec<ProxyProfile>,
     ) {
         *self.proxies.borrow_mut() = proxies;
-        self.sync_port_proxies();
     }
 
     pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {
@@ -5627,7 +5620,12 @@ impl SessionController {
                             .map(|rule_id| (session.profile_id.clone(), rule_id))
                     })
                     .flatten();
-                Some((prompt, request_id, session.commands.clone(), port_forward_key))
+                Some((
+                    prompt,
+                    request_id,
+                    session.commands.clone(),
+                    port_forward_key,
+                ))
             })
         else {
             return;
@@ -5692,7 +5690,12 @@ impl SessionController {
                             .map(|rule_id| (session.profile_id.clone(), rule_id))
                     })
                     .flatten();
-                Some((challenge, request_id, session.commands.clone(), port_forward_key))
+                Some((
+                    challenge,
+                    request_id,
+                    session.commands.clone(),
+                    port_forward_key,
+                ))
             })
         else {
             return;
@@ -6300,10 +6303,6 @@ impl SessionController {
         self.ports.borrow_mut().snapshot.profiles = self.profiles.borrow().clone();
     }
 
-    fn sync_port_proxies(&self) {
-        self.ports.borrow_mut().snapshot.proxies = self.proxies.borrow().clone();
-    }
-
     pub(in crate::ui::shell) fn query_port(&self) -> SessionQueryPort {
         SessionQueryPort {
             state: self.ports.clone(),
@@ -6322,7 +6321,6 @@ impl EventEmitter<AppCommand> for SessionController {}
 #[derive(Clone, Default)]
 pub(in crate::ui::shell) struct SessionPortSnapshot {
     profiles: Vec<SessionProfile>,
-    proxies: Vec<ProxyProfile>,
     sessions: HashMap<TabId, SessionPortSession>,
     terminal_order: Vec<TabId>,
     active_profile_id: Option<String>,
@@ -6332,7 +6330,6 @@ pub(in crate::ui::shell) struct SessionPortSnapshot {
 impl SessionPortSnapshot {
     pub(in crate::ui::shell) fn new(
         profiles: Vec<SessionProfile>,
-        proxies: Vec<ProxyProfile>,
         sessions: Vec<SessionPortSession>,
         active_profile_id: Option<String>,
         active_terminal_tab_id: Option<TabId>,
@@ -6348,7 +6345,6 @@ impl SessionPortSnapshot {
             .collect();
         Self {
             profiles,
-            proxies,
             sessions,
             terminal_order,
             active_profile_id,
@@ -6393,33 +6389,8 @@ pub(in crate::ui::shell) struct SessionQueryPort {
 }
 
 impl SessionQueryPort {
-    pub(in crate::ui::shell) fn profiles(&self) -> Vec<SessionProfile> {
-        self.state.borrow().snapshot.profiles.clone()
-    }
-
-    pub(in crate::ui::shell) fn profile(&self, profile_id: &str) -> Option<SessionProfile> {
-        self.state
-            .borrow()
-            .snapshot
-            .profiles
-            .iter()
-            .find(|profile| profile.id == profile_id)
-            .cloned()
-    }
-
-    pub(in crate::ui::shell) fn proxies(&self) -> Vec<ProxyProfile> {
-        self.state.borrow().snapshot.proxies.clone()
-    }
-
-    pub(in crate::ui::shell) fn active_profile(&self) -> Option<SessionProfile> {
-        let state = self.state.borrow();
-        let profile_id = state.snapshot.active_profile_id.as_deref()?;
-        state
-            .snapshot
-            .profiles
-            .iter()
-            .find(|profile| profile.id == profile_id)
-            .cloned()
+    pub(in crate::ui::shell) fn active_profile_id(&self) -> Option<String> {
+        self.state.borrow().snapshot.active_profile_id.clone()
     }
 
     pub(in crate::ui::shell) fn has_active_terminal_session(&self) -> bool {
@@ -6433,17 +6404,14 @@ impl SessionQueryPort {
     pub(in crate::ui::shell) fn resolved_profile_for_session(
         &self,
         tab_id: TabId,
+        catalog: &CatalogQueryPort,
     ) -> Option<SessionProfile> {
-        let state = self.state.borrow();
-        let session = state.snapshot.sessions.get(&tab_id)?;
-        session.pending_profile.clone().or_else(|| {
-            state
-                .snapshot
-                .profiles
-                .iter()
-                .find(|profile| profile.id == session.profile_id)
-                .cloned()
-        })
+        let (pending_profile, profile_id) = {
+            let state = self.state.borrow();
+            let session = state.snapshot.sessions.get(&tab_id)?;
+            (session.pending_profile.clone(), session.profile_id.clone())
+        };
+        pending_profile.or_else(|| catalog.profile(&profile_id))
     }
 }
 
@@ -6674,6 +6642,7 @@ fn release_retired_lease_if_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::contracts::CatalogReader;
     use crate::ui::shell::{SessionConnectionState, SessionMonitoringState, TerminalState};
     use gpui_kit::{point, px};
     use miaominal_ssh::SessionEvent;
@@ -6756,6 +6725,103 @@ mod tests {
         )
     }
 
+    #[derive(Default)]
+    struct TestCatalog {
+        profiles: RefCell<Vec<SessionProfile>>,
+    }
+
+    impl CatalogReader for TestCatalog {
+        fn profiles(&self) -> Vec<SessionProfile> {
+            self.profiles.borrow().clone()
+        }
+
+        fn profile(&self, id: &str) -> Option<SessionProfile> {
+            self.profiles
+                .borrow()
+                .iter()
+                .find(|profile| profile.id == id)
+                .cloned()
+        }
+
+        fn proxies(&self) -> Vec<ProxyProfile> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn pending_session_profile_wins_over_catalog_updates_and_deletion() {
+        let controller = SessionController::new_for_test();
+        let tab_id = TabId::new(7);
+        let pending_profile = profile("profile-a", "Connection draft");
+        let mut session = terminal(tab_id, "profile-a", "terminal-a");
+        session.pending_profile = Some(pending_profile.clone());
+        controller.sync_port_snapshot(SessionPortSnapshot::new(
+            vec![profile("profile-a", "Runtime snapshot")],
+            vec![session],
+            Some("profile-a".into()),
+            Some(tab_id),
+        ));
+        let source = Rc::new(TestCatalog {
+            profiles: RefCell::new(vec![profile("profile-a", "Committed edit")]),
+        });
+        let catalog = CatalogQueryPort::new(source.clone());
+        let query = controller.query_port();
+
+        assert_eq!(
+            query.resolved_profile_for_session(tab_id, &catalog),
+            Some(pending_profile.clone())
+        );
+        source.profiles.borrow_mut().clear();
+        assert_eq!(
+            query.resolved_profile_for_session(tab_id, &catalog),
+            Some(pending_profile)
+        );
+        assert!(
+            query
+                .resolved_profile_for_session(TabId::new(99), &catalog)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn catalog_resolution_and_terminal_profile_snapshots_have_separate_owners() {
+        let controller = SessionController::new_for_test();
+        let tab_id = TabId::new(7);
+        let mut runtime_profile = SessionProfile::blank_local("profile-a", 1);
+        runtime_profile.name = "Runtime local terminal".into();
+        controller.sync_port_snapshot(SessionPortSnapshot::new(
+            vec![runtime_profile.clone()],
+            vec![terminal(tab_id, "profile-a", "terminal-a")],
+            Some("profile-a".into()),
+            Some(tab_id),
+        ));
+        let source = Rc::new(TestCatalog {
+            profiles: RefCell::new(vec![profile("profile-a", "New committed profile")]),
+        });
+        let catalog = CatalogQueryPort::new(source.clone());
+        let query = controller.query_port();
+        let terminal = controller.terminal_port();
+
+        assert_eq!(
+            query.resolved_profile_for_session(tab_id, &catalog),
+            catalog.profile("profile-a")
+        );
+        assert_eq!(
+            terminal.target(tab_id).unwrap().profile,
+            Some(runtime_profile.clone())
+        );
+        source.profiles.borrow_mut().clear();
+        assert!(
+            query
+                .resolved_profile_for_session(tab_id, &catalog)
+                .is_none()
+        );
+        assert_eq!(
+            terminal.target(tab_id).unwrap().profile,
+            Some(runtime_profile)
+        );
+    }
+
     #[test]
     fn transferring_monitor_source_carries_shared_history_and_clears_source_ownership() {
         let controller = SessionController::new_for_test();
@@ -6802,7 +6868,6 @@ mod tests {
         let controller = SessionController::new_for_test();
         controller.sync_port_snapshot(SessionPortSnapshot::new(
             vec![profile("profile-a", "A"), profile("profile-b", "B")],
-            Vec::new(),
             vec![
                 terminal(TabId::new(7), "profile-a", "terminal-a"),
                 terminal(TabId::new(9), "profile-b", "terminal-b"),
@@ -6825,20 +6890,6 @@ mod tests {
         assert_eq!(synced.len(), 1);
         assert_eq!(synced[0].id, "starting");
         assert!(synced[0].enabled);
-    }
-
-    #[test]
-    fn query_port_starts_with_profiles_and_tracks_replacements() {
-        let controller =
-            SessionController::new_for_test_with_profiles(vec![profile("profile-a", "A")]);
-        let query = controller.query_port();
-
-        assert_eq!(query.profiles()[0].id, "profile-a");
-
-        controller.replace_profiles(vec![profile("profile-b", "B")]);
-
-        assert_eq!(query.profiles()[0].id, "profile-b");
-        assert!(query.profile("profile-a").is_none());
     }
 
     #[test]
@@ -6925,10 +6976,7 @@ mod tests {
     fn snapshot_exposes_active_profile_and_ordered_terminal_targets() {
         let (query, terminal) = ports();
 
-        assert_eq!(
-            query.active_profile().map(|profile| profile.id),
-            Some("profile-b".to_string())
-        );
+        assert_eq!(query.active_profile_id(), Some("profile-b".to_string()));
         let targets = terminal.targets();
         assert_eq!(
             targets

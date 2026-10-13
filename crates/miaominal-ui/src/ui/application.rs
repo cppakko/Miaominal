@@ -19,7 +19,11 @@ use std::rc::Rc;
 use std::time::Instant;
 use tokio::runtime::Handle as TokioHandle;
 
+use super::contracts::CatalogQueryPort;
 use super::i18n;
+
+mod catalog;
+use catalog::ConnectionCatalog;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ApplicationGenerations {
@@ -98,9 +102,7 @@ fn vault_chat_refresh_action(
             VaultChatRefreshAction::RefreshLocalVault
         }
         Ok(miaominal_paths::CredentialPolicy::SystemKeyring) => VaultChatRefreshAction::Preserve,
-        Ok(miaominal_paths::CredentialPolicy::PlatformInjected) => {
-            VaultChatRefreshAction::Preserve
-        }
+        Ok(miaominal_paths::CredentialPolicy::PlatformInjected) => VaultChatRefreshAction::Preserve,
         Err(()) => VaultChatRefreshAction::ClearUnavailable,
     }
 }
@@ -132,8 +134,7 @@ pub(crate) struct ApplicationBootstrapSnapshot {
 pub(crate) struct ApplicationState {
     services: AppServices,
     settings_store: SettingsStore,
-    profiles: Vec<SessionProfile>,
-    proxies: Vec<ProxyProfile>,
+    catalog: Rc<ConnectionCatalog>,
     selected_profile: Option<usize>,
     known_hosts_entries: Vec<KnownHostEntry>,
     snippets: Vec<SnippetRecord>,
@@ -284,8 +285,7 @@ impl ApplicationState {
         Self {
             services,
             settings_store,
-            profiles: sessions,
-            proxies,
+            catalog: Rc::new(ConnectionCatalog::new(sessions, proxies)),
             selected_profile,
             known_hosts_entries,
             snippets,
@@ -332,18 +332,24 @@ impl ApplicationState {
         }
         let mut replacement = Self::load(runtime);
         replacement.generations = generations_after_reload(self.generations);
+        self.catalog.replace(&replacement.catalog);
+        replacement.catalog = self.catalog.clone();
         let previous = std::mem::replace(self, replacement);
         drop(previous);
         self.start_runtime_observers(cx);
         cx.notify();
     }
 
+    pub(crate) fn catalog_query(&self) -> CatalogQueryPort {
+        CatalogQueryPort::new(self.catalog.clone())
+    }
+
     pub(crate) fn snapshot(&self) -> ApplicationBootstrapSnapshot {
         ApplicationBootstrapSnapshot {
             services: self.services.clone(),
             settings_store: self.settings_store.clone(),
-            profiles: self.profiles.clone(),
-            proxies: self.proxies.clone(),
+            profiles: self.catalog.profiles(),
+            proxies: self.catalog.proxies(),
             selected_profile: self.selected_profile,
             known_hosts_entries: self.known_hosts_entries.clone(),
             snippets: self.snippets.clone(),
@@ -378,15 +384,13 @@ impl ApplicationState {
         known_hosts_entries: Vec<KnownHostEntry>,
         cx: &mut Context<Self>,
     ) {
-        if self.profiles == profiles
-            && self.proxies == proxies
+        let connections_changed = self.catalog.set_catalogs(profiles, proxies);
+        if !connections_changed
             && self.snippets == snippets
             && self.known_hosts_entries == known_hosts_entries
         {
             return;
         }
-        self.profiles = profiles;
-        self.proxies = proxies;
         self.snippets = snippets;
         self.known_hosts_entries = known_hosts_entries;
         self.refresh_connection_catalog_services();
@@ -403,7 +407,7 @@ impl ApplicationState {
     ) {
         let settings_changed =
             miaominal_settings::changed(self.settings_store.settings(), settings_store.settings());
-        let proxies_changed = self.proxies != proxies;
+        let proxies_changed = self.catalog.set_proxies(proxies);
         let sync_changed = self.sync_engine.config_store.config != sync_engine.config_store.config;
         if !settings_changed && !proxies_changed && !sync_changed {
             return;
@@ -415,7 +419,6 @@ impl ApplicationState {
             .local_vault_auto_lock_duration
             != settings_store.settings().local_vault_auto_lock_duration;
         self.settings_store = settings_store;
-        self.proxies = proxies;
         self.sync_engine = sync_engine;
         self.generations.settings = next_generation(self.generations.settings);
         if proxies_changed {
@@ -582,8 +585,7 @@ impl ApplicationState {
                         "failed to preserve local port-forward runtime state after sync: {error:?}"
                     );
                 }
-                if self.profiles != profiles {
-                    self.profiles = profiles;
+                if self.catalog.set_profiles(profiles) {
                     catalogs_changed = true;
                     routes_changed = true;
                 }
@@ -591,8 +593,7 @@ impl ApplicationState {
                 log::warn!("failed to reload sessions after sync: {error}");
             }
             if let Ok(proxies) = &reload.proxies {
-                if self.proxies != *proxies {
-                    self.proxies = proxies.clone();
+                if self.catalog.set_proxies(proxies.clone()) {
                     catalogs_changed = true;
                     routes_changed = true;
                 }
@@ -634,13 +635,13 @@ impl ApplicationState {
         if let Err(error) = self
             .services
             .open_ssh_integration_service
-            .refresh(self.profiles.clone(), self.proxies.clone())
+            .refresh(self.catalog.profiles(), self.catalog.proxies())
         {
             log::warn!("failed to refresh managed OpenSSH config: {error:?}");
         }
         self.services
             .port_forward_manager
-            .replace_catalogs(self.profiles.clone(), self.proxies.clone());
+            .replace_catalogs(self.catalog.profiles(), self.catalog.proxies());
     }
 
     pub(crate) fn apply_manual_sync_result(
@@ -792,18 +793,20 @@ impl ApplicationState {
                             return;
                         }
                         state.port_forward_snapshot = snapshot;
+                        let mut profiles = state.catalog.profiles();
                         let catalogs_changed = reconcile_port_forward_enabled(
-                            &mut state.profiles,
+                            &mut profiles,
                             &state.port_forward_snapshot,
                         );
                         if catalogs_changed {
                             if let Some(store) = &state.services.session_store
-                                && let Err(error) = store.save(&state.profiles)
+                                && let Err(error) = store.save(&profiles)
                             {
                                 log::warn!(
                                     "failed to persist terminal port-forward runtime state: {error:?}"
                                 );
                             }
+                            state.catalog.set_profiles(profiles);
                             state.generations.catalogs =
                                 next_generation(state.generations.catalogs);
                         }

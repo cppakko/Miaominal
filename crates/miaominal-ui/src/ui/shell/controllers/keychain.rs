@@ -1,4 +1,5 @@
 use super::{AppCommand, KeychainDeferredCommand};
+use crate::ui::contracts::CatalogQueryPort;
 use crate::ui::i18n;
 use crate::ui::shell::*;
 use gpui_kit::EventEmitter;
@@ -61,7 +62,7 @@ pub(in crate::ui::shell) struct KeychainController {
     pub(in crate::ui::shell) forms: KeychainForms,
     pub(in crate::ui::shell) managed_keys: Vec<ManagedKeyRecord>,
     pub(in crate::ui::shell) agent_identities: Vec<AgentIdentitySummary>,
-    pub(in crate::ui::shell) session_query: SessionQueryPort,
+    pub(in crate::ui::shell) catalog_query: CatalogQueryPort,
     pub(in crate::ui::shell) runtime: TokioHandle,
     pub(in crate::ui::shell) keychain_store: Option<ManagedKeyStore>,
     pub(in crate::ui::shell) secrets: SecretStore,
@@ -85,7 +86,7 @@ pub(in crate::ui::shell) struct KeychainController {
 
 impl KeychainController {
     fn build_forms(
-        session_query: &SessionQueryPort,
+        catalog_query: &CatalogQueryPort,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> KeychainForms {
@@ -164,7 +165,7 @@ impl KeychainController {
         );
         let deploy_profile_select = cx.new(|cx| {
             SelectState::new(
-                Self::keychain_deploy_profile_options(&session_query.profiles()),
+                Self::keychain_deploy_profile_options(&catalog_query.profiles()),
                 None,
                 window,
                 cx,
@@ -280,11 +281,11 @@ impl KeychainController {
 
     pub(in crate::ui::shell) fn new(
         args: KeychainControllerArgs,
-        session_query: SessionQueryPort,
+        catalog_query: CatalogQueryPort,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let forms = Self::build_forms(&session_query, window, cx);
+        let forms = Self::build_forms(&catalog_query, window, cx);
         let filter_input = forms.filter_input.clone();
         let filter_subscription =
             cx.subscribe(&filter_input, |_: &mut Self, _, event: &InputEvent, cx| {
@@ -297,7 +298,7 @@ impl KeychainController {
             forms,
             managed_keys: args.managed_keys,
             agent_identities: Vec::new(),
-            session_query,
+            catalog_query,
             runtime: args.runtime,
             keychain_store: args.keychain_store,
             secrets: args.secrets,

@@ -266,16 +266,34 @@ impl ControllerSet {
     ) -> Self {
         let session = cx.new(|cx| SessionController::new(session, window, cx));
         let session_query = session.read(cx).query_port();
+        let catalog_query = crate::ui::application::application_state(cx)
+            .read(cx)
+            .catalog_query();
         let session_terminal = session.read(cx).terminal_port();
         Self {
             session,
             agent: cx.new(|cx| {
-                AgentController::new(agent, session_query.clone(), session_terminal, window, cx)
+                AgentController::new(
+                    agent,
+                    catalog_query.clone(),
+                    session_query.clone(),
+                    session_terminal,
+                    window,
+                    cx,
+                )
             }),
-            sftp: cx.new(|cx| SftpController::new(sftp, session_query.clone(), window, cx)),
+            sftp: cx.new(|cx| {
+                SftpController::new(
+                    sftp,
+                    catalog_query.clone(),
+                    session_query.clone(),
+                    window,
+                    cx,
+                )
+            }),
             settings: cx
-                .new(|cx| SettingsController::new(settings, session_query.clone(), window, cx)),
-            keychain: cx.new(|cx| KeychainController::new(keychain, session_query, window, cx)),
+                .new(|cx| SettingsController::new(settings, catalog_query.clone(), window, cx)),
+            keychain: cx.new(|cx| KeychainController::new(keychain, catalog_query, window, cx)),
         }
     }
 

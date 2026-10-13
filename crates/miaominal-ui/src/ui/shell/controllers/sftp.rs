@@ -1,3 +1,4 @@
+use crate::ui::contracts::CatalogQueryPort;
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet, VecDeque},
@@ -881,6 +882,7 @@ enum SftpEditSessionStartError {
 
 pub(in crate::ui::shell) struct SftpController {
     service: SftpService,
+    catalog_query: CatalogQueryPort,
     session_query: SessionQueryPort,
     forms: RefCell<SftpBrowserForms>,
     tabs: RefCell<SftpTabStore>,
@@ -1350,6 +1352,7 @@ impl SftpController {
 
     pub(in crate::ui::shell) fn new(
         args: SftpControllerArgs,
+        catalog_query: CatalogQueryPort,
         session_query: SessionQueryPort,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1420,6 +1423,7 @@ impl SftpController {
 
         Self {
             service: args.service,
+            catalog_query,
             session_query,
             forms: RefCell::new(forms),
             tabs: RefCell::new(SftpTabStore::default()),
@@ -3789,7 +3793,7 @@ impl SftpController {
     }
 
     pub(in crate::ui::shell) fn session_profiles(&self) -> Vec<SessionProfile> {
-        self.session_query.profiles()
+        self.catalog_query.profiles()
     }
 
     fn insert_tab(&self, tab_id: TabId, tab: SftpTabState) {
@@ -3820,13 +3824,15 @@ impl SftpController {
         owner: Option<TabId>,
         cx: &mut Context<Self>,
     ) -> Result<SessionProfile, String> {
-        let owner_profile =
-            owner.and_then(|owner| self.session_query.resolved_profile_for_session(owner));
+        let owner_profile = owner.and_then(|owner| {
+            self.session_query
+                .resolved_profile_for_session(owner, &self.catalog_query)
+        });
         let profile = Self::resolve_start_profile(profile, owner, owner_profile)?;
-        let profiles = self.session_query.profiles();
+        let profiles = self.catalog_query.profiles();
         let connection =
             self.service
-                .start_session(profile.clone(), profiles, self.session_query.proxies());
+                .start_session(profile.clone(), profiles, self.catalog_query.proxies());
         let mut tab = SftpTabState::new(&profile);
         tab.commands = Some(connection.commands);
         self.insert_tab(tab_id, tab);

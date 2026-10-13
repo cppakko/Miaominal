@@ -212,7 +212,7 @@ impl KeychainController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let profiles = self.session_query.profiles();
+        let profiles = self.catalog_query.profiles();
         let items = Self::keychain_deploy_profile_items(&profiles);
         let selected_profile_id = selected_profile_id.map(str::to_string).or_else(|| {
             self.forms
@@ -1132,7 +1132,7 @@ impl KeychainController {
             command_template
         };
 
-        let profiles = self.session_query.profiles();
+        let profiles = self.catalog_query.profiles();
         let Some(profile) = profiles
             .iter()
             .find(|profile| profile.id == selected_profile_id)
@@ -1168,7 +1168,7 @@ impl KeychainController {
         let command =
             keychain_deploy_exec_command(&command_template, &location, &filename, &key_public_key);
         let all_profiles = profiles;
-        let all_proxies = self.session_query.proxies();
+        let all_proxies = self.catalog_query.proxies();
         let runtime = self.runtime.clone();
         let Some(service) = self.keychain_service() else {
             self.status_message = i18n::string("keychain.messages.storage_unavailable");
