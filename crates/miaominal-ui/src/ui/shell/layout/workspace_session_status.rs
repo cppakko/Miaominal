@@ -1,6 +1,7 @@
 use crate::ui::components::{fab_icon_button, md3_spinner};
 use crate::ui::i18n;
 use crate::ui::shell::SessionFailureStatus;
+use crate::ui::shell::controllers::TabOpenRequest;
 use gpui_kit::component::Disableable;
 
 use super::super::*;
@@ -603,12 +604,13 @@ impl SessionController {
                                     None,
                                     {
                                         move |_window, cx| {
-                                            profile_controller.update(cx, |controller, cx| {
-                                                controller.request_profile_editor(
-                                                    profile_id_edit.clone(),
-                                                    true,
-                                                    cx,
-                                                );
+                                            profile_controller.update(cx, |_controller, cx| {
+                                                cx.emit(AppCommand::OpenTab(
+                                                    TabOpenRequest::ProfileEditor {
+                                                        profile_id: profile_id_edit.clone(),
+                                                        open_hosts_tab: true,
+                                                    },
+                                                ));
                                             });
                                         }
                                     },

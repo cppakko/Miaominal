@@ -101,6 +101,7 @@ impl SessionController {
             self.remove_tab(tab_id);
         }
 
+        self.publish_committed_profiles(cx);
         cx.emit(AppCommand::SessionEventApplied { tab_id, outcome });
         cx.notify();
     }

@@ -191,15 +191,14 @@ impl LocalVaultRootExt for AppView {
         cx: &mut Context<Self>,
     ) {
         match follow_up {
+            DeferredAppCommand::SaveHostProfile => {
+                self.controllers.hosts.update(cx, |controller, cx| {
+                    controller.continue_save_profile_after_unlock(window, cx);
+                });
+            }
             DeferredAppCommand::Session(command) => match command {
                 SessionDeferredCommand::OpenProfile(profile) => {
                     self.open_session_tab(*profile, window, cx);
-                }
-                SessionDeferredCommand::SaveProfile => {
-                    let controller = self.controllers.session.clone();
-                    controller.update(cx, |controller, cx| {
-                        controller.continue_save_profile_after_unlock(window, cx);
-                    });
                 }
                 SessionDeferredCommand::SavePortForwardRule => {
                     let controller = self.controllers.session.clone();
@@ -272,7 +271,7 @@ impl LocalVaultRootExt for AppView {
                 }
                 SettingsDeferredCommand::RevealSecret(target) => {
                     if target == SecretRevealTarget::HostPassword {
-                        self.controllers.session.update(cx, |controller, cx| {
+                        self.controllers.hosts.update(cx, |controller, cx| {
                             controller.reveal_host_password_input(window, cx);
                         });
                     } else {
@@ -768,7 +767,7 @@ impl LocalVaultRootExt for AppView {
         cx.notify();
     }
     fn lock_local_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
-        self.controllers.session.update(cx, |controller, cx| {
+        self.controllers.hosts.update(cx, |controller, cx| {
             controller.prepare_host_password_for_lock(window, cx);
         });
         let transition = self
@@ -777,7 +776,7 @@ impl LocalVaultRootExt for AppView {
             .read(cx)
             .local_vault_lock_transition();
         self.apply_local_vault_transition(transition, cx);
-        self.controllers.session.update(cx, |controller, cx| {
+        self.controllers.hosts.update(cx, |controller, cx| {
             controller.set_host_password_visibility(false, false, window, cx);
         });
         let settings = self.controllers.settings.clone();

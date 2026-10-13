@@ -1012,7 +1012,7 @@ impl AppView {
         &self,
         cx: &App,
     ) -> Option<PendingProfileDeleteState> {
-        self.controllers.session.read(cx).pending_profile_delete()
+        self.controllers.hosts.read(cx).pending_profile_delete()
     }
 
     pub(in crate::ui::shell) fn pending_profile_import_result(
@@ -1020,7 +1020,7 @@ impl AppView {
         cx: &App,
     ) -> Option<PendingProfileImportResultState> {
         self.controllers
-            .session
+            .hosts
             .read(cx)
             .pending_profile_import_result()
     }

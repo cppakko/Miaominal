@@ -8,9 +8,9 @@ pub(in crate::ui::shell) fn initial_profile_selection(
     let editing_auth_method = selected_profile_data
         .as_ref()
         .map(SessionProfile::effective_auth_method)
-        .map(SessionController::host_editor_auth_method)
+        .map(HostsController::host_editor_auth_method)
         .unwrap_or_default();
-    let available_groups = SessionController::collect_available_groups(profiles);
+    let available_groups = HostsController::collect_available_groups(profiles);
     let selected_group = selected_profile_data
         .as_ref()
         .map(|profile| profile.group.trim().to_string())

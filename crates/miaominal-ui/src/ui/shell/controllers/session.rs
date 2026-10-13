@@ -2,14 +2,13 @@ use crate::ui::contracts::CatalogQueryPort;
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{HashMap, HashSet},
-    path::PathBuf,
     rc::Rc,
     time::SystemTime,
 };
 
 use gpui_kit::component::{
     input::{EditorState, InputEvent, InputState, TabSize},
-    select::{SearchableVec, SelectEvent, SelectItem, SelectState},
+    select::{SearchableVec, SelectEvent, SelectState},
 };
 use gpui_kit::{
     App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, ScrollHandle,
@@ -18,17 +17,13 @@ use gpui_kit::{
 use miaominal_agent::{TerminalOutputReceiver, TerminalOutputTap};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
-use miaominal_core::profile::{
-    AuthMethod, DEFAULT_SESSION_CHARSET, ImportIssue, ImportSourceKind, ImportedBatch,
-    PortForwardKind, PortForwardRule, ProfileKind, SessionEnvironmentVariable, ShellType,
-};
+use miaominal_core::profile::{AuthMethod, PortForwardKind, PortForwardRule};
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_core::snippet::SnippetRecord;
-use miaominal_secrets::{SecretKind, SecretStore};
+use miaominal_secrets::SecretStore;
 use miaominal_services::{
-    ImportedProfilesResult, OpenSshIntegrationService, PortForwardManager,
-    PortForwardManagerSnapshot, PortForwardPrompt, PortForwardRuntimeState, ProfileService,
-    SshBridgeService, TerminalService,
+    OpenSshIntegrationService, PortForwardManager, PortForwardManagerSnapshot, PortForwardPrompt,
+    PortForwardRuntimeState, ProfileService, SshBridgeService, TerminalService,
 };
 use miaominal_ssh::{
     HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionCommandSender, SessionConnection,
@@ -43,17 +38,14 @@ use super::{
     AppCommand, DeferredAppCommand, SessionDeferredCommand, SessionSftpProgressLayoutState,
     TabOpenRequest,
 };
-use crate::ui::shell::bootstrap_loaders::initial_profile_selection;
-use crate::ui::shell::support::set_input_masked;
 use crate::ui::{
     i18n,
     shell::{
-        AppIcon, DialogOverlaySnapshot, ForwardProfileSelectItem, LocalVaultStatus,
-        ManagedKeySelectItem, PageEditorSidebarKind, ProfileViewMode, ProxyJumpCandidateSelectItem,
-        SelectOption, SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation,
-        ValidationFailure, WorkspaceSidePanelTransition, error_notification,
-        localized_secret_placeholder, new_input_state, set_code_editor_input_placeholder,
-        set_editor_value, set_input_placeholder, set_input_value, validation_notification,
+        DialogOverlaySnapshot, ForwardProfileSelectItem, LocalVaultStatus, PageEditorSidebarKind,
+        ProfileViewMode, SessionProfile, TabId, TabKindTag, TabState, TerminalSearchAnimation,
+        ValidationFailure, WorkspaceSidePanelTransition, new_input_state,
+        set_code_editor_input_placeholder, set_editor_value, set_input_placeholder,
+        set_input_value, validation_notification,
     },
 };
 
@@ -61,26 +53,12 @@ mod events;
 mod forwarding;
 mod lifecycle;
 mod local_session;
-mod profile_import;
 mod search;
 mod snippets;
 mod terminal;
 
 pub(in crate::ui::shell) const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
 pub(in crate::ui::shell) use forwarding::PortForwardSessionStart;
-
-fn is_valid_environment_variable_name(name: &str) -> bool {
-    let mut characters = name.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-
-    if first != '_' && !first.is_ascii_alphabetic() {
-        return false;
-    }
-
-    characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-}
 
 #[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct MonitorChartPoint {
@@ -284,20 +262,6 @@ pub(in crate::ui::shell) struct SessionEventOutcome {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingProfileDeleteState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) profile_name: String,
-    pub(in crate::ui::shell) reload_inputs_after_delete: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct PendingProfileImportResultState {
-    pub(in crate::ui::shell) source: ImportSourceKind,
-    pub(in crate::ui::shell) imported_count: usize,
-    pub(in crate::ui::shell) issues: Vec<ImportIssue>,
-}
-
-#[derive(Debug, Clone)]
 pub(in crate::ui::shell) struct PendingKnownHostDeleteState {
     pub(in crate::ui::shell) host: String,
     pub(in crate::ui::shell) port: u16,
@@ -347,69 +311,10 @@ struct SavePortForwardRuleAfterUnlockResult {
     persist_error: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ProfileInputPurpose {
-    Save,
-    ConnectionTest,
-}
-
-impl ProfileInputPurpose {
-    fn requires_name(self) -> bool {
-        matches!(self, Self::Save)
-    }
-}
-
-struct SaveProfileAfterUnlockResult {
-    profile: SessionProfile,
-    profiles: Vec<SessionProfile>,
-    selected_profile: Option<usize>,
-}
-
 pub(in crate::ui::shell) struct ClosedSessionTabState {
     pub(in crate::ui::shell) tab_id: TabId,
     pub(in crate::ui::shell) profile: SessionProfile,
     pub(in crate::ui::shell) hidden_from_topbar: bool,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct HostEditorEnvironmentVariableRow {
-    pub(in crate::ui::shell) name_input: Entity<InputState>,
-    pub(in crate::ui::shell) value_input: Entity<InputState>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct HostEditorForms {
-    pub(in crate::ui::shell) name_input: Entity<InputState>,
-    pub(in crate::ui::shell) group_input: Entity<InputState>,
-    pub(in crate::ui::shell) group_select: Entity<SelectState<SearchableVec<String>>>,
-    pub(in crate::ui::shell) managed_key_select:
-        Entity<SelectState<SearchableVec<ManagedKeySelectItem>>>,
-    pub(in crate::ui::shell) proxy_jump_select:
-        Entity<SelectState<SearchableVec<ProxyJumpCandidateSelectItem>>>,
-    pub(in crate::ui::shell) entry_proxy_select:
-        Entity<SelectState<SearchableVec<SelectOption<Option<String>>>>>,
-    pub(in crate::ui::shell) charset_select: Entity<SelectState<SearchableVec<String>>>,
-    pub(in crate::ui::shell) creating_new_group: bool,
-    pub(in crate::ui::shell) tags_input: Entity<InputState>,
-    pub(in crate::ui::shell) host_input: Entity<InputState>,
-    pub(in crate::ui::shell) port_input: Entity<InputState>,
-    pub(in crate::ui::shell) username_input: Entity<InputState>,
-    pub(in crate::ui::shell) password_input: Entity<InputState>,
-    pub(in crate::ui::shell) private_key_input: Entity<InputState>,
-    pub(in crate::ui::shell) agent_identity_input: Entity<InputState>,
-    pub(in crate::ui::shell) certificate_input: Entity<InputState>,
-    pub(in crate::ui::shell) passphrase_input: Entity<InputState>,
-    pub(in crate::ui::shell) startup_command_input: Entity<EditorState>,
-    pub(in crate::ui::shell) proxy_jump_profile_ids: Vec<String>,
-    pub(in crate::ui::shell) selected_proxy_jump_hop: Option<usize>,
-    pub(in crate::ui::shell) environment_variable_rows: Vec<HostEditorEnvironmentVariableRow>,
-    pub(in crate::ui::shell) shell_type: ShellType,
-    pub(in crate::ui::shell) editing_auth_method: AuthMethod,
-    pub(in crate::ui::shell) agent_forwarding_enabled: bool,
-    pub(in crate::ui::shell) profile_kind: ProfileKind,
-    pub(in crate::ui::shell) local_shell_input: Entity<InputState>,
-    pub(in crate::ui::shell) local_shell_args_input: Entity<InputState>,
-    pub(in crate::ui::shell) local_working_directory_input: Entity<InputState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -476,11 +381,6 @@ pub(in crate::ui::shell) struct SnippetsForms {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct HostsForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
-}
-
-#[derive(Clone)]
 pub(in crate::ui::shell) struct TrustedHostsForms {
     pub(in crate::ui::shell) filter_input: Entity<InputState>,
 }
@@ -499,25 +399,20 @@ pub(in crate::ui::shell) struct PortForwardingForms {
 
 #[derive(Clone)]
 pub(in crate::ui::shell) struct SessionPanelForms {
-    pub(in crate::ui::shell) hosts: HostsForms,
     pub(in crate::ui::shell) trusted: TrustedHostsForms,
     pub(in crate::ui::shell) forwarding: PortForwardingForms,
 }
 
 #[derive(Clone)]
 pub(in crate::ui::shell) struct SessionCatalogViewState {
-    pub(in crate::ui::shell) hosts_view_mode: ProfileViewMode,
     pub(in crate::ui::shell) forward_view_mode: ProfileViewMode,
     pub(in crate::ui::shell) snippets_view_mode: ProfileViewMode,
-    pub(in crate::ui::shell) hosts_group_filter: Option<String>,
     pub(in crate::ui::shell) trusted_host_filter: TrustedHostFilter,
     pub(in crate::ui::shell) snippets_package_filter: Option<String>,
 }
 
 #[derive(Clone)]
 pub(in crate::ui::shell) struct SessionEditorState {
-    pub(in crate::ui::shell) host_editor_open: bool,
-    pub(in crate::ui::shell) host_editor_is_new: bool,
     pub(in crate::ui::shell) snippets_editor_open: bool,
     pub(in crate::ui::shell) port_forward_editor_open: bool,
     pub(in crate::ui::shell) port_forward_editor_profile_id: Option<String>,
@@ -576,13 +471,13 @@ fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
 }
 
 pub(in crate::ui::shell) struct SessionController {
-    host_password_visible: bool,
     services: SessionControllerServices,
     profiles: RefCell<Vec<SessionProfile>>,
+    // Phase 2: drain only successful persistence; redraws never republish profile snapshots.
+    committed_profiles: RefCell<Option<Vec<SessionProfile>>>,
     proxies: RefCell<Vec<ProxyProfile>>,
     selected_profile: Cell<Option<usize>>,
     forms: Option<RefCell<SessionWorkspaceForms>>,
-    host_editor_forms: Option<RefCell<HostEditorForms>>,
     snippets_forms: Option<RefCell<SnippetsForms>>,
     kbi_inputs: RefCell<Vec<Entity<InputState>>>,
     snippets: RefCell<Vec<SnippetRecord>>,
@@ -595,7 +490,6 @@ pub(in crate::ui::shell) struct SessionController {
     tabs: RefCell<HashMap<TabId, SessionTabState>>,
     shared_profile_monitoring: RefCell<HashMap<String, SessionMonitoringState>>,
     monitor_source_tabs: RefCell<HashMap<String, TabId>>,
-    host_editor_scroll_handle: ScrollHandle,
     monitor_scroll_handle: ScrollHandle,
     reported_terminal_focus_tab_id: RefCell<Option<TabId>>,
     panel: RefCell<SessionPanelState>,
@@ -628,7 +522,6 @@ pub(in crate::ui::shell) struct SessionControllerArgs {
 
 struct SessionFormsBundle {
     workspace: SessionWorkspaceForms,
-    host_editor: HostEditorForms,
     snippets: SnippetsForms,
     panel: SessionPanelForms,
 }
@@ -657,8 +550,6 @@ struct SessionPanelState {
 
 #[derive(Default)]
 struct SessionPendingDialogs {
-    profile_delete: Option<PendingProfileDeleteState>,
-    profile_import_result: Option<PendingProfileImportResultState>,
     known_host_delete: Option<PendingKnownHostDeleteState>,
     snippet_delete: Option<PendingSnippetDeleteState>,
     port_forward_rule_delete: Option<PendingPortForwardRuleDeleteState>,
@@ -686,321 +577,12 @@ fn dedicated_port_forward_rules(
 }
 
 impl SessionController {
-    fn available_session_charsets() -> Vec<String> {
-        [
-            "UTF-8",
-            "GB18030",
-            "GBK",
-            "GB2312",
-            "Big5",
-            "Shift_JIS",
-            "EUC-JP",
-            "EUC-KR",
-            "ISO-8859-1",
-            "ISO-8859-15",
-            "Windows-1252",
-            "KOI8-R",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-    }
-
-    fn entry_proxy_select_options(
-        proxies: &[ProxyProfile],
-        selected_proxy_id: Option<&str>,
-    ) -> Vec<SelectOption<Option<String>>> {
-        let mut options = vec![SelectOption::new(
-            None,
-            i18n::string("hosts.editor.entry_proxy.direct"),
-        )];
-        options.extend(
-            proxies
-                .iter()
-                .map(|proxy| SelectOption::new(Some(proxy.id.clone()), proxy.connection_label())),
-        );
-        if let Some(selected_proxy_id) = selected_proxy_id
-            && !proxies.iter().any(|proxy| proxy.id == selected_proxy_id)
-        {
-            options.push(SelectOption::new(
-                Some(selected_proxy_id.to_string()),
-                i18n::string_args(
-                    "hosts.editor.entry_proxy.missing_option",
-                    &[("id", selected_proxy_id)],
-                ),
-            ));
-        }
-        options
-    }
-
     fn build_forms(
         profiles: &[SessionProfile],
-        proxies: &[ProxyProfile],
-        selected_profile: Option<usize>,
-        managed_keys: &[ManagedKeyRecord],
         snippets: &[SnippetRecord],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> SessionFormsBundle {
-        let selection = initial_profile_selection(profiles, selected_profile);
-        let selected_profile_data = selection.selected_profile_data;
-        let selected_group = selection.selected_group;
-        let selected_existing_group = selection.selected_existing_group;
-        let name_input = new_input_state(
-            i18n::string("placeholders.host_editor.profile_name"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.name.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let group_input = new_input_state(
-            i18n::string("placeholders.host_editor.new_group_name"),
-            if selected_existing_group.is_none() {
-                selected_group.clone()
-            } else {
-                String::new()
-            },
-            false,
-            window,
-            cx,
-        );
-        let tags_input = new_input_state(
-            i18n::string("placeholders.host_editor.tags"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.tags.join(", "))
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let host_input = new_input_state(
-            i18n::string("placeholders.host_editor.host"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.host.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let port_input = new_input_state(
-            "22",
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.port.to_string())
-                .unwrap_or_else(|| "22".to_string()),
-            false,
-            window,
-            cx,
-        );
-        let username_input = new_input_state(
-            i18n::string("placeholders.host_editor.username"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.username.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let password_input = new_input_state(
-            localized_secret_placeholder(
-                selected_profile_data
-                    .as_ref()
-                    .is_some_and(|profile| profile.has_stored_password),
-                "placeholders.host_editor.password",
-            ),
-            "",
-            true,
-            window,
-            cx,
-        );
-        let private_key_input = new_input_state(
-            i18n::string("placeholders.host_editor.private_key_path"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.private_key_path.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let agent_identity_input = new_input_state(
-            i18n::string("placeholders.host_editor.agent_identity"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.agent_identity.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let certificate_input = new_input_state(
-            i18n::string("placeholders.host_editor.certificate_path"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.certificate_path.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let passphrase_input = new_input_state(
-            localized_secret_placeholder(
-                selected_profile_data
-                    .as_ref()
-                    .is_some_and(|profile| profile.has_stored_passphrase),
-                "placeholders.host_editor.key_passphrase",
-            ),
-            "",
-            true,
-            window,
-            cx,
-        );
-        let startup_command_value = selected_profile_data
-            .as_ref()
-            .map(|profile| profile.startup_command.clone())
-            .unwrap_or_default();
-        let startup_command_input = cx.new(|cx| {
-            EditorState::new(window, cx)
-                .language("bash")
-                .indent_guides(false)
-                .folding(false)
-                .searchable(false)
-                .tab_size(TabSize {
-                    tab_size: 2,
-                    ..Default::default()
-                })
-                .placeholder("")
-                .default_value(startup_command_value)
-        });
-        set_code_editor_input_placeholder(
-            &startup_command_input,
-            i18n::string("placeholders.host_editor.startup_command"),
-            false,
-            window,
-            cx,
-        );
-        let local_shell_input = new_input_state(
-            local_session::local_shell_placeholder(),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.local_shell.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let local_shell_args_input = new_input_state(
-            i18n::string("placeholders.host_editor.local_shell_args"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.local_shell_args.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let local_working_directory_input = new_input_state(
-            i18n::string("placeholders.host_editor.local_working_directory"),
-            selected_profile_data
-                .as_ref()
-                .map(|profile| profile.local_working_directory.clone())
-                .unwrap_or_default(),
-            false,
-            window,
-            cx,
-        );
-        let proxy_jump_profile_ids = selected_profile_data
-            .as_ref()
-            .map(|profile| profile.proxy_jump_profile_ids.clone())
-            .unwrap_or_default();
-        let selected_entry_proxy_id = selected_profile_data
-            .as_ref()
-            .and_then(|profile| profile.entry_proxy_id.clone());
-        let environment_variable_rows = selected_profile_data
-            .as_ref()
-            .map(|profile| {
-                Self::host_editor_environment_variable_rows(
-                    &profile.environment_variables,
-                    window,
-                    cx,
-                )
-            })
-            .unwrap_or_else(|| Self::host_editor_environment_variable_rows(&[], window, cx));
-        let group_select = cx.new(|cx| {
-            let mut state = SelectState::new(
-                SearchableVec::new(selection.available_groups),
-                None,
-                window,
-                cx,
-            );
-            if let Some(existing_group) = selected_existing_group.as_ref() {
-                state.set_selected_value(existing_group, window, cx);
-            }
-            state
-        });
-        let managed_key_select = cx.new(|cx| {
-            let mut state = SelectState::new(
-                ManagedKeySelectItem::options(managed_keys),
-                None,
-                window,
-                cx,
-            )
-            .searchable(true);
-            if let Some(managed_key_id) = selected_profile_data
-                .as_ref()
-                .map(|profile| profile.managed_key_id.trim().to_string())
-                .filter(|managed_key_id| !managed_key_id.is_empty())
-            {
-                state.set_selected_value(&managed_key_id, window, cx);
-            }
-            state
-        });
-        let selected_charset = selected_profile_data
-            .as_ref()
-            .map(|profile| profile.charset.trim().to_string())
-            .filter(|charset| !charset.is_empty())
-            .unwrap_or_else(|| DEFAULT_SESSION_CHARSET.to_string());
-        let charset_select = cx.new(|cx| {
-            let mut state = SelectState::new(
-                SearchableVec::new(Self::available_session_charsets()),
-                None,
-                window,
-                cx,
-            )
-            .searchable(true);
-            state.set_selected_value(&selected_charset, window, cx);
-            state
-        });
-        let proxy_jump_select = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(Vec::<ProxyJumpCandidateSelectItem>::new()),
-                None,
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
-        let entry_proxy_options =
-            Self::entry_proxy_select_options(proxies, selected_entry_proxy_id.as_deref());
-        let selected_entry_proxy = entry_proxy_options
-            .iter()
-            .position(|option| option.value() == &selected_entry_proxy_id)
-            .map(|index| gpui_kit::component::IndexPath::default().row(index));
-        let entry_proxy_select = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(entry_proxy_options),
-                selected_entry_proxy,
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
         let snippet_script_input = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("bash")
@@ -1047,44 +629,6 @@ impl SessionController {
                     selected_package_filter: None,
                 },
             },
-            host_editor: HostEditorForms {
-                name_input,
-                group_input,
-                group_select,
-                managed_key_select,
-                proxy_jump_select,
-                entry_proxy_select,
-                charset_select,
-                creating_new_group: !selected_group.is_empty() && selected_existing_group.is_none(),
-                tags_input,
-                host_input,
-                port_input,
-                username_input,
-                password_input,
-                private_key_input,
-                agent_identity_input,
-                certificate_input,
-                passphrase_input,
-                startup_command_input,
-                proxy_jump_profile_ids,
-                selected_proxy_jump_hop: None,
-                environment_variable_rows,
-                shell_type: selected_profile_data
-                    .as_ref()
-                    .map(|profile| profile.shell_type)
-                    .unwrap_or_default(),
-                editing_auth_method: selection.editing_auth_method,
-                agent_forwarding_enabled: selected_profile_data
-                    .as_ref()
-                    .is_some_and(|profile| profile.agent_forwarding),
-                profile_kind: selected_profile_data
-                    .as_ref()
-                    .map(|profile| profile.kind)
-                    .unwrap_or_default(),
-                local_shell_input,
-                local_shell_args_input,
-                local_working_directory_input,
-            },
             snippets: SnippetsForms {
                 filter_input: new_input_state(
                     i18n::string("placeholders.snippets.filter"),
@@ -1119,15 +663,6 @@ impl SessionController {
                 script_input: snippet_script_input,
             },
             panel: SessionPanelForms {
-                hosts: HostsForms {
-                    filter_input: new_input_state(
-                        i18n::string("placeholders.hosts.filter"),
-                        "",
-                        false,
-                        window,
-                        cx,
-                    ),
-                },
                 trusted: TrustedHostsForms {
                     filter_input: new_input_state(
                         i18n::string("placeholders.trusted.filter"),
@@ -1194,88 +729,6 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let host_editor = self.host_editor_forms();
-        let selected_profile = if self.editor_state().host_editor_is_new {
-            None
-        } else {
-            self.selected_profile()
-                .and_then(|index| self.profiles().get(index).cloned())
-        };
-        let has_saved_password = selected_profile
-            .as_ref()
-            .is_some_and(|profile| profile.has_stored_password);
-        let has_saved_passphrase = selected_profile
-            .as_ref()
-            .is_some_and(|profile| profile.has_stored_passphrase);
-
-        for (input, key) in [
-            (
-                &host_editor.name_input,
-                "placeholders.host_editor.profile_name",
-            ),
-            (
-                &host_editor.group_input,
-                "placeholders.host_editor.new_group_name",
-            ),
-            (&host_editor.tags_input, "placeholders.host_editor.tags"),
-            (&host_editor.host_input, "placeholders.host_editor.host"),
-            (
-                &host_editor.username_input,
-                "placeholders.host_editor.username",
-            ),
-            (
-                &host_editor.private_key_input,
-                "placeholders.host_editor.private_key_path",
-            ),
-            (
-                &host_editor.agent_identity_input,
-                "placeholders.host_editor.agent_identity",
-            ),
-            (
-                &host_editor.certificate_input,
-                "placeholders.host_editor.certificate_path",
-            ),
-        ] {
-            set_input_placeholder(input, i18n::string(key), window, cx);
-        }
-        set_input_placeholder(&host_editor.port_input, "22", window, cx);
-        set_input_placeholder(
-            &host_editor.password_input,
-            localized_secret_placeholder(has_saved_password, "placeholders.host_editor.password"),
-            window,
-            cx,
-        );
-        set_input_placeholder(
-            &host_editor.passphrase_input,
-            localized_secret_placeholder(
-                has_saved_passphrase,
-                "placeholders.host_editor.key_passphrase",
-            ),
-            window,
-            cx,
-        );
-        set_code_editor_input_placeholder(
-            &host_editor.startup_command_input,
-            i18n::string("placeholders.host_editor.startup_command"),
-            false,
-            window,
-            cx,
-        );
-        for row in &host_editor.environment_variable_rows {
-            set_input_placeholder(
-                &row.name_input,
-                i18n::string("placeholders.host_editor.environment_variable_name"),
-                window,
-                cx,
-            );
-            set_input_placeholder(
-                &row.value_input,
-                i18n::string("placeholders.host_editor.environment_variable_value"),
-                window,
-                cx,
-            );
-        }
-
         let panel = self.panel_forms();
         for (input, key) in [
             (
@@ -1302,7 +755,6 @@ impl SessionController {
                 &panel.forwarding.target_port_input,
                 "placeholders.forward.target_port",
             ),
-            (&panel.hosts.filter_input, "placeholders.hosts.filter"),
             (&panel.trusted.filter_input, "placeholders.trusted.filter"),
         ] {
             set_input_placeholder(input, i18n::string(key), window, cx);
@@ -1348,15 +800,7 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let forms = Self::build_forms(
-            &args.profiles,
-            &args.proxies,
-            args.selected_profile,
-            &args.managed_keys,
-            &args.snippets,
-            window,
-            cx,
-        );
+        let forms = Self::build_forms(&args.profiles, &args.snippets, window, cx);
         macro_rules! subscribe_to_change {
             ($input:expr) => {
                 cx.subscribe(&$input, |_controller, _input, event: &InputEvent, cx| {
@@ -1367,15 +811,9 @@ impl SessionController {
             };
         }
         let terminal_search_input = forms.workspace.search.input.clone();
-        let group_input = forms.host_editor.group_input.clone();
-        let group_select = forms.host_editor.group_select.clone();
-        let managed_key_select = forms.host_editor.managed_key_select.clone();
-        let proxy_jump_select = forms.host_editor.proxy_jump_select.clone();
-        let entry_proxy_select = forms.host_editor.entry_proxy_select.clone();
         let session_snippets_filter_input = forms.workspace.snippets_panel.filter_input.clone();
         let snippets_filter_input = forms.snippets.filter_input.clone();
         let snippet_package_select = forms.snippets.package_select.clone();
-        let hosts_filter_input = forms.panel.hosts.filter_input.clone();
         let trusted_filter_input = forms.panel.trusted.filter_input.clone();
         let forwarding_filter_input = forms.panel.forwarding.filter_input.clone();
         let forward_profile_select = forms.panel.forwarding.profile_select.clone();
@@ -1411,54 +849,6 @@ impl SessionController {
                     _ => {}
                 },
             ),
-            subscribe_to_change!(group_input),
-            cx.subscribe(
-                &group_select,
-                |controller, _, event: &SelectEvent<SearchableVec<String>>, cx| {
-                    let SelectEvent::Confirm(selected_group) = event;
-                    if selected_group.is_some() {
-                        controller.host_editor_forms_mut().creating_new_group = false;
-                    }
-                    cx.notify();
-                },
-            ),
-            cx.subscribe(
-                &managed_key_select,
-                |controller, _, event: &SelectEvent<SearchableVec<ManagedKeySelectItem>>, cx| {
-                    let SelectEvent::Confirm(selected_managed_key_id) = event;
-                    if selected_managed_key_id.is_some()
-                        && controller.host_editor_forms().editing_auth_method
-                            != AuthMethod::ManagedKey
-                    {
-                        controller.host_editor_forms_mut().editing_auth_method =
-                            AuthMethod::ManagedKey;
-                        cx.notify();
-                    }
-                },
-            ),
-            cx.subscribe(
-                &proxy_jump_select,
-                |controller,
-                 _,
-                 event: &SelectEvent<SearchableVec<ProxyJumpCandidateSelectItem>>,
-                 cx| {
-                    let SelectEvent::Confirm(selected_profile_id) = event;
-                    if let Some(selected_profile_id) = selected_profile_id.as_deref() {
-                        controller.add_proxy_jump_profile(selected_profile_id, cx);
-                    }
-                },
-            ),
-            cx.subscribe(
-                &entry_proxy_select,
-                |_controller,
-                 _,
-                 event: &SelectEvent<SearchableVec<SelectOption<Option<String>>>>,
-                 cx| {
-                    let SelectEvent::Confirm(_) = event;
-                    cx.notify();
-                },
-            ),
-            subscribe_to_change!(hosts_filter_input),
             subscribe_to_change!(trusted_filter_input),
             subscribe_to_change!(forwarding_filter_input),
             cx.subscribe(
@@ -1508,7 +898,6 @@ impl SessionController {
             args.proxies,
             args.selected_profile,
             Some(forms.workspace),
-            Some(forms.host_editor),
             Some(forms.snippets),
             Some(forms.panel),
             args.snippets,
@@ -1533,7 +922,6 @@ impl SessionController {
         proxies: Vec<ProxyProfile>,
         selected_profile: Option<usize>,
         forms: Option<SessionWorkspaceForms>,
-        host_editor_forms: Option<HostEditorForms>,
         snippets_forms: Option<SnippetsForms>,
         panel_forms: Option<SessionPanelForms>,
         snippets: Vec<SnippetRecord>,
@@ -1543,13 +931,12 @@ impl SessionController {
     ) -> Self {
         let port_profiles = profiles.clone();
         Self {
-            host_password_visible: false,
             services,
             profiles: RefCell::new(profiles),
+            committed_profiles: RefCell::new(None),
             proxies: RefCell::new(proxies),
             selected_profile: Cell::new(selected_profile),
             forms: forms.map(RefCell::new),
-            host_editor_forms: host_editor_forms.map(RefCell::new),
             snippets_forms: snippets_forms.map(RefCell::new),
             kbi_inputs: RefCell::new(Vec::new()),
             snippets: RefCell::new(snippets),
@@ -1557,16 +944,12 @@ impl SessionController {
             known_hosts_entries: RefCell::new(known_hosts_entries),
             panel_forms,
             catalog_view: RefCell::new(SessionCatalogViewState {
-                hosts_view_mode: ProfileViewMode::Grid,
                 forward_view_mode: ProfileViewMode::Grid,
                 snippets_view_mode: ProfileViewMode::Grid,
-                hosts_group_filter: None,
                 trusted_host_filter: TrustedHostFilter::All,
                 snippets_package_filter: None,
             }),
             editor_state: RefCell::new(SessionEditorState {
-                host_editor_open: false,
-                host_editor_is_new: false,
                 snippets_editor_open: false,
                 port_forward_editor_open: false,
                 port_forward_editor_profile_id: None,
@@ -1577,7 +960,6 @@ impl SessionController {
             tabs: RefCell::new(HashMap::new()),
             shared_profile_monitoring: RefCell::new(HashMap::new()),
             monitor_source_tabs: RefCell::new(HashMap::new()),
-            host_editor_scroll_handle: ScrollHandle::new(),
             monitor_scroll_handle: ScrollHandle::new(),
             reported_terminal_focus_tab_id: RefCell::new(None),
             panel: RefCell::new(SessionPanelState::default()),
@@ -1634,7 +1016,6 @@ impl SessionController {
             None,
             None,
             None,
-            None,
             Vec::new(),
             None,
             Vec::new(),
@@ -1665,6 +1046,7 @@ impl SessionController {
     }
 
     pub(in crate::ui::shell) fn replace_profiles(&self, profiles: Vec<SessionProfile>) {
+        self.committed_profiles.replace(Some(profiles.clone()));
         self.replace_profiles_from_application(profiles);
         self.refresh_ssh_bridge_routes();
     }
@@ -1677,10 +1059,6 @@ impl SessionController {
         self.sync_port_profiles();
     }
 
-    pub(in crate::ui::shell) fn proxies(&self) -> Ref<'_, Vec<ProxyProfile>> {
-        self.proxies.borrow()
-    }
-
     pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
         self.replace_proxies_from_application(proxies);
         self.refresh_ssh_bridge_routes();
@@ -1691,10 +1069,6 @@ impl SessionController {
         proxies: Vec<ProxyProfile>,
     ) {
         *self.proxies.borrow_mut() = proxies;
-    }
-
-    pub(in crate::ui::shell) fn selected_profile(&self) -> Option<usize> {
-        self.selected_profile.get()
     }
 
     pub(in crate::ui::shell) fn set_selected_profile(&self, selected: Option<usize>) {
@@ -1748,1727 +1122,6 @@ impl SessionController {
         self.services.session_store.is_some()
     }
 
-    pub(in crate::ui::shell) fn current_host_editor_profile_id(&self) -> Option<String> {
-        let index = self.selected_profile.get()?;
-        self.profiles
-            .borrow()
-            .get(index)
-            .map(|profile| profile.id.clone())
-    }
-
-    pub(in crate::ui::shell) fn available_proxy_jump_candidates(
-        &self,
-        target_profile_id: &str,
-    ) -> Vec<SessionProfile> {
-        let forms = self.host_editor_forms();
-        let chained_ids: HashSet<&str> = forms
-            .proxy_jump_profile_ids
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let mut candidates = self
-            .profiles
-            .borrow()
-            .iter()
-            .filter(|profile| {
-                !profile.is_local()
-                    && profile.id != target_profile_id
-                    && !chained_ids.contains(profile.id.as_str())
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            left.name
-                .to_ascii_lowercase()
-                .cmp(&right.name.to_ascii_lowercase())
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        candidates
-    }
-
-    pub(in crate::ui::shell) fn collect_available_groups(
-        profiles: &[SessionProfile],
-    ) -> Vec<String> {
-        let mut groups = profiles
-            .iter()
-            .filter_map(|profile| {
-                let group = profile.group.trim();
-                (!group.is_empty()).then(|| group.to_string())
-            })
-            .collect::<Vec<_>>();
-        groups.sort_by_key(|group| group.to_ascii_lowercase());
-        groups.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-        groups
-    }
-
-    pub(in crate::ui::shell) fn available_groups(&self) -> Vec<String> {
-        Self::collect_available_groups(&self.profiles.borrow())
-    }
-
-    pub(in crate::ui::shell) fn proxy_jump_chain_profiles(&self) -> Vec<SessionProfile> {
-        let profile_ids = self.host_editor_forms().proxy_jump_profile_ids;
-        let profiles = self.profiles.borrow();
-        profile_ids
-            .iter()
-            .filter_map(|profile_id| {
-                profiles
-                    .iter()
-                    .find(|profile| profile.id == *profile_id)
-                    .cloned()
-            })
-            .collect()
-    }
-
-    pub(in crate::ui::shell) fn set_auth_method(
-        &self,
-        auth_method: AuthMethod,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_editor_forms_mut().editing_auth_method = match auth_method {
-            AuthMethod::KeyFile => AuthMethod::ManagedKey,
-            _ => auth_method,
-        };
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_agent_forwarding_enabled(
-        &self,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_editor_forms_mut().agent_forwarding_enabled = enabled;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_host_editor_profile_kind(
-        &self,
-        kind: ProfileKind,
-        cx: &mut Context<Self>,
-    ) {
-        if self.host_editor_forms().profile_kind == kind {
-            return;
-        }
-        self.host_editor_forms_mut().profile_kind = kind;
-        cx.notify();
-    }
-
-    /// Applies the shell executable chosen in the host editor file picker.
-    pub(in crate::ui::shell) fn set_local_shell_path(
-        &self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let input = self.host_editor_forms().local_shell_input.clone();
-        set_input_value(&input, path.display().to_string(), window, cx);
-        cx.notify();
-    }
-
-    /// Applies the working directory chosen in the host editor folder picker.
-    pub(in crate::ui::shell) fn set_local_working_directory_path(
-        &self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let input = self
-            .host_editor_forms()
-            .local_working_directory_input
-            .clone();
-        set_input_value(&input, path.display().to_string(), window, cx);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn set_shell_type(
-        &self,
-        shell_type: ShellType,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_editor_forms_mut().shell_type = shell_type;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn begin_new_group(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let forms = self.host_editor_forms();
-        self.host_editor_forms_mut().creating_new_group = true;
-        forms.group_select.update(cx, |select, cx| {
-            select.set_selected_index(None, window, cx);
-        });
-        set_input_value(&forms.group_input, "", window, cx);
-        cx.notify();
-    }
-
-    fn new_host_editor_environment_variable_row<T: 'static>(
-        name: impl Into<String>,
-        value: impl Into<String>,
-        window: &mut Window,
-        cx: &mut Context<T>,
-    ) -> HostEditorEnvironmentVariableRow {
-        HostEditorEnvironmentVariableRow {
-            name_input: new_input_state(
-                i18n::string("placeholders.host_editor.environment_variable_name"),
-                name.into(),
-                false,
-                window,
-                cx,
-            ),
-            value_input: new_input_state(
-                i18n::string("placeholders.host_editor.environment_variable_value"),
-                value.into(),
-                false,
-                window,
-                cx,
-            ),
-        }
-    }
-
-    pub(in crate::ui::shell) fn host_editor_environment_variable_rows<T: 'static>(
-        variables: &[SessionEnvironmentVariable],
-        window: &mut Window,
-        cx: &mut Context<T>,
-    ) -> Vec<HostEditorEnvironmentVariableRow> {
-        if variables.is_empty() {
-            return vec![Self::new_host_editor_environment_variable_row(
-                "", "", window, cx,
-            )];
-        }
-
-        variables
-            .iter()
-            .map(|variable| {
-                Self::new_host_editor_environment_variable_row(
-                    variable.name.clone(),
-                    variable.value.clone(),
-                    window,
-                    cx,
-                )
-            })
-            .collect()
-    }
-
-    pub(in crate::ui::shell) fn add_environment_variable_row(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let row = Self::new_host_editor_environment_variable_row("", "", window, cx);
-        self.host_editor_forms_mut()
-            .environment_variable_rows
-            .push(row);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn remove_environment_variable_row(
-        &self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let needs_replacement = {
-            let mut forms = self.host_editor_forms_mut();
-            if index < forms.environment_variable_rows.len() {
-                forms.environment_variable_rows.remove(index);
-            }
-            forms.environment_variable_rows.is_empty()
-        };
-        if needs_replacement {
-            let replacement = Self::new_host_editor_environment_variable_row("", "", window, cx);
-            self.host_editor_forms_mut()
-                .environment_variable_rows
-                .push(replacement);
-        }
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn select_proxy_jump_step(
-        &self,
-        step_index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let mut forms = self.host_editor_forms_mut();
-        forms.selected_proxy_jump_hop = if step_index < forms.proxy_jump_profile_ids.len() {
-            Some(step_index)
-        } else {
-            None
-        };
-        drop(forms);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn move_selected_proxy_jump_hop_up(&self, cx: &mut Context<Self>) {
-        let mut forms = self.host_editor_forms_mut();
-        let Some(selected_index) = forms.selected_proxy_jump_hop else {
-            return;
-        };
-        if selected_index == 0 {
-            return;
-        }
-        forms
-            .proxy_jump_profile_ids
-            .swap(selected_index - 1, selected_index);
-        forms.selected_proxy_jump_hop = Some(selected_index - 1);
-        drop(forms);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn move_selected_proxy_jump_hop_down(&self, cx: &mut Context<Self>) {
-        let mut forms = self.host_editor_forms_mut();
-        let Some(selected_index) = forms.selected_proxy_jump_hop else {
-            return;
-        };
-        if selected_index + 1 >= forms.proxy_jump_profile_ids.len() {
-            return;
-        }
-        forms
-            .proxy_jump_profile_ids
-            .swap(selected_index, selected_index + 1);
-        forms.selected_proxy_jump_hop = Some(selected_index + 1);
-        drop(forms);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn remove_selected_proxy_jump_hop(&self, cx: &mut Context<Self>) {
-        let mut forms = self.host_editor_forms_mut();
-        let Some(selected_index) = forms.selected_proxy_jump_hop else {
-            return;
-        };
-        if selected_index >= forms.proxy_jump_profile_ids.len() {
-            forms.selected_proxy_jump_hop = None;
-            return;
-        }
-        forms.proxy_jump_profile_ids.remove(selected_index);
-        forms.selected_proxy_jump_hop = if forms.proxy_jump_profile_ids.is_empty() {
-            None
-        } else {
-            Some(selected_index.min(forms.proxy_jump_profile_ids.len() - 1))
-        };
-        drop(forms);
-        self.sync_proxy_jump_candidate_select_in_active_window(cx);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn close_host_editor(&self, cx: &mut Context<Self>) {
-        if !self.editor_state().host_editor_open {
-            return;
-        }
-        self.set_host_editor_state(false, false);
-        cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn request_selected_profile_delete(&self, cx: &mut Context<Self>) {
-        let Some(index) = self.selected_profile() else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "profile.messages.select_profile_to_delete",
-            )));
-            return;
-        };
-        let Some(profile) = self.profiles.borrow().get(index).cloned() else {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "profile.messages.select_profile_to_delete",
-            )));
-            return;
-        };
-        self.set_pending_profile_delete(Some(PendingProfileDeleteState {
-            profile_id: profile.id,
-            profile_name: profile.name,
-            reload_inputs_after_delete: true,
-        }));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn request_new_profile_editor(&self, cx: &mut Context<Self>) {
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::NewProfileEditor));
-    }
-
-    pub(in crate::ui::shell) fn request_profile_editor_at_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(profile_id) = self
-            .profiles
-            .borrow()
-            .get(index)
-            .map(|profile| profile.id.clone())
-        else {
-            return;
-        };
-        self.request_profile_editor(profile_id, false, cx);
-    }
-
-    pub(in crate::ui::shell) fn request_profile_editor(
-        &self,
-        profile_id: String,
-        open_hosts_tab: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if !self
-            .profiles
-            .borrow()
-            .iter()
-            .any(|profile| profile.id == profile_id)
-        {
-            cx.emit(AppCommand::Feedback(i18n::string(
-                "trusted.messages.profile_not_found",
-            )));
-            return;
-        }
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::ProfileEditor {
-            profile_id,
-            open_hosts_tab,
-        }));
-    }
-
-    pub(in crate::ui::shell) fn request_profile_connection_test(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.read_profile_from_inputs(
-            self.current_profile_id(),
-            ProfileInputPurpose::ConnectionTest,
-            cx,
-        ) {
-            Ok(profile) => {
-                cx.emit(AppCommand::OpenTab(TabOpenRequest::ProfileConnectionTest {
-                    profile: Box::new(profile),
-                }));
-            }
-            Err(error) => {
-                if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
-                    let message = validation.message.clone();
-                    cx.emit(AppCommand::Feedback(message.clone()));
-                    crate::ui::shell::push_app_notification(
-                        window,
-                        validation_notification(validation.kind, message),
-                        cx,
-                    );
-                } else {
-                    let message = error.to_string();
-                    cx.emit(AppCommand::Feedback(i18n::string_args(
-                        "profile.messages.test_connection_failed",
-                        &[("message", &message)],
-                    )));
-                    crate::ui::shell::push_app_notification(
-                        window,
-                        error_notification(
-                            i18n::string("profile.messages.test_connection_failed_title"),
-                            message,
-                        ),
-                        cx,
-                    );
-                }
-                cx.notify();
-            }
-        }
-    }
-
-    pub(in crate::ui::shell) fn request_profile_save(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.read_profile_save_draft(cx) {
-            Ok(profile) => {
-                cx.emit(AppCommand::SaveProfileRequested(Box::new(profile)));
-            }
-            Err(error) => self.report_profile_save_error(error, window, cx),
-        }
-    }
-
-    pub(in crate::ui::shell) fn commit_profile_save_request(
-        &mut self,
-        profile: SessionProfile,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.save_prepared_profile(profile) {
-            Ok(profile) => {
-                self.load_selected_profile_into_inputs(managed_key_options, window, cx);
-                self.set_host_editor_state(false, false);
-                cx.emit(AppCommand::SidebarEditorStateChanged(None));
-                let message = if self.session_store_available() {
-                    i18n::string_args("profile.messages.saved", &[("name", &profile.name)])
-                } else {
-                    i18n::string_args(
-                        "profile.messages.saved_memory_only",
-                        &[("name", &profile.name)],
-                    )
-                };
-                cx.emit(AppCommand::Feedback(message));
-                cx.notify();
-            }
-            Err(error) => self.report_profile_save_error(error, window, cx),
-        }
-    }
-
-    pub(in crate::ui::shell) fn request_sftp_at_profile_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(profile_id) = self
-            .profiles
-            .borrow()
-            .get(index)
-            .map(|profile| profile.id.clone())
-        else {
-            return;
-        };
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::Sftp {
-            profile_id,
-            owner: None,
-        }));
-    }
-
-    pub(in crate::ui::shell) fn request_session_at_profile_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(profile_id) = self
-            .profiles
-            .borrow()
-            .get(index)
-            .map(|profile| profile.id.clone())
-        else {
-            return;
-        };
-        cx.emit(AppCommand::OpenTab(TabOpenRequest::Session { profile_id }));
-    }
-
-    pub(in crate::ui::shell) fn host_password_reveal_icon(&self) -> AppIcon {
-        if self.host_password_visible() {
-            AppIcon::EyeOff
-        } else {
-            AppIcon::Eye
-        }
-    }
-
-    pub(in crate::ui::shell) fn host_editor_auth_method(auth_method: AuthMethod) -> AuthMethod {
-        match auth_method {
-            AuthMethod::KeyFile => AuthMethod::ManagedKey,
-            _ => auth_method,
-        }
-    }
-
-    fn saved_secret_placeholder(has_saved: bool, fallback_key: &'static str) -> String {
-        if has_saved {
-            i18n::string("placeholders.saved.keep_existing")
-        } else {
-            i18n::string(fallback_key)
-        }
-    }
-
-    fn sync_group_controls(&self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let group = group.trim();
-        let available_groups = self.available_groups();
-        let selected_existing_group = available_groups
-            .iter()
-            .find(|candidate| candidate.eq_ignore_ascii_case(group))
-            .cloned();
-        let forms = self.host_editor_forms();
-
-        forms.group_select.update(cx, |select, cx| {
-            select.set_items(SearchableVec::new(available_groups), window, cx);
-            if let Some(existing_group) = selected_existing_group.as_ref() {
-                select.set_selected_value(existing_group, window, cx);
-            } else {
-                select.set_selected_index(None, window, cx);
-            }
-        });
-
-        let creating_new_group = !group.is_empty() && selected_existing_group.is_none();
-        self.host_editor_forms_mut().creating_new_group = creating_new_group;
-        set_input_value(
-            &forms.group_input,
-            if creating_new_group {
-                group.to_string()
-            } else {
-                String::new()
-            },
-            window,
-            cx,
-        );
-    }
-
-    pub(in crate::ui::shell) fn sync_managed_key_select(
-        &self,
-        options: Vec<ManagedKeySelectItem>,
-        selected_key_id: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let forms = self.host_editor_forms();
-        let selected_key_id = selected_key_id
-            .map(str::to_string)
-            .or_else(|| forms.managed_key_select.read(cx).selected_value().cloned());
-        let has_selected_key = selected_key_id.as_ref().is_some_and(|selected_key_id| {
-            options.iter().any(|item| item.value() == selected_key_id)
-        });
-
-        forms.managed_key_select.update(cx, |select, cx| {
-            select.set_items(SearchableVec::new(options), window, cx);
-            if has_selected_key {
-                if let Some(selected_key_id) = selected_key_id.as_ref() {
-                    select.set_selected_value(selected_key_id, window, cx);
-                }
-            } else {
-                select.set_selected_index(None, window, cx);
-            }
-        });
-    }
-
-    fn sync_entry_proxy_select(
-        &self,
-        selected_proxy_id: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let options =
-            Self::entry_proxy_select_options(&self.proxies.borrow(), selected_proxy_id.as_deref());
-        let select = self.host_editor_forms().entry_proxy_select;
-        select.update(cx, |select, cx| {
-            select.set_items(SearchableVec::new(options), window, cx);
-            select.set_selected_value(&selected_proxy_id, window, cx);
-        });
-    }
-
-    pub(in crate::ui::shell) fn refresh_entry_proxy_select(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let selected_proxy_id = self
-            .host_editor_forms()
-            .entry_proxy_select
-            .read(cx)
-            .selected_value()
-            .cloned()
-            .flatten();
-        self.sync_entry_proxy_select(selected_proxy_id, window, cx);
-    }
-
-    pub(in crate::ui::shell) fn sync_managed_key_select_in_active_window(
-        &self,
-        options: Vec<ManagedKeySelectItem>,
-        selected_key_id: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        let forms = self.host_editor_forms();
-        let selected_key_id =
-            selected_key_id.or_else(|| forms.managed_key_select.read(cx).selected_value().cloned());
-        let has_selected_key = selected_key_id.as_ref().is_some_and(|selected_key_id| {
-            options.iter().any(|item| item.value() == selected_key_id)
-        });
-        let managed_key_select = forms.managed_key_select;
-
-        if let Some(window_handle) = cx.active_window()
-            && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                managed_key_select.update(cx, |select, cx| {
-                    select.set_items(SearchableVec::new(options), window, cx);
-                    if has_selected_key {
-                        if let Some(selected_key_id) = selected_key_id.as_ref() {
-                            select.set_selected_value(selected_key_id, window, cx);
-                        }
-                    } else {
-                        select.set_selected_index(None, window, cx);
-                    }
-                });
-            })
-        {
-            log::debug!("failed to refresh managed key options: {error:?}");
-        }
-    }
-
-    fn sync_proxy_jump_candidate_select(
-        &self,
-        selected_profile_id: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let target_profile_id = self.current_host_editor_profile_id().unwrap_or_default();
-        let options = SearchableVec::new(
-            self.available_proxy_jump_candidates(&target_profile_id)
-                .iter()
-                .map(ProxyJumpCandidateSelectItem::new)
-                .collect::<Vec<_>>(),
-        );
-        let selected_profile_id = selected_profile_id.map(str::to_string);
-        let proxy_jump_select = self.host_editor_forms().proxy_jump_select;
-
-        proxy_jump_select.update(cx, |select, cx| {
-            select.set_items(options, window, cx);
-            if let Some(selected_profile_id) = selected_profile_id.as_ref() {
-                select.set_selected_value(selected_profile_id, window, cx);
-            } else {
-                select.set_selected_index(None, window, cx);
-            }
-        });
-    }
-
-    pub(in crate::ui::shell) fn set_host_password_visibility(
-        &mut self,
-        visible: bool,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_password_visible = visible;
-        let password_input = self.host_editor_forms().password_input;
-        set_input_masked(&password_input, !visible, focus, window, cx);
-    }
-
-    pub(in crate::ui::shell) fn load_selected_profile_into_inputs(
-        &mut self,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let profile = self
-            .selected_profile()
-            .and_then(|index| self.profiles.borrow().get(index).cloned());
-        if let Some(profile) = profile {
-            self.populate_profile_inputs(&profile, managed_key_options, window, cx);
-        } else {
-            self.clear_profile_inputs(managed_key_options, window, cx);
-        }
-    }
-
-    fn populate_profile_inputs(
-        &mut self,
-        profile: &SessionProfile,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_host_password_visibility(false, false, window, cx);
-        let forms = self.host_editor_forms();
-        set_input_value(&forms.name_input, profile.name.clone(), window, cx);
-        self.sync_group_controls(&profile.group, window, cx);
-        set_input_value(&forms.tags_input, profile.tags.join(", "), window, cx);
-        set_input_value(&forms.host_input, profile.host.clone(), window, cx);
-        set_input_value(&forms.port_input, profile.port.to_string(), window, cx);
-        set_input_value(&forms.username_input, profile.username.clone(), window, cx);
-        set_input_value(&forms.password_input, "", window, cx);
-        set_input_placeholder(
-            &forms.password_input,
-            Self::saved_secret_placeholder(
-                profile.has_stored_password,
-                "placeholders.host_editor.password",
-            ),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.private_key_input,
-            profile.private_key_path.clone(),
-            window,
-            cx,
-        );
-        self.sync_managed_key_select(
-            managed_key_options,
-            Some(&profile.managed_key_id),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.agent_identity_input,
-            profile.agent_identity.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.certificate_input,
-            profile.certificate_path.clone(),
-            window,
-            cx,
-        );
-        set_input_value(&forms.passphrase_input, "", window, cx);
-        set_input_placeholder(
-            &forms.passphrase_input,
-            Self::saved_secret_placeholder(
-                profile.has_stored_passphrase,
-                "placeholders.host_editor.key_passphrase",
-            ),
-            window,
-            cx,
-        );
-        set_editor_value(
-            &forms.startup_command_input,
-            profile.startup_command.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.local_shell_input,
-            profile.local_shell.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.local_shell_args_input,
-            profile.local_shell_args.clone(),
-            window,
-            cx,
-        );
-        set_input_value(
-            &forms.local_working_directory_input,
-            profile.local_working_directory.clone(),
-            window,
-            cx,
-        );
-        let selected_charset = if profile.charset.trim().is_empty() {
-            DEFAULT_SESSION_CHARSET.to_string()
-        } else {
-            profile.charset.clone()
-        };
-        forms.charset_select.update(cx, |select, cx| {
-            select.set_selected_value(&selected_charset, window, cx);
-        });
-        self.sync_entry_proxy_select(profile.entry_proxy_id.clone(), window, cx);
-        {
-            let mut forms = self.host_editor_forms_mut();
-            forms.proxy_jump_profile_ids = profile.proxy_jump_profile_ids.clone();
-            forms.selected_proxy_jump_hop = None;
-        }
-        self.sync_proxy_jump_candidate_select(None, window, cx);
-        let environment_variable_rows =
-            Self::host_editor_environment_variable_rows(&profile.environment_variables, window, cx);
-        let mut forms = self.host_editor_forms_mut();
-        forms.environment_variable_rows = environment_variable_rows;
-        forms.shell_type = profile.shell_type;
-        forms.editing_auth_method = Self::host_editor_auth_method(profile.effective_auth_method());
-        forms.agent_forwarding_enabled = profile.agent_forwarding;
-        forms.profile_kind = profile.kind;
-    }
-
-    fn clear_profile_inputs(
-        &mut self,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_host_password_visibility(false, false, window, cx);
-        let forms = self.host_editor_forms();
-        set_input_value(&forms.name_input, "", window, cx);
-        self.sync_group_controls("", window, cx);
-        set_input_value(&forms.tags_input, "", window, cx);
-        set_input_value(&forms.host_input, "", window, cx);
-        set_input_value(&forms.port_input, "22", window, cx);
-        set_input_value(&forms.username_input, "", window, cx);
-        set_input_value(&forms.password_input, "", window, cx);
-        set_input_placeholder(
-            &forms.password_input,
-            i18n::string("placeholders.host_editor.password"),
-            window,
-            cx,
-        );
-        set_input_value(&forms.private_key_input, "", window, cx);
-        self.sync_managed_key_select(managed_key_options, Some(""), window, cx);
-        set_input_value(&forms.agent_identity_input, "", window, cx);
-        set_input_value(&forms.certificate_input, "", window, cx);
-        set_input_value(&forms.passphrase_input, "", window, cx);
-        set_input_placeholder(
-            &forms.passphrase_input,
-            i18n::string("placeholders.host_editor.key_passphrase"),
-            window,
-            cx,
-        );
-        set_editor_value(&forms.startup_command_input, "", window, cx);
-        set_input_value(&forms.local_shell_input, "", window, cx);
-        set_input_placeholder(
-            &forms.local_shell_input,
-            local_session::local_shell_placeholder(),
-            window,
-            cx,
-        );
-        set_input_value(&forms.local_shell_args_input, "", window, cx);
-        set_input_value(&forms.local_working_directory_input, "", window, cx);
-        forms.charset_select.update(cx, |select, cx| {
-            select.set_selected_value(&DEFAULT_SESSION_CHARSET.to_string(), window, cx);
-        });
-        self.sync_entry_proxy_select(None, window, cx);
-        {
-            let mut forms = self.host_editor_forms_mut();
-            forms.proxy_jump_profile_ids.clear();
-            forms.selected_proxy_jump_hop = None;
-        }
-        self.sync_proxy_jump_candidate_select(None, window, cx);
-        let environment_variable_rows =
-            Self::host_editor_environment_variable_rows(&[], window, cx);
-        let mut forms = self.host_editor_forms_mut();
-        forms.environment_variable_rows = environment_variable_rows;
-        forms.shell_type = ShellType::Posix;
-        forms.editing_auth_method = AuthMethod::Password;
-        forms.agent_forwarding_enabled = false;
-        forms.profile_kind = ProfileKind::Ssh;
-    }
-
-    pub(in crate::ui::shell) fn add_profile(
-        &mut self,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let profile =
-            SessionProfile::blank(self.next_profile_id(), self.profiles.borrow().len() + 1);
-        self.set_selected_profile(None);
-        self.set_host_editor_state(true, true);
-        self.populate_profile_inputs(&profile, managed_key_options, window, cx);
-        self.reset_host_editor_scroll();
-        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
-            PageEditorSidebarKind::Hosts,
-        )));
-        cx.emit(AppCommand::Feedback(i18n::string(
-            "profile.messages.new_profile_created",
-        )));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn open_profile_editor(
-        &mut self,
-        index: usize,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(profile) = self.profiles.borrow().get(index).cloned() else {
-            return;
-        };
-
-        self.set_selected_profile(Some(index));
-        self.populate_profile_inputs(&profile, managed_key_options, window, cx);
-        self.set_host_editor_state(true, false);
-        self.reset_host_editor_scroll();
-        cx.emit(AppCommand::SidebarEditorStateChanged(Some(
-            PageEditorSidebarKind::Hosts,
-        )));
-        cx.emit(AppCommand::Feedback(i18n::string_args(
-            "navigation.messages.editing_profile",
-            &[("name", &profile.name)],
-        )));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn delete_profile_by_id(
-        &mut self,
-        profile_id: &str,
-        profile_name: &str,
-        reload_inputs_after_delete: bool,
-        managed_key_options: Vec<ManagedKeySelectItem>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self
-            .profiles
-            .borrow()
-            .iter()
-            .position(|profile| profile.id == profile_id)
-        else {
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "profile.messages.already_removed",
-                &[("name", profile_name)],
-            )));
-            cx.notify();
-            return;
-        };
-
-        let deleted_selected_profile = self.selected_profile() == Some(index);
-        let service = self.profile_service();
-        let mut selected_profile = self.selected_profile();
-        let outcome = {
-            let mut profiles = self.profiles.borrow_mut();
-            service.delete_and_persist_profile(&mut profiles, &mut selected_profile, index)
-        };
-        let outcome = match outcome {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                cx.emit(AppCommand::Feedback(i18n::string_args(
-                    "profile.messages.deleted_local_save_failed",
-                    &[("name", profile_name), ("error", &error.to_string())],
-                )));
-                cx.notify();
-                return;
-            }
-        };
-        let Some(outcome) = outcome else {
-            return;
-        };
-        self.set_selected_profile(selected_profile);
-
-        if deleted_selected_profile {
-            self.set_host_editor_state(false, false);
-            cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        }
-
-        self.sync_port_profiles();
-        self.refresh_ssh_bridge_routes();
-        let message = i18n::string_args(
-            "profile.messages.deleted",
-            &[("name", &outcome.removed.name)],
-        );
-
-        if reload_inputs_after_delete {
-            self.load_selected_profile_into_inputs(managed_key_options, window, cx);
-        }
-
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn load_selected_profile_password_input(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        let Some(index) = self.selected_profile() else {
-            return Ok(());
-        };
-        let Some(profile) = self.profiles.borrow().get(index).cloned() else {
-            return Ok(());
-        };
-
-        if !profile.has_stored_password {
-            return Ok(());
-        }
-
-        let password = self
-            .services
-            .secrets
-            .get(&profile.id, SecretKind::Password)?
-            .unwrap_or_default();
-        let password_input = self.host_editor_forms().password_input;
-        set_input_value(&password_input, password, window, cx);
-        Ok(())
-    }
-
-    pub(in crate::ui::shell) fn prepare_host_password_for_lock(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self.selected_profile() else {
-            return;
-        };
-        let Some(profile) = self.profiles.borrow().get(index).cloned() else {
-            return;
-        };
-        if !profile.has_stored_password {
-            return;
-        }
-
-        let password_input = self.host_editor_forms().password_input;
-        let current_password = password_input.read(cx).value().to_string();
-        if current_password.is_empty() {
-            self.set_host_password_visibility(false, false, window, cx);
-            return;
-        }
-
-        match self.services.secrets.get(&profile.id, SecretKind::Password) {
-            Ok(Some(stored_password)) if stored_password == current_password => {
-                set_input_value(&password_input, "", window, cx);
-            }
-            Ok(_) => {}
-            Err(error) => {
-                log::warn!(
-                    "failed to compare stored host password before locking local vault: {error:?}"
-                );
-            }
-        }
-
-        self.set_host_password_visibility(false, false, window, cx);
-    }
-
-    pub(in crate::ui::shell) fn reveal_host_password_input(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Err(error) = self.load_selected_profile_password_input(window, cx) {
-            let message = error.to_string();
-            cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
-                window,
-                error_notification(
-                    i18n::string("settings.sync.vault.notifications.failed_title"),
-                    message,
-                ),
-                cx,
-            );
-            cx.notify();
-            return;
-        }
-
-        self.set_host_password_visibility(true, true, window, cx);
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn toggle_host_password_visibility(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.host_password_visible() {
-            self.set_host_password_visibility(false, true, window, cx);
-            cx.notify();
-            return;
-        }
-
-        let forms = self.host_editor_forms();
-        let has_text = !forms.password_input.read(cx).value().is_empty();
-        let has_stored_password = self
-            .selected_profile()
-            .and_then(|index| self.profiles.borrow().get(index).cloned())
-            .is_some_and(|profile| profile.has_stored_password);
-
-        if has_text || !has_stored_password {
-            self.set_host_password_visibility(true, true, window, cx);
-            cx.notify();
-            return;
-        }
-
-        if self.services.local_vault_status == LocalVaultStatus::Locked {
-            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Settings(
-                super::SettingsDeferredCommand::RevealSecret(
-                    crate::ui::shell::SecretRevealTarget::HostPassword,
-                ),
-            )));
-            return;
-        }
-
-        self.reveal_host_password_input(window, cx);
-    }
-
-    pub(in crate::ui::shell) fn import_profiles(
-        &self,
-        batch: ImportedBatch,
-    ) -> anyhow::Result<ImportedProfilesResult> {
-        let service = self.profile_service();
-        let result = service.import_profiles(&mut self.profiles.borrow_mut(), batch)?;
-        self.sync_port_profiles();
-        self.refresh_ssh_bridge_routes();
-        Ok(result)
-    }
-
-    fn group_value(&self, cx: &App) -> String {
-        let forms = self.host_editor_forms();
-        if forms.creating_new_group {
-            forms.group_input.read(cx).value().trim().to_string()
-        } else {
-            forms
-                .group_select
-                .read(cx)
-                .selected_value()
-                .cloned()
-                .unwrap_or_default()
-                .trim()
-                .to_string()
-        }
-    }
-
-    fn session_charset_value(&self, cx: &App) -> String {
-        self.host_editor_forms()
-            .charset_select
-            .read(cx)
-            .selected_value()
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_SESSION_CHARSET.to_string())
-            .trim()
-            .to_string()
-    }
-
-    fn read_environment_variables(
-        &self,
-        cx: &App,
-    ) -> anyhow::Result<Vec<SessionEnvironmentVariable>> {
-        let mut variables = Vec::new();
-        let forms = self.host_editor_forms();
-
-        for (index, row) in forms.environment_variable_rows.iter().enumerate() {
-            let raw_name = row.name_input.read(cx).value().to_string();
-            let raw_value = row.value_input.read(cx).value().to_string();
-            let name = raw_name.trim().to_string();
-
-            if name.is_empty() {
-                if raw_value.trim().is_empty() {
-                    continue;
-                }
-
-                let index = (index + 1).to_string();
-                anyhow::bail!(i18n::string_args(
-                    "errors.host_editor.environment_variables.missing_name",
-                    &[("index", &index)],
-                ));
-            }
-
-            if !is_valid_environment_variable_name(&name) {
-                anyhow::bail!(i18n::string_args(
-                    "errors.host_editor.environment_variables.invalid_name",
-                    &[("name", &name)],
-                ));
-            }
-
-            variables.push(SessionEnvironmentVariable {
-                name,
-                value: raw_value,
-            });
-        }
-
-        Ok(variables)
-    }
-
-    fn read_proxy_jump_profile_ids(&self, target_profile_id: &str) -> anyhow::Result<Vec<String>> {
-        let mut seen = HashSet::new();
-        let mut resolved = Vec::new();
-        let forms = self.host_editor_forms();
-        let profiles = self.profiles.borrow();
-
-        for profile_id in &forms.proxy_jump_profile_ids {
-            let profile_id = profile_id.trim();
-            if profile_id.is_empty() {
-                continue;
-            }
-            if profile_id == target_profile_id {
-                anyhow::bail!("host chaining cannot reference the host being edited");
-            }
-            if !seen.insert(profile_id.to_string()) {
-                anyhow::bail!("host chaining cannot include the same saved host more than once");
-            }
-
-            let profile = profiles
-                .iter()
-                .find(|profile| profile.id == profile_id)
-                .ok_or_else(|| anyhow::anyhow!("a selected jump host is no longer available"))?;
-            resolved.push(profile.id.clone());
-        }
-
-        Ok(resolved)
-    }
-
-    pub(in crate::ui::shell) fn current_profile_id(&self) -> String {
-        self.selected_profile()
-            .and_then(|index| {
-                self.profiles
-                    .borrow()
-                    .get(index)
-                    .map(|profile| profile.id.clone())
-            })
-            .unwrap_or_else(|| self.next_profile_id())
-    }
-
-    pub(in crate::ui::shell) fn next_profile_id(&self) -> String {
-        self.profile_service()
-            .next_profile_id(&self.profiles.borrow())
-    }
-
-    /// The editor only offers SSH and local terminals; legacy remote kinds are
-    /// normalized to SSH so the saved kind matches the form.
-    fn host_editor_profile_kind(kind: ProfileKind) -> ProfileKind {
-        match kind {
-            ProfileKind::Local => ProfileKind::Local,
-            ProfileKind::Ssh | ProfileKind::Telnet | ProfileKind::Rdp => ProfileKind::Ssh,
-        }
-    }
-
-    fn read_profile_from_inputs(
-        &self,
-        profile_id: String,
-        purpose: ProfileInputPurpose,
-        cx: &App,
-    ) -> anyhow::Result<SessionProfile> {
-        let forms = self.host_editor_forms();
-        let name = forms.name_input.read(cx).value().to_string();
-        let group = self.group_value(cx);
-        let tags_text = forms.tags_input.read(cx).value().to_string();
-        let host = forms.host_input.read(cx).value().to_string();
-        let port_text = forms.port_input.read(cx).value().to_string();
-        let username = forms.username_input.read(cx).value().to_string();
-        let password = forms.password_input.read(cx).value().to_string();
-        let private_key_path = forms.private_key_input.read(cx).value().to_string();
-        let managed_key_id = forms
-            .managed_key_select
-            .read(cx)
-            .selected_value()
-            .cloned()
-            .unwrap_or_default();
-        let agent_identity = forms.agent_identity_input.read(cx).value().to_string();
-        let certificate_path = forms.certificate_input.read(cx).value().to_string();
-        let passphrase = forms.passphrase_input.read(cx).value().to_string();
-        let startup_command = forms.startup_command_input.read(cx).value().to_string();
-        let charset = self.session_charset_value(cx);
-
-        let name = name.trim().to_string();
-        let group = group.trim().to_string();
-        let tags = ProfileService::parse_tags(&tags_text);
-        let host = host.trim().to_string();
-        let username = username.trim().to_string();
-        let private_key_path = private_key_path.trim().to_string();
-        let managed_key_id = managed_key_id.trim().to_string();
-        let agent_identity = agent_identity.trim().to_string();
-        let certificate_path = certificate_path.trim().to_string();
-        let startup_command = startup_command.trim().to_string();
-        let charset = if charset.is_empty() {
-            DEFAULT_SESSION_CHARSET.to_string()
-        } else {
-            charset
-        };
-        let environment_variables = self.read_environment_variables(cx)?;
-        let is_local_kind = forms.profile_kind == ProfileKind::Local;
-        let proxy_jump_profile_ids = if is_local_kind {
-            Vec::new()
-        } else {
-            self.read_proxy_jump_profile_ids(&profile_id)?
-        };
-        let entry_proxy_id = if is_local_kind {
-            None
-        } else {
-            forms
-                .entry_proxy_select
-                .read(cx)
-                .selected_value()
-                .cloned()
-                .flatten()
-        };
-        if let Some(entry_proxy_id) = entry_proxy_id.as_deref()
-            && !self
-                .proxies
-                .borrow()
-                .iter()
-                .any(|proxy| proxy.id == entry_proxy_id)
-        {
-            return Err(ValidationFailure::invalid(i18n::string_args(
-                "errors.profile.validation.entry_proxy_missing",
-                &[("id", entry_proxy_id)],
-            ))
-            .into());
-        }
-
-        if is_local_kind {
-            let local_shell = forms.local_shell_input.read(cx).value().trim().to_string();
-            let local_shell_args = forms
-                .local_shell_args_input
-                .read(cx)
-                .value()
-                .trim()
-                .to_string();
-            let local_working_directory = forms
-                .local_working_directory_input
-                .read(cx)
-                .value()
-                .trim()
-                .to_string();
-            if local_shell.is_empty() {
-                return Err(ValidationFailure::required(i18n::string(
-                    "errors.profile.validation.local_shell_required",
-                ))
-                .into());
-            }
-            if !local_session::local_shell_is_available(&local_shell) {
-                return Err(ValidationFailure::invalid(i18n::string_args(
-                    "errors.profile.validation.local_shell_not_found",
-                    &[("path", &local_shell)],
-                ))
-                .into());
-            }
-            if !local_session::local_working_directory_is_available(&local_working_directory) {
-                return Err(ValidationFailure::invalid(i18n::string_args(
-                    "errors.profile.validation.local_working_directory_not_found",
-                    &[("path", &local_working_directory)],
-                ))
-                .into());
-            }
-            let profiles = self.profiles.borrow();
-            let existing = profiles.iter().find(|profile| profile.id == profile_id);
-            let name = if name.is_empty() {
-                local_session::local_terminal_label(&local_shell)
-            } else {
-                name
-            };
-            return Ok(SessionProfile {
-                id: profile_id,
-                name,
-                group: String::new(),
-                tags,
-                kind: ProfileKind::Local,
-                host: String::new(),
-                port: 22,
-                username: String::new(),
-                password: String::new(),
-                auth_method: None,
-                private_key_path: String::new(),
-                managed_key_id: String::new(),
-                agent_identity: String::new(),
-                agent_identity_label: String::new(),
-                certificate_path: String::new(),
-                passphrase: String::new(),
-                agent_forwarding: false,
-                startup_command,
-                charset,
-                environment_variables,
-                shell_type: ShellType::Posix,
-                proxy_jump_profile_ids: Vec::new(),
-                entry_proxy_id: None,
-                has_stored_password: false,
-                has_stored_passphrase: false,
-                port_forwarding_rules: existing
-                    .map(|profile| profile.port_forwarding_rules.clone())
-                    .unwrap_or_default(),
-                is_favorite: existing.is_some_and(|profile| profile.is_favorite),
-                remote_path_favorites: Vec::new(),
-                local_shell,
-                local_shell_args,
-                local_working_directory,
-                last_connected_at: existing.and_then(|profile| profile.last_connected_at),
-            });
-        }
-
-        if purpose.requires_name() && name.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.profile.validation.profile_name_required",
-            ))
-            .into());
-        }
-        if host.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.profile.validation.host_required",
-            ))
-            .into());
-        }
-        if username.is_empty() {
-            return Err(ValidationFailure::required(i18n::string(
-                "errors.profile.validation.username_required",
-            ))
-            .into());
-        }
-
-        let name = if name.is_empty() {
-            format!("{}@{}", username, host)
-        } else {
-            name
-        };
-        let port: u16 = port_text.trim().parse().map_err(|_| {
-            anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
-                "errors.profile.validation.invalid_port",
-                &[("port", &port_text)],
-            )))
-        })?;
-
-        let profiles = self.profiles.borrow();
-        let existing = profiles.iter().find(|profile| profile.id == profile_id);
-        let prior_password = existing.is_some_and(|profile| profile.has_stored_password);
-        let prior_passphrase = existing.is_some_and(|profile| profile.has_stored_passphrase);
-        let has_password = !password.trim().is_empty();
-        let has_passphrase = !passphrase.trim().is_empty();
-        let auth_method = Self::host_editor_auth_method(forms.editing_auth_method);
-
-        match auth_method {
-            AuthMethod::Password => {
-                if !has_password && !prior_password {
-                    return Err(ValidationFailure::required(i18n::string(
-                        "errors.profile.validation.password_requires_password",
-                    ))
-                    .into());
-                }
-            }
-            AuthMethod::KeyFile | AuthMethod::ManagedKey => {
-                if managed_key_id.is_empty() {
-                    return Err(ValidationFailure::required(i18n::string(
-                        "errors.profile.validation.managed_key_requires_id",
-                    ))
-                    .into());
-                }
-            }
-            AuthMethod::Agent => {
-                if agent_identity.is_empty() {
-                    return Err(ValidationFailure::required(i18n::string(
-                        "errors.profile.validation.ssh_agent_requires_identity",
-                    ))
-                    .into());
-                }
-            }
-            AuthMethod::KeyboardInteractive => {}
-        }
-
-        let private_key_path = if matches!(auth_method, AuthMethod::KeyFile) {
-            private_key_path
-        } else {
-            String::new()
-        };
-        let passphrase = if matches!(auth_method, AuthMethod::KeyFile) {
-            passphrase
-        } else {
-            String::new()
-        };
-        let has_stored_passphrase = if matches!(auth_method, AuthMethod::KeyFile) {
-            has_passphrase || prior_passphrase
-        } else {
-            false
-        };
-
-        if !certificate_path.is_empty() && matches!(auth_method, AuthMethod::Password) {
-            return Err(ValidationFailure::invalid(i18n::string(
-                "errors.profile.validation.certificate_requires_key_based_identity",
-            ))
-            .into());
-        }
-
-        let form_local_shell = forms.local_shell_input.read(cx).value().trim().to_string();
-        let form_local_shell_args = forms
-            .local_shell_args_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        let form_local_working_directory = forms
-            .local_working_directory_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        let local_shell = if form_local_shell.is_empty() {
-            existing
-                .map(|profile| profile.local_shell.clone())
-                .unwrap_or_default()
-        } else {
-            form_local_shell
-        };
-        let local_shell_args = if form_local_shell_args.is_empty() {
-            existing
-                .map(|profile| profile.local_shell_args.clone())
-                .unwrap_or_default()
-        } else {
-            form_local_shell_args
-        };
-        let local_working_directory = if form_local_working_directory.is_empty() {
-            existing
-                .map(|profile| profile.local_working_directory.clone())
-                .unwrap_or_default()
-        } else {
-            form_local_working_directory
-        };
-
-        Ok(SessionProfile {
-            id: profile_id,
-            name,
-            group,
-            tags,
-            kind: Self::host_editor_profile_kind(forms.profile_kind),
-            host,
-            port,
-            username,
-            password,
-            auth_method: Some(auth_method),
-            private_key_path,
-            passphrase,
-            managed_key_id,
-            agent_identity: agent_identity.clone(),
-            agent_identity_label: existing
-                .map(|profile| profile.agent_identity_label.clone())
-                .filter(|label| !label.trim().is_empty())
-                .unwrap_or(agent_identity),
-            certificate_path,
-            agent_forwarding: forms.agent_forwarding_enabled,
-            startup_command,
-            charset,
-            environment_variables,
-            shell_type: forms.shell_type,
-            proxy_jump_profile_ids,
-            entry_proxy_id,
-            has_stored_password: has_password || prior_password,
-            has_stored_passphrase,
-            port_forwarding_rules: existing
-                .map(|profile| profile.port_forwarding_rules.clone())
-                .unwrap_or_default(),
-            is_favorite: existing.map(|profile| profile.is_favorite).unwrap_or(false),
-            remote_path_favorites: existing
-                .map(|profile| profile.remote_path_favorites.clone())
-                .unwrap_or_default(),
-            local_shell,
-            local_shell_args,
-            local_working_directory,
-            last_connected_at: existing.and_then(|profile| profile.last_connected_at),
-        })
-    }
-
-    pub(in crate::ui::shell) fn read_profile_save_draft(
-        &self,
-        cx: &App,
-    ) -> anyhow::Result<SessionProfile> {
-        self.read_profile_from_inputs(self.current_profile_id(), ProfileInputPurpose::Save, cx)
-    }
-
-    pub(in crate::ui::shell) fn save_prepared_profile(
-        &self,
-        profile: SessionProfile,
-    ) -> anyhow::Result<SessionProfile> {
-        let service = self.profile_service();
-        let mut selected_profile = self.selected_profile();
-        {
-            let mut profiles = self.profiles.borrow_mut();
-            service.save_profile(&mut profiles, &mut selected_profile, profile.clone())?;
-        }
-        self.selected_profile.set(selected_profile);
-        self.sync_port_profiles();
-        self.refresh_ssh_bridge_routes();
-        Ok(profile)
-    }
-
-    fn report_profile_save_error(
-        &self,
-        error: anyhow::Error,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(validation) = error.downcast_ref::<ValidationFailure>() {
-            let message = validation.message.clone();
-            cx.emit(AppCommand::Feedback(message.clone()));
-            crate::ui::shell::push_app_notification(
-                window,
-                validation_notification(validation.kind, message),
-                cx,
-            );
-        } else {
-            let message = error.to_string();
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "profile.messages.save_failed",
-                &[("message", &message)],
-            )));
-        }
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn continue_save_profile_after_unlock(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let profile = match self.read_profile_save_draft(cx) {
-            Ok(profile) => profile,
-            Err(error) => {
-                self.report_profile_save_error(error, window, cx);
-                return;
-            }
-        };
-
-        let service = self.profile_service();
-        let mut profiles = self.profiles.borrow().clone();
-        let mut selected_profile = self.selected_profile();
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        let spawn_result = std::thread::Builder::new()
-            .name("post-unlock-profile-save".to_string())
-            .spawn(move || {
-                let result = (|| -> anyhow::Result<SaveProfileAfterUnlockResult> {
-                    service.save_profile(&mut profiles, &mut selected_profile, profile.clone())?;
-                    Ok(SaveProfileAfterUnlockResult {
-                        profile,
-                        profiles,
-                        selected_profile,
-                    })
-                })();
-                tx.send(result).ok();
-            });
-
-        if let Err(error) = spawn_result {
-            cx.emit(AppCommand::Feedback(i18n::string_args(
-                "profile.messages.save_failed",
-                &[("message", &error.to_string())],
-            )));
-            cx.notify();
-            return;
-        }
-
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    rx.recv().unwrap_or_else(|_| {
-                        Err(anyhow::anyhow!("post-unlock profile save task cancelled"))
-                    })
-                })
-                .await;
-
-            let _ = this.update(cx, move |controller, cx| match result {
-                Ok(result) => {
-                    controller.replace_profiles(result.profiles);
-                    controller.set_selected_profile(result.selected_profile);
-                    controller.set_host_editor_state(false, false);
-                    cx.emit(AppCommand::SidebarEditorStateChanged(None));
-                    let message = if controller.session_store_available() {
-                        i18n::string_args(
-                            "profile.messages.saved",
-                            &[("name", &result.profile.name)],
-                        )
-                    } else {
-                        i18n::string_args(
-                            "profile.messages.saved_memory_only",
-                            &[("name", &result.profile.name)],
-                        )
-                    };
-                    cx.emit(AppCommand::Feedback(message));
-                    cx.notify();
-                }
-                Err(error) => {
-                    cx.emit(AppCommand::Feedback(i18n::string_args(
-                        "profile.messages.save_failed",
-                        &[("message", &error.to_string())],
-                    )));
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    fn sync_proxy_jump_candidate_select_in_active_window(&self, cx: &mut Context<Self>) {
-        let target_profile_id = self.current_host_editor_profile_id().unwrap_or_default();
-        let options = SearchableVec::new(
-            self.available_proxy_jump_candidates(&target_profile_id)
-                .iter()
-                .map(ProxyJumpCandidateSelectItem::new)
-                .collect::<Vec<_>>(),
-        );
-        let select = self.host_editor_forms().proxy_jump_select;
-        if let Some(window_handle) = cx.active_window()
-            && let Err(error) = window_handle.update(cx, move |_, window, cx| {
-                select.update(cx, |select, cx| {
-                    select.set_items(options, window, cx);
-                    select.set_selected_index(None, window, cx);
-                });
-            })
-        {
-            log::debug!("failed to refresh proxy jump candidates: {error:?}");
-        }
-    }
-
-    fn add_proxy_jump_profile(&self, profile_id: &str, cx: &mut Context<Self>) {
-        let forms = self.host_editor_forms();
-        if forms
-            .proxy_jump_profile_ids
-            .iter()
-            .any(|existing| existing == profile_id)
-            || self
-                .current_host_editor_profile_id()
-                .is_some_and(|current_id| current_id == profile_id)
-        {
-            return;
-        }
-
-        {
-            let mut forms = self.host_editor_forms_mut();
-            forms.proxy_jump_profile_ids.push(profile_id.to_string());
-            forms.selected_proxy_jump_hop = Some(forms.proxy_jump_profile_ids.len() - 1);
-        }
-        self.sync_proxy_jump_candidate_select_in_active_window(cx);
-        cx.notify();
-    }
-
     pub(in crate::ui::shell) fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
         localized_port_forward_kind_label(kind)
     }
@@ -3487,16 +1140,6 @@ impl SessionController {
             rule.target_host,
             rule.target_port
         )
-    }
-
-    pub(in crate::ui::shell) fn forward_profile_items(
-        profiles: &[SessionProfile],
-    ) -> Vec<ForwardProfileSelectItem> {
-        profiles
-            .iter()
-            .filter(|profile| !profile.is_local())
-            .map(ForwardProfileSelectItem::new)
-            .collect()
     }
 
     pub(in crate::ui::shell) fn forward_profile_options(
@@ -3674,10 +1317,27 @@ impl SessionController {
         }
     }
 
+    fn publish_committed_profiles(&self, cx: &mut Context<Self>) {
+        if let Some(profiles) = self.committed_profiles.take() {
+            cx.emit(AppCommand::ProfilesCommitted(profiles));
+        }
+    }
+
+    pub(in crate::ui::shell) fn persist_profiles_and_publish(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.persist_profiles()?;
+        self.publish_committed_profiles(cx);
+        Ok(())
+    }
+
     pub(in crate::ui::shell) fn persist_profiles(&self) -> anyhow::Result<()> {
         self.sync_port_profiles();
         self.profile_service()
             .persist_sessions(&self.profiles.borrow())?;
+        self.committed_profiles
+            .replace(Some(self.profiles.borrow().clone()));
         self.refresh_ssh_bridge_routes();
         Ok(())
     }
@@ -3686,6 +1346,7 @@ impl SessionController {
         &self,
         profile_id: &str,
         favorites: Vec<String>,
+        cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let previous = {
             let mut profiles = self.profiles.borrow_mut();
@@ -3695,7 +1356,7 @@ impl SessionController {
                 .ok_or_else(|| anyhow::anyhow!("missing profile {profile_id}"))?;
             std::mem::replace(&mut profile.remote_path_favorites, favorites)
         };
-        if let Err(error) = self.persist_profiles() {
+        if let Err(error) = self.persist_profiles_and_publish(cx) {
             if let Some(profile) = self
                 .profiles
                 .borrow_mut()
@@ -3765,7 +1426,7 @@ impl SessionController {
             .insert(rule_index + 1, duplicated_rule.clone());
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        let message = match self.persist_profiles() {
+        let message = match self.persist_profiles_and_publish(cx) {
             Ok(()) => i18n::string_args(
                 "forwarding.messages.duplicated",
                 &[
@@ -3785,103 +1446,6 @@ impl SessionController {
                     ],
                 )
             }
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn request_profile_delete_at_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(profile) = self.profiles.borrow().get(index).cloned() else {
-            return;
-        };
-
-        self.set_pending_profile_delete(Some(PendingProfileDeleteState {
-            profile_id: profile.id,
-            profile_name: profile.name,
-            reload_inputs_after_delete: false,
-        }));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn duplicate_profile_at_index(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.profiles.borrow().len() {
-            return;
-        }
-
-        let original_name = self.profiles.borrow()[index].name.clone();
-        let duplicate_name = i18n::string_args(
-            "profile.messages.duplicate_name",
-            &[("name", &original_name)],
-        );
-        let service = self.profile_service();
-        let duplicated = {
-            let mut profiles = self.profiles.borrow_mut();
-            service.duplicate_profile(&mut profiles, index, duplicate_name)
-        };
-        let Some(duplicated) = duplicated else {
-            return;
-        };
-
-        let message = if let Err(error) = self.persist_profiles() {
-            let error = error.to_string();
-            i18n::string_args(
-                "profile.messages.duplicated_local_save_failed",
-                &[("name", &duplicated.name), ("error", &error)],
-            )
-        } else {
-            i18n::string_args(
-                "profile.messages.duplicated_as",
-                &[("name", &duplicated.name)],
-            )
-        };
-        cx.emit(AppCommand::Feedback(message));
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn toggle_profile_favorite(
-        &self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.profiles.borrow().len() {
-            return;
-        }
-
-        let (name, is_favorite) = {
-            let mut profiles = self.profiles.borrow_mut();
-            let profile = &mut profiles[index];
-            profile.is_favorite = !profile.is_favorite;
-            (profile.name.clone(), profile.is_favorite)
-        };
-
-        let message = if let Err(error) = self.persist_profiles() {
-            let error = error.to_string();
-            if is_favorite {
-                i18n::string_args(
-                    "profile.messages.starred_local_save_failed",
-                    &[("name", &name), ("error", &error)],
-                )
-            } else {
-                i18n::string_args(
-                    "profile.messages.unstarred_local_save_failed",
-                    &[("name", &name), ("error", &error)],
-                )
-            }
-        } else if is_favorite {
-            i18n::string_args("profile.messages.added_to_favorites", &[("name", &name)])
-        } else {
-            i18n::string_args(
-                "profile.messages.removed_from_favorites",
-                &[("name", &name)],
-            )
         };
         cx.emit(AppCommand::Feedback(message));
         cx.notify();
@@ -4077,7 +1641,7 @@ impl SessionController {
 
             self.clear_port_forward_editor();
             cx.emit(AppCommand::SidebarEditorStateChanged(None));
-            let message = match self.persist_profiles() {
+            let message = match self.persist_profiles_and_publish(cx) {
                 Ok(()) => i18n::string_args(
                     "forwarding.messages.saved",
                     &[
@@ -4129,7 +1693,7 @@ impl SessionController {
 
         self.clear_port_forward_editor();
         cx.emit(AppCommand::SidebarEditorStateChanged(None));
-        let message = match self.persist_profiles() {
+        let message = match self.persist_profiles_and_publish(cx) {
             Ok(()) => i18n::string_args(
                 "forwarding.messages.added",
                 &[
@@ -4274,6 +1838,7 @@ impl SessionController {
             let _ = this.update(cx, move |controller, cx| match result {
                 Ok(result) => {
                     controller.replace_profiles(result.profiles);
+                    controller.publish_committed_profiles(cx);
                     let synced_sessions =
                         controller.sync_current_port_forward_rules_for_profile(&result.profile_id);
                     let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
@@ -4500,29 +2065,6 @@ impl SessionController {
         cx.notify();
     }
 
-    fn host_editor_forms_state(&self) -> &RefCell<HostEditorForms> {
-        self.host_editor_forms
-            .as_ref()
-            .expect("host editor forms are available in the application")
-    }
-
-    pub(in crate::ui::shell) fn host_editor_forms(&self) -> HostEditorForms {
-        self.host_editor_forms_state().borrow().clone()
-    }
-
-    pub(in crate::ui::shell) fn host_editor_forms_mut(&self) -> RefMut<'_, HostEditorForms> {
-        self.host_editor_forms_state().borrow_mut()
-    }
-
-    pub(in crate::ui::shell) fn host_editor_scroll_handle(&self) -> ScrollHandle {
-        self.host_editor_scroll_handle.clone()
-    }
-
-    fn reset_host_editor_scroll(&self) {
-        self.host_editor_scroll_handle
-            .set_offset(Default::default());
-    }
-
     fn snippets_forms_state(&self) -> &RefCell<SnippetsForms> {
         self.snippets_forms
             .as_ref()
@@ -4689,7 +2231,10 @@ impl SessionController {
         profile_id: String,
         cx: &mut Context<Self>,
     ) {
-        self.request_profile_editor(profile_id, false, cx);
+        cx.emit(AppCommand::OpenTab(TabOpenRequest::ProfileEditor {
+            profile_id,
+            open_hosts_tab: false,
+        }));
     }
 
     pub(in crate::ui::shell) fn request_trusted_known_host_removal(
@@ -4781,15 +2326,6 @@ impl SessionController {
         self.catalog_view.borrow().clone()
     }
 
-    pub(in crate::ui::shell) fn set_hosts_view_mode(
-        &mut self,
-        mode: ProfileViewMode,
-        cx: &mut Context<Self>,
-    ) {
-        self.catalog_view.get_mut().hosts_view_mode = mode;
-        cx.notify();
-    }
-
     pub(in crate::ui::shell) fn set_forward_view_mode(
         &mut self,
         mode: ProfileViewMode,
@@ -4814,23 +2350,6 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         self.catalog_view.get_mut().trusted_host_filter = filter;
-        cx.notify();
-    }
-
-    pub(in crate::ui::shell) fn toggle_hosts_group_filter(
-        &mut self,
-        group: String,
-        cx: &mut Context<Self>,
-    ) {
-        let status =
-            if self.catalog_view.get_mut().hosts_group_filter.as_deref() == Some(group.as_str()) {
-                self.catalog_view.get_mut().hosts_group_filter = None;
-                i18n::string("hosts.messages.cleared_group_filter")
-            } else {
-                self.catalog_view.get_mut().hosts_group_filter = Some(group.clone());
-                i18n::string_args("hosts.messages.filtering_by_group", &[("group", &group)])
-            };
-        cx.emit(AppCommand::Feedback(status));
         cx.notify();
     }
 
@@ -4870,12 +2389,6 @@ impl SessionController {
 
     pub(in crate::ui::shell) fn editor_state(&self) -> SessionEditorState {
         self.editor_state.borrow().clone()
-    }
-
-    pub(in crate::ui::shell) fn set_host_editor_state(&self, open: bool, is_new: bool) {
-        let mut state = self.editor_state.borrow_mut();
-        state.host_editor_open = open;
-        state.host_editor_is_new = is_new;
     }
 
     pub(in crate::ui::shell) fn set_snippets_editor_open(&self, open: bool) {
@@ -4969,6 +2482,65 @@ impl SessionController {
         selected.clone()
     }
 
+    pub(in crate::ui::shell) fn build_local_tab(
+        id: TabId,
+        profile: SessionProfile,
+        terminal: TerminalState,
+    ) -> (TabState, SessionTabState) {
+        let title = if profile.name.trim().is_empty() {
+            local_session::local_terminal_label(&profile.local_shell)
+        } else {
+            profile.name.clone()
+        };
+        let profile_id = profile.id.clone();
+
+        let session = SessionTabState {
+            profile_id,
+            port_forward_rule_id: None,
+            terminal,
+            connection_state: SessionConnectionState::Connecting,
+            preserved_history_popup_hidden: false,
+            pending_profile: Some(profile),
+            commands: None,
+            bytes_in: 0,
+            bytes_out: 0,
+            pending_host_key: None,
+            pending_host_key_request_id: 0,
+            pending_keyboard_interactive: None,
+            pending_keyboard_interactive_request_id: 0,
+            reconnect_task: None,
+            reconnect_attempt: 0,
+            has_activity: false,
+            monitoring: SessionMonitoringState::new(false),
+            purpose: SessionPurpose::Terminal,
+            port_forward_revision: 0,
+            port_forward_log_len: 0,
+            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
+            local_terminal: true,
+            owner_route: None,
+        };
+        (
+            TabState::new(
+                id,
+                title,
+                i18n::string("tabs.initial.local_terminal_starting"),
+                TabKindTag::LocalTerminal,
+                crate::ui::shell::workspace::TabPlacement::TopLevel,
+            ),
+            session,
+        )
+    }
+
+    pub(in crate::ui::shell) fn forward_profile_items(
+        profiles: &[SessionProfile],
+    ) -> Vec<ForwardProfileSelectItem> {
+        profiles
+            .iter()
+            .filter(|profile| !profile.is_local())
+            .map(ForwardProfileSelectItem::new)
+            .collect()
+    }
+
     pub(in crate::ui::shell) fn build_pending_tab(
         id: TabId,
         profile: SessionProfile,
@@ -5014,55 +2586,6 @@ impl SessionController {
                 title,
                 status,
                 TabKindTag::Session,
-                crate::ui::shell::workspace::TabPlacement::TopLevel,
-            ),
-            session,
-        )
-    }
-
-    pub(in crate::ui::shell) fn build_local_tab(
-        id: TabId,
-        profile: SessionProfile,
-        terminal: TerminalState,
-    ) -> (TabState, SessionTabState) {
-        let title = if profile.name.trim().is_empty() {
-            local_session::local_terminal_label(&profile.local_shell)
-        } else {
-            profile.name.clone()
-        };
-        let profile_id = profile.id.clone();
-
-        let session = SessionTabState {
-            profile_id,
-            port_forward_rule_id: None,
-            terminal,
-            connection_state: SessionConnectionState::Connecting,
-            preserved_history_popup_hidden: false,
-            pending_profile: Some(profile),
-            commands: None,
-            bytes_in: 0,
-            bytes_out: 0,
-            pending_host_key: None,
-            pending_host_key_request_id: 0,
-            pending_keyboard_interactive: None,
-            pending_keyboard_interactive_request_id: 0,
-            reconnect_task: None,
-            reconnect_attempt: 0,
-            has_activity: false,
-            monitoring: SessionMonitoringState::new(false),
-            purpose: SessionPurpose::Terminal,
-            port_forward_revision: 0,
-            port_forward_log_len: 0,
-            sftp_progress_layout: SessionSftpProgressLayoutState::default(),
-            local_terminal: true,
-            owner_route: None,
-        };
-        (
-            TabState::new(
-                id,
-                title,
-                i18n::string("tabs.initial.local_terminal_starting"),
-                TabKindTag::LocalTerminal,
                 crate::ui::shell::workspace::TabPlacement::TopLevel,
             ),
             session,
@@ -5750,57 +3273,6 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn pending_profile_delete(&self) -> Option<PendingProfileDeleteState> {
-        self.pending_dialogs.borrow().profile_delete.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_pending_profile_delete(
-        &self,
-        pending: Option<PendingProfileDeleteState>,
-    ) {
-        self.pending_dialogs.borrow_mut().profile_delete = pending;
-    }
-
-    pub(in crate::ui::shell) fn take_pending_profile_delete(
-        &self,
-    ) -> Option<PendingProfileDeleteState> {
-        self.pending_dialogs.borrow_mut().profile_delete.take()
-    }
-
-    pub(in crate::ui::shell) fn cancel_profile_delete(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.take_pending_profile_delete() {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::ProfileDelete(pending),
-            ));
-        }
-    }
-
-    pub(in crate::ui::shell) fn pending_profile_import_result(
-        &self,
-    ) -> Option<PendingProfileImportResultState> {
-        self.pending_dialogs.borrow().profile_import_result.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_pending_profile_import_result(
-        &self,
-        pending: Option<PendingProfileImportResultState>,
-    ) {
-        self.pending_dialogs.borrow_mut().profile_import_result = pending;
-    }
-
-    pub(in crate::ui::shell) fn dismiss_profile_import_result(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self
-            .pending_dialogs
-            .borrow_mut()
-            .profile_import_result
-            .take()
-        {
-            cx.emit(AppCommand::OverlayDismissed(
-                DialogOverlaySnapshot::ProfileImportResult(pending),
-            ));
-        }
-    }
-
     pub(in crate::ui::shell) fn pending_known_host_delete(
         &self,
     ) -> Option<PendingKnownHostDeleteState> {
@@ -6281,10 +3753,6 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn host_password_visible(&self) -> bool {
-        self.host_password_visible
-    }
-
     pub(in crate::ui::shell) fn sync_port_snapshot(&self, snapshot: SessionPortSnapshot) {
         let mut state = self.ports.borrow_mut();
         let removed_tabs = state
@@ -6406,12 +3874,12 @@ impl SessionQueryPort {
         tab_id: TabId,
         catalog: &CatalogQueryPort,
     ) -> Option<SessionProfile> {
-        let (pending_profile, profile_id) = {
-            let state = self.state.borrow();
-            let session = state.snapshot.sessions.get(&tab_id)?;
-            (session.pending_profile.clone(), session.profile_id.clone())
-        };
-        pending_profile.or_else(|| catalog.profile(&profile_id))
+        let state = self.state.borrow();
+        let session = state.snapshot.sessions.get(&tab_id)?;
+        session
+            .pending_profile
+            .clone()
+            .or_else(|| catalog.profile(&session.profile_id))
     }
 }
 
@@ -6644,26 +4112,7 @@ mod tests {
     use super::*;
     use crate::ui::contracts::CatalogReader;
     use crate::ui::shell::{SessionConnectionState, SessionMonitoringState, TerminalState};
-    use gpui_kit::{point, px};
     use miaominal_ssh::SessionEvent;
-
-    #[test]
-    fn host_editor_scroll_position_survives_view_recreation_until_editor_reopens() {
-        let controller = SessionController::new_for_test();
-        let retained_handle = controller.host_editor_scroll_handle();
-        let scrolled_offset = point(px(0.0), px(-128.0));
-
-        retained_handle.set_offset(scrolled_offset);
-
-        assert_eq!(
-            controller.host_editor_scroll_handle().offset(),
-            scrolled_offset
-        );
-
-        controller.reset_host_editor_scroll();
-
-        assert_eq!(retained_handle.offset(), point(px(0.0), px(0.0)));
-    }
 
     fn session_payload(profile_id: &str) -> SessionTabState {
         SessionTabState {
@@ -7140,25 +4589,5 @@ mod tests {
         ssh.has_stored_password = true;
 
         assert!(controller.profile_requires_local_vault_unlock(&ssh));
-    }
-
-    #[test]
-    fn saved_profile_kind_matches_the_editor_selection() {
-        assert_eq!(
-            SessionController::host_editor_profile_kind(ProfileKind::Ssh),
-            ProfileKind::Ssh
-        );
-        assert_eq!(
-            SessionController::host_editor_profile_kind(ProfileKind::Local),
-            ProfileKind::Local
-        );
-        assert_eq!(
-            SessionController::host_editor_profile_kind(ProfileKind::Telnet),
-            ProfileKind::Ssh
-        );
-        assert_eq!(
-            SessionController::host_editor_profile_kind(ProfileKind::Rdp),
-            ProfileKind::Ssh
-        );
     }
 }

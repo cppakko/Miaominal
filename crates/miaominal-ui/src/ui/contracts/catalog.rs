@@ -2,6 +2,38 @@ use std::rc::Rc;
 
 use miaominal_core::{profile::SessionProfile, proxy::ProxyProfile};
 
+pub(crate) type ProfileCommitOperation =
+    Box<dyn FnOnce(Vec<SessionProfile>) -> anyhow::Result<Vec<SessionProfile>>>;
+
+/// Serializes profile commands against the application catalog. The feature
+/// operation must durably persist its candidate before returning success.
+pub(crate) trait ProfileCommitter {
+    fn commit(
+        &self,
+        cx: &mut gpui_kit::App,
+        operation: ProfileCommitOperation,
+    ) -> anyhow::Result<Vec<SessionProfile>>;
+}
+
+#[derive(Clone)]
+pub(crate) struct ProfileCommitPort(Rc<dyn ProfileCommitter>);
+
+impl ProfileCommitPort {
+    pub(crate) fn new(writer: Rc<dyn ProfileCommitter>) -> Self {
+        Self(writer)
+    }
+
+    /// The operation sees the latest catalog during a synchronous application
+    /// update. Failed persistence leaves its source and generation unchanged.
+    pub(crate) fn commit(
+        &self,
+        cx: &mut gpui_kit::App,
+        operation: impl FnOnce(Vec<SessionProfile>) -> anyhow::Result<Vec<SessionProfile>> + 'static,
+    ) -> anyhow::Result<Vec<SessionProfile>> {
+        self.0.commit(cx, Box::new(operation))
+    }
+}
+
 /// Read access to committed connection data, independent of any window or session.
 pub(crate) trait CatalogReader {
     fn profiles(&self) -> Vec<SessionProfile>;

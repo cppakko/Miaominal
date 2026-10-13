@@ -486,6 +486,9 @@ impl AppView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.controllers.hosts.update(cx, |controller, cx| {
+            controller.refresh_localized_placeholders(window, cx);
+        });
         for domain in locale_refresh_domains() {
             match domain {
                 LocaleRefreshDomain::Session => {

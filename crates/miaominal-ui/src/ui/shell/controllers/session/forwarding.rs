@@ -154,7 +154,7 @@ impl SessionController {
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
         let disconnect_suffix = Self::forwarding_closed_connection_suffix(retired.is_some());
-        let message = match self.persist_profiles() {
+        let message = match self.persist_profiles_and_publish(cx) {
             Ok(()) => i18n::string_args(
                 "forwarding.messages.removed",
                 &[
@@ -210,7 +210,7 @@ impl SessionController {
         let retired = self.retire_port_forward_connection(profile_id, rule_id);
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        let persisted = self.persist_profiles();
+        let persisted = self.persist_profiles_and_publish(cx);
         let message = if retired.is_some() {
             let stopped_suffix = Self::forwarding_stopped_tunnel_suffix(true);
             match persisted {
@@ -344,7 +344,7 @@ impl SessionController {
         };
         rule.enabled = true;
         let _ = self.update_port_forward_rule_enabled_state(profile_id, rule_id, true);
-        if let Err(error) = self.persist_profiles() {
+        if let Err(error) = self.persist_profiles_and_publish(cx) {
             log::warn!("failed to persist connected port-forward rule state: {error:?}");
         }
         let commands = self
@@ -403,7 +403,7 @@ impl SessionController {
 
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(profile_id);
         let synced_suffix = Self::synced_sessions_suffix(synced_sessions);
-        if let Err(error) = self.persist_profiles() {
+        if let Err(error) = self.persist_profiles_and_publish(cx) {
             log::warn!("failed to persist disconnected port-forward rule state: {error:?}");
         }
         if let Some((tab_id, _)) = retired {

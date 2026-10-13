@@ -1,4 +1,4 @@
-use gpui_kit::{App, AppContext as _, Context, Entity, Global};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::known_host::KnownHostEntry;
 use miaominal_core::profile::SessionProfile;
@@ -19,7 +19,9 @@ use std::rc::Rc;
 use std::time::Instant;
 use tokio::runtime::Handle as TokioHandle;
 
-use super::contracts::CatalogQueryPort;
+use super::contracts::{
+    CatalogQueryPort, ProfileCommitOperation, ProfileCommitPort, ProfileCommitter,
+};
 use super::i18n;
 
 mod catalog;
@@ -376,19 +378,27 @@ impl ApplicationState {
         }
     }
 
-    pub(crate) fn publish_catalogs(
+    pub(crate) fn publish_profiles(
         &mut self,
         profiles: Vec<SessionProfile>,
-        proxies: Vec<ProxyProfile>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.catalog.set_profiles(profiles) {
+            return;
+        }
+        self.refresh_connection_catalog_services();
+        self.generations.catalogs = next_generation(self.generations.catalogs);
+        cx.notify();
+    }
+
+    // Remaining management catalogs move to their own feature command ports.
+    pub(crate) fn publish_session_management(
+        &mut self,
         snippets: Vec<SnippetRecord>,
         known_hosts_entries: Vec<KnownHostEntry>,
         cx: &mut Context<Self>,
     ) {
-        let connections_changed = self.catalog.set_catalogs(profiles, proxies);
-        if !connections_changed
-            && self.snippets == snippets
-            && self.known_hosts_entries == known_hosts_entries
-        {
+        if self.snippets == snippets && self.known_hosts_entries == known_hosts_entries {
             return;
         }
         self.snippets = snippets;
@@ -1045,6 +1055,30 @@ impl Drop for ApplicationState {
 
 pub(crate) fn application_state(cx: &App) -> Entity<ApplicationState> {
     cx.global::<GlobalApplicationState>().0.clone()
+}
+
+struct ApplicationProfileCommitter {
+    state: WeakEntity<ApplicationState>,
+}
+
+impl ProfileCommitter for ApplicationProfileCommitter {
+    fn commit(
+        &self,
+        cx: &mut App,
+        operation: ProfileCommitOperation,
+    ) -> anyhow::Result<Vec<SessionProfile>> {
+        self.state.update(cx, |application, cx| {
+            let profiles = operation(application.catalog.profiles())?;
+            application.publish_profiles(profiles.clone(), cx);
+            Ok(profiles)
+        })?
+    }
+}
+
+pub(crate) fn profile_commit_port(cx: &App) -> ProfileCommitPort {
+    ProfileCommitPort::new(Rc::new(ApplicationProfileCommitter {
+        state: application_state(cx).downgrade(),
+    }))
 }
 
 fn newly_observed_capability_notice<'a>(

@@ -50,6 +50,10 @@ mod bootstrap_subscriptions;
 mod bridge_security_notification;
 mod containers;
 mod controllers;
+// Phase 5: remove this logical Shell seam after shared UI contracts leave Shell.
+#[path = "features/hosts.rs"]
+mod hosts;
+use hosts::{HostsController, HostsControllerArgs};
 mod forms;
 mod layout;
 mod metrics;

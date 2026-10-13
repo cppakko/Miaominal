@@ -1808,7 +1808,7 @@ impl ChromeAppViewExt for AppView {
     }
 
     fn render_fab(&self, _entity: Entity<Self>) -> impl IntoElement {
-        let controller = self.controllers.session.clone();
+        let controller = self.controllers.hosts.clone();
         fab_button(move |_window, cx| {
             controller.update(cx, |controller, cx| {
                 controller.request_new_profile_editor(cx);

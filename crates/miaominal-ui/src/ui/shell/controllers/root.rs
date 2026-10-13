@@ -78,7 +78,7 @@ impl AppView {
         let retention = sidebar_editor_retention(transition, visible_section);
         if !retention.host_profile {
             self.controllers
-                .session
+                .hosts
                 .read(cx)
                 .set_host_editor_state(false, false);
         }
@@ -590,10 +590,8 @@ impl AppView {
         match request {
             TabOpenRequest::NewProfileEditor => {
                 let entity = cx.entity();
+                let window_handle = self.controllers.hosts.read(cx).owner_window();
                 cx.defer(move |cx| {
-                    let Some(window_handle) = cx.active_window() else {
-                        return;
-                    };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
                         entity_for_window.update(cx, |this, cx| {
@@ -601,7 +599,7 @@ impl AppView {
                                 this.controllers.keychain.read(cx).managed_keys(),
                             );
                             this.set_sidebar_section(super::SidebarSection::Hosts, cx);
-                            this.controllers.session.update(cx, |controller, cx| {
+                            this.controllers.hosts.update(cx, |controller, cx| {
                                 controller.add_profile(managed_key_options, window, cx);
                             });
                             this.remember_active_page_editor_sidebar(Some(
@@ -620,16 +618,14 @@ impl AppView {
                 let profile_id = profile_id.clone();
                 let open_hosts_tab = *open_hosts_tab;
                 let entity = cx.entity();
+                let window_handle = self.controllers.hosts.read(cx).owner_window();
                 cx.defer(move |cx| {
-                    let Some(window_handle) = cx.active_window() else {
-                        return;
-                    };
                     let entity_for_window = entity.clone();
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
                         entity_for_window.update(cx, |this, cx| {
                             let index = this
                                 .controllers
-                                .session
+                                .hosts
                                 .read(cx)
                                 .profiles()
                                 .iter()
@@ -648,7 +644,7 @@ impl AppView {
                             } else {
                                 this.set_sidebar_section(super::SidebarSection::Hosts, cx);
                             }
-                            this.controllers.session.update(cx, |controller, cx| {
+                            this.controllers.hosts.update(cx, |controller, cx| {
                                 controller.open_profile_editor(
                                     index,
                                     managed_key_options,
@@ -780,36 +776,6 @@ impl AppView {
         }
     }
 
-    fn profile_save_requires_local_vault_unlock(&self, profile: &SessionProfile, cx: &App) -> bool {
-        let settings = self.controllers.settings.read(cx);
-        settings.sync_requires_local_vault_unlock()
-            || (settings.local_vault_status() == LocalVaultStatus::Locked
-                && (!profile.password.is_empty() || !profile.passphrase.is_empty()))
-    }
-
-    fn handle_profile_save_request(
-        &mut self,
-        profile: SessionProfile,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.profile_save_requires_local_vault_unlock(&profile, cx) {
-            self.defer_app_command_in_window(
-                DeferredAppCommand::Session(SessionDeferredCommand::SaveProfile),
-                window,
-                cx,
-            );
-            return;
-        }
-
-        let managed_key_options =
-            ManagedKeySelectItem::sorted_items(self.controllers.keychain.read(cx).managed_keys());
-        let controller = self.controllers.session.clone();
-        controller.update(cx, |controller, cx| {
-            controller.commit_profile_save_request(profile, managed_key_options, window, cx);
-        });
-    }
-
     fn handle_snippet_save_request(
         &mut self,
         snippet: miaominal_core::snippet::SnippetRecord,
@@ -895,14 +861,11 @@ impl AppView {
                 self.handle_local_vault_action_request(request.clone(), window, cx)
             }
             AppCommand::LocalDataResetRequested => self.start_local_data_reset(window, cx),
-            AppCommand::SaveProfileRequested(profile) => {
-                self.handle_profile_save_request((**profile).clone(), window, cx)
-            }
             AppCommand::SaveSnippetRequested(snippet) => {
                 self.handle_snippet_save_request((**snippet).clone(), window, cx)
             }
             AppCommand::ImportProfilesRequested(source) => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.hosts.clone();
                 controller.update(cx, |controller, cx| {
                     controller.import_profiles_from_source(*source, window, cx);
                 });
@@ -911,10 +874,13 @@ impl AppView {
                 self.handle_session_event_outcome(*tab_id, outcome.clone(), window, cx)
             }
             AppCommand::ProxiesChanged(proxies) => {
+                self.controllers.hosts.update(cx, |controller, cx| {
+                    controller.replace_proxies_from_application(proxies.clone());
+                    controller.refresh_entry_proxy_select(window, cx);
+                });
                 let proxies = proxies.clone();
                 self.controllers.session.update(cx, |controller, cx| {
-                    controller.replace_proxies(proxies);
-                    controller.refresh_entry_proxy_select(window, cx);
+                    controller.replace_proxies(proxies.clone());
                     cx.notify();
                 });
             }
@@ -929,6 +895,11 @@ impl AppView {
 
     fn handle_app_command(&mut self, command: &AppCommand, cx: &mut Context<Self>) {
         match command {
+            AppCommand::ProfilesCommitted(profiles) => {
+                application_state(cx).update(cx, |application, cx| {
+                    application.publish_profiles(profiles.clone(), cx);
+                });
+            }
             AppCommand::Feedback(message) => self.shell.status_message = message.clone(),
             AppCommand::KnownHostsChanged => {
                 self.controllers.session.update(cx, |controller, cx| {
@@ -950,7 +921,6 @@ impl AppView {
             | AppCommand::TerminalMenuRequested { .. }
             | AppCommand::VaultActionRequested(_)
             | AppCommand::LocalDataResetRequested
-            | AppCommand::SaveProfileRequested(_)
             | AppCommand::SaveSnippetRequested(_)
             | AppCommand::ImportProfilesRequested(_)
             | AppCommand::SessionEventApplied { .. }
@@ -988,11 +958,9 @@ impl AppView {
                 profile_id,
                 favorites,
             } => {
-                let result = self
-                    .controllers
-                    .session
-                    .read(cx)
-                    .persist_remote_path_favorites(profile_id, favorites.clone());
+                let result = self.controllers.session.update(cx, |controller, cx| {
+                    controller.persist_remote_path_favorites(profile_id, favorites.clone(), cx)
+                });
                 let persisted = self
                     .controllers
                     .session
@@ -1061,25 +1029,16 @@ impl AppView {
                     .read(cx)
                     .clear_managed_key_profile_references(key_id)
             };
-            let host_editor_forms = self.controllers.session.read(cx).host_editor_forms();
-
-            if host_editor_forms
-                .managed_key_select
+            self.controllers
+                .hosts
                 .read(cx)
-                .selected_value()
-                .is_some_and(|selected| selected == key_id)
-                && host_editor_forms.editing_auth_method == AuthMethod::ManagedKey
-            {
-                self.controllers
-                    .session
-                    .read(cx)
-                    .host_editor_forms_mut()
-                    .editing_auth_method = AuthMethod::Password;
-            }
+                .remove_managed_key_from_editor(key_id, cx);
 
             if sessions_changed
                 && self.controllers.session.read(cx).session_store_available()
-                && let Err(error) = self.controllers.session.read(cx).persist_profiles()
+                && let Err(error) = self.controllers.session.update(cx, |controller, cx| {
+                    controller.persist_profiles_and_publish(cx)
+                })
             {
                 self.shell.status_message = i18n::string_args(
                     "keychain.messages.removed_locally_session_save_failed",
@@ -1090,7 +1049,7 @@ impl AppView {
 
         let managed_key_options =
             ManagedKeySelectItem::sorted_items(self.controllers.keychain.read(cx).managed_keys());
-        self.controllers.session.update(cx, |controller, cx| {
+        self.controllers.hosts.update(cx, |controller, cx| {
             controller.sync_managed_key_select_in_active_window(managed_key_options, None, cx);
         });
     }
@@ -1121,35 +1080,6 @@ impl AppView {
             window,
             cx,
         );
-    }
-
-    pub(in crate::ui::shell) fn confirm_profile_delete(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pending) = self
-            .controllers
-            .session
-            .read(cx)
-            .take_pending_profile_delete()
-        else {
-            return;
-        };
-
-        self.start_dialog_exit(DialogOverlaySnapshot::ProfileDelete(pending.clone()), cx);
-        let managed_key_options =
-            ManagedKeySelectItem::sorted_items(self.controllers.keychain.read(cx).managed_keys());
-        self.controllers.session.update(cx, |controller, cx| {
-            controller.delete_profile_by_id(
-                &pending.profile_id,
-                &pending.profile_name,
-                pending.reload_inputs_after_delete,
-                managed_key_options,
-                window,
-                cx,
-            );
-        });
     }
 }
 

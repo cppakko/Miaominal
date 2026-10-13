@@ -29,7 +29,7 @@ fn profile_import_presentation(
     }
 }
 
-impl SessionController {
+impl HostsController {
     pub(in crate::ui::shell) fn import_profiles_from_source(
         &self,
         source: ImportSourceKind,
@@ -37,15 +37,13 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         let dialog = build_profile_import_dialog(source, window);
+        let window_handle = window.window_handle();
         cx.spawn(async move |this, cx| {
             let Some(file) = dialog.pick_file().await else {
                 return;
             };
             let path = file.path().to_path_buf();
             cx.update(move |cx| {
-                let Some(window_handle) = cx.active_window() else {
-                    return;
-                };
                 let this_for_window = this.clone();
                 if let Err(error) = window_handle.update(cx, move |_, window, cx| {
                     let _ = this_for_window.update(cx, |controller, cx| {
@@ -135,7 +133,7 @@ impl SessionController {
         let ImportedProfilesResult {
             imported_count,
             issues,
-        } = match self.import_profiles(batch) {
+        } = match self.import_profiles(batch, cx) {
             Ok(result) => result,
             Err(error) => {
                 self.report_profile_import_validation(

@@ -711,7 +711,7 @@ impl AppView {
     ) -> AnyElement {
         match section {
             SidebarSection::Hosts => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.hosts.clone();
                 let connect_controller = controller.clone();
                 let edit_controller = controller.clone();
                 let sftp_controller = controller.clone();
@@ -719,17 +719,23 @@ impl AppView {
                     controller.clone(),
                     move |index, _window, cx| {
                         connect_controller.update(cx, |controller, cx| {
-                            controller.request_session_at_profile_index(index, cx);
+                            if let Some(index) = controller.profile_index(&index) {
+                                controller.request_session_at_profile_index(index, cx);
+                            }
                         });
                     },
                     move |index, _window, cx| {
                         edit_controller.update(cx, |controller, cx| {
-                            controller.request_profile_editor_at_index(index, cx);
+                            if let Some(index) = controller.profile_index(&index) {
+                                controller.request_profile_editor_at_index(index, cx);
+                            }
                         });
                     },
                     move |index, _window, cx| {
                         sftp_controller.update(cx, |controller, cx| {
-                            controller.request_sftp_at_profile_index(index, cx);
+                            if let Some(index) = controller.profile_index(&index) {
+                                controller.request_sftp_at_profile_index(index, cx);
+                            }
                         });
                     },
                     cx,
@@ -1125,7 +1131,13 @@ impl AppView {
             .filter(|kind| page_editor_sidebar_matches_view(*kind, view))?;
             let controller = self.controllers.session.read(cx);
             let is_open = match kind {
-                PageEditorSidebarKind::Hosts => controller.editor_state().host_editor_open,
+                PageEditorSidebarKind::Hosts => {
+                    self.controllers
+                        .hosts
+                        .read(cx)
+                        .editor_state()
+                        .host_editor_open
+                }
                 PageEditorSidebarKind::PortForwarding => {
                     controller.editor_state().port_forward_editor_open
                 }
@@ -1138,7 +1150,16 @@ impl AppView {
         let controller = self.controllers.session.read(cx);
         let editors = controller.editor_state();
         match section {
-            SidebarSection::Hosts if editors.host_editor_open => Some(PageEditorSidebarKind::Hosts),
+            SidebarSection::Hosts
+                if self
+                    .controllers
+                    .hosts
+                    .read(cx)
+                    .editor_state()
+                    .host_editor_open =>
+            {
+                Some(PageEditorSidebarKind::Hosts)
+            }
             SidebarSection::PortForwarding if editors.port_forward_editor_open => {
                 Some(PageEditorSidebarKind::PortForwarding)
             }
@@ -1342,22 +1363,35 @@ impl AppView {
     ) -> AnyElement {
         match kind {
             PageEditorSidebarKind::Hosts => {
-                let controller = self.controllers.session.clone();
+                let controller = self.controllers.hosts.clone();
+                let session = self.controllers.session.clone();
+                let connection_test = hosts::HostConnectionTest::new(
+                    session.read(cx).connection_test_in_progress(),
+                    move |cx| {
+                        session.update(cx, |controller, cx| {
+                            controller.cancel_profile_connection_test(cx);
+                        });
+                    },
+                );
                 let test_controller = controller.clone();
                 let save_controller = controller.clone();
+                let save_settings = self.controllers.settings.clone();
                 let visibility_controller = controller.clone();
                 controller
                     .read(cx)
                     .render_hosts_editor_sidebar(
                         controller.clone(),
+                        connection_test,
                         move |window, cx| {
                             test_controller.update(cx, |controller, cx| {
                                 controller.request_profile_connection_test(window, cx);
                             });
                         },
                         move |window, cx| {
+                            let requires_unlock =
+                                save_settings.read(cx).sync_requires_local_vault_unlock();
                             save_controller.update(cx, |controller, cx| {
-                                controller.request_profile_save(window, cx);
+                                controller.request_profile_save(requires_unlock, window, cx);
                             });
                         },
                         move |window, cx| {
@@ -1738,57 +1772,13 @@ impl AppView {
 
     fn render_profile_delete_prompt(
         &self,
-        entity: Entity<Self>,
+        _entity: Entity<Self>,
         prompt: &PendingProfileDeleteState,
         exit_progress: Option<f32>,
-    ) -> gpui_kit::AnyElement {
-        let profile_name = if prompt.profile_name.trim().is_empty() {
-            i18n::string("dialogs.profile_delete.untitled_profile")
-        } else {
-            prompt.profile_name.clone()
-        };
-        let subtitle = i18n::string_args(
-            "dialogs.profile_delete.message",
-            &[("profile_name", profile_name.as_str())],
-        );
-
-        let controller_cancel = self.controllers.session.clone();
-        let entity_confirm = entity.clone();
-
-        let actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                basic_dialog_action_button(
-                    "profile-delete-cancel",
-                    i18n::string("dialogs.profile_delete.cancel"),
-                    BasicDialogActionTone::Default,
-                )
-                .on_click(move |_, _, cx| {
-                    controller_cancel.update(cx, |controller, cx| {
-                        controller.cancel_profile_delete(cx);
-                    });
-                }),
-            )
-            .child(
-                basic_dialog_action_button(
-                    "profile-delete-confirm",
-                    i18n::string("dialogs.profile_delete.confirm"),
-                    BasicDialogActionTone::Destructive,
-                )
-                .on_click(move |_, window, cx| {
-                    entity_confirm.update(cx, |this, cx| {
-                        this.confirm_profile_delete(window, cx);
-                    });
-                }),
-            );
-
-        render_basic_dialog(
-            "profile-delete",
-            i18n::string("dialogs.profile_delete.title"),
-            Some(subtitle),
-            None,
-            actions.into_any_element(),
+    ) -> AnyElement {
+        HostsController::render_profile_delete_prompt(
+            self.controllers.hosts.clone(),
+            prompt,
             exit_progress,
         )
     }
@@ -1797,113 +1787,10 @@ impl AppView {
         &self,
         prompt: &PendingProfileImportResultState,
         exit_progress: Option<f32>,
-    ) -> gpui_kit::AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
-        let source = localized_profile_import_source_label(prompt.source);
-        let imported_count = prompt.imported_count.to_string();
-        let issue_count = prompt.issues.len().to_string();
-        let title = i18n::string(if prompt.imported_count == 0 {
-            "settings.connections.import_result.failed_title"
-        } else {
-            "settings.connections.import_result.partial_title"
-        });
-        let supporting_text = i18n::string_args(
-            if prompt.imported_count == 0 {
-                "settings.connections.import_result.failed_summary"
-            } else {
-                "settings.connections.import_result.partial_summary"
-            },
-            &[
-                ("source", &source),
-                ("imported", &imported_count),
-                ("issues", &issue_count),
-            ],
-        );
-
-        let issue_rows = prompt
-            .issues
-            .iter()
-            .enumerate()
-            .map(|(index, issue)| {
-                let entry_name = if issue.entry_name.trim().is_empty() {
-                    i18n::string("settings.connections.import_result.unknown_entry")
-                } else {
-                    issue.entry_name.clone()
-                };
-                let kind = localized_profile_import_issue_kind(issue.kind);
-                let reason = localized_profile_import_issue_reason(&issue.reason);
-                v_flex()
-                    .id(SharedString::from(format!("profile-import-issue-{index}")))
-                    .w_full()
-                    .min_w(px(0.0))
-                    .gap_1()
-                    .p_3()
-                    .rounded(px(14.0))
-                    .bg(rgb(roles.surface_container_low))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_sm()
-                                    .text_color(rgb(roles.on_surface))
-                                    .child(entry_name),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(rgb(roles.tertiary))
-                                    .child(kind),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .text_sm()
-                            .line_height(miaominal_settings::scaled_line_height(18.0))
-                            .text_color(rgb(roles.on_surface_variant))
-                            .child(reason),
-                    )
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
-        let body = div()
-            .w_full()
-            .max_h(px(360.0))
-            .overflow_y_scrollbar()
-            .child(v_flex().w_full().gap_2().children(issue_rows))
-            .into_any_element();
-
-        let controller = self.controllers.session.clone();
-        let actions = h_flex().justify_end().child(
-            basic_dialog_action_button(
-                "profile-import-result-close",
-                i18n::string("settings.connections.import_result.close"),
-                BasicDialogActionTone::Default,
-            )
-            .on_click(move |_, _, cx| {
-                controller.update(cx, |controller, cx| {
-                    controller.dismiss_profile_import_result(cx);
-                });
-            }),
-        );
-
-        render_basic_dialog(
-            "profile-import-result",
-            title,
-            Some(supporting_text),
-            Some(body),
-            actions.into_any_element(),
+    ) -> AnyElement {
+        HostsController::render_profile_import_result(
+            self.controllers.hosts.clone(),
+            prompt,
             exit_progress,
         )
     }

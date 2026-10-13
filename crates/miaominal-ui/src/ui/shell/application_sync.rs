@@ -32,6 +32,14 @@ impl AppView {
 
         if snapshot.generations.catalogs != self.application_generations.catalogs {
             self.controllers
+                .hosts
+                .read(cx)
+                .replace_profiles_from_application(snapshot.profiles.clone());
+            self.controllers
+                .hosts
+                .read(cx)
+                .replace_proxies_from_application(snapshot.proxies.clone());
+            self.controllers
                 .session
                 .read(cx)
                 .replace_profiles_from_application(snapshot.profiles);
@@ -56,7 +64,7 @@ impl AppView {
             let managed_key_options = ManagedKeySelectItem::sorted_items(
                 self.controllers.keychain.read(cx).managed_keys(),
             );
-            self.controllers.session.update(cx, |controller, cx| {
+            self.controllers.hosts.update(cx, |controller, cx| {
                 controller.refresh_entry_proxy_select(window, cx);
                 controller.sync_managed_key_select_in_active_window(managed_key_options, None, cx);
             });
@@ -115,13 +123,13 @@ impl AppView {
                 vault_lock_presentation(snapshot.vault.automatic_lock, window.is_window_active());
             if vault_locked {
                 // Reconcile visible inputs while this window still owns the unlocked secret store.
-                self.controllers.session.update(cx, |controller, cx| {
+                self.controllers.hosts.update(cx, |controller, cx| {
                     controller.prepare_host_password_for_lock(window, cx);
                 });
             }
             self.apply_application_vault_snapshot(snapshot.vault, cx);
             if vault_locked {
-                self.controllers.session.update(cx, |controller, cx| {
+                self.controllers.hosts.update(cx, |controller, cx| {
                     controller.set_host_password_visibility(false, false, window, cx);
                 });
                 let message =
@@ -322,18 +330,16 @@ impl AppView {
         if self.applying_application_snapshot {
             return;
         }
-        let (profiles, proxies, snippets, known_hosts) = {
+        let (snippets, known_hosts) = {
             let controller = self.controllers.session.read(cx);
             (
-                controller.profiles().clone(),
-                controller.proxies().clone(),
                 controller.snippets().clone(),
                 controller.known_hosts_entries().clone(),
             )
         };
 
         application_state(cx).update(cx, |application, cx| {
-            application.publish_catalogs(profiles, proxies, snippets, known_hosts, cx);
+            application.publish_session_management(snippets, known_hosts, cx);
         });
     }
 

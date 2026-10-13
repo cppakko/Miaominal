@@ -1,6 +1,5 @@
-mod empty_state;
+pub(in crate::ui::shell) mod empty_state;
 mod forward;
-mod hosts;
 mod keychain;
 mod onboarding;
 mod settings;

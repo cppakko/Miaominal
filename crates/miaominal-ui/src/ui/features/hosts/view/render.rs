@@ -1,10 +1,10 @@
-use super::super::super::*;
-use super::super::empty_state::{shell_empty_page, shell_empty_state};
 use super::components::{
     HostCardBadgeChip, HostCardGroupBadge, HostCardMetadata, HostCardTags, group_card,
     host_card_with_action, host_list_row,
 };
 use crate::ui::i18n;
+use crate::ui::shell::pages::empty_state::{shell_empty_page, shell_empty_state};
+use crate::ui::shell::*;
 use miaominal_core::profile::SessionProfile;
 use std::{collections::BTreeMap, rc::Rc};
 
@@ -13,7 +13,7 @@ const HOST_CARD_TAG_BADGE_UNIT_OVERHEAD: usize = 4;
 const HOST_CARD_TAG_GAP_UNITS: usize = 1;
 const HOST_CARD_TAG_MIN_LABEL_UNITS: usize = 4;
 
-type HostPageAction = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type HostPageAction = Rc<dyn Fn(String, &mut Window, &mut App)>;
 
 #[derive(Clone)]
 struct HostPageActions {
@@ -24,9 +24,9 @@ struct HostPageActions {
 
 impl HostPageActions {
     fn new(
-        connect: impl Fn(usize, &mut Window, &mut App) + 'static,
-        edit: impl Fn(usize, &mut Window, &mut App) + 'static,
-        open_sftp: impl Fn(usize, &mut Window, &mut App) + 'static,
+        connect: impl Fn(String, &mut Window, &mut App) + 'static,
+        edit: impl Fn(String, &mut Window, &mut App) + 'static,
+        open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             connect: Rc::new(connect),
@@ -35,30 +35,33 @@ impl HostPageActions {
         }
     }
 
-    fn connect(&self, index: usize, window: &mut Window, cx: &mut App) {
+    fn connect(&self, index: String, window: &mut Window, cx: &mut App) {
         (self.connect)(index, window, cx);
     }
 
-    fn edit(&self, index: usize, window: &mut Window, cx: &mut App) {
+    fn edit(&self, index: String, window: &mut Window, cx: &mut App) {
         (self.edit)(index, window, cx);
     }
 
-    fn open_sftp(&self, index: usize, window: &mut Window, cx: &mut App) {
+    fn open_sftp(&self, index: String, window: &mut Window, cx: &mut App) {
         (self.open_sftp)(index, window, cx);
     }
 }
 
 fn build_host_context_menu(
     menu: PopupMenu,
-    controller: Entity<SessionController>,
+    controller: Entity<HostsController>,
     actions: HostPageActions,
-    index: usize,
+    profile_id: String,
     is_favorite: bool,
     is_local: bool,
 ) -> PopupMenu {
     let favorite_controller = controller.clone();
     let duplicate_controller = controller.clone();
     let delete_controller = controller;
+    let favorite_id = profile_id.clone();
+    let duplicate_id = profile_id.clone();
+    let sftp_id = profile_id.clone();
 
     let fav_label = if is_favorite {
         i18n::string("hosts.menu.remove_from_favorites")
@@ -68,7 +71,9 @@ fn build_host_context_menu(
 
     let menu = menu.item(PopupMenuItem::new(fav_label).on_click(move |_, _, cx| {
         favorite_controller.update(cx, |controller, cx| {
-            controller.toggle_profile_favorite(index, cx);
+            if let Some(index) = controller.profile_index(&favorite_id) {
+                controller.toggle_profile_favorite(index, cx);
+            }
         });
     }));
     let menu = if is_local {
@@ -77,7 +82,7 @@ fn build_host_context_menu(
         menu.item(
             PopupMenuItem::new(i18n::string("hosts.menu.open_sftp")).on_click(
                 move |_, window, cx| {
-                    actions.open_sftp(index, window, cx);
+                    actions.open_sftp(sftp_id.clone(), window, cx);
                 },
             ),
         )
@@ -88,7 +93,9 @@ fn build_host_context_menu(
             PopupMenuItem::new(i18n::string("hosts.menu.duplicate_profile")).on_click(
                 move |_, _, cx| {
                     duplicate_controller.update(cx, |controller, cx| {
-                        controller.duplicate_profile_at_index(index, cx);
+                        if let Some(index) = controller.profile_index(&duplicate_id) {
+                            controller.duplicate_profile_at_index(index, cx);
+                        }
                     });
                 },
             ),
@@ -97,7 +104,9 @@ fn build_host_context_menu(
             PopupMenuItem::new(i18n::string("hosts.menu.delete_profile")).on_click(
                 move |_, _, cx| {
                     delete_controller.update(cx, |controller, cx| {
-                        controller.request_profile_delete_at_index(index, cx);
+                        if let Some(index) = controller.profile_index(&profile_id) {
+                            controller.request_profile_delete_at_index(index, cx);
+                        }
                     });
                 },
             ),
@@ -331,9 +340,9 @@ fn prepare_host_card_metadata(profile: &SessionProfile) -> HostCardMetadata {
 }
 
 fn render_host_profile_item(
-    controller: Entity<SessionController>,
+    controller: Entity<HostsController>,
     actions: HostPageActions,
-    index: usize,
+    _index: usize,
     profile: &SessionProfile,
     is_list: bool,
     id_prefix: &'static str,
@@ -347,6 +356,9 @@ fn render_host_profile_item(
     ));
     let badge_id_prefix = SharedString::from(format!("{id_prefix}-card-metadata-{}", profile.id));
     let is_local = profile.is_local();
+    let menu_id = profile.id.clone();
+    let connect_id = profile.id.clone();
+    let edit_id = profile.id.clone();
     let menu_controller = controller;
     let menu_actions = actions.clone();
     let connect_actions = actions.clone();
@@ -362,7 +374,7 @@ fn render_host_profile_item(
                     menu,
                     menu_controller.clone(),
                     menu_actions.clone(),
-                    index,
+                    menu_id.clone(),
                     is_favorite,
                     is_local,
                 )
@@ -370,12 +382,10 @@ fn render_host_profile_item(
             .child(host_list_row(
                 SharedString::from(display_title),
                 subtitle,
-                None,
-                0,
                 is_local,
                 Some(AppIcon::Edit),
-                move |window, cx| connect_actions.connect(index, window, cx),
-                move |window, cx| edit_actions.edit(index, window, cx),
+                move |window, cx| connect_actions.connect(connect_id.clone(), window, cx),
+                move |window, cx| edit_actions.edit(edit_id.clone(), window, cx),
             ))
             .into_any_element()
     } else {
@@ -388,7 +398,7 @@ fn render_host_profile_item(
                     menu,
                     menu_controller.clone(),
                     menu_actions.clone(),
-                    index,
+                    menu_id.clone(),
                     is_favorite,
                     is_local,
                 )
@@ -398,20 +408,20 @@ fn render_host_profile_item(
                 metadata,
                 badge_id_prefix,
                 AppIcon::Edit,
-                move |window, cx| connect_actions.connect(index, window, cx),
-                move |window, cx| edit_actions.edit(index, window, cx),
+                move |window, cx| connect_actions.connect(connect_id.clone(), window, cx),
+                move |window, cx| edit_actions.edit(edit_id.clone(), window, cx),
             ))
             .into_any_element()
     }
 }
 
-impl SessionController {
+impl HostsController {
     pub(in crate::ui::shell) fn render_hosts_page(
         &self,
         controller: Entity<Self>,
-        on_connect: impl Fn(usize, &mut Window, &mut App) + 'static,
-        on_edit: impl Fn(usize, &mut Window, &mut App) + 'static,
-        on_open_sftp: impl Fn(usize, &mut Window, &mut App) + 'static,
+        on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_edit: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> gpui_kit::AnyElement {
         let actions = HostPageActions::new(on_connect, on_edit, on_open_sftp);

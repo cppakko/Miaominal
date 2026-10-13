@@ -4,7 +4,8 @@ use crate::ui::{
     i18n,
 };
 
-use super::super::super::super::*;
+use crate::ui::shell::*;
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::Size;
 use rfd::AsyncFileDialog;
 
@@ -16,10 +17,11 @@ mod sections;
 use fields::{editor_environment_variable_row, editor_static_field};
 use sections::{HostEditorKindLayout, proxy_jump_stepper_item};
 
-impl SessionController {
+impl HostsController {
     pub(in crate::ui::shell) fn render_hosts_editor_sidebar(
         &self,
         controller: Entity<Self>,
+        connection_test: crate::ui::shell::hosts::HostConnectionTest,
         on_test_connection: impl Fn(&mut Window, &mut App) + 'static,
         on_save: impl Fn(&mut Window, &mut App) + 'static,
         on_toggle_password: impl Fn(&mut Window, &mut App) + 'static,
@@ -31,7 +33,7 @@ impl SessionController {
         let available_groups = self.available_groups();
         let auth_method = host_editor.editing_auth_method;
         let host_editor_is_new = self.editor_state().host_editor_is_new;
-        let connection_test_in_progress = self.connection_test_in_progress();
+        let connection_test_in_progress = connection_test.in_progress;
         let scroll_handle = self.host_editor_scroll_handle();
 
         let kind_layout = HostEditorKindLayout::for_kind(host_editor.profile_kind);
@@ -651,7 +653,12 @@ impl SessionController {
                 ),
         );
 
-        let kind_section = h_flex().w_full().justify_center().child(profile_kind_tabs);
+        let kind_section = h_flex()
+            .id("host-editor-profile-kind-section")
+            .test_support()
+            .w_full()
+            .justify_center()
+            .child(profile_kind_tabs);
 
         let on_pick_local_shell = {
             let controller = controller.clone();
@@ -825,11 +832,12 @@ impl SessionController {
                 None,
                 on_save,
             )
+            .id("host-editor-save")
+            .test_support()
             .into_any_element(),
         );
         let footer = editor_footer_actions(footer_actions).h_full();
         let connection_test_overlay = connection_test_in_progress.then(|| {
-            let cancel_controller = controller.clone();
             let panel = v_flex()
                 .id("host-editor-connection-test-panel")
                 .mx_auto()
@@ -851,9 +859,7 @@ impl SessionController {
                     false,
                     false,
                     move |_, cx| {
-                        cancel_controller.update(cx, |controller, cx| {
-                            controller.cancel_profile_connection_test(cx);
-                        });
+                        connection_test.cancel(cx);
                     },
                 ));
             render_rounded_prompt_overlay(

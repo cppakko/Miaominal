@@ -1,24 +1,24 @@
-use super::super::super::super::*;
+use crate::ui::shell::*;
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardBadgeChip {
+pub(in crate::ui::shell::hosts) struct HostCardBadgeChip {
     pub label: SharedString,
     pub tooltip: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardGroupBadge {
+pub(in crate::ui::shell::hosts) struct HostCardGroupBadge {
     pub badge: HostCardBadgeChip,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardTags {
+pub(in crate::ui::shell::hosts) struct HostCardTags {
     pub visible: Vec<HostCardBadgeChip>,
     pub overflow: Option<HostCardBadgeChip>,
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell::pages::hosts) struct HostCardMetadata {
+pub(in crate::ui::shell::hosts) struct HostCardMetadata {
     pub group: Option<HostCardGroupBadge>,
     pub local_terminal: bool,
     pub tags: HostCardTags,
@@ -47,7 +47,7 @@ fn host_card_badge(
         .into_any_element()
 }
 
-pub(in crate::ui::shell::pages::hosts) fn group_card(
+pub(in crate::ui::shell::hosts) fn group_card(
     icon: impl Into<SharedString>,
     count: impl Into<SharedString>,
     title: impl Into<SharedString>,
@@ -133,7 +133,7 @@ pub(in crate::ui::shell::pages::hosts) fn group_card(
     )
 }
 
-pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
+pub(in crate::ui::shell::hosts) fn host_card_with_action(
     title: impl Into<SharedString>,
     metadata: HostCardMetadata,
     badge_id_prefix: impl Into<SharedString>,
@@ -278,11 +278,9 @@ pub(in crate::ui::shell::pages::hosts) fn host_card_with_action(
         )
 }
 
-pub(in crate::ui::shell::pages::hosts) fn host_list_row(
+pub(in crate::ui::shell::hosts) fn host_list_row(
     title: SharedString,
     subtitle: Option<SharedString>,
-    _status_label: Option<SharedString>,
-    _status_color: u32,
     local_terminal: bool,
     action_icon: Option<AppIcon>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
