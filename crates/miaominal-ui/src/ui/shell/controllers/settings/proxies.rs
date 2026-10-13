@@ -19,7 +19,7 @@ struct ProxySaveDraftInput {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct ProxySaveDraft {
+pub(in crate::ui) struct ProxySaveDraft {
     proxy: ProxyProfile,
     password_update: ProxyPasswordUpdate,
 }

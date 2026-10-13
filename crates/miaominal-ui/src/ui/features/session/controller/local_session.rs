@@ -7,7 +7,7 @@
 use std::io::{Read as _, Write as _};
 
 use crate::ui::i18n;
-pub(in crate::ui::shell) use crate::ui::utils::local_shell::local_terminal_label;
+pub(in crate::ui) use crate::ui::utils::local_shell::local_terminal_label;
 use crate::ui::utils::local_shell::{find_program, shell_display};
 #[cfg(test)]
 use crate::ui::utils::local_shell::{
@@ -20,18 +20,18 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 
 /// A shell program resolved for a local terminal profile.
-pub(in crate::ui::shell) struct LocalShell {
-    pub(in crate::ui::shell) program: String,
-    pub(in crate::ui::shell) args: Vec<String>,
+pub(in crate::ui) struct LocalShell {
+    pub(in crate::ui) program: String,
+    pub(in crate::ui) args: Vec<String>,
     /// Short label used for tab titles and status messages.
-    pub(in crate::ui::shell) display: String,
+    pub(in crate::ui) display: String,
 }
 
 /// Resolves the shell for a local terminal profile.
 ///
 /// Local terminals never fall back to a detected shell: the profile has to name
 /// the executable, and `None` means the profile does not specify one.
-pub(in crate::ui::shell) fn resolve_local_shell(profile: &SessionProfile) -> Option<LocalShell> {
+pub(in crate::ui) fn resolve_local_shell(profile: &SessionProfile) -> Option<LocalShell> {
     let program = profile.local_shell.trim();
     if program.is_empty() {
         return None;
@@ -203,7 +203,7 @@ fn resolve_program(program: &str) -> String {
 
 /// Starts a local shell session and returns the session connection handed to
 /// the workspace, matching `TerminalService::start_session`.
-pub(in crate::ui::shell) fn start_local_session(
+pub(in crate::ui) fn start_local_session(
     profile: SessionProfile,
     columns: usize,
     lines: usize,

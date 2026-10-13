@@ -4,7 +4,7 @@ use crate::ui::i18n;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) enum DialogOverlaySnapshot {
+pub(in crate::ui) enum DialogOverlaySnapshot {
     HostKey {
         tab_id: TabId,
         prompt: HostKeyPrompt,

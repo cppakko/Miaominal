@@ -45,15 +45,6 @@ impl AppView {
         self.controllers.session.read(cx).tab(tab_id)
     }
 
-    pub(in crate::ui::shell) fn session_tab_mut<'a>(
-        &self,
-        tab_id: TabId,
-        cx: &'a App,
-    ) -> Option<RefMut<'a, SessionTabState>> {
-        self.workspace.tabs.get(tab_id)?;
-        self.controllers.session.read(cx).tab_mut(tab_id)
-    }
-
     pub(in crate::ui::shell) fn insert_session_tab(
         &mut self,
         tab: TabState,
@@ -363,6 +354,10 @@ impl AppView {
             .session
             .read(cx)
             .sync_port_snapshot(self.session_port_snapshot(cx));
+        self.controllers
+            .session
+            .read(cx)
+            .sync_terminal_search_target(self.workspace.workspace.active_tab, cx);
     }
 
     pub(in crate::ui::shell) fn set_active_pane(
@@ -661,7 +656,7 @@ impl AppView {
                     pane: new_pane_id,
                 })
                 .unwrap_or(TabPlacement::Background);
-            self.insert_session_tab(tab, session, cx);
+            self.insert_session_tab(tab.into(), session, cx);
             self.workspace.workspace.active_tab =
                 self.workspace.tabs.id_at(self.workspace.tabs.len() - 1);
         }

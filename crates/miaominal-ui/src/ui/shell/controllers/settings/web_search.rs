@@ -9,7 +9,7 @@ use miaominal_secrets::SecretKind;
 use miaominal_settings::{WebSearchConfig, WebSearchProviderKind};
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct WebSearchSaveDraft {
+pub(in crate::ui) struct WebSearchSaveDraft {
     pub(in crate::ui::shell) config: WebSearchConfig,
     pub(in crate::ui::shell) api_key: String,
 }

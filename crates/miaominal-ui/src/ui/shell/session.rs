@@ -169,7 +169,7 @@ impl AppView {
 
         let (tab, session) =
             SessionController::build_connection_test_tab(tab_id, &profile, connection.commands);
-        self.insert_session_tab(tab, session, cx);
+        self.insert_session_tab(tab.into(), session, cx);
         window.blur(cx);
         self.controllers.session.update(cx, |controller, cx| {
             controller.spawn_session_event_loop(tab_id, connection.events, cx);
@@ -236,10 +236,17 @@ impl AppView {
         let tab_id = self.workspace.allocate_tab_id();
 
         if profile.is_local() {
-            return SessionController::build_local_tab(tab_id, profile, terminal);
+            let (tab, session) = SessionController::build_local_tab(tab_id, profile, terminal);
+            return (tab.into(), session);
         }
 
-        SessionController::build_pending_tab(tab_id, profile, terminal, auto_collect_monitoring)
+        let (tab, session) = SessionController::build_pending_tab(
+            tab_id,
+            profile,
+            terminal,
+            auto_collect_monitoring,
+        );
+        (tab.into(), session)
     }
 
     fn estimated_terminal_size(&self, window: &Window) -> (usize, usize) {
@@ -295,7 +302,7 @@ impl AppView {
             self.replace_with_session_tab(index, tab, session, cx);
             index
         } else {
-            self.insert_session_tab(tab, session, cx);
+            self.insert_session_tab(tab.into(), session, cx);
             self.workspace.tabs.len() - 1
         };
 
@@ -616,7 +623,7 @@ impl AppView {
                         TabPlacement::TopLevel
                     };
                     let reopened_id = tab.id;
-                    self.insert_session_tab(tab, session, cx);
+                    self.insert_session_tab(tab.into(), session, cx);
                     reopened_indices.push(self.workspace.tabs.len() - 1);
                     reopened_ids.insert(closed_tab.tab_id, reopened_id);
                 }

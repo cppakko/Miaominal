@@ -596,12 +596,16 @@ impl WorkspacePanesAppViewExt for AppView {
         let session_controller = self.controllers.session.clone();
         let placeholder = parked_tab.as_ref().and_then(|tab| {
             session_controller.update(cx, |controller, cx| {
-                controller.render_session_placeholder(tab, !embedded_in_split, cx)
+                controller.render_session_placeholder(
+                    &tab.session_descriptor(),
+                    !embedded_in_split,
+                    cx,
+                )
             })
         });
         let history_banner = parked_tab.as_ref().and_then(|tab| {
             session_controller.update(cx, |controller, cx| {
-                controller.render_session_history_banner(tab, cx)
+                controller.render_session_history_banner(&tab.session_descriptor(), cx)
             })
         });
 
@@ -805,10 +809,14 @@ impl WorkspacePanesAppViewExt for AppView {
                 }
                 let session_controller = self.controllers.session.clone();
                 let placeholder = session_controller.update(cx, |controller, cx| {
-                    controller.render_session_placeholder(&tab, !embedded_in_split, cx)
+                    controller.render_session_placeholder(
+                        &tab.session_descriptor(),
+                        !embedded_in_split,
+                        cx,
+                    )
                 });
                 let history_banner = session_controller.update(cx, |controller, cx| {
-                    controller.render_session_history_banner(&tab, cx)
+                    controller.render_session_history_banner(&tab.session_descriptor(), cx)
                 });
                 let tab_id = tab.id;
                 let hovered_link = self

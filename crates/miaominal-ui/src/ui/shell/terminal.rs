@@ -1,4 +1,4 @@
-use super::panes::TerminalPaneFreeTypeDropTarget;
+use crate::ui::features::session::TerminalPaneFreeTypeDropTarget;
 use super::*;
 use crate::ui::i18n;
 use alacritty_terminal::index::Side;

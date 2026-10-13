@@ -91,3 +91,4 @@ pub(crate) fn prepare_detached_windows_for_application_quit(cx: &mut App) {
         }
     }
 }
+use crate::ui::workspace::transfer::WorkspaceTransferExt;

@@ -3,6 +3,7 @@ pub mod assets;
 pub mod bridge_security_platform;
 pub(crate) mod components;
 pub(crate) mod contracts;
+pub(crate) mod features;
 pub mod i18n;
 pub(crate) mod licenses;
 mod shell;
@@ -10,6 +11,7 @@ mod system_tray;
 pub(crate) mod theme;
 pub(crate) mod utils;
 mod windowing;
+pub(crate) mod workspace;
 
 pub use application::{initialize_application_state, reload_application_state};
 pub use shell::{AppView, AppWindowRole, open_settings_from_menu};

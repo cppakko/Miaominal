@@ -1,5 +1,3 @@
-#[path = "../../features/session/host_key_prompt.rs"]
-mod host_key_prompt;
 use crate::ui::contracts::CatalogQueryPort;
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
@@ -29,15 +27,20 @@ use miaominal_storage::known_hosts_store::KnownHostsStore;
 use miaominal_terminal::TerminalState;
 use tokio::runtime::Handle as TokioHandle;
 
-use super::{AppCommand, SessionSftpProgressLayoutState};
-use crate::ui::{
-    i18n,
-    shell::{
-        DialogOverlaySnapshot, LocalVaultStatus, SessionProfile, TabId, TabKindTag, TabState,
-        TerminalSearchAnimation, WorkspaceSidePanelTransition, new_input_state,
-        set_input_placeholder, set_input_value,
-    },
+use crate::ui::components::animation::{TerminalSearchAnimation, WorkspaceSidePanelTransition};
+use crate::ui::components::forms::{new_input_state, set_input_placeholder, set_input_value};
+use crate::ui::contracts::commands::AppCommand;
+use crate::ui::contracts::security::LocalVaultStatus;
+use crate::ui::contracts::session::{
+    ClosedSessionTabState, SessionEventOutcome, SessionEventTabRemoval, SessionNotificationRequest,
+    SessionNotificationTone, SessionTabDescriptor,
 };
+use crate::ui::contracts::workspace::{TabId, TabKindTag, TabPlacement};
+use crate::ui::features::session::SessionSftpProgressLayoutState;
+use crate::ui::i18n;
+use miaominal_core::profile::SessionProfile;
+// Stage 4 replaces legacy window overlay payloads with opaque owner-rendered snapshots.
+use crate::ui::shell::state::DialogOverlaySnapshot;
 
 mod events;
 mod forwarding;
@@ -46,33 +49,33 @@ mod local_session;
 mod search;
 mod terminal;
 
-pub(in crate::ui::shell) const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
-pub(in crate::ui::shell) use forwarding::PortForwardSessionStart;
+pub(in crate::ui) const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
+pub(in crate::ui) use forwarding::PortForwardSessionStart;
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct MonitorChartPoint {
-    pub(in crate::ui::shell) label: String,
-    pub(in crate::ui::shell) value: f64,
+pub(in crate::ui) struct MonitorChartPoint {
+    pub(in crate::ui) label: String,
+    pub(in crate::ui) value: f64,
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct SessionMonitoringState {
-    pub(in crate::ui::shell) auto_collect_enabled: bool,
-    pub(in crate::ui::shell) last_snapshot: Option<SessionMonitorSnapshot>,
-    pub(in crate::ui::shell) last_error: Option<String>,
-    pub(in crate::ui::shell) last_updated_at: Option<SystemTime>,
-    pub(in crate::ui::shell) cpu_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) memory_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) network_rx_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) network_tx_history: Vec<MonitorChartPoint>,
-    pub(in crate::ui::shell) cpu_sample_ready: bool,
-    pub(in crate::ui::shell) network_sample_ready: bool,
+pub(in crate::ui) struct SessionMonitoringState {
+    pub(in crate::ui) auto_collect_enabled: bool,
+    pub(in crate::ui) last_snapshot: Option<SessionMonitorSnapshot>,
+    pub(in crate::ui) last_error: Option<String>,
+    pub(in crate::ui) last_updated_at: Option<SystemTime>,
+    pub(in crate::ui) cpu_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui) memory_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui) network_rx_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui) network_tx_history: Vec<MonitorChartPoint>,
+    pub(in crate::ui) cpu_sample_ready: bool,
+    pub(in crate::ui) network_sample_ready: bool,
     rates_warming_up: bool,
-    pub(in crate::ui::shell) sample_count: usize,
+    pub(in crate::ui) sample_count: usize,
 }
 
 impl SessionMonitoringState {
-    pub(in crate::ui::shell) fn new(auto_collect_enabled: bool) -> Self {
+    pub(in crate::ui) fn new(auto_collect_enabled: bool) -> Self {
         Self {
             auto_collect_enabled,
             last_snapshot: None,
@@ -89,7 +92,7 @@ impl SessionMonitoringState {
         }
     }
 
-    pub(in crate::ui::shell) fn set_enabled(&mut self, enabled: bool) {
+    pub(in crate::ui) fn set_enabled(&mut self, enabled: bool) {
         let was_enabled = self.auto_collect_enabled;
         self.auto_collect_enabled = enabled;
         if enabled && !was_enabled {
@@ -100,7 +103,7 @@ impl SessionMonitoringState {
         }
     }
 
-    pub(in crate::ui::shell) fn apply_snapshot(&mut self, snapshot: SessionMonitorSnapshot) {
+    pub(in crate::ui) fn apply_snapshot(&mut self, snapshot: SessionMonitorSnapshot) {
         self.sample_count = self.sample_count.saturating_add(1);
         let label = self.sample_count.to_string();
         let rates_warming_up = self.rates_warming_up;
@@ -132,12 +135,12 @@ impl SessionMonitoringState {
         self.last_updated_at = Some(SystemTime::now());
     }
 
-    pub(in crate::ui::shell) fn report_error(&mut self, error: String) {
+    pub(in crate::ui) fn report_error(&mut self, error: String) {
         self.last_error = Some(error);
         self.mark_rates_warming_up();
     }
 
-    pub(in crate::ui::shell) fn mark_rates_warming_up(&mut self) {
+    pub(in crate::ui) fn mark_rates_warming_up(&mut self) {
         self.rates_warming_up = true;
     }
 
@@ -153,33 +156,33 @@ impl SessionMonitoringState {
     }
 }
 
-pub(in crate::ui::shell) struct SessionTabState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) port_forward_rule_id: Option<String>,
-    pub(in crate::ui::shell) terminal: TerminalState,
-    pub(in crate::ui::shell) connection_state: SessionConnectionState,
-    pub(in crate::ui::shell) preserved_history_popup_hidden: bool,
-    pub(in crate::ui::shell) pending_profile: Option<SessionProfile>,
-    pub(in crate::ui::shell) commands: Option<SessionCommandSender>,
-    pub(in crate::ui::shell) bytes_in: u64,
-    pub(in crate::ui::shell) bytes_out: u64,
-    pub(in crate::ui::shell) pending_host_key: Option<HostKeyPrompt>,
-    pub(in crate::ui::shell) pending_host_key_request_id: u64,
-    pub(in crate::ui::shell) pending_keyboard_interactive: Option<KbiChallenge>,
-    pub(in crate::ui::shell) pending_keyboard_interactive_request_id: u64,
-    pub(in crate::ui::shell) reconnect_task: Option<gpui_kit::Task<()>>,
-    pub(in crate::ui::shell) reconnect_attempt: u32,
-    pub(in crate::ui::shell) has_activity: bool,
-    pub(in crate::ui::shell) monitoring: SessionMonitoringState,
-    pub(in crate::ui::shell) purpose: SessionPurpose,
-    pub(in crate::ui::shell) port_forward_revision: u64,
-    pub(in crate::ui::shell) port_forward_log_len: usize,
-    pub(in crate::ui::shell) sftp_progress_layout: SessionSftpProgressLayoutState,
-    pub(in crate::ui::shell) local_terminal: bool,
-    pub(in crate::ui::shell) owner_route: Option<Entity<SessionTabOwnerRoute>>,
+pub(in crate::ui) struct SessionTabState {
+    pub(in crate::ui) profile_id: String,
+    pub(in crate::ui) port_forward_rule_id: Option<String>,
+    pub(in crate::ui) terminal: TerminalState,
+    pub(in crate::ui) connection_state: SessionConnectionState,
+    pub(in crate::ui) preserved_history_popup_hidden: bool,
+    pub(in crate::ui) pending_profile: Option<SessionProfile>,
+    pub(in crate::ui) commands: Option<SessionCommandSender>,
+    pub(in crate::ui) bytes_in: u64,
+    pub(in crate::ui) bytes_out: u64,
+    pub(in crate::ui) pending_host_key: Option<HostKeyPrompt>,
+    pub(in crate::ui) pending_host_key_request_id: u64,
+    pub(in crate::ui) pending_keyboard_interactive: Option<KbiChallenge>,
+    pub(in crate::ui) pending_keyboard_interactive_request_id: u64,
+    pub(in crate::ui) reconnect_task: Option<gpui_kit::Task<()>>,
+    pub(in crate::ui) reconnect_attempt: u32,
+    pub(in crate::ui) has_activity: bool,
+    pub(in crate::ui) monitoring: SessionMonitoringState,
+    pub(in crate::ui) purpose: SessionPurpose,
+    pub(in crate::ui) port_forward_revision: u64,
+    pub(in crate::ui) port_forward_log_len: usize,
+    pub(in crate::ui) sftp_progress_layout: SessionSftpProgressLayoutState,
+    pub(in crate::ui) local_terminal: bool,
+    pub(in crate::ui) owner_route: Option<Entity<SessionTabOwnerRoute>>,
 }
 
-pub(in crate::ui::shell) struct SessionTabOwnerRoute {
+pub(in crate::ui) struct SessionTabOwnerRoute {
     owner: WeakEntity<SessionController>,
 }
 
@@ -193,14 +196,15 @@ impl SessionTabOwnerRoute {
     }
 }
 
-pub(in crate::ui::shell) struct TransferredSessionTab {
+pub(in crate::ui) struct TransferredSessionTab {
+    tab_id: TabId,
     state: SessionTabState,
     terminal_lease: Option<TerminalLeaseEntry>,
     shared_monitoring: Option<SessionMonitoringState>,
     was_monitor_source: bool,
 }
 
-pub(in crate::ui::shell) struct TransferredSessionWorkspaceUi {
+pub(in crate::ui) struct TransferredSessionWorkspaceUi {
     side_panel_open: bool,
     side_panel_view: SessionSidePanelView,
     terminal_search_query: String,
@@ -214,51 +218,14 @@ pub(in crate::ui::shell) struct TransferredSessionWorkspaceUi {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SessionPurpose {
+pub(in crate::ui) enum SessionPurpose {
     Terminal,
     PortForwarding,
     ConnectionTest,
 }
 
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum SessionNotificationTone {
-    Success,
-    Error,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct SessionNotificationRequest {
-    pub(in crate::ui::shell) tone: SessionNotificationTone,
-    pub(in crate::ui::shell) title: String,
-    pub(in crate::ui::shell) message: String,
-    pub(in crate::ui::shell) id: String,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum SessionEventTabRemoval {
-    ConnectionTest { status_message: String },
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct SessionEventOutcome {
-    pub(in crate::ui::shell) connected_profile: Option<(String, u64)>,
-    pub(in crate::ui::shell) tab_status: Option<String>,
-    pub(in crate::ui::shell) clipboard_writes: Vec<String>,
-    pub(in crate::ui::shell) notification: Option<SessionNotificationRequest>,
-    pub(in crate::ui::shell) removal: Option<SessionEventTabRemoval>,
-    pub(in crate::ui::shell) schedule_reconnect_error: Option<String>,
-    pub(in crate::ui::shell) refresh_monitoring_profile: Option<String>,
-    pub(in crate::ui::shell) should_notify: bool,
-}
-
-pub(in crate::ui::shell) struct ClosedSessionTabState {
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) profile: SessionProfile,
-    pub(in crate::ui::shell) hidden_from_topbar: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::ui::shell) enum SessionSidePanelView {
+pub(in crate::ui) enum SessionSidePanelView {
     #[default]
     Monitor,
     Snippets,
@@ -266,12 +233,12 @@ pub(in crate::ui::shell) enum SessionSidePanelView {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SessionFailureStatus {
+pub(in crate::ui) enum SessionFailureStatus {
     Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SessionConnectionState {
+pub(in crate::ui) enum SessionConnectionState {
     Connecting,
     Ready,
     Reconnecting {
@@ -289,29 +256,29 @@ pub(in crate::ui::shell) enum SessionConnectionState {
     Disconnected,
 }
 
-pub(in crate::ui::shell) struct TerminalSearchForms {
-    pub(in crate::ui::shell) input: Entity<InputState>,
-    pub(in crate::ui::shell) open: bool,
-    pub(in crate::ui::shell) visible: bool,
-    pub(in crate::ui::shell) visibility: f32,
-    pub(in crate::ui::shell) animation: Option<TerminalSearchAnimation>,
-    pub(in crate::ui::shell) total: usize,
-    pub(in crate::ui::shell) current: Option<usize>,
-    pub(in crate::ui::shell) status: Option<String>,
+pub(in crate::ui) struct TerminalSearchForms {
+    pub(in crate::ui) input: Entity<InputState>,
+    pub(in crate::ui) open: bool,
+    pub(in crate::ui) visible: bool,
+    pub(in crate::ui) visibility: f32,
+    pub(in crate::ui) animation: Option<TerminalSearchAnimation>,
+    pub(in crate::ui) total: usize,
+    pub(in crate::ui) current: Option<usize>,
+    pub(in crate::ui) status: Option<String>,
 }
 
-pub(in crate::ui::shell) struct WorkspaceSnippetsForms {
-    pub(in crate::ui::shell) filter_input: Entity<InputState>,
-    pub(in crate::ui::shell) selected_package_filter: Option<String>,
+pub(in crate::ui) struct WorkspaceSnippetsForms {
+    pub(in crate::ui) filter_input: Entity<InputState>,
+    pub(in crate::ui) selected_package_filter: Option<String>,
 }
 
-pub(in crate::ui::shell) struct SessionWorkspaceForms {
-    pub(in crate::ui::shell) search: TerminalSearchForms,
-    pub(in crate::ui::shell) snippets_panel: WorkspaceSnippetsForms,
+pub(in crate::ui) struct SessionWorkspaceForms {
+    pub(in crate::ui) search: TerminalSearchForms,
+    pub(in crate::ui) snippets_panel: WorkspaceSnippetsForms,
 }
 
 impl SessionConnectionState {
-    pub(in crate::ui::shell) fn preserves_terminal_history(&self) -> bool {
+    pub(in crate::ui) fn preserves_terminal_history(&self) -> bool {
         matches!(
             self,
             Self::Failed { .. } | Self::Exited { .. } | Self::Disconnected
@@ -320,33 +287,30 @@ impl SessionConnectionState {
 }
 
 impl SessionTabState {
-    pub(in crate::ui::shell) fn set_connection_state(
-        &mut self,
-        connection_state: SessionConnectionState,
-    ) {
+    pub(in crate::ui) fn set_connection_state(&mut self, connection_state: SessionConnectionState) {
         self.connection_state = connection_state;
         self.preserved_history_popup_hidden = false;
     }
 
-    pub(in crate::ui::shell) fn preserves_terminal_history(&self) -> bool {
+    pub(in crate::ui) fn preserves_terminal_history(&self) -> bool {
         self.purpose == SessionPurpose::Terminal
             && self.connection_state.preserves_terminal_history()
     }
 
-    pub(in crate::ui::shell) fn uses_blocking_placeholder(&self) -> bool {
+    pub(in crate::ui) fn uses_blocking_placeholder(&self) -> bool {
         !matches!(self.connection_state, SessionConnectionState::Ready)
             && !self.preserves_terminal_history()
     }
 
-    pub(in crate::ui::shell) fn is_terminal_read_only(&self) -> bool {
+    pub(in crate::ui) fn is_terminal_read_only(&self) -> bool {
         self.preserves_terminal_history()
     }
 
-    pub(in crate::ui::shell) fn preserved_history_popup_hidden(&self) -> bool {
+    pub(in crate::ui) fn preserved_history_popup_hidden(&self) -> bool {
         self.preserves_terminal_history() && self.preserved_history_popup_hidden
     }
 
-    pub(in crate::ui::shell) fn hide_preserved_history_popup(&mut self) {
+    pub(in crate::ui) fn hide_preserved_history_popup(&mut self) {
         if self.preserves_terminal_history() {
             self.preserved_history_popup_hidden = true;
         }
@@ -360,7 +324,7 @@ fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
     }
 }
 
-pub(in crate::ui::shell) struct SessionController {
+pub(in crate::ui) struct SessionController {
     services: SessionControllerServices,
     profiles: RefCell<Vec<SessionProfile>>,
     // Phase 2: drain only successful persistence; redraws never republish profile snapshots.
@@ -380,18 +344,18 @@ pub(in crate::ui::shell) struct SessionController {
     _subscriptions: Vec<Subscription>,
 }
 
-pub(in crate::ui::shell) struct SessionControllerArgs {
-    pub(in crate::ui::shell) runtime: TokioHandle,
-    pub(in crate::ui::shell) secrets: SecretStore,
-    pub(in crate::ui::shell) known_hosts: KnownHostsStore,
-    pub(in crate::ui::shell) profiles: Vec<SessionProfile>,
-    pub(in crate::ui::shell) proxies: Vec<ProxyProfile>,
-    pub(in crate::ui::shell) selected_profile: Option<usize>,
-    pub(in crate::ui::shell) terminal_focus: FocusHandle,
-    pub(in crate::ui::shell) local_vault_status: LocalVaultStatus,
-    pub(in crate::ui::shell) auto_collect_session_monitoring: bool,
-    pub(in crate::ui::shell) ssh_bridge_service: SshBridgeService,
-    pub(in crate::ui::shell) port_forward_manager: PortForwardManager,
+pub(in crate::ui) struct SessionControllerArgs {
+    pub(in crate::ui) runtime: TokioHandle,
+    pub(in crate::ui) secrets: SecretStore,
+    pub(in crate::ui) known_hosts: KnownHostsStore,
+    pub(in crate::ui) profiles: Vec<SessionProfile>,
+    pub(in crate::ui) proxies: Vec<ProxyProfile>,
+    pub(in crate::ui) selected_profile: Option<usize>,
+    pub(in crate::ui) terminal_focus: FocusHandle,
+    pub(in crate::ui) local_vault_status: LocalVaultStatus,
+    pub(in crate::ui) auto_collect_session_monitoring: bool,
+    pub(in crate::ui) ssh_bridge_service: SshBridgeService,
+    pub(in crate::ui) port_forward_manager: PortForwardManager,
 }
 
 struct SessionFormsBundle {
@@ -471,7 +435,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+    pub(in crate::ui) fn refresh_localized_placeholders(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -490,7 +454,7 @@ impl SessionController {
         );
     }
 
-    pub(super) fn new(
+    pub(in crate::ui) fn new(
         args: SessionControllerArgs,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -608,7 +572,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn rebind_terminal_focus_events(
+    pub(in crate::ui) fn rebind_terminal_focus_events(
         &mut self,
         terminal_focus: FocusHandle,
         window: &mut Window,
@@ -656,30 +620,24 @@ impl SessionController {
             .expect("session workspace forms are available in the application")
     }
 
-    pub(in crate::ui::shell) fn profiles(&self) -> Ref<'_, Vec<SessionProfile>> {
+    pub(in crate::ui) fn profiles(&self) -> Ref<'_, Vec<SessionProfile>> {
         self.profiles.borrow()
     }
 
-    pub(in crate::ui::shell) fn replace_profiles_from_application(
-        &self,
-        profiles: Vec<SessionProfile>,
-    ) {
+    pub(in crate::ui) fn replace_profiles_from_application(&self, profiles: Vec<SessionProfile>) {
         *self.profiles.borrow_mut() = profiles;
         self.sync_port_profiles();
     }
 
-    pub(in crate::ui::shell) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
+    pub(in crate::ui) fn replace_proxies(&self, proxies: Vec<ProxyProfile>) {
         self.replace_proxies_from_application(proxies);
     }
 
-    pub(in crate::ui::shell) fn replace_proxies_from_application(
-        &self,
-        proxies: Vec<ProxyProfile>,
-    ) {
+    pub(in crate::ui) fn replace_proxies_from_application(&self, proxies: Vec<ProxyProfile>) {
         *self.proxies.borrow_mut() = proxies;
     }
 
-    pub(in crate::ui::shell) fn set_selected_profile(&self, selected: Option<usize>) {
+    pub(in crate::ui) fn set_selected_profile(&self, selected: Option<usize>) {
         self.selected_profile.set(selected);
     }
 
@@ -695,7 +653,7 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn start_terminal_session(
+    pub(in crate::ui) fn start_terminal_session(
         &self,
         profile: SessionProfile,
         columns: usize,
@@ -715,11 +673,11 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
+    pub(in crate::ui) fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
         localized_port_forward_kind_label(kind)
     }
 
-    pub(in crate::ui::shell) fn rule_summary_label(rule: &PortForwardRule) -> String {
+    pub(in crate::ui) fn rule_summary_label(rule: &PortForwardRule) -> String {
         let label = rule.label.trim();
         if !label.is_empty() {
             return label.to_string();
@@ -735,7 +693,7 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn port_forward_rule_indices(
+    pub(in crate::ui) fn port_forward_rule_indices(
         &self,
         profile_id: &str,
         rule_id: &str,
@@ -757,7 +715,7 @@ impl SessionController {
             })
     }
 
-    pub(in crate::ui::shell) fn sync_current_port_forward_rules_for_profile(
+    pub(in crate::ui) fn sync_current_port_forward_rules_for_profile(
         &self,
         profile_id: &str,
     ) -> usize {
@@ -774,7 +732,7 @@ impl SessionController {
         self.sync_port_forward_rules_for_profile(profile_id, &rules)
     }
 
-    pub(in crate::ui::shell) fn synced_sessions_suffix(count: usize) -> String {
+    pub(in crate::ui) fn synced_sessions_suffix(count: usize) -> String {
         if count == 0 {
             String::new()
         } else {
@@ -793,23 +751,23 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn terminal_search(&self) -> Ref<'_, TerminalSearchForms> {
+    pub(in crate::ui) fn terminal_search(&self) -> Ref<'_, TerminalSearchForms> {
         Ref::map(self.forms().borrow(), |forms| &forms.search)
     }
 
-    pub(in crate::ui::shell) fn terminal_search_mut(&self) -> RefMut<'_, TerminalSearchForms> {
+    pub(in crate::ui) fn terminal_search_mut(&self) -> RefMut<'_, TerminalSearchForms> {
         RefMut::map(self.forms().borrow_mut(), |forms| &mut forms.search)
     }
 
-    pub(in crate::ui::shell) fn terminal_search_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn terminal_search_input(&self) -> Entity<InputState> {
         self.forms().borrow().search.input.clone()
     }
 
-    pub(in crate::ui::shell) fn terminal_search_open(&self) -> bool {
+    pub(in crate::ui) fn terminal_search_open(&self) -> bool {
         self.forms().borrow().search.open
     }
 
-    pub(in crate::ui::shell) fn handle_workspace_snippets_package_filter_toggle(
+    pub(in crate::ui) fn handle_workspace_snippets_package_filter_toggle(
         &self,
         package: String,
         cx: &mut Context<Self>,
@@ -827,13 +785,11 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn workspace_snippets_filter_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn workspace_snippets_filter_input(&self) -> Entity<InputState> {
         self.forms().borrow().snippets_panel.filter_input.clone()
     }
 
-    pub(in crate::ui::shell) fn workspace_snippets_selected_package_filter(
-        &self,
-    ) -> Option<String> {
+    pub(in crate::ui) fn workspace_snippets_selected_package_filter(&self) -> Option<String> {
         self.forms()
             .borrow()
             .snippets_panel
@@ -841,7 +797,7 @@ impl SessionController {
             .clone()
     }
 
-    pub(in crate::ui::shell) fn toggle_workspace_snippets_package_filter(
+    pub(in crate::ui) fn toggle_workspace_snippets_package_filter(
         &self,
         package: &str,
     ) -> Option<String> {
@@ -855,11 +811,11 @@ impl SessionController {
         selected.clone()
     }
 
-    pub(in crate::ui::shell) fn build_local_tab(
+    pub(in crate::ui) fn build_local_tab(
         id: TabId,
         profile: SessionProfile,
         terminal: TerminalState,
-    ) -> (TabState, SessionTabState) {
+    ) -> (SessionTabDescriptor, SessionTabState) {
         let title = if profile.name.trim().is_empty() {
             local_session::local_terminal_label(&profile.local_shell)
         } else {
@@ -893,23 +849,23 @@ impl SessionController {
             owner_route: None,
         };
         (
-            TabState::new(
+            SessionTabDescriptor::new(
                 id,
                 title,
                 i18n::string("tabs.initial.local_terminal_starting"),
                 TabKindTag::LocalTerminal,
-                crate::ui::shell::workspace::TabPlacement::TopLevel,
+                TabPlacement::TopLevel,
             ),
             session,
         )
     }
 
-    pub(in crate::ui::shell) fn build_pending_tab(
+    pub(in crate::ui) fn build_pending_tab(
         id: TabId,
         profile: SessionProfile,
         terminal: TerminalState,
         auto_collect_monitoring: bool,
-    ) -> (TabState, SessionTabState) {
+    ) -> (SessionTabDescriptor, SessionTabState) {
         let title = profile.name.clone();
         let connection = profile.connection_label();
         let status = i18n::string_args(
@@ -944,23 +900,23 @@ impl SessionController {
             owner_route: None,
         };
         (
-            TabState::new(
+            SessionTabDescriptor::new(
                 id,
                 title,
                 status,
                 TabKindTag::Session,
-                crate::ui::shell::workspace::TabPlacement::TopLevel,
+                TabPlacement::TopLevel,
             ),
             session,
         )
     }
 
-    pub(in crate::ui::shell) fn build_port_forwarding_tab(
+    pub(in crate::ui) fn build_port_forwarding_tab(
         id: TabId,
         profile: &SessionProfile,
         rule: &PortForwardRule,
         commands: Option<SessionCommandSender>,
-    ) -> (TabState, SessionTabState) {
+    ) -> (SessionTabDescriptor, SessionTabState) {
         let kind = localized_port_forward_kind_label(rule.kind);
         let listen_port = rule.listen_port.to_string();
         let target_port = rule.target_port.to_string();
@@ -1009,7 +965,7 @@ impl SessionController {
             owner_route: None,
         };
         (
-            TabState::new(
+            SessionTabDescriptor::new(
                 id,
                 title,
                 i18n::string_args(
@@ -1017,17 +973,17 @@ impl SessionController {
                     &[("profile", &profile_summary)],
                 ),
                 TabKindTag::Session,
-                crate::ui::shell::workspace::TabPlacement::Background,
+                TabPlacement::Background,
             ),
             session,
         )
     }
 
-    pub(in crate::ui::shell) fn build_connection_test_tab(
+    pub(in crate::ui) fn build_connection_test_tab(
         id: TabId,
         profile: &SessionProfile,
         commands: SessionCommandSender,
-    ) -> (TabState, SessionTabState) {
+    ) -> (SessionTabDescriptor, SessionTabState) {
         let profile_summary = profile.summary();
 
         let session = SessionTabState {
@@ -1056,7 +1012,7 @@ impl SessionController {
             owner_route: None,
         };
         (
-            TabState::new(
+            SessionTabDescriptor::new(
                 id,
                 i18n::string_args(
                     "tabs.initial.connection_test_title",
@@ -1067,20 +1023,17 @@ impl SessionController {
                     &[("profile", &profile_summary)],
                 ),
                 TabKindTag::Session,
-                crate::ui::shell::workspace::TabPlacement::Background,
+                TabPlacement::Background,
             ),
             session,
         )
     }
 
-    pub(in crate::ui::shell) fn tab(&self, tab_id: TabId) -> Option<Ref<'_, SessionTabState>> {
+    pub(in crate::ui) fn tab(&self, tab_id: TabId) -> Option<Ref<'_, SessionTabState>> {
         Ref::filter_map(self.tabs.borrow(), |tabs| tabs.get(&tab_id)).ok()
     }
 
-    pub(in crate::ui::shell) fn tab_mut(
-        &self,
-        tab_id: TabId,
-    ) -> Option<RefMut<'_, SessionTabState>> {
+    pub(in crate::ui) fn tab_mut(&self, tab_id: TabId) -> Option<RefMut<'_, SessionTabState>> {
         RefMut::filter_map(self.tabs.borrow_mut(), |tabs| tabs.get_mut(&tab_id)).ok()
     }
 
@@ -1100,14 +1053,14 @@ impl SessionController {
         Some(route)
     }
 
-    pub(in crate::ui::shell) fn insert_tab(&self, tab_id: TabId, tab: SessionTabState) {
+    pub(in crate::ui) fn insert_tab(&self, tab_id: TabId, tab: SessionTabState) {
         assert!(
             self.tabs.borrow_mut().insert(tab_id, tab).is_none(),
             "duplicate session tab payload for {tab_id}"
         );
     }
 
-    pub(in crate::ui::shell) fn take_tab_for_transfer(
+    pub(in crate::ui) fn take_tab_for_transfer(
         &self,
         tab_id: TabId,
     ) -> Option<TransferredSessionTab> {
@@ -1145,6 +1098,7 @@ impl SessionController {
             ports.snapshot.active_terminal_tab_id = None;
         }
         Some(TransferredSessionTab {
+            tab_id,
             state,
             terminal_lease,
             shared_monitoring,
@@ -1152,13 +1106,13 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn insert_transferred_tab(
+    pub(in crate::ui) fn insert_transferred_tab(
         &mut self,
-        tab_id: TabId,
         transferred: TransferredSessionTab,
         cx: &mut Context<Self>,
-    ) {
+    ) -> TabId {
         let TransferredSessionTab {
+            tab_id,
             state,
             terminal_lease,
             shared_monitoring,
@@ -1184,14 +1138,20 @@ impl SessionController {
                 .insert(profile_id, tab_id);
         }
         if let Some(terminal_lease) = terminal_lease {
-            self.ports
-                .borrow_mut()
-                .terminal_leases
-                .insert(tab_id, terminal_lease);
+            *terminal_lease.owner.borrow_mut() = Rc::downgrade(&self.ports);
+            if terminal_lease.retire_requested.get() && terminal_lease.tap.can_release_lease() {
+                terminal_lease.tap.close();
+            } else {
+                self.ports
+                    .borrow_mut()
+                    .terminal_leases
+                    .insert(tab_id, terminal_lease);
+            }
         }
+        tab_id
     }
 
-    pub(in crate::ui::shell) fn remove_tab(&self, tab_id: TabId) -> Option<SessionTabState> {
+    pub(in crate::ui) fn remove_tab(&self, tab_id: TabId) -> Option<SessionTabState> {
         let removed = self.tabs.borrow_mut().remove(&tab_id);
         if removed.is_some() {
             self.terminal_port().close_session(tab_id);
@@ -1205,51 +1165,51 @@ impl SessionController {
         removed
     }
 
-    pub(in crate::ui::shell) fn monitor_scroll_handle(&self) -> ScrollHandle {
+    pub(in crate::ui) fn monitor_scroll_handle(&self) -> ScrollHandle {
         self.monitor_scroll_handle.clone()
     }
 
-    pub(in crate::ui::shell) fn reported_terminal_focus_tab_id(&self) -> Option<TabId> {
+    pub(in crate::ui) fn reported_terminal_focus_tab_id(&self) -> Option<TabId> {
         *self.reported_terminal_focus_tab_id.borrow()
     }
 
-    pub(in crate::ui::shell) fn take_reported_terminal_focus_tab_id(&self) -> Option<TabId> {
+    pub(in crate::ui) fn take_reported_terminal_focus_tab_id(&self) -> Option<TabId> {
         self.reported_terminal_focus_tab_id.borrow_mut().take()
     }
 
-    pub(in crate::ui::shell) fn set_reported_terminal_focus_tab_id(&self, tab_id: Option<TabId>) {
+    pub(in crate::ui) fn set_reported_terminal_focus_tab_id(&self, tab_id: Option<TabId>) {
         *self.reported_terminal_focus_tab_id.borrow_mut() = tab_id;
     }
 
-    pub(in crate::ui::shell) fn side_panel_open(&self) -> bool {
+    pub(in crate::ui) fn side_panel_open(&self) -> bool {
         self.panel.borrow().open
     }
 
-    pub(in crate::ui::shell) fn set_side_panel_open(&self, open: bool) {
+    pub(in crate::ui) fn set_side_panel_open(&self, open: bool) {
         self.panel.borrow_mut().open = open;
     }
 
-    pub(in crate::ui::shell) fn toggle_side_panel(&self) {
+    pub(in crate::ui) fn toggle_side_panel(&self) {
         let mut panel = self.panel.borrow_mut();
         panel.open = !panel.open;
     }
 
-    pub(in crate::ui::shell) fn side_panel_view(&self) -> SessionSidePanelView {
+    pub(in crate::ui) fn side_panel_view(&self) -> SessionSidePanelView {
         self.panel.borrow().view
     }
 
-    pub(in crate::ui::shell) fn set_side_panel_view(&self, view: SessionSidePanelView) {
+    pub(in crate::ui) fn set_side_panel_view(&self, view: SessionSidePanelView) {
         self.panel.borrow_mut().view = view;
     }
 
-    pub(in crate::ui::shell) fn side_panel_transition_state(
+    pub(in crate::ui) fn side_panel_transition_state(
         &self,
     ) -> (bool, Option<WorkspaceSidePanelTransition>) {
         let panel = self.panel.borrow();
         (panel.visible, panel.transition)
     }
 
-    pub(in crate::ui::shell) fn set_side_panel_transition_state(
+    pub(in crate::ui) fn set_side_panel_transition_state(
         &self,
         visible: bool,
         transition: Option<WorkspaceSidePanelTransition>,
@@ -1259,7 +1219,7 @@ impl SessionController {
         panel.transition = transition;
     }
 
-    pub(in crate::ui::shell) fn take_workspace_ui_for_transfer(
+    pub(in crate::ui) fn take_workspace_ui_for_transfer(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1338,7 +1298,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn restore_workspace_ui_after_transfer(
+    pub(in crate::ui) fn restore_workspace_ui_after_transfer(
         &mut self,
         transferred: TransferredSessionWorkspaceUi,
         active_tab_id: Option<TabId>,
@@ -1402,7 +1362,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn pending_host_key_prompt(
+    pub(in crate::ui) fn pending_host_key_prompt(
         &self,
         active_tab_id: Option<TabId>,
         ordered_tab_ids: &[TabId],
@@ -1422,7 +1382,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn pending_keyboard_interactive_prompt(
+    pub(in crate::ui) fn pending_keyboard_interactive_prompt(
         &self,
         active_tab_id: Option<TabId>,
         ordered_tab_ids: &[TabId],
@@ -1442,7 +1402,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn sync_keyboard_interactive_inputs(
+    pub(in crate::ui) fn sync_keyboard_interactive_inputs(
         &self,
         challenge: Option<KbiChallenge>,
         has_exiting_prompt: bool,
@@ -1468,11 +1428,11 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn keyboard_interactive_inputs(&self) -> Vec<Entity<InputState>> {
+    pub(in crate::ui) fn keyboard_interactive_inputs(&self) -> Vec<Entity<InputState>> {
         self.kbi_inputs.borrow().clone()
     }
 
-    pub(in crate::ui::shell) fn resolve_host_key_prompt(
+    pub(in crate::ui) fn resolve_host_key_prompt(
         &self,
         tab_id: TabId,
         decision: HostKeyDecision,
@@ -1549,7 +1509,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn submit_keyboard_interactive(
+    pub(in crate::ui) fn submit_keyboard_interactive(
         &self,
         tab_id: TabId,
         responses: Vec<String>,
@@ -1592,11 +1552,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn cancel_keyboard_interactive(
-        &self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn cancel_keyboard_interactive(&self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some((challenge, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let challenge = session.pending_keyboard_interactive.take()?;
@@ -1628,7 +1584,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn online_session_count_for_profile(&self, profile_id: &str) -> usize {
+    pub(in crate::ui) fn online_session_count_for_profile(&self, profile_id: &str) -> usize {
         self.tabs
             .borrow()
             .values()
@@ -1646,7 +1602,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn has_port_forward_rule_session(
+    pub(in crate::ui) fn has_port_forward_rule_session(
         &self,
         profile_id: &str,
         rule_id: &str,
@@ -1655,7 +1611,7 @@ impl SessionController {
             .is_some()
     }
 
-    pub(in crate::ui::shell) fn terminal_profile_ids(&self) -> Vec<String> {
+    pub(in crate::ui) fn terminal_profile_ids(&self) -> Vec<String> {
         self.tabs
             .borrow()
             .values()
@@ -1666,7 +1622,7 @@ impl SessionController {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn sync_port_forward_rules_for_profile(
+    pub(in crate::ui) fn sync_port_forward_rules_for_profile(
         &self,
         profile_id: &str,
         rules: &[PortForwardRule],
@@ -1692,7 +1648,7 @@ impl SessionController {
         synced_sessions
     }
 
-    pub(in crate::ui::shell) fn monitoring_state_for_profile(
+    pub(in crate::ui) fn monitoring_state_for_profile(
         &self,
         profile_id: &str,
         fallback: &SessionMonitoringState,
@@ -1704,14 +1660,14 @@ impl SessionController {
             .unwrap_or_else(|| fallback.clone())
     }
 
-    pub(in crate::ui::shell) fn shared_monitoring_enabled(&self, profile_id: &str) -> Option<bool> {
+    pub(in crate::ui) fn shared_monitoring_enabled(&self, profile_id: &str) -> Option<bool> {
         self.shared_profile_monitoring
             .borrow()
             .get(profile_id)
             .map(|state| state.auto_collect_enabled)
     }
 
-    pub(in crate::ui::shell) fn monitoring_enabled_for_profile(
+    pub(in crate::ui) fn monitoring_enabled_for_profile(
         &self,
         profile_id: &str,
         ordered_tab_ids: &[TabId],
@@ -1737,7 +1693,7 @@ impl SessionController {
             .unwrap_or(default_enabled)
     }
 
-    pub(in crate::ui::shell) fn claim_profile_monitor_source(
+    pub(in crate::ui) fn claim_profile_monitor_source(
         &self,
         profile_id: &str,
         tab_id: TabId,
@@ -1765,7 +1721,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn set_profile_monitoring_enabled(
+    pub(in crate::ui) fn set_profile_monitoring_enabled(
         &self,
         profile_id: &str,
         enabled: bool,
@@ -1824,7 +1780,7 @@ impl SessionController {
         self.ports.borrow().snapshot.terminal_order.clone()
     }
 
-    pub(in crate::ui::shell) fn enable_profile_monitoring(
+    pub(in crate::ui) fn enable_profile_monitoring(
         &self,
         profile_id: &str,
         cx: &mut Context<Self>,
@@ -1837,7 +1793,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn apply_auto_collect_monitoring_preference(
+    pub(in crate::ui) fn apply_auto_collect_monitoring_preference(
         &self,
         enabled: bool,
         cx: &mut Context<Self>,
@@ -1854,7 +1810,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn apply_profile_monitor_snapshot(
+    pub(in crate::ui) fn apply_profile_monitor_snapshot(
         &self,
         profile_id: &str,
         tab_id: TabId,
@@ -1879,7 +1835,7 @@ impl SessionController {
         });
     }
 
-    pub(in crate::ui::shell) fn apply_profile_monitor_error(
+    pub(in crate::ui) fn apply_profile_monitor_error(
         &self,
         profile_id: &str,
         tab_id: TabId,
@@ -1899,7 +1855,7 @@ impl SessionController {
         self.update_shared_monitoring_state(profile_id, enabled, |state| state.report_error(error));
     }
 
-    pub(in crate::ui::shell) fn refresh_profile_monitoring(
+    pub(in crate::ui) fn refresh_profile_monitoring(
         &self,
         profile_id: &str,
         excluded_tab_id: Option<TabId>,
@@ -2017,11 +1973,11 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
         cx.emit(command);
     }
 
-    pub(super) fn credentials_changed(
+    pub(in crate::ui) fn credentials_changed(
         &mut self,
         secrets: SecretStore,
         local_vault_status: LocalVaultStatus,
@@ -2035,7 +1991,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn sync_port_snapshot(&self, snapshot: SessionPortSnapshot) {
+    pub(in crate::ui) fn sync_port_snapshot(&self, snapshot: SessionPortSnapshot) {
         let mut state = self.ports.borrow_mut();
         let removed_tabs = state
             .terminal_leases
@@ -2053,13 +2009,13 @@ impl SessionController {
         self.ports.borrow_mut().snapshot.profiles = self.profiles.borrow().clone();
     }
 
-    pub(in crate::ui::shell) fn query_port(&self) -> SessionQueryPort {
+    pub(in crate::ui) fn query_port(&self) -> SessionQueryPort {
         SessionQueryPort {
             state: self.ports.clone(),
         }
     }
 
-    pub(in crate::ui::shell) fn terminal_port(&self) -> SessionTerminalPort {
+    pub(in crate::ui) fn terminal_port(&self) -> SessionTerminalPort {
         SessionTerminalPort {
             state: self.ports.clone(),
         }
@@ -2069,7 +2025,7 @@ impl SessionController {
 impl EventEmitter<AppCommand> for SessionController {}
 
 #[derive(Clone, Default)]
-pub(in crate::ui::shell) struct SessionPortSnapshot {
+pub(in crate::ui) struct SessionPortSnapshot {
     profiles: Vec<SessionProfile>,
     sessions: HashMap<TabId, SessionPortSession>,
     terminal_order: Vec<TabId>,
@@ -2078,7 +2034,7 @@ pub(in crate::ui::shell) struct SessionPortSnapshot {
 }
 
 impl SessionPortSnapshot {
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         profiles: Vec<SessionProfile>,
         sessions: Vec<SessionPortSession>,
         active_profile_id: Option<String>,
@@ -2104,7 +2060,7 @@ impl SessionPortSnapshot {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct SessionPortSession {
+pub(in crate::ui) struct SessionPortSession {
     tab_id: TabId,
     title: String,
     profile_id: String,
@@ -2114,7 +2070,7 @@ pub(in crate::ui::shell) struct SessionPortSession {
 }
 
 impl SessionPortSession {
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         tab_id: TabId,
         title: String,
         profile_id: String,
@@ -2134,16 +2090,16 @@ impl SessionPortSession {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct SessionQueryPort {
+pub(in crate::ui) struct SessionQueryPort {
     state: Rc<RefCell<SessionPortState>>,
 }
 
 impl SessionQueryPort {
-    pub(in crate::ui::shell) fn active_profile_id(&self) -> Option<String> {
+    pub(in crate::ui) fn active_profile_id(&self) -> Option<String> {
         self.state.borrow().snapshot.active_profile_id.clone()
     }
 
-    pub(in crate::ui::shell) fn has_active_terminal_session(&self) -> bool {
+    pub(in crate::ui) fn has_active_terminal_session(&self) -> bool {
         self.state
             .borrow()
             .snapshot
@@ -2151,7 +2107,7 @@ impl SessionQueryPort {
             .is_some()
     }
 
-    pub(in crate::ui::shell) fn resolved_profile_for_session(
+    pub(in crate::ui) fn resolved_profile_for_session(
         &self,
         tab_id: TabId,
         catalog: &CatalogQueryPort,
@@ -2166,19 +2122,14 @@ impl SessionQueryPort {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct SessionTerminalPort {
+pub(in crate::ui) struct SessionTerminalPort {
     state: Rc<RefCell<SessionPortState>>,
 }
 
 impl SessionTerminalPort {
     /// Paste through the runtime owner so bracketed paste, free-type selection and
     /// terminal history use the same path as keyboard input.
-    pub(in crate::ui::shell) fn paste_text(
-        &self,
-        tab_id: TabId,
-        text: String,
-        cx: &mut App,
-    ) -> bool {
+    pub(in crate::ui) fn paste_text(&self, tab_id: TabId, text: String, cx: &mut App) -> bool {
         let owner = self
             .state
             .borrow()
@@ -2192,7 +2143,7 @@ impl SessionTerminalPort {
         })
     }
 
-    pub(in crate::ui::shell) fn targets(&self) -> Vec<SessionTerminalTarget> {
+    pub(in crate::ui) fn targets(&self) -> Vec<SessionTerminalTarget> {
         let state = self.state.borrow();
         state
             .snapshot
@@ -2208,19 +2159,19 @@ impl SessionTerminalPort {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn target(&self, tab_id: TabId) -> Option<SessionTerminalTarget> {
+    pub(in crate::ui) fn target(&self, tab_id: TabId) -> Option<SessionTerminalTarget> {
         let state = self.state.borrow();
         let session = state.snapshot.sessions.get(&tab_id)?;
         (session.purpose == SessionPurpose::Terminal)
             .then(|| terminal_target(&state.snapshot, session))
     }
 
-    pub(in crate::ui::shell) fn active_target(&self) -> Option<SessionTerminalTarget> {
+    pub(in crate::ui) fn active_target(&self) -> Option<SessionTerminalTarget> {
         let tab_id = self.state.borrow().snapshot.active_terminal_tab_id?;
         self.target(tab_id)
     }
 
-    pub(in crate::ui::shell) fn acquire(
+    pub(in crate::ui) fn acquire(
         &self,
         tab_id: TabId,
     ) -> Result<TerminalLeaseGrant, TerminalLeaseError> {
@@ -2266,24 +2217,28 @@ impl SessionTerminalPort {
         SessionPortState::close_terminal_lease(&mut state, tab_id);
 
         let (tap, output) = TerminalOutputTap::channel();
+        let owner = Rc::new(RefCell::new(Rc::downgrade(&self.state)));
+        let retire_requested = Rc::new(Cell::new(false));
         state.terminal_leases.insert(
             tab_id,
             TerminalLeaseEntry {
                 tap: tap.clone(),
-                retire_requested: false,
+                owner: owner.clone(),
+                retire_requested: retire_requested.clone(),
             },
         );
         Ok((
             TerminalLease {
                 tab_id,
                 tap,
-                state: self.state.clone(),
+                owner,
+                retire_requested,
             },
             output,
         ))
     }
 
-    pub(in crate::ui::shell) fn forward_output(&self, tab_id: TabId, bytes: Vec<u8>) -> bool {
+    pub(in crate::ui) fn forward_output(&self, tab_id: TabId, bytes: Vec<u8>) -> bool {
         let tap = self
             .state
             .borrow()
@@ -2298,18 +2253,18 @@ impl SessionTerminalPort {
         delivered
     }
 
-    pub(in crate::ui::shell) fn close_session(&self, tab_id: TabId) {
+    pub(in crate::ui) fn close_session(&self, tab_id: TabId) {
         SessionPortState::close_terminal_lease(&mut self.state.borrow_mut(), tab_id);
     }
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct SessionTerminalTarget {
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) title: String,
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) profile: Option<SessionProfile>,
-    pub(in crate::ui::shell) command_available: bool,
+pub(in crate::ui) struct SessionTerminalTarget {
+    pub(in crate::ui) tab_id: TabId,
+    pub(in crate::ui) title: String,
+    pub(in crate::ui) profile_id: String,
+    pub(in crate::ui) profile: Option<SessionProfile>,
+    pub(in crate::ui) command_available: bool,
 }
 
 fn terminal_target(
@@ -2331,23 +2286,29 @@ fn terminal_target(
     }
 }
 
-pub(in crate::ui::shell) struct TerminalLeaseGrant {
-    pub(in crate::ui::shell) commands: SessionCommandSender,
-    pub(in crate::ui::shell) output: TerminalOutputReceiver,
-    pub(in crate::ui::shell) lease: TerminalLease,
+pub(in crate::ui) struct TerminalLeaseGrant {
+    pub(in crate::ui) commands: SessionCommandSender,
+    pub(in crate::ui) output: TerminalOutputReceiver,
+    pub(in crate::ui) lease: TerminalLease,
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct TerminalLease {
+pub(in crate::ui) struct TerminalLease {
     tab_id: TabId,
     tap: TerminalOutputTap,
-    state: Rc<RefCell<SessionPortState>>,
+    owner: Rc<RefCell<std::rc::Weak<RefCell<SessionPortState>>>>,
+    retire_requested: Rc<Cell<bool>>,
 }
 
 impl TerminalLease {
-    pub(in crate::ui::shell) fn retire(&self) {
+    pub(in crate::ui) fn retire(&self) {
+        self.retire_requested.set(true);
+        let Some(owner) = self.owner.borrow().upgrade() else {
+            self.tap.retire_lease();
+            return;
+        };
         let should_close = {
-            let mut state = self.state.borrow_mut();
+            let mut state = owner.borrow_mut();
             let Some(entry) = state.terminal_leases.get_mut(&self.tab_id) else {
                 self.tap.retire_lease();
                 return;
@@ -2356,18 +2317,18 @@ impl TerminalLease {
                 self.tap.retire_lease();
                 return;
             }
-            entry.retire_requested = true;
+            entry.retire_requested.set(true);
             entry.tap.retire_lease();
             entry.tap.can_release_lease()
         };
         if should_close {
-            SessionPortState::close_terminal_lease(&mut self.state.borrow_mut(), self.tab_id);
+            SessionPortState::close_terminal_lease(&mut owner.borrow_mut(), self.tab_id);
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum TerminalLeaseError {
+pub(in crate::ui) enum TerminalLeaseError {
     Missing,
     Disconnected,
     Busy,
@@ -2391,7 +2352,8 @@ impl SessionPortState {
 
 struct TerminalLeaseEntry {
     tap: TerminalOutputTap,
-    retire_requested: bool,
+    owner: Rc<RefCell<std::rc::Weak<RefCell<SessionPortState>>>>,
+    retire_requested: Rc<Cell<bool>>,
 }
 
 fn release_retired_lease_if_ready(
@@ -2404,7 +2366,9 @@ fn release_retired_lease_if_ready(
         .terminal_leases
         .get(&tab_id)
         .is_some_and(|entry| {
-            entry.tap.same_channel(tap) && entry.retire_requested && entry.tap.can_release_lease()
+            entry.tap.same_channel(tap)
+                && entry.retire_requested.get()
+                && entry.tap.can_release_lease()
         });
     if should_close {
         SessionPortState::close_terminal_lease(&mut state.borrow_mut(), tab_id);
@@ -2415,10 +2379,9 @@ fn release_retired_lease_if_ready(
 mod tests {
     use super::*;
     use crate::ui::contracts::CatalogReader;
-    use crate::ui::shell::{SessionConnectionState, SessionMonitoringState, TerminalState};
     use miaominal_ssh::SessionEvent;
 
-    fn session_payload(profile_id: &str) -> SessionTabState {
+    pub(super) fn session_payload(profile_id: &str) -> SessionTabState {
         SessionTabState {
             profile_id: profile_id.to_string(),
             port_forward_rule_id: None,
@@ -2725,6 +2688,231 @@ mod tests {
         );
     }
 
+    #[gpui_kit::test]
+    fn transfer_and_rollback_preserve_identity_history_routes_and_lease_owner(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let source = cx.new(|_| SessionController::new_for_test());
+            let destination = cx.new(|_| SessionController::new_for_test());
+            let id = TabId::new(71);
+            let mut payload = session_payload("profile-a");
+            payload.bytes_in = 42;
+            payload.terminal.push_text("retained history");
+            let generation = payload.terminal.generation();
+            payload.owner_route = Some(cx.new(|_| SessionTabOwnerRoute::new(source.downgrade())));
+            let route = payload.owner_route.clone().unwrap();
+            source.read(cx).insert_tab(id, payload);
+            source.read(cx).sync_port_snapshot(SessionPortSnapshot::new(
+                vec![],
+                vec![terminal(id, "profile-a", "terminal")],
+                None,
+                Some(id),
+            ));
+            let (lease, _output) = source
+                .read(cx)
+                .terminal_port()
+                .acquire_output_lease(id)
+                .unwrap();
+            let transferred = source.read(cx).take_tab_for_transfer(id).unwrap();
+            assert_eq!(transferred.tab_id, id);
+            assert!(source.read(cx).tab(id).is_none());
+            assert!(!source.read(cx).terminal_port().forward_output(id, vec![0]));
+            assert_eq!(
+                destination.update(cx, |owner, cx| owner
+                    .insert_transferred_tab(transferred, cx)),
+                id
+            );
+            assert_eq!(
+                route.read(cx).owner.upgrade().unwrap().entity_id(),
+                destination.entity_id()
+            );
+            assert_eq!(destination.read(cx).tab(id).unwrap().bytes_in, 42);
+            assert_eq!(
+                destination.read(cx).tab(id).unwrap().terminal.generation(),
+                generation
+            );
+            assert!(
+                destination
+                    .read(cx)
+                    .terminal_port()
+                    .forward_output(id, vec![1])
+            );
+            // Restore the same opaque resource bundle on a failed handoff; no reconnect/new ID.
+            let rollback = destination.read(cx).take_tab_for_transfer(id).unwrap();
+            assert_eq!(
+                source.update(cx, |owner, cx| owner.insert_transferred_tab(rollback, cx)),
+                id
+            );
+            assert_eq!(
+                route.read(cx).owner.upgrade().unwrap().entity_id(),
+                source.entity_id()
+            );
+            assert!(source.read(cx).terminal_port().forward_output(id, vec![2]));
+            assert!(
+                !destination
+                    .read(cx)
+                    .terminal_port()
+                    .forward_output(id, vec![3])
+            );
+            // Move once more, then release using the original lease handle.
+            let transferred = source.read(cx).take_tab_for_transfer(id).unwrap();
+            destination.update(cx, |owner, cx| {
+                owner.insert_transferred_tab(transferred, cx)
+            });
+            lease.retire();
+            assert!(
+                !destination
+                    .read(cx)
+                    .ports
+                    .borrow()
+                    .terminal_leases
+                    .contains_key(&id)
+            );
+            assert!(lease.tap.try_send(vec![4]).is_err());
+            assert!(source.read(cx).ports.borrow().terminal_leases.is_empty());
+        });
+    }
+
+    struct SearchHarness(Entity<SessionController>);
+    impl gpui_kit::Render for SearchHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
+            gpui_kit::div()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn search_target_changes_recompute_matches_without_render_and_ignore_closed_tabs(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            SearchHarness(cx.new(|cx| {
+                let mut controller = SessionController::new_for_test();
+                controller.forms = Some(RefCell::new(
+                    SessionController::build_forms(window, cx).workspace,
+                ));
+                controller
+            }))
+        });
+        let owner = view.read_with(cx, |view, _| view.0.clone());
+        cx.update(|window, cx| {
+            owner.update(cx, |controller, cx| {
+                let first = TabId::new(80);
+                let second = TabId::new(81);
+                let a = session_payload("profile-a");
+                a.terminal.push_text("needle needle");
+                let b = session_payload("profile-b");
+                b.terminal.push_text("needle");
+                controller.insert_tab(first, a);
+                controller.insert_tab(second, b);
+                controller.open_terminal_search(first, window, cx);
+                set_input_value(&controller.terminal_search_input(), "needle", window, cx);
+                controller.update_terminal_search("needle".into(), cx);
+                assert_eq!(controller.terminal_search().total, 2);
+                controller.sync_terminal_search_target(Some(second), cx);
+                assert_eq!(controller.terminal_search().total, 1);
+                assert_eq!(
+                    controller
+                        .tab(first)
+                        .unwrap()
+                        .terminal
+                        .snapshot(false)
+                        .search_total,
+                    0
+                );
+                assert_eq!(
+                    controller
+                        .tab(second)
+                        .unwrap()
+                        .terminal
+                        .snapshot(false)
+                        .search_total,
+                    1
+                );
+                controller.remove_tab(second);
+                controller.sync_terminal_search_target(Some(second), cx);
+                assert_eq!(controller.search_target.get(), None);
+                controller.update_terminal_search("late input".into(), cx);
+                assert_eq!(controller.terminal_search().total, 0);
+                assert_eq!(
+                    controller
+                        .tab(first)
+                        .unwrap()
+                        .terminal
+                        .snapshot(false)
+                        .search_total,
+                    0
+                );
+            });
+        });
+    }
+
+    #[gpui_kit::test]
+    fn retirement_during_prepared_transfer_does_not_revive_the_lease(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let source = cx.new(|_| SessionController::new_for_test());
+            let destination = cx.new(|_| SessionController::new_for_test());
+            let id = TabId::new(72);
+            source.read(cx).insert_tab(id, session_payload("profile-a"));
+            source.read(cx).sync_port_snapshot(SessionPortSnapshot::new(
+                vec![],
+                vec![terminal(id, "profile-a", "terminal")],
+                None,
+                Some(id),
+            ));
+            let (lease, _output) = source
+                .read(cx)
+                .terminal_port()
+                .acquire_output_lease(id)
+                .unwrap();
+            let transferred = source.read(cx).take_tab_for_transfer(id).unwrap();
+            lease.retire();
+            destination.update(cx, |owner, cx| {
+                owner.insert_transferred_tab(transferred, cx)
+            });
+            assert!(destination.read(cx).tab(id).is_some());
+            assert!(
+                destination
+                    .read(cx)
+                    .ports
+                    .borrow()
+                    .terminal_leases
+                    .is_empty()
+            );
+            assert!(
+                !destination
+                    .read(cx)
+                    .terminal_port()
+                    .forward_output(id, vec![1])
+            );
+            assert!(lease.tap.try_send(vec![2]).is_err());
+            destination
+                .read(cx)
+                .sync_port_snapshot(SessionPortSnapshot::new(
+                    vec![],
+                    vec![terminal(id, "profile-a", "terminal")],
+                    None,
+                    Some(id),
+                ));
+            let (replacement, _replacement_output) = destination
+                .read(cx)
+                .terminal_port()
+                .acquire_output_lease(id)
+                .unwrap();
+            lease.retire();
+            assert!(matches!(
+                destination
+                    .read(cx)
+                    .terminal_port()
+                    .acquire_output_lease(id),
+                Err(TerminalLeaseError::Busy)
+            ));
+            replacement.retire();
+        });
+    }
     #[test]
     fn snapshot_exposes_active_profile_and_ordered_terminal_targets() {
         let (query, terminal) = ports();
@@ -2834,13 +3022,13 @@ mod tests {
             TerminalState::default(),
         );
 
-        assert_eq!(tab.title, "Dev box");
+        assert_eq!(tab.title(), "Dev box");
         assert_eq!(
-            tab.status,
+            tab.status(),
             i18n::string("tabs.initial.local_terminal_starting")
         );
-        assert_eq!(tab.kind, TabKindTag::LocalTerminal);
-        assert!(tab.is_local_terminal());
+        assert_eq!(tab.kind(), TabKindTag::LocalTerminal);
+        assert_eq!(tab.kind(), TabKindTag::LocalTerminal);
         assert!(session.local_terminal);
         assert!(!session.monitoring.auto_collect_enabled);
     }
@@ -2854,7 +3042,7 @@ mod tests {
         let (tab, _) =
             SessionController::build_local_tab(TabId::new(12), profile, TerminalState::default());
 
-        assert_eq!(tab.title, "zsh");
+        assert_eq!(tab.title(), "zsh");
     }
 
     #[test]
@@ -2865,7 +3053,10 @@ mod tests {
         let (tab, _) =
             SessionController::build_local_tab(TabId::new(13), profile, TerminalState::default());
 
-        assert_eq!(tab.title, i18n::string("tabs.initial.local_terminal_title"));
+        assert_eq!(
+            tab.title(),
+            i18n::string("tabs.initial.local_terminal_title")
+        );
     }
 
     #[test]

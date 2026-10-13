@@ -80,3 +80,6 @@ pub(crate) use text_input::{
     surface_text_editor, surface_text_editor_stack, surface_text_input,
     surface_text_input_action_stack, surface_text_input_stack,
 };
+
+pub(crate) mod forms;
+pub(crate) mod progress_panel;

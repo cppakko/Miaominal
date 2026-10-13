@@ -222,26 +222,13 @@ fn is_valid_local_directory_name(name: &str) -> bool {
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SftpProgressCenterTransitionPhase {
-    Entering,
-    Exiting,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct SftpProgressCenterTransition {
-    pub(in crate::ui::shell) phase: SftpProgressCenterTransitionPhase,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SessionSftpProgressCenterDragState {
-    pub(in crate::ui::shell) initial_pointer: f32,
-    pub(in crate::ui::shell) initial_flex: f32,
-    pub(in crate::ui::shell) container_height: Pixels,
-}
-
+pub(in crate::ui) use crate::ui::components::progress_panel::ProgressPanelDrag as SessionSftpProgressCenterDragState;
+use crate::ui::components::progress_panel::{
+    ProgressPanelTransition as SftpProgressCenterTransition,
+    ProgressPanelTransitionPhase as SftpProgressCenterTransitionPhase,
+    progress_center_render_visibility, update_progress_center_state,
+};
+pub(in crate::ui) use crate::ui::features::session::SessionSftpProgressLayoutState;
 struct SftpProgressLayoutState {
     scroll_handle: ScrollHandle,
 }
@@ -255,139 +242,18 @@ impl Default for SftpProgressLayoutState {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SessionSftpProgressLayoutState {
-    visible: bool,
-    transition: Option<SftpProgressCenterTransition>,
-    flex: f32,
-    drag: Option<SessionSftpProgressCenterDragState>,
-}
-
-impl Default for SessionSftpProgressLayoutState {
-    fn default() -> Self {
-        Self {
-            visible: false,
-            transition: None,
-            flex: SESSION_SFTP_PROGRESS_DEFAULT_FLEX,
-            drag: None,
-        }
-    }
-}
-
-impl SessionSftpProgressLayoutState {
-    pub(in crate::ui::shell) fn visible(&self) -> bool {
-        self.visible
-    }
-
-    pub(in crate::ui::shell) fn set_visible(&mut self, visible: bool) -> bool {
-        update_progress_center_state(
-            &mut self.visible,
-            &mut self.transition,
-            visible,
-            Instant::now(),
-        )
-    }
-
-    pub(in crate::ui::shell) fn render_visibility(&mut self, window: &mut Window) -> Option<f32> {
-        progress_center_render_visibility(self.visible, &mut self.transition, window)
-    }
-
-    pub(in crate::ui::shell) fn flex(&self) -> f32 {
-        self.flex
-    }
-
-    pub(in crate::ui::shell) fn set_flex(&mut self, flex: f32) {
-        self.flex = flex;
-    }
-
-    pub(in crate::ui::shell) fn drag(&self) -> Option<SessionSftpProgressCenterDragState> {
-        self.drag.clone()
-    }
-
-    pub(in crate::ui::shell) fn set_drag(
-        &mut self,
-        drag: Option<SessionSftpProgressCenterDragState>,
-    ) {
-        self.drag = drag;
-    }
-
-    pub(in crate::ui::shell) fn take_drag(&mut self) -> Option<SessionSftpProgressCenterDragState> {
-        self.drag.take()
-    }
-}
-
-fn update_progress_center_state(
-    current_visible: &mut bool,
-    transition: &mut Option<SftpProgressCenterTransition>,
-    visible: bool,
-    started_at: Instant,
-) -> bool {
-    let phase = if visible {
-        SftpProgressCenterTransitionPhase::Entering
-    } else {
-        SftpProgressCenterTransitionPhase::Exiting
-    };
-    if *current_visible == visible
-        && transition
-            .as_ref()
-            .is_none_or(|transition| transition.phase == phase)
-    {
-        return false;
-    }
-
-    *current_visible = visible;
-    *transition = Some(SftpProgressCenterTransition {
-        phase,
-        started_at,
-        duration: CONTAINER_TRANSITION_DURATION,
-    });
-    true
-}
-
-fn progress_center_render_visibility(
-    visible: bool,
-    transition: &mut Option<SftpProgressCenterTransition>,
-    window: &mut Window,
-) -> Option<f32> {
-    let Some(current_transition) = *transition else {
-        return visible.then_some(1.0);
-    };
-
-    let duration_seconds = current_transition.duration.as_secs_f32();
-    if duration_seconds <= f32::EPSILON {
-        *transition = None;
-        return visible.then_some(1.0);
-    }
-
-    let elapsed = Instant::now().saturating_duration_since(current_transition.started_at);
-    let progress = (elapsed.as_secs_f32() / duration_seconds).clamp(0.0, 1.0);
-    let eased = progress * progress * (3.0 - 2.0 * progress);
-
-    if progress >= 1.0 {
-        *transition = None;
-        return visible.then_some(1.0);
-    }
-
-    window.request_animation_frame();
-
-    Some(match current_transition.phase {
-        SftpProgressCenterTransitionPhase::Entering => eased,
-        SftpProgressCenterTransitionPhase::Exiting => 1.0 - eased,
-    })
+pub(in crate::ui) struct LocalSftpEntry {
+    pub(in crate::ui) filename: String,
+    pub(in crate::ui) path: PathBuf,
+    pub(in crate::ui) is_directory: bool,
+    pub(in crate::ui) size: Option<u64>,
+    pub(in crate::ui) modified: Option<SystemTime>,
+    pub(in crate::ui) attributes: Option<String>,
+    pub(in crate::ui) owner: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct LocalSftpEntry {
-    pub(in crate::ui::shell) filename: String,
-    pub(in crate::ui::shell) path: PathBuf,
-    pub(in crate::ui::shell) is_directory: bool,
-    pub(in crate::ui::shell) size: Option<u64>,
-    pub(in crate::ui::shell) modified: Option<SystemTime>,
-    pub(in crate::ui::shell) attributes: Option<String>,
-    pub(in crate::ui::shell) owner: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::ui::shell) enum SftpTransferStatus {
+pub(in crate::ui) enum SftpTransferStatus {
     Queued,
     Running,
     Paused,
@@ -397,7 +263,7 @@ pub(in crate::ui::shell) enum SftpTransferStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) enum SftpTransferChildStatus {
+pub(in crate::ui) enum SftpTransferChildStatus {
     Running,
     Paused,
     Done,
@@ -406,34 +272,34 @@ pub(in crate::ui::shell) enum SftpTransferChildStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SftpTransferChildRow {
-    pub(in crate::ui::shell) child_id: TransferChildId,
-    pub(in crate::ui::shell) relative_path: String,
-    pub(in crate::ui::shell) bytes_complete: u64,
-    pub(in crate::ui::shell) bytes_total: Option<u64>,
-    pub(in crate::ui::shell) status: SftpTransferChildStatus,
+pub(in crate::ui) struct SftpTransferChildRow {
+    pub(in crate::ui) child_id: TransferChildId,
+    pub(in crate::ui) relative_path: String,
+    pub(in crate::ui) bytes_complete: u64,
+    pub(in crate::ui) bytes_total: Option<u64>,
+    pub(in crate::ui) status: SftpTransferChildStatus,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SftpTransferRow {
-    pub(in crate::ui::shell) transfer_id: TransferId,
-    pub(in crate::ui::shell) direction: TransferDirection,
-    pub(in crate::ui::shell) source: PathBuf,
-    pub(in crate::ui::shell) destination: String,
-    pub(in crate::ui::shell) bytes_complete: u64,
-    pub(in crate::ui::shell) bytes_total: Option<u64>,
-    pub(in crate::ui::shell) status: SftpTransferStatus,
-    pub(in crate::ui::shell) bytes_per_second: Option<u64>,
-    pub(in crate::ui::shell) last_progress_at: Option<Instant>,
-    pub(in crate::ui::shell) last_bytes_complete: u64,
-    pub(in crate::ui::shell) is_directory: bool,
-    pub(in crate::ui::shell) expanded: bool,
-    pub(in crate::ui::shell) children: VecDeque<SftpTransferChildRow>,
-    pub(in crate::ui::shell) child_count: u64,
+pub(in crate::ui) struct SftpTransferRow {
+    pub(in crate::ui) transfer_id: TransferId,
+    pub(in crate::ui) direction: TransferDirection,
+    pub(in crate::ui) source: PathBuf,
+    pub(in crate::ui) destination: String,
+    pub(in crate::ui) bytes_complete: u64,
+    pub(in crate::ui) bytes_total: Option<u64>,
+    pub(in crate::ui) status: SftpTransferStatus,
+    pub(in crate::ui) bytes_per_second: Option<u64>,
+    pub(in crate::ui) last_progress_at: Option<Instant>,
+    pub(in crate::ui) last_bytes_complete: u64,
+    pub(in crate::ui) is_directory: bool,
+    pub(in crate::ui) expanded: bool,
+    pub(in crate::ui) children: VecDeque<SftpTransferChildRow>,
+    pub(in crate::ui) child_count: u64,
 }
 
 impl SftpTransferRow {
-    pub(in crate::ui::shell) fn push_child(&mut self, child: SftpTransferChild) {
+    pub(in crate::ui) fn push_child(&mut self, child: SftpTransferChild) {
         self.is_directory = true;
         self.child_count = self.child_count.saturating_add(1);
         if self.children.len() == SFTP_TRANSFER_CHILD_HISTORY_LIMIT {
@@ -448,11 +314,11 @@ impl SftpTransferRow {
         });
     }
 
-    pub(in crate::ui::shell) fn omitted_child_count(&self) -> u64 {
+    pub(in crate::ui) fn omitted_child_count(&self) -> u64 {
         self.child_count.saturating_sub(self.children.len() as u64)
     }
 
-    pub(in crate::ui::shell) fn apply_child_update(&mut self, update: SftpTransferChildUpdate) {
+    pub(in crate::ui) fn apply_child_update(&mut self, update: SftpTransferChildUpdate) {
         let Some(child) = self
             .children
             .iter_mut()
@@ -484,7 +350,7 @@ impl SftpTransferRow {
         };
     }
 
-    pub(in crate::ui::shell) fn pause_active_child(&mut self) {
+    pub(in crate::ui) fn pause_active_child(&mut self) {
         if let Some(child) = self
             .children
             .iter_mut()
@@ -494,7 +360,7 @@ impl SftpTransferRow {
         }
     }
 
-    pub(in crate::ui::shell) fn resume_active_child(&mut self) {
+    pub(in crate::ui) fn resume_active_child(&mut self) {
         if let Some(child) = self
             .children
             .iter_mut()
@@ -504,7 +370,7 @@ impl SftpTransferRow {
         }
     }
 
-    pub(in crate::ui::shell) fn cancel_unfinished_children(&mut self) {
+    pub(in crate::ui) fn cancel_unfinished_children(&mut self) {
         for child in &mut self.children {
             if matches!(
                 child.status,
@@ -515,7 +381,7 @@ impl SftpTransferRow {
         }
     }
 
-    pub(in crate::ui::shell) fn fail_unfinished_children(&mut self, message: &str) {
+    pub(in crate::ui) fn fail_unfinished_children(&mut self, message: &str) {
         if !self
             .children
             .iter()
@@ -531,7 +397,7 @@ impl SftpTransferRow {
         }
     }
 
-    pub(in crate::ui::shell) fn apply_progress(&mut self, progress: SftpTransferProgress) {
+    pub(in crate::ui) fn apply_progress(&mut self, progress: SftpTransferProgress) {
         if matches!(
             self.status,
             SftpTransferStatus::Done
@@ -586,14 +452,14 @@ fn retain_unfinished_transfer_rows(transfers: &mut Vec<SftpTransferRow>) -> usiz
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(in crate::ui::shell) struct SftpDragSelectionState {
-    pub(in crate::ui::shell) start: Point<Pixels>,
-    pub(in crate::ui::shell) current: Point<Pixels>,
-    pub(in crate::ui::shell) last_row_range: Option<(usize, usize)>,
+pub(in crate::ui) struct SftpDragSelectionState {
+    pub(in crate::ui) start: Point<Pixels>,
+    pub(in crate::ui) current: Point<Pixels>,
+    pub(in crate::ui) last_row_range: Option<(usize, usize)>,
 }
 
 impl SftpDragSelectionState {
-    pub(in crate::ui::shell) fn new(start: Point<Pixels>) -> Self {
+    pub(in crate::ui) fn new(start: Point<Pixels>) -> Self {
         Self {
             start,
             current: start,
@@ -601,11 +467,11 @@ impl SftpDragSelectionState {
         }
     }
 
-    pub(in crate::ui::shell) fn update(&mut self, current: Point<Pixels>) {
+    pub(in crate::ui) fn update(&mut self, current: Point<Pixels>) {
         self.current = current;
     }
 
-    pub(in crate::ui::shell) fn bounds(&self) -> Bounds<Pixels> {
+    pub(in crate::ui) fn bounds(&self) -> Bounds<Pixels> {
         let left = if self.start.x <= self.current.x {
             self.start.x
         } else {
@@ -630,15 +496,12 @@ impl SftpDragSelectionState {
         Bounds::from_corners(Point::new(left, top), Point::new(right, bottom))
     }
 
-    pub(in crate::ui::shell) fn exceeds_threshold(&self, threshold: Pixels) -> bool {
+    pub(in crate::ui) fn exceeds_threshold(&self, threshold: Pixels) -> bool {
         let bounds = self.bounds();
         bounds.size.width >= threshold || bounds.size.height >= threshold
     }
 
-    pub(in crate::ui::shell) fn set_last_row_range(
-        &mut self,
-        row_range: Option<(usize, usize)>,
-    ) -> bool {
+    pub(in crate::ui) fn set_last_row_range(&mut self, row_range: Option<(usize, usize)>) -> bool {
         if self.last_row_range == row_range {
             return false;
         }
@@ -649,43 +512,43 @@ impl SftpDragSelectionState {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(in crate::ui::shell) struct SftpDragSelectionContext {
-    pub(in crate::ui::shell) side: SftpBrowserSide,
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) last_position: Point<Pixels>,
-    pub(in crate::ui::shell) panel_bounds: Bounds<Pixels>,
-    pub(in crate::ui::shell) row_height: Pixels,
-    pub(in crate::ui::shell) anchor_content_y: f32,
-    pub(in crate::ui::shell) generation: u64,
+pub(in crate::ui) struct SftpDragSelectionContext {
+    pub(in crate::ui) side: SftpBrowserSide,
+    pub(in crate::ui) tab_id: TabId,
+    pub(in crate::ui) last_position: Point<Pixels>,
+    pub(in crate::ui) panel_bounds: Bounds<Pixels>,
+    pub(in crate::ui) row_height: Pixels,
+    pub(in crate::ui) anchor_content_y: f32,
+    pub(in crate::ui) generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SftpSplitDivider {
+pub(in crate::ui) enum SftpSplitDivider {
     BrowserPanels,
     ProgressCenter,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SftpSplitDragState {
-    pub(in crate::ui::shell) divider: SftpSplitDivider,
-    pub(in crate::ui::shell) initial_pointer: f32,
-    pub(in crate::ui::shell) initial_flex_a: f32,
-    pub(in crate::ui::shell) container_size: f32,
+pub(in crate::ui) struct SftpSplitDragState {
+    pub(in crate::ui) divider: SftpSplitDivider,
+    pub(in crate::ui) initial_pointer: f32,
+    pub(in crate::ui) initial_flex_a: f32,
+    pub(in crate::ui) container_size: f32,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SftpLayoutState {
-    pub(in crate::ui::shell) local_panel_flex: Option<f32>,
-    pub(in crate::ui::shell) browser_area_flex: Option<f32>,
-    pub(in crate::ui::shell) favorites_panel_visible: bool,
-    pub(in crate::ui::shell) favorites_panel_transition: Option<SftpProgressCenterTransition>,
-    pub(in crate::ui::shell) progress_center_visible: bool,
-    pub(in crate::ui::shell) progress_center_transition: Option<SftpProgressCenterTransition>,
-    pub(in crate::ui::shell) browser_container_width: Pixels,
-    pub(in crate::ui::shell) page_container_height: Pixels,
-    pub(in crate::ui::shell) local_breadcrumb_width: Pixels,
-    pub(in crate::ui::shell) remote_breadcrumb_width: Pixels,
-    pub(in crate::ui::shell) drag: Option<SftpSplitDragState>,
+pub(in crate::ui) struct SftpLayoutState {
+    pub(in crate::ui) local_panel_flex: Option<f32>,
+    pub(in crate::ui) browser_area_flex: Option<f32>,
+    pub(in crate::ui) favorites_panel_visible: bool,
+    pub(in crate::ui) favorites_panel_transition: Option<SftpProgressCenterTransition>,
+    pub(in crate::ui) progress_center_visible: bool,
+    pub(in crate::ui) progress_center_transition: Option<SftpProgressCenterTransition>,
+    pub(in crate::ui) browser_container_width: Pixels,
+    pub(in crate::ui) page_container_height: Pixels,
+    pub(in crate::ui) local_breadcrumb_width: Pixels,
+    pub(in crate::ui) remote_breadcrumb_width: Pixels,
+    pub(in crate::ui) drag: Option<SftpSplitDragState>,
 }
 
 impl Default for SftpLayoutState {
@@ -707,43 +570,43 @@ impl Default for SftpLayoutState {
 }
 
 #[derive(Clone)]
-pub(in crate::ui::shell) struct SftpTabState {
-    pub(in crate::ui::shell) profile_id: String,
-    pub(in crate::ui::shell) commands: Option<SftpCommandSender>,
-    pub(in crate::ui::shell) local_path: PathBuf,
-    pub(in crate::ui::shell) local_entries: Vec<LocalSftpEntry>,
-    pub(in crate::ui::shell) selected_local_path: Option<PathBuf>,
-    pub(in crate::ui::shell) selected_local_paths: Vec<PathBuf>,
-    pub(in crate::ui::shell) local_selection_anchor: Option<PathBuf>,
-    pub(in crate::ui::shell) remote_path: String,
-    pub(in crate::ui::shell) remote_path_favorites: Vec<String>,
-    pub(in crate::ui::shell) requested_remote_path: Option<String>,
-    pub(in crate::ui::shell) remote_directory_request_id: Option<SftpDirectoryRequestId>,
-    pub(in crate::ui::shell) remote_entries: Vec<SftpEntry>,
-    pub(in crate::ui::shell) selected_remote_path: Option<String>,
-    pub(in crate::ui::shell) selected_remote_paths: Vec<String>,
-    pub(in crate::ui::shell) remote_selection_anchor: Option<String>,
-    pub(in crate::ui::shell) transfers: Vec<SftpTransferRow>,
-    pub(in crate::ui::shell) last_status: String,
-    pub(in crate::ui::shell) last_error: Option<String>,
-    pub(in crate::ui::shell) loading_remote: bool,
-    pub(in crate::ui::shell) local_drag_candidate: Option<Point<Pixels>>,
-    pub(in crate::ui::shell) remote_drag_candidate: Option<Point<Pixels>>,
-    pub(in crate::ui::shell) local_drag_selection: Option<SftpDragSelectionState>,
-    pub(in crate::ui::shell) remote_drag_selection: Option<SftpDragSelectionState>,
-    pub(in crate::ui::shell) drag_selection_context: Option<SftpDragSelectionContext>,
-    pub(in crate::ui::shell) drag_selection_generation: u64,
-    pub(in crate::ui::shell) suppress_local_clear_click: bool,
-    pub(in crate::ui::shell) suppress_remote_clear_click: bool,
-    pub(in crate::ui::shell) pending_local_refresh_paths: HashSet<PathBuf>,
-    pub(in crate::ui::shell) pending_remote_refresh_paths: HashSet<String>,
-    pub(in crate::ui::shell) directory_refresh_generation: u64,
-    pub(in crate::ui::shell) local_scan_generation: u64,
-    pub(in crate::ui::shell) layout: SftpLayoutState,
+pub(in crate::ui) struct SftpTabState {
+    pub(in crate::ui) profile_id: String,
+    pub(in crate::ui) commands: Option<SftpCommandSender>,
+    pub(in crate::ui) local_path: PathBuf,
+    pub(in crate::ui) local_entries: Vec<LocalSftpEntry>,
+    pub(in crate::ui) selected_local_path: Option<PathBuf>,
+    pub(in crate::ui) selected_local_paths: Vec<PathBuf>,
+    pub(in crate::ui) local_selection_anchor: Option<PathBuf>,
+    pub(in crate::ui) remote_path: String,
+    pub(in crate::ui) remote_path_favorites: Vec<String>,
+    pub(in crate::ui) requested_remote_path: Option<String>,
+    pub(in crate::ui) remote_directory_request_id: Option<SftpDirectoryRequestId>,
+    pub(in crate::ui) remote_entries: Vec<SftpEntry>,
+    pub(in crate::ui) selected_remote_path: Option<String>,
+    pub(in crate::ui) selected_remote_paths: Vec<String>,
+    pub(in crate::ui) remote_selection_anchor: Option<String>,
+    pub(in crate::ui) transfers: Vec<SftpTransferRow>,
+    pub(in crate::ui) last_status: String,
+    pub(in crate::ui) last_error: Option<String>,
+    pub(in crate::ui) loading_remote: bool,
+    pub(in crate::ui) local_drag_candidate: Option<Point<Pixels>>,
+    pub(in crate::ui) remote_drag_candidate: Option<Point<Pixels>>,
+    pub(in crate::ui) local_drag_selection: Option<SftpDragSelectionState>,
+    pub(in crate::ui) remote_drag_selection: Option<SftpDragSelectionState>,
+    pub(in crate::ui) drag_selection_context: Option<SftpDragSelectionContext>,
+    pub(in crate::ui) drag_selection_generation: u64,
+    pub(in crate::ui) suppress_local_clear_click: bool,
+    pub(in crate::ui) suppress_remote_clear_click: bool,
+    pub(in crate::ui) pending_local_refresh_paths: HashSet<PathBuf>,
+    pub(in crate::ui) pending_remote_refresh_paths: HashSet<String>,
+    pub(in crate::ui) directory_refresh_generation: u64,
+    pub(in crate::ui) local_scan_generation: u64,
+    pub(in crate::ui) layout: SftpLayoutState,
 }
 
 impl SftpTabState {
-    pub(in crate::ui::shell) fn new(profile: &SessionProfile) -> Self {
+    pub(in crate::ui) fn new(profile: &SessionProfile) -> Self {
         Self {
             profile_id: profile.id.clone(),
             commands: None,
@@ -781,18 +644,6 @@ impl SftpTabState {
     }
 }
 
-impl TabState {
-    pub(in crate::ui::shell) fn new_sftp(id: TabId, profile: &SessionProfile) -> Self {
-        Self::new(
-            id,
-            profile.connection_label(),
-            i18n::string("tabs.initial.sftp_connecting"),
-            TabKindTag::Sftp,
-            crate::ui::shell::workspace::TabPlacement::TopLevel,
-        )
-    }
-}
-
 #[derive(Default)]
 struct SftpTabStore {
     tabs: HashMap<TabId, SftpTabState>,
@@ -812,7 +663,7 @@ impl SftpTabStore {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) enum SftpPromptKind {
+pub(in crate::ui) enum SftpPromptKind {
     CreateRemoteDirectory {
         parent: String,
     },
@@ -840,8 +691,8 @@ pub(in crate::ui::shell) enum SftpPromptKind {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::ui::shell) struct SftpPromptState {
-    pub(in crate::ui::shell) kind: SftpPromptKind,
+pub(in crate::ui) struct SftpPromptState {
+    pub(in crate::ui) kind: SftpPromptKind,
 }
 
 #[derive(Debug, Clone)]
@@ -851,28 +702,28 @@ enum InlineRenameState {
 }
 
 struct SftpEditSession {
-    pub(in crate::ui::shell) temp_path: PathBuf,
-    pub(in crate::ui::shell) _watcher: notify::RecommendedWatcher,
-    pub(in crate::ui::shell) debounce_task: Option<gpui_kit::Task<()>>,
-    pub(in crate::ui::shell) _watch_task: gpui_kit::Task<()>,
+    pub(in crate::ui) temp_path: PathBuf,
+    pub(in crate::ui) _watcher: notify::RecommendedWatcher,
+    pub(in crate::ui) debounce_task: Option<gpui_kit::Task<()>>,
+    pub(in crate::ui) _watch_task: gpui_kit::Task<()>,
 }
 
-pub(in crate::ui::shell) struct SftpBrowserForms {
-    pub(in crate::ui::shell) local_path_input: Entity<InputState>,
-    pub(in crate::ui::shell) remote_path_input: Entity<InputState>,
-    pub(in crate::ui::shell) local_path_editing: bool,
-    pub(in crate::ui::shell) remote_path_editing: bool,
-    pub(in crate::ui::shell) remote_path_submit_pending: bool,
-    pub(in crate::ui::shell) local_table: Entity<TableState<SftpBrowserTableDelegate>>,
-    pub(in crate::ui::shell) remote_table: Entity<TableState<SftpBrowserTableDelegate>>,
-    pub(in crate::ui::shell) prompt_input: Entity<InputState>,
-    pub(in crate::ui::shell) inline_rename_input: Entity<InputState>,
+pub(in crate::ui) struct SftpBrowserForms {
+    pub(in crate::ui) local_path_input: Entity<InputState>,
+    pub(in crate::ui) remote_path_input: Entity<InputState>,
+    pub(in crate::ui) local_path_editing: bool,
+    pub(in crate::ui) remote_path_editing: bool,
+    pub(in crate::ui) remote_path_submit_pending: bool,
+    pub(in crate::ui) local_table: Entity<TableState<SftpBrowserTableDelegate>>,
+    pub(in crate::ui) remote_table: Entity<TableState<SftpBrowserTableDelegate>>,
+    pub(in crate::ui) prompt_input: Entity<InputState>,
+    pub(in crate::ui) inline_rename_input: Entity<InputState>,
 }
 
-pub(in crate::ui::shell) struct SftpControllerArgs {
-    pub(in crate::ui::shell) service: SftpService,
-    pub(in crate::ui::shell) local_hidden_columns: Vec<usize>,
-    pub(in crate::ui::shell) remote_hidden_columns: Vec<usize>,
+pub(in crate::ui) struct SftpControllerArgs {
+    pub(in crate::ui) service: SftpService,
+    pub(in crate::ui) local_hidden_columns: Vec<usize>,
+    pub(in crate::ui) remote_hidden_columns: Vec<usize>,
 }
 
 enum SftpEditSessionStartError {
@@ -880,7 +731,7 @@ enum SftpEditSessionStartError {
     WatchDirectory(String),
 }
 
-pub(in crate::ui::shell) struct SftpController {
+pub(in crate::ui) struct SftpController {
     service: SftpService,
     catalog_query: CatalogQueryPort,
     session_query: SessionQueryPort,
@@ -917,12 +768,13 @@ impl SftpTabOwnerRoute {
     }
 }
 
-pub(in crate::ui::shell) struct TransferredSftpTab {
+pub(in crate::ui) struct TransferredSftpTab {
+    tab_id: TabId,
     state: SftpTabState,
     interaction: Option<SftpInteractionState>,
 }
 
-pub(in crate::ui::shell) struct TransferredSftpWindowUi {
+pub(in crate::ui) struct TransferredSftpWindowUi {
     tab_id: TabId,
     local_path_value: String,
     remote_path_value: String,
@@ -952,11 +804,7 @@ fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
 }
 
 impl SftpController {
-    pub(in crate::ui::shell) fn toggle_favorites_panel(
-        &self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn toggle_favorites_panel(&self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(mut tab) = self.tab_mut(tab_id) else {
             return;
         };
@@ -976,7 +824,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn tab_favorites_render_visibility(
+    pub(in crate::ui) fn tab_favorites_render_visibility(
         &self,
         tab_id: TabId,
         window: &mut Window,
@@ -989,7 +837,7 @@ impl SftpController {
         )
     }
 
-    pub(in crate::ui::shell) fn toggle_remote_path_favorite(
+    pub(in crate::ui) fn toggle_remote_path_favorite(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -1031,7 +879,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn remove_remote_path_favorite(
+    pub(in crate::ui) fn remove_remote_path_favorite(
         &mut self,
         tab_id: TabId,
         path: String,
@@ -1055,7 +903,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_remove_remote_path_favorite(
+    pub(in crate::ui) fn begin_remove_remote_path_favorite(
         &mut self,
         tab_id: TabId,
         path: String,
@@ -1078,7 +926,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_remove_current_remote_path_favorite(
+    pub(in crate::ui) fn begin_remove_current_remote_path_favorite(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -1092,7 +940,7 @@ impl SftpController {
         self.begin_remove_remote_path_favorite(tab_id, path, cx);
     }
 
-    pub(in crate::ui::shell) fn navigate_to_remote_path(
+    pub(in crate::ui) fn navigate_to_remote_path(
         &mut self,
         tab_id: TabId,
         path: String,
@@ -1113,7 +961,7 @@ impl SftpController {
         });
     }
 
-    pub(in crate::ui::shell) fn sync_remote_path_favorites(
+    pub(in crate::ui) fn sync_remote_path_favorites(
         &self,
         profile_id: &str,
         favorites: &[String],
@@ -1298,7 +1146,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn refresh_localized_placeholders(
+    pub(in crate::ui) fn refresh_localized_placeholders(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1325,7 +1173,7 @@ impl SftpController {
         });
     }
 
-    pub(in crate::ui::shell) fn apply_hidden_columns(
+    pub(in crate::ui) fn apply_hidden_columns(
         &self,
         local_hidden_columns: Vec<usize>,
         remote_hidden_columns: Vec<usize>,
@@ -1350,7 +1198,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn new(
+    pub(in crate::ui) fn new(
         args: SftpControllerArgs,
         catalog_query: CatalogQueryPort,
         session_query: SessionQueryPort,
@@ -1441,21 +1289,19 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn local_path_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn local_path_input(&self) -> Entity<InputState> {
         self.forms.borrow().local_path_input.clone()
     }
 
-    pub(in crate::ui::shell) fn remote_path_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn remote_path_input(&self) -> Entity<InputState> {
         self.forms.borrow().remote_path_input.clone()
     }
 
-    pub(in crate::ui::shell) fn local_table(&self) -> Entity<TableState<SftpBrowserTableDelegate>> {
+    pub(in crate::ui) fn local_table(&self) -> Entity<TableState<SftpBrowserTableDelegate>> {
         self.forms.borrow().local_table.clone()
     }
 
-    pub(in crate::ui::shell) fn remote_table(
-        &self,
-    ) -> Entity<TableState<SftpBrowserTableDelegate>> {
+    pub(in crate::ui) fn remote_table(&self) -> Entity<TableState<SftpBrowserTableDelegate>> {
         self.forms.borrow().remote_table.clone()
     }
 
@@ -1598,15 +1444,15 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn prompt_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn prompt_input(&self) -> Entity<InputState> {
         self.forms.borrow().prompt_input.clone()
     }
 
-    pub(in crate::ui::shell) fn inline_rename_input(&self) -> Entity<InputState> {
+    pub(in crate::ui) fn inline_rename_input(&self) -> Entity<InputState> {
         self.forms.borrow().inline_rename_input.clone()
     }
 
-    pub(in crate::ui::shell) fn request_expand_directory(
+    pub(in crate::ui) fn request_expand_directory(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -1616,35 +1462,35 @@ impl SftpController {
         self.expand_directory(tab_id, side, path, cx);
     }
 
-    pub(in crate::ui::shell) fn local_path_editing(&self) -> bool {
+    pub(in crate::ui) fn local_path_editing(&self) -> bool {
         self.forms.borrow().local_path_editing
     }
 
-    pub(in crate::ui::shell) fn remote_path_editing(&self) -> bool {
+    pub(in crate::ui) fn remote_path_editing(&self) -> bool {
         self.forms.borrow().remote_path_editing
     }
 
-    pub(in crate::ui::shell) fn remote_path_submit_pending(&self) -> bool {
+    pub(in crate::ui) fn remote_path_submit_pending(&self) -> bool {
         self.forms.borrow().remote_path_submit_pending
     }
 
-    pub(in crate::ui::shell) fn set_local_path_editing(&self, editing: bool) {
+    pub(in crate::ui) fn set_local_path_editing(&self, editing: bool) {
         self.forms.borrow_mut().local_path_editing = editing;
     }
 
-    pub(in crate::ui::shell) fn set_remote_path_editing(&self, editing: bool) {
+    pub(in crate::ui) fn set_remote_path_editing(&self, editing: bool) {
         self.forms.borrow_mut().remote_path_editing = editing;
     }
 
-    pub(in crate::ui::shell) fn set_remote_path_submit_pending(&self, pending: bool) {
+    pub(in crate::ui) fn set_remote_path_submit_pending(&self, pending: bool) {
         self.forms.borrow_mut().remote_path_submit_pending = pending;
     }
 
-    pub(in crate::ui::shell) fn display_local_path(path: &std::path::Path) -> SharedString {
+    pub(in crate::ui) fn display_local_path(path: &std::path::Path) -> SharedString {
         SftpService::display_local_path(path).into()
     }
 
-    pub(in crate::ui::shell) fn sync_path_inputs_for_tab(
+    pub(in crate::ui) fn sync_path_inputs_for_tab(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -1668,7 +1514,7 @@ impl SftpController {
         });
     }
 
-    pub(in crate::ui::shell) fn set_path_editing(
+    pub(in crate::ui) fn set_path_editing(
         &mut self,
         side: SftpBrowserSide,
         editing: bool,
@@ -1712,13 +1558,13 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn reset_path_editing(&self) {
+    pub(in crate::ui) fn reset_path_editing(&self) {
         self.set_local_path_editing(false);
         self.set_remote_path_editing(false);
         self.set_remote_path_submit_pending(false);
     }
 
-    pub(in crate::ui::shell) fn take_window_ui_for_transfer(
+    pub(in crate::ui) fn take_window_ui_for_transfer(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -1773,7 +1619,7 @@ impl SftpController {
         })
     }
 
-    pub(in crate::ui::shell) fn restore_window_ui_after_transfer(
+    pub(in crate::ui) fn restore_window_ui_after_transfer(
         &mut self,
         transferred: TransferredSftpWindowUi,
         window: &mut Window,
@@ -1882,7 +1728,7 @@ impl SftpController {
         self.request_remote_directory_with_source(tab_id, next_path, true, cx);
     }
 
-    pub(in crate::ui::shell) fn navigate_local_to_path(
+    pub(in crate::ui) fn navigate_local_to_path(
         &mut self,
         tab_id: TabId,
         path: PathBuf,
@@ -1897,7 +1743,7 @@ impl SftpController {
         self.refresh_local_directory(tab_id, cx);
     }
 
-    pub(in crate::ui::shell) fn navigate_local_into_selected(
+    pub(in crate::ui) fn navigate_local_into_selected(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -1913,7 +1759,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn open_local_path(
+    pub(in crate::ui) fn open_local_path(
         &mut self,
         tab_id: TabId,
         path: PathBuf,
@@ -1935,11 +1781,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn navigate_local_up(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn navigate_local_up(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(next_path) = self
             .tab(tab_id)
             .and_then(|tab| tab.local_path.parent().map(Path::to_path_buf))
@@ -1949,7 +1791,7 @@ impl SftpController {
         self.navigate_local_to_path(tab_id, next_path, cx);
     }
 
-    pub(in crate::ui::shell) fn request_remote_directory(
+    pub(in crate::ui) fn request_remote_directory(
         &mut self,
         tab_id: TabId,
         path: String,
@@ -2015,7 +1857,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn navigate_remote_into_selected(
+    pub(in crate::ui) fn navigate_remote_into_selected(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -2034,18 +1876,14 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn navigate_remote_up(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn navigate_remote_up(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(current_path) = self.tab(tab_id).map(|tab| tab.remote_path.clone()) else {
             return;
         };
         self.request_remote_directory(tab_id, Self::remote_parent_path(&current_path), cx);
     }
 
-    pub(in crate::ui::shell) fn begin_inline_rename(
+    pub(in crate::ui) fn begin_inline_rename(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -2088,7 +1926,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_local_inline_rename(
+    pub(in crate::ui) fn begin_local_inline_rename(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -2225,7 +2063,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn cancel_inline_rename(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn cancel_inline_rename(&mut self, cx: &mut Context<Self>) {
         let Some(tab_id) = self.browser_tab_id(cx) else {
             return;
         };
@@ -2258,11 +2096,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn refresh_local_directory(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn refresh_local_directory(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some((path, generation)) = self.tab_mut(tab_id).map(|mut tab| {
             tab.local_scan_generation = tab.local_scan_generation.wrapping_add(1);
             (tab.local_path.clone(), tab.local_scan_generation)
@@ -2422,7 +2256,7 @@ impl SftpController {
         Ok(entries)
     }
 
-    pub(in crate::ui::shell) fn expand_directory(
+    pub(in crate::ui) fn expand_directory(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -2609,25 +2443,17 @@ impl SftpController {
         pending_paths.contains(target).then(|| target.to_string())
     }
 
-    pub(in crate::ui::shell) fn sync_tables_for_tab(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn sync_tables_for_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         self.sync_table_for_side(tab_id, SftpBrowserSide::Local, cx);
         self.sync_table_for_side(tab_id, SftpBrowserSide::Remote, cx);
     }
 
-    pub(in crate::ui::shell) fn set_download_destination_prompt_tab(
-        &self,
-        tab_id: TabId,
-        enabled: bool,
-    ) {
+    pub(in crate::ui) fn set_download_destination_prompt_tab(&self, tab_id: TabId, enabled: bool) {
         self.download_destination_prompt_tab
             .set(enabled.then_some(tab_id));
     }
 
-    pub(in crate::ui::shell) fn sync_table_for_side(
+    pub(in crate::ui) fn sync_table_for_side(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -2689,11 +2515,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn sync_selection_for_tab(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn sync_selection_for_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some((local_paths, local_path, remote_paths, remote_path)) =
             self.tab(tab_id).map(|tab| {
                 (
@@ -2727,7 +2549,7 @@ impl SftpController {
         });
     }
 
-    pub(in crate::ui::shell) fn sync_selection_for_side(
+    pub(in crate::ui) fn sync_selection_for_side(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -2776,23 +2598,15 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn clear_local_selection(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn clear_local_selection(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         self.set_local_selection(tab_id, Vec::new(), None, cx);
     }
 
-    pub(in crate::ui::shell) fn clear_remote_selection(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn clear_remote_selection(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         self.set_remote_selection(tab_id, Vec::new(), None, cx);
     }
 
-    pub(in crate::ui::shell) fn handle_blank_click(
+    pub(in crate::ui) fn handle_blank_click(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -2835,7 +2649,7 @@ impl SftpController {
         self.sync_selection_for_tab(tab_id, cx);
     }
 
-    pub(in crate::ui::shell) fn select_local_row(
+    pub(in crate::ui) fn select_local_row(
         &mut self,
         tab_id: TabId,
         row_ix: usize,
@@ -2918,7 +2732,7 @@ impl SftpController {
         self.sync_selection_for_side(tab_id, SftpBrowserSide::Local, cx);
     }
 
-    pub(in crate::ui::shell) fn select_remote_row(
+    pub(in crate::ui) fn select_remote_row(
         &mut self,
         tab_id: TabId,
         row_ix: usize,
@@ -3044,7 +2858,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn set_local_selection(
+    pub(in crate::ui) fn set_local_selection(
         &mut self,
         tab_id: TabId,
         paths: Vec<PathBuf>,
@@ -3082,7 +2896,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn set_remote_selection(
+    pub(in crate::ui) fn set_remote_selection(
         &mut self,
         tab_id: TabId,
         paths: Vec<String>,
@@ -3120,7 +2934,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn select_local_path(
+    pub(in crate::ui) fn select_local_path(
         &mut self,
         tab_id: TabId,
         path: PathBuf,
@@ -3130,7 +2944,7 @@ impl SftpController {
         self.set_local_selection_anchor(tab_id, Some(path));
     }
 
-    pub(in crate::ui::shell) fn select_remote_path(
+    pub(in crate::ui) fn select_remote_path(
         &mut self,
         tab_id: TabId,
         path: String,
@@ -3140,7 +2954,7 @@ impl SftpController {
         self.set_remote_selection_anchor(tab_id, Some(path));
     }
 
-    pub(in crate::ui::shell) fn begin_drag_selection(
+    pub(in crate::ui) fn begin_drag_selection(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -3195,7 +3009,7 @@ impl SftpController {
         self.start_drag_selection_auto_scroll(tab_id, generation, cx);
     }
 
-    pub(in crate::ui::shell) fn update_active_drag_selection(
+    pub(in crate::ui) fn update_active_drag_selection(
         &mut self,
         tab_id: TabId,
         position: Point<Pixels>,
@@ -3215,7 +3029,7 @@ impl SftpController {
         )
     }
 
-    pub(in crate::ui::shell) fn finish_active_drag_selection(
+    pub(in crate::ui) fn finish_active_drag_selection(
         &mut self,
         tab_id: TabId,
         position: Point<Pixels>,
@@ -3235,7 +3049,7 @@ impl SftpController {
         )
     }
 
-    pub(in crate::ui::shell) fn finish_any_active_drag_selection(
+    pub(in crate::ui) fn finish_any_active_drag_selection(
         &mut self,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -3466,7 +3280,7 @@ impl SftpController {
         true
     }
 
-    pub(in crate::ui::shell) fn update_drag_selection(
+    pub(in crate::ui) fn update_drag_selection(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -3549,7 +3363,7 @@ impl SftpController {
         true
     }
 
-    pub(in crate::ui::shell) fn finish_drag_selection(
+    pub(in crate::ui) fn finish_drag_selection(
         &mut self,
         tab_id: TabId,
         side: SftpBrowserSide,
@@ -3729,11 +3543,7 @@ impl SftpController {
         Some((start_row, end_row))
     }
 
-    pub(in crate::ui::shell) fn set_tab_progress_visible(
-        &self,
-        tab_id: TabId,
-        visible: bool,
-    ) -> bool {
+    pub(in crate::ui) fn set_tab_progress_visible(&self, tab_id: TabId, visible: bool) -> bool {
         let started_at = Instant::now();
         let Some(mut tab) = self.tab_mut(tab_id) else {
             return false;
@@ -3761,7 +3571,7 @@ impl SftpController {
         changed
     }
 
-    pub(in crate::ui::shell) fn tab_progress_render_visibility(
+    pub(in crate::ui) fn tab_progress_render_visibility(
         &self,
         tab_id: TabId,
         window: &mut Window,
@@ -3774,25 +3584,25 @@ impl SftpController {
         )
     }
 
-    pub(in crate::ui::shell) fn progress_scroll_handle(&self) -> ScrollHandle {
+    pub(in crate::ui) fn progress_scroll_handle(&self) -> ScrollHandle {
         self.progress_layout.borrow().scroll_handle.clone()
     }
 
-    pub(in crate::ui::shell) fn tab(&self, tab_id: TabId) -> Option<Ref<'_, SftpTabState>> {
+    pub(in crate::ui) fn tab(&self, tab_id: TabId) -> Option<Ref<'_, SftpTabState>> {
         let tabs = self.tabs.borrow();
         Ref::filter_map(tabs, |store| store.tabs.get(&tab_id)).ok()
     }
 
-    pub(in crate::ui::shell) fn tab_mut(&self, tab_id: TabId) -> Option<RefMut<'_, SftpTabState>> {
+    pub(in crate::ui) fn tab_mut(&self, tab_id: TabId) -> Option<RefMut<'_, SftpTabState>> {
         let tabs = self.tabs.borrow_mut();
         RefMut::filter_map(tabs, |store| store.tabs.get_mut(&tab_id)).ok()
     }
 
-    pub(in crate::ui::shell) fn tabs(&self) -> Ref<'_, HashMap<TabId, SftpTabState>> {
+    pub(in crate::ui) fn tabs(&self) -> Ref<'_, HashMap<TabId, SftpTabState>> {
         Ref::map(self.tabs.borrow(), |store| &store.tabs)
     }
 
-    pub(in crate::ui::shell) fn session_profiles(&self) -> Vec<SessionProfile> {
+    pub(in crate::ui) fn session_profiles(&self) -> Vec<SessionProfile> {
         self.catalog_query.profiles()
     }
 
@@ -3817,7 +3627,7 @@ impl SftpController {
         route
     }
 
-    pub(in crate::ui::shell) fn start_tab(
+    pub(in crate::ui) fn start_tab(
         &mut self,
         tab_id: TabId,
         profile: SessionProfile,
@@ -4368,7 +4178,7 @@ impl SftpController {
         transfer.apply_progress(progress);
     }
 
-    pub(in crate::ui::shell) fn resolve_remote_entry(
+    pub(in crate::ui) fn resolve_remote_entry(
         &self,
         tab_id: TabId,
         path: &str,
@@ -4410,11 +4220,7 @@ impl SftpController {
         })
     }
 
-    pub(in crate::ui::shell) fn queue_upload_selected(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn queue_upload_selected(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(selected_paths) = self.tab(tab_id).map(|tab| tab.selected_local_paths.clone())
         else {
             return;
@@ -4427,7 +4233,7 @@ impl SftpController {
         self.queue_upload_paths(tab_id, selected_paths, cx);
     }
 
-    pub(in crate::ui::shell) fn queue_upload_path(
+    pub(in crate::ui) fn queue_upload_path(
         &mut self,
         tab_id: TabId,
         local_path: PathBuf,
@@ -4436,7 +4242,7 @@ impl SftpController {
         self.queue_upload_paths(tab_id, vec![local_path], cx);
     }
 
-    pub(in crate::ui::shell) fn queue_upload_paths(
+    pub(in crate::ui) fn queue_upload_paths(
         &mut self,
         tab_id: TabId,
         local_paths: Vec<PathBuf>,
@@ -4492,7 +4298,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn queue_download_selected(
+    pub(in crate::ui) fn queue_download_selected(
         &mut self,
         tab_id: TabId,
         prompt_for_destination: bool,
@@ -4513,7 +4319,7 @@ impl SftpController {
         self.queue_download_paths(tab_id, remote_paths, prompt_for_destination, window, cx);
     }
 
-    pub(in crate::ui::shell) fn queue_download_path(
+    pub(in crate::ui) fn queue_download_path(
         &mut self,
         tab_id: TabId,
         remote_path: String,
@@ -4635,7 +4441,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn pause_transfer(
+    pub(in crate::ui) fn pause_transfer(
         &mut self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -4654,7 +4460,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn resume_transfer(
+    pub(in crate::ui) fn resume_transfer(
         &mut self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -4673,7 +4479,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn cancel_transfer(
+    pub(in crate::ui) fn cancel_transfer(
         &mut self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -4692,7 +4498,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn remove_transfer_record(
+    pub(in crate::ui) fn remove_transfer_record(
         &mut self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -4717,7 +4523,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn clear_finished_transfers(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn clear_finished_transfers(&mut self, cx: &mut Context<Self>) {
         let mut cleared_total = 0usize;
         for tab in self.tabs.borrow_mut().tabs.values_mut() {
             let cleared = retain_unfinished_transfer_rows(&mut tab.transfers);
@@ -4736,7 +4542,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn toggle_transfer_expanded(
+    pub(in crate::ui) fn toggle_transfer_expanded(
         &mut self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -4761,7 +4567,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_create_directory(
+    pub(in crate::ui) fn begin_create_directory(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -4788,7 +4594,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn begin_create_local_directory(
+    pub(in crate::ui) fn begin_create_local_directory(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -4815,11 +4621,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn delete_local_selected(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn delete_local_selected(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(entries) = self
             .tab(tab_id)
             .map(|tab| tab.selected_local_paths.clone())
@@ -4891,11 +4693,7 @@ impl SftpController {
             .detach();
     }
 
-    pub(in crate::ui::shell) fn delete_remote_selected(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn delete_remote_selected(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some((refresh_path, selected_paths)) = self.tab(tab_id).and_then(|tab| {
             tab.commands.as_ref()?;
             Some((tab.remote_path.clone(), tab.selected_remote_paths.clone()))
@@ -4994,7 +4792,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn resolve_host_key_prompt(
+    pub(in crate::ui) fn resolve_host_key_prompt(
         &mut self,
         tab_id: TabId,
         decision: HostKeyDecision,
@@ -5058,11 +4856,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn skip_overwrite_prompt(
-        &mut self,
-        tab_id: TabId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(in crate::ui) fn skip_overwrite_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
             return;
         };
@@ -5122,7 +4916,7 @@ impl SftpController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn commit_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn commit_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         let Some(prompt) = self.prompt(tab_id) else {
             return;
         };
@@ -5287,7 +5081,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn cancel_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn cancel_prompt(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
         if self
             .prompt(tab_id)
             .is_some_and(|prompt| matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. }))
@@ -5303,18 +5097,18 @@ impl SftpController {
         ));
     }
 
-    pub(in crate::ui::shell) fn join_remote_path(base: &str, name: &str) -> String {
+    pub(in crate::ui) fn join_remote_path(base: &str, name: &str) -> String {
         SftpService::join_remote_path(base, name)
     }
 
-    pub(in crate::ui::shell) fn prompt(&self, tab_id: TabId) -> Option<SftpPromptState> {
+    pub(in crate::ui) fn prompt(&self, tab_id: TabId) -> Option<SftpPromptState> {
         self.interactions
             .borrow()
             .get(&tab_id)
             .and_then(|state| state.prompt.clone())
     }
 
-    pub(in crate::ui::shell) fn set_prompt(&self, tab_id: TabId, prompt: Option<SftpPromptState>) {
+    pub(in crate::ui) fn set_prompt(&self, tab_id: TabId, prompt: Option<SftpPromptState>) {
         self.interactions
             .borrow_mut()
             .entry(tab_id)
@@ -5322,14 +5116,14 @@ impl SftpController {
             .prompt = prompt;
     }
 
-    pub(in crate::ui::shell) fn take_prompt(&self, tab_id: TabId) -> Option<SftpPromptState> {
+    pub(in crate::ui) fn take_prompt(&self, tab_id: TabId) -> Option<SftpPromptState> {
         self.interactions
             .borrow_mut()
             .get_mut(&tab_id)
             .and_then(|state| state.prompt.take())
     }
 
-    pub(in crate::ui::shell) fn has_inline_rename(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn has_inline_rename(&self, tab_id: TabId) -> bool {
         self.interactions
             .borrow()
             .get(&tab_id)
@@ -5351,7 +5145,7 @@ impl SftpController {
             .inline_rename = inline_rename;
     }
 
-    pub(in crate::ui::shell) fn edit_session_temp_path(
+    pub(in crate::ui) fn edit_session_temp_path(
         &self,
         tab_id: TabId,
         remote_path: &str,
@@ -5363,7 +5157,7 @@ impl SftpController {
             .map(|session| session.temp_path.clone())
     }
 
-    pub(in crate::ui::shell) fn insert_edit_pending_download(
+    pub(in crate::ui) fn insert_edit_pending_download(
         &self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -5377,7 +5171,7 @@ impl SftpController {
             .insert(transfer_id, remote_path);
     }
 
-    pub(in crate::ui::shell) fn take_edit_pending_download(
+    pub(in crate::ui) fn take_edit_pending_download(
         &self,
         tab_id: TabId,
         transfer_id: TransferId,
@@ -5388,7 +5182,7 @@ impl SftpController {
             .and_then(|state| state.edit_pending_downloads.remove(&transfer_id))
     }
 
-    pub(in crate::ui::shell) fn open_remote_file_for_editing(
+    pub(in crate::ui) fn open_remote_file_for_editing(
         &mut self,
         tab_id: TabId,
         remote_path: String,
@@ -5446,7 +5240,7 @@ impl SftpController {
         }
     }
 
-    pub(in crate::ui::shell) fn complete_edit_download(
+    pub(in crate::ui) fn complete_edit_download(
         &mut self,
         tab_id: TabId,
         temp_path: PathBuf,
@@ -5613,7 +5407,24 @@ impl SftpController {
         self.schedule_edit_upload(tab_id, remote_path, temp_path, commands, cx);
     }
 
-    pub(in crate::ui::shell) fn remove_tab_state(&self, tab_id: TabId) -> Option<SftpTabState> {
+    pub(in crate::ui) fn retire_tab_resources(&self, tab_id: TabId) {
+        let reject = self
+            .interactions
+            .borrow()
+            .get(&tab_id)
+            .and_then(|state| state.prompt.as_ref())
+            .is_some_and(|prompt| matches!(prompt.kind, SftpPromptKind::ConfirmHostKey { .. }));
+        if let Some(commands) = self.tab_mut(tab_id).and_then(|mut tab| tab.commands.take()) {
+            if reject {
+                let _ = commands.respond_host_key(HostKeyDecision::Reject);
+            }
+            if let Err(error) = commands.close() {
+                log::debug!("failed to close SFTP tab {tab_id}: {error:?}");
+            }
+        }
+    }
+
+    pub(in crate::ui) fn remove_tab_state(&self, tab_id: TabId) -> Option<SftpTabState> {
         let interaction = self.interactions.borrow_mut().remove(&tab_id);
         let tab = self.tabs.borrow_mut().remove(tab_id);
         let has_pending_host_key = interaction
@@ -5628,22 +5439,23 @@ impl SftpController {
         tab
     }
 
-    pub(in crate::ui::shell) fn take_tab_for_transfer(
-        &self,
-        tab_id: TabId,
-    ) -> Option<TransferredSftpTab> {
+    pub(in crate::ui) fn take_tab_for_transfer(&self, tab_id: TabId) -> Option<TransferredSftpTab> {
         let state = self.tabs.borrow_mut().remove(tab_id)?;
         let interaction = self.interactions.borrow_mut().remove(&tab_id);
-        Some(TransferredSftpTab { state, interaction })
+        Some(TransferredSftpTab {
+            tab_id,
+            state,
+            interaction,
+        })
     }
 
-    pub(in crate::ui::shell) fn insert_transferred_tab(
+    pub(in crate::ui) fn insert_transferred_tab(
         &mut self,
-        tab_id: TabId,
         transferred: TransferredSftpTab,
         cx: &mut Context<Self>,
-    ) {
+    ) -> TabId {
         let TransferredSftpTab {
+            tab_id,
             mut state,
             mut interaction,
         } = transferred;
@@ -5659,9 +5471,10 @@ impl SftpController {
         if let Some(interaction) = interaction.take() {
             self.interactions.borrow_mut().insert(tab_id, interaction);
         }
+        tab_id
     }
 
-    pub(in crate::ui::shell) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
         cx.emit(command);
     }
 
@@ -5993,20 +5806,6 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn session_progress_layout_state_is_independent_per_tab() {
-        let mut first = SessionSftpProgressLayoutState::default();
-        let second = SessionSftpProgressLayoutState::default();
-
-        assert!(first.set_visible(true));
-        first.set_flex(0.42);
-
-        assert!(first.visible());
-        assert_eq!(first.flex(), 0.42);
-        assert!(!second.visible());
-        assert_eq!(second.flex(), SESSION_SFTP_PROGRESS_DEFAULT_FLEX);
     }
 
     #[test]

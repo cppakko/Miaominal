@@ -199,14 +199,16 @@ mod secret_visibility;
 mod sync;
 mod web_search;
 
-pub(in crate::ui::shell) use ai_providers::AiProviderSaveDraft;
+pub(in crate::ui) use ai_providers::AiProviderSaveDraft;
+pub(in crate::ui) use local_vault::LocalVaultActionRequest;
 pub(in crate::ui::shell) use local_vault::{
-    LocalVaultActionRequest, LocalVaultChangePassphraseResult, LocalVaultEnableResult,
-    LocalVaultOperationResult, LocalVaultUnlockResult,
+    LocalVaultChangePassphraseResult, LocalVaultEnableResult, LocalVaultOperationResult,
+    LocalVaultUnlockResult,
 };
-pub(in crate::ui::shell) use proxies::ProxySaveDraft;
-pub(in crate::ui::shell) use sync::{LocalVaultSyncSecretInputs, SyncProviderConfigSaveDraft};
-pub(in crate::ui::shell) use web_search::WebSearchSaveDraft;
+pub(in crate::ui) use proxies::ProxySaveDraft;
+pub(in crate::ui::shell) use sync::LocalVaultSyncSecretInputs;
+pub(in crate::ui) use sync::SyncProviderConfigSaveDraft;
+pub(in crate::ui) use web_search::WebSearchSaveDraft;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum OnboardingStep {

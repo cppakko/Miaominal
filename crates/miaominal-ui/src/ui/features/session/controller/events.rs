@@ -9,7 +9,8 @@ use super::{
     SessionEventTabRemoval, SessionFailureStatus, SessionNotificationRequest,
     SessionNotificationTone, SessionPurpose, SessionTabOwnerRoute,
 };
-use crate::ui::{i18n, shell::TabId};
+use crate::ui::contracts::workspace::TabId;
+use crate::ui::i18n;
 
 const TERMINAL_OUTPUT_BATCH_MAX_CHUNKS: usize = 64;
 const TERMINAL_OUTPUT_BATCH_MAX_BYTES: usize = 256 * 1024;
@@ -37,7 +38,7 @@ fn coalesce_session_output(
 }
 
 impl SessionController {
-    pub(in crate::ui::shell) fn spawn_session_event_loop(
+    pub(in crate::ui) fn spawn_session_event_loop(
         &self,
         tab_id: TabId,
         events: SessionEventReceiver,
@@ -176,7 +177,7 @@ impl SessionTabOwnerRoute {
 }
 
 impl SessionController {
-    pub(in crate::ui::shell) fn apply_session_event(
+    pub(in crate::ui) fn apply_session_event(
         &self,
         tab_id: TabId,
         event: SessionEvent,
@@ -584,8 +585,9 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::shell::controllers::SessionSftpProgressLayoutState;
-    use crate::ui::shell::{SessionMonitoringState, SessionTabState, TerminalState};
+    use crate::ui::features::session::SessionSftpProgressLayoutState;
+    use crate::ui::features::session::{SessionMonitoringState, SessionTabState};
+    use miaominal_terminal::TerminalState;
     use tokio::sync::mpsc;
 
     fn connection_test_controller() -> (SessionController, TabId) {

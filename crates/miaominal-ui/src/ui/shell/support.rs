@@ -30,7 +30,3 @@ pub(in crate::ui::shell) use terminal::{
     TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase, classify_terminal_key,
     terminal_cell_width, terminal_key_stroke, terminal_line_height,
 };
-pub(in crate::ui::shell) use terminal_element::{
-    TerminalScrollbarMetrics, render_terminal_canvas_for_pane, terminal_scrollbar_metrics,
-    terminal_scrollbar_offset_for_pointer,
-};

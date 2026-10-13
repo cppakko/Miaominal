@@ -3,10 +3,9 @@ use gpui_kit::Context;
 use super::{
     AppCommand, SessionConnectionState, SessionController, SessionPurpose, SessionTabOwnerRoute,
 };
-use crate::ui::{
-    i18n,
-    shell::{SessionProfile, TabId},
-};
+use crate::ui::contracts::workspace::TabId;
+use crate::ui::i18n;
+use miaominal_core::profile::SessionProfile;
 
 impl SessionController {
     fn connection_test_tab_ids(&self) -> Vec<TabId> {
@@ -19,7 +18,7 @@ impl SessionController {
             .collect()
     }
 
-    pub(in crate::ui::shell) fn connection_test_in_progress(&self) -> bool {
+    pub(in crate::ui) fn connection_test_in_progress(&self) -> bool {
         !self.connection_test_tab_ids().is_empty()
     }
 
@@ -32,10 +31,7 @@ impl SessionController {
         tab_ids
     }
 
-    pub(in crate::ui::shell) fn cancel_profile_connection_test(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub(in crate::ui) fn cancel_profile_connection_test(&self, cx: &mut Context<Self>) -> bool {
         let tab_ids = self.retire_connection_tests();
         if tab_ids.is_empty() {
             return false;
@@ -51,14 +47,11 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn tab_purpose(&self, tab_id: TabId) -> Option<SessionPurpose> {
+    pub(in crate::ui) fn tab_purpose(&self, tab_id: TabId) -> Option<SessionPurpose> {
         self.tab(tab_id).map(|session| session.purpose)
     }
 
-    pub(in crate::ui::shell) fn resolved_profile_for_tab(
-        &self,
-        tab_id: TabId,
-    ) -> Option<SessionProfile> {
+    pub(in crate::ui) fn resolved_profile_for_tab(&self, tab_id: TabId) -> Option<SessionProfile> {
         let session = self.tab(tab_id)?;
         let profile_id = session.profile_id.clone();
         let pending_profile = session.pending_profile.clone();
@@ -72,10 +65,7 @@ impl SessionController {
             .or(pending_profile)
     }
 
-    pub(in crate::ui::shell) fn reopen_profile_for_tab(
-        &self,
-        tab_id: TabId,
-    ) -> Option<SessionProfile> {
+    pub(in crate::ui) fn reopen_profile_for_tab(&self, tab_id: TabId) -> Option<SessionProfile> {
         let session = self.tab(tab_id)?;
         let profile_id = session.profile_id.clone();
         let pending_profile = session.pending_profile.clone();
@@ -90,7 +80,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn clear_tab_activity(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn clear_tab_activity(&self, tab_id: TabId) -> bool {
         let Some(mut session) = self.tab_mut(tab_id) else {
             return false;
         };
@@ -99,15 +89,17 @@ impl SessionController {
         changed
     }
 
-    pub(in crate::ui::shell) fn retire_tab_resources(
+    pub(in crate::ui) fn retire_tab_resources(
         &self,
         tab_id: TabId,
     ) -> Option<(SessionPurpose, String)> {
-        let session = self.tab(tab_id)?;
+        let mut session = self.tab_mut(tab_id)?;
         let purpose = session.purpose;
         let profile_id = session.profile_id.clone();
-        let commands = session.commands.clone();
+        let commands = session.commands.take();
+        let reconnect = session.reconnect_task.take();
         drop(session);
+        drop(reconnect);
 
         self.terminal_port().close_session(tab_id);
         if should_close_commands_when_retiring(purpose)
@@ -119,7 +111,7 @@ impl SessionController {
         Some((purpose, profile_id))
     }
 
-    pub(in crate::ui::shell) fn schedule_reconnect(
+    pub(in crate::ui) fn schedule_reconnect(
         &mut self,
         tab_id: TabId,
         error: String,

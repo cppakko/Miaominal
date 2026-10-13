@@ -28,8 +28,6 @@ mod workspace_monitor;
 #[path = "layout/workspace_panes.rs"]
 mod workspace_panes;
 pub(in crate::ui::shell) use workspace_panes::WorkspacePanesAppViewExt;
-#[path = "layout/workspace_session_status.rs"]
-mod workspace_session_status;
 #[path = "layout/workspace_side_panel.rs"]
 mod workspace_side_panel;
 #[path = "layout/workspace_terminal_menu.rs"]

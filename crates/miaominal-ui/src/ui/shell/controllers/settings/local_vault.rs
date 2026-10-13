@@ -12,7 +12,7 @@ fn local_vault_passphrase_too_long(passphrase: &str) -> bool {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum LocalVaultActionRequest {
+pub(in crate::ui) enum LocalVaultActionRequest {
     Enable {
         passphrase: ProtectedPassphrase,
     },

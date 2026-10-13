@@ -1,10 +1,21 @@
+use crate::ui::assets::AppIcon;
+use crate::ui::components::animation::{BasicDialogConfig, render_basic_dialog_with_config};
+use crate::ui::components::icon_button;
+use crate::ui::components::tokens::color_with_alpha;
+use crate::ui::components::{
+    BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, basic_dialog_action_button,
+};
 use crate::ui::components::{fab_icon_button, md3_spinner};
+use crate::ui::contracts::{AppCommand, SessionTabDescriptor, TabId, TabOpenRequest};
+use crate::ui::features::session::{
+    SessionConnectionState, SessionController, SessionFailureStatus, SessionPurpose,
+    SessionTabState,
+};
 use crate::ui::i18n;
-use crate::ui::shell::SessionFailureStatus;
-use crate::ui::shell::controllers::TabOpenRequest;
 use gpui_kit::component::Disableable;
-
-use super::super::*;
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::{Context, IntoElement, SharedString, Styled, div, prelude::*, px, rgb};
+use miaominal_core::profile::SessionProfile;
 
 struct SessionFailureView {
     title: String,
@@ -16,8 +27,8 @@ struct SessionFailureView {
     tab_id: TabId,
 }
 
-pub(in crate::ui::shell::layout) fn session_summary(
-    tab: &TabState,
+pub(crate) fn session_summary(
+    tab: &SessionTabDescriptor,
     session: &SessionTabState,
     sessions: &[SessionProfile],
 ) -> String {
@@ -26,19 +37,19 @@ pub(in crate::ui::shell::layout) fn session_summary(
         .find(|profile| profile.id == session.profile_id)
     {
         if profile.is_local() {
-            return tab.title.clone();
+            return tab.title().to_owned();
         }
         return format!("{}@{}:{}", profile.username, profile.host, profile.port);
     }
 
     if let Some(profile) = session.pending_profile.as_ref() {
         if profile.is_local() {
-            return tab.title.clone();
+            return tab.title().to_owned();
         }
         return format!("{}@{}:{}", profile.username, profile.host, profile.port);
     }
 
-    tab.title.clone()
+    tab.title().to_owned()
 }
 
 impl SessionController {
@@ -52,7 +63,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn reconnect_session_tab(
+    pub(crate) fn reconnect_session_tab(
         &mut self,
         tab_id: TabId,
         profile_id: &str,
@@ -83,14 +94,14 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell::layout) fn render_session_placeholder(
+    pub(crate) fn render_session_placeholder(
         &self,
-        tab: &TabState,
+        tab: &SessionTabDescriptor,
         rounded: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::AnyElement> {
         let (summary, profile_id, purpose, connection_state) = {
-            let session = self.tab(tab.id)?;
+            let session = self.tab(tab.id())?;
             if !session.uses_blocking_placeholder() {
                 return None;
             }
@@ -109,7 +120,7 @@ impl SessionController {
                 } else {
                     i18n::string("session.workspace.connecting_to_host")
                 },
-                tab.status.clone(),
+                tab.status().to_owned(),
                 summary,
                 rounded,
             )),
@@ -126,7 +137,7 @@ impl SessionController {
                         failure_status: status,
                         profile_id,
                         purpose,
-                        tab_id: tab.id,
+                        tab_id: tab.id(),
                     },
                     rounded,
                     cx,
@@ -134,24 +145,34 @@ impl SessionController {
             }
             SessionConnectionState::Reconnecting { error, attempt } => {
                 Some(self.render_session_reconnecting_surface(
-                    summary, error, attempt, tab.id, rounded, cx,
+                    summary,
+                    error,
+                    attempt,
+                    tab.id(),
+                    rounded,
+                    cx,
                 ))
             }
             SessionConnectionState::Ready => None,
             SessionConnectionState::Exited { .. } => None,
             SessionConnectionState::Disconnected => Some(self.render_session_disconnected_surface(
-                summary, profile_id, purpose, tab.id, rounded, cx,
+                summary,
+                profile_id,
+                purpose,
+                tab.id(),
+                rounded,
+                cx,
             )),
         }
     }
 
-    pub(in crate::ui::shell::layout) fn render_session_history_banner(
+    pub(crate) fn render_session_history_banner(
         &self,
-        tab: &TabState,
+        tab: &SessionTabDescriptor,
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::AnyElement> {
         let (summary, popup_hidden, profile_id, purpose, connection_state) = {
-            let session = self.tab(tab.id)?;
+            let session = self.tab(tab.id())?;
             if !session.preserves_terminal_history() {
                 return None;
             }
@@ -166,7 +187,7 @@ impl SessionController {
 
         match connection_state {
             SessionConnectionState::Failed { error, status } => Some(if popup_hidden {
-                self.render_session_reconnect_fab(profile_id, true, tab.id, cx)
+                self.render_session_reconnect_fab(profile_id, true, tab.id(), cx)
             } else {
                 self.render_session_failure_banner(
                     SessionFailureView {
@@ -176,17 +197,21 @@ impl SessionController {
                         failure_status: status,
                         profile_id,
                         purpose,
-                        tab_id: tab.id,
+                        tab_id: tab.id(),
                     },
                     cx,
                 )
             }),
             SessionConnectionState::Exited { .. } | SessionConnectionState::Disconnected => {
                 Some(if popup_hidden {
-                    self.render_session_reconnect_fab(profile_id, false, tab.id, cx)
+                    self.render_session_reconnect_fab(profile_id, false, tab.id(), cx)
                 } else {
                     self.render_session_disconnected_banner(
-                        summary, profile_id, purpose, tab.id, cx,
+                        summary,
+                        profile_id,
+                        purpose,
+                        tab.id(),
+                        cx,
                     )
                 })
             }
@@ -696,7 +721,7 @@ impl SessionController {
 
         render_basic_dialog_with_config(
             format!("session-disconnected-{tab_id}"),
-            crate::ui::shell::support::BasicDialogConfig {
+            BasicDialogConfig {
                 title: i18n::string("session.workspace.session_closed"),
                 supporting_text,
                 body: Some(body),
@@ -824,7 +849,7 @@ impl SessionController {
 
         render_basic_dialog_with_config(
             format!("session-failure-{tab_id}"),
-            crate::ui::shell::support::BasicDialogConfig {
+            BasicDialogConfig {
                 title,
                 supporting_text,
                 body: Some(body),

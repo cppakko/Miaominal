@@ -14,228 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::ui::shell) struct PaneId(pub usize);
-
-impl PaneId {
-    pub fn raw(self) -> usize {
-        self.0
-    }
-}
-
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(in crate::ui::shell) struct PaneSplitDragMarker {
-    pub path: Vec<usize>,
-    pub child_index: usize,
-    pub axis: SplitAxis,
-}
-
-impl gpui_kit::Render for PaneSplitDragMarker {
-    fn render(
-        &mut self,
-        _window: &mut gpui_kit::Window,
-        _cx: &mut gpui_kit::Context<Self>,
-    ) -> impl gpui_kit::IntoElement {
-        use gpui_kit::Styled;
-        // Invisible 1x1 ghost so the cursor styling drives the visual feedback.
-        gpui_kit::div().size(gpui_kit::px(1.0))
-    }
-}
-
-#[derive(Clone)]
-pub(in crate::ui::shell) struct PaneSplitDragState {
-    pub path: Vec<usize>,
-    pub child_index: usize,
-    pub axis: SplitAxis,
-    pub initial_pointer: f32,
-    pub initial_flex_a: f32,
-    pub initial_flex_b: f32,
-    pub container_size: f32,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum PaneSplitAnimationKind {
-    Opening,
-    Closing,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct PaneCloseAnimation {
-    pub removed_pane_id: PaneId,
-    pub hidden_tab_id: Option<TabId>,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct PaneSplitAnimation {
-    pub kind: PaneSplitAnimationKind,
-    pub path: Vec<usize>,
-    pub child_index: usize,
-    pub new_child_index: usize,
-    pub axis: SplitAxis,
-    pub from_flex_a: f32,
-    pub from_flex_b: f32,
-    pub to_flex_a: f32,
-    pub to_flex_b: f32,
-    pub started_at: Instant,
-    pub duration: Duration,
-    pub pending_close: Option<PaneCloseAnimation>,
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::ui::shell) struct TerminalScrollbarDrag {
-    pub thumb_grab_offset: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) enum TerminalMouseGesture {
-    TraditionalSelection,
-    FreeTypePendingCursor {
-        origin: Point<Pixels>,
-        target: TerminalFreeTypeTarget,
-    },
-    FreeTypeSelection,
-    FreeTypePendingDrop {
-        origin: Point<Pixels>,
-    },
-    FreeTypeDrop {
-        target: Option<TerminalFreeTypeTarget>,
-    },
-}
-
-impl TerminalMouseGesture {
-    pub(in crate::ui::shell) fn is_free_type(self) -> bool {
-        !matches!(self, Self::TraditionalSelection)
-    }
-
-    pub(in crate::ui::shell) fn drop_target(self) -> Option<TerminalFreeTypeTarget> {
-        match self {
-            Self::FreeTypeDrop { target } => target,
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TerminalPaneFreeTypeDropTarget {
-    pub pane_id: PaneId,
-    pub target: TerminalFreeTypeTarget,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TerminalHoveredLink {
-    pub tab_id: TabId,
-    pub line: usize,
-    pub start_column: usize,
-    pub end_column: usize,
-    pub uri: Arc<str>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TerminalLinkQuery {
-    pub tab_id: TabId,
-    pub generation: u64,
-    pub line: usize,
-    pub column: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum PaneTabDropZone {
-    Center,
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct PaneTabDropTarget {
-    pub pane_id: PaneId,
-    pub zone: PaneTabDropZone,
-}
-
-pub(in crate::ui::shell) struct PaneViewState {
-    pub terminal_focus: FocusHandle,
-    pub terminal_bounds: Option<Bounds<Pixels>>,
-    pub terminal_cell_width: f32,
-    pub terminal_line_height: f32,
-    pub terminal_ime_anchor: Option<(TabId, Bounds<Pixels>)>,
-    pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
-    pub terminal_suppressed_key_releases: HashSet<String>,
-    pub terminal_mouse_reporting_active: bool,
-    pub last_reported_mouse_cell: Option<(usize, usize)>,
-    pub terminal_pointer_position: Option<Point<Pixels>>,
-    pub terminal_link_query: Option<TerminalLinkQuery>,
-    pub terminal_hovered_link: Option<TerminalHoveredLink>,
-    pub terminal_link_open_modifier: bool,
-    pub terminal_scrollbar_drag: Option<TerminalScrollbarDrag>,
-    pub terminal_scrollbar_last_interaction_at: Option<Instant>,
-}
-
-impl PaneViewState {
-    #[allow(dead_code)]
-    pub fn new(focus: FocusHandle) -> Self {
-        Self {
-            terminal_focus: focus,
-            terminal_bounds: None,
-            terminal_cell_width: terminal_cell_width_default(),
-            terminal_line_height: terminal_line_height_default(),
-            terminal_ime_anchor: None,
-            terminal_mouse_gesture: None,
-            terminal_suppressed_key_releases: HashSet::new(),
-            terminal_mouse_reporting_active: false,
-            last_reported_mouse_cell: None,
-            terminal_pointer_position: None,
-            terminal_link_query: None,
-            terminal_hovered_link: None,
-            terminal_link_open_modifier: false,
-            terminal_scrollbar_drag: None,
-            terminal_scrollbar_last_interaction_at: None,
-        }
-    }
-}
-
-pub(in crate::ui::shell) struct ParkedPane {
-    pub active_tab: Option<TabId>,
-    pub terminal_focus: FocusHandle,
-    pub terminal_bounds: Option<Bounds<Pixels>>,
-    pub terminal_cell_width: f32,
-    pub terminal_line_height: f32,
-    pub terminal_mouse_gesture: Option<TerminalMouseGesture>,
-    pub terminal_suppressed_key_releases: HashSet<String>,
-    pub terminal_mouse_reporting_active: bool,
-    pub last_reported_mouse_cell: Option<(usize, usize)>,
-    pub terminal_pointer_position: Option<Point<Pixels>>,
-    pub terminal_link_query: Option<TerminalLinkQuery>,
-    pub terminal_hovered_link: Option<TerminalHoveredLink>,
-    pub terminal_link_open_modifier: bool,
-    pub terminal_scrollbar_drag: Option<TerminalScrollbarDrag>,
-    pub terminal_scrollbar_last_interaction_at: Option<Instant>,
-}
-
-impl ParkedPane {
-    #[allow(dead_code)]
-    pub fn empty(focus: FocusHandle) -> Self {
-        Self {
-            active_tab: None,
-            terminal_focus: focus,
-            terminal_bounds: None,
-            terminal_cell_width: terminal_cell_width_default(),
-            terminal_line_height: terminal_line_height_default(),
-            terminal_mouse_gesture: None,
-            terminal_suppressed_key_releases: HashSet::new(),
-            terminal_mouse_reporting_active: false,
-            last_reported_mouse_cell: None,
-            terminal_pointer_position: None,
-            terminal_link_query: None,
-            terminal_hovered_link: None,
-            terminal_link_open_modifier: false,
-            terminal_scrollbar_drag: None,
-            terminal_scrollbar_last_interaction_at: None,
-        }
-    }
-}
-
+pub(in crate::ui::shell) use crate::ui::contracts::workspace::PaneId;
+use crate::ui::features::session::{PaneViewState, TerminalPaneFreeTypeDropTarget};
+pub(in crate::ui::shell) use crate::ui::workspace::panes::*;
 impl AppView {
     pub(in crate::ui::shell) fn active_pane_id(&self) -> PaneId {
         self.workspace.workspace.active_pane_id
@@ -741,9 +522,10 @@ impl AppView {
         };
         self.workspace.parked_workspaces.remove(&source_tab_id);
         let moved_title = moved_tab.title.clone();
-        if let Some(mut session) = self.session_tab_mut(source_tab_id, cx) {
-            session.has_activity = false;
-        }
+        self.controllers
+            .session
+            .read(cx)
+            .clear_tab_activity(source_tab_id);
 
         let moved_index = self.workspace.tabs.len();
         self.workspace.tabs.push(moved_tab);
@@ -846,9 +628,10 @@ impl AppView {
             TabWorkspaceState::new(Some(swap.promoted_tab_id), cx.focus_handle()),
         );
         self.workspace.parked_workspaces.remove(&swap.moved_tab_id);
-        if let Some(mut session) = self.session_tab_mut(swap.moved_tab_id, cx) {
-            session.has_activity = false;
-        }
+        self.controllers
+            .session
+            .read(cx)
+            .clear_tab_activity(swap.moved_tab_id);
 
         self.set_pane_active_tab(target_pane_id, Some(swap.moved_order_index));
 

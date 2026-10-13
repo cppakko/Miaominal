@@ -49,10 +49,13 @@ mod bootstrap_loaders;
 mod bootstrap_subscriptions;
 mod bridge_security_notification;
 mod containers;
-mod controllers;
-// Phase 5: remove this logical Shell seam after shared UI contracts leave Shell.
+pub(in crate::ui) mod controllers;
+#[path = "features/forwarding.rs"]
+mod forwarding;
 #[path = "features/hosts.rs"]
 mod hosts;
+#[path = "features/snippets.rs"]
+mod snippets;
 #[path = "features/trusted_hosts.rs"]
 mod trusted_hosts;
 use hosts::{HostsController, HostsControllerArgs};
@@ -69,13 +72,13 @@ mod session_agent;
 mod session_agent_stream_batch;
 mod session_agent_view;
 mod settings_labels;
-mod sftp_browser;
-mod state;
+pub(in crate::ui) mod sftp_browser;
+pub(in crate::ui) mod state;
 mod support;
 mod system_file_icons;
 mod tab_transfer;
 mod terminal;
-mod workspace;
+use crate::ui::workspace::model as workspace;
 
 use app_view::ShellUiState;
 pub use app_view::{AppView, AppWindowRole};
@@ -157,10 +160,8 @@ pub(crate) use notification_center::{
     show_pending_app_notifications,
 };
 pub(in crate::ui::shell) use pages::SettingsDestination;
+pub(in crate::ui::shell) use panes::PaneId;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
-pub(in crate::ui::shell) use panes::{
-    PaneId, TerminalHoveredLink, TerminalLinkQuery, TerminalMouseGesture, TerminalScrollbarDrag,
-};
 pub(in crate::ui::shell) use settings_labels::*;
 pub(in crate::ui::shell) use sftp_browser::{
     SftpBrowserSelectionModifiers, SftpBrowserSide, SftpBrowserTableDelegate, SftpBrowserTableRow,
@@ -181,17 +182,21 @@ use workspace::{
     restored_page_editor_sidebar, restored_sidebar_section,
 };
 
-pub(in crate::ui::shell) use support::{GroupAccentPalette, group_accent_palette};
+pub(in crate::ui::shell) use crate::ui::features::session::{
+    TerminalHoveredLink, TerminalLinkQuery, TerminalMouseGesture, TerminalScrollbarDrag,
+    TerminalScrollbarMetrics, render_terminal_canvas_for_pane, terminal_cell_width,
+    terminal_ime_cursor_bounds, terminal_line_height, terminal_scrollbar_metrics,
+    terminal_scrollbar_offset_for_pointer,
+};
+use crate::ui::workspace::transfer::WorkspaceTransferExt;
+use support::{GroupAccentPalette, group_accent_palette};
 use support::{
     OVERLAY_ENTER_DURATION, TerminalKeyAction, TerminalKeyEvent, TerminalKeyPhase,
-    TerminalScrollbarMetrics, classify_terminal_key, container_transition_animation,
-    list_enter_animation, localized_secret_placeholder, new_input_state, overlay_enter_animation,
-    render_basic_dialog, render_basic_dialog_with_config, render_bottom_popup,
-    render_rounded_prompt_overlay, render_terminal_canvas_for_pane,
+    classify_terminal_key, container_transition_animation, list_enter_animation,
+    localized_secret_placeholder, new_input_state, overlay_enter_animation, render_basic_dialog,
+    render_basic_dialog_with_config, render_bottom_popup, render_rounded_prompt_overlay,
     set_code_editor_input_placeholder, set_editor_value, set_input_placeholder, set_input_value,
-    set_textarea_placeholder, set_textarea_value, short_feedback_animation, terminal_cell_width,
-    terminal_key_stroke, terminal_line_height, terminal_scrollbar_metrics,
-    terminal_scrollbar_offset_for_pointer,
+    set_textarea_placeholder, set_textarea_value, short_feedback_animation, terminal_key_stroke,
 };
 
 pub(in crate::ui::shell) fn color_with_alpha(color: u32, alpha: u8) -> gpui_kit::Rgba {
@@ -231,61 +236,8 @@ pub(in crate::ui::shell) enum ProfileViewMode {
     List,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::ui::shell) enum PrimaryViewKind {
-    Sidebar(SidebarSection),
-    Terminal(TabId),
-    Sftp(TabId),
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::ui::shell) struct PrimaryViewTransition {
-    pub(in crate::ui::shell) from: PrimaryViewKind,
-    pub(in crate::ui::shell) to: PrimaryViewKind,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum TopbarTabVisualKind {
-    Hosts,
-    Session,
-    Sftp,
-    LocalTerminal,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct TopbarTabSnapshot {
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) visible_index: usize,
-    pub(in crate::ui::shell) title: String,
-    pub(in crate::ui::shell) kind: TopbarTabVisualKind,
-    pub(in crate::ui::shell) status_color: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct TopbarTabEnterTransition {
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct TopbarTabExitTransition {
-    pub(in crate::ui::shell) snapshot: TopbarTabSnapshot,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct TopbarActiveTabTransition {
-    pub(in crate::ui::shell) from_tab_id: Option<TabId>,
-    pub(in crate::ui::shell) to_tab_id: Option<TabId>,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
 use crate::ui::contracts::navigation::PageEditorSidebarKind;
+use crate::ui::workspace::presentation::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) enum PageEditorSidebarTransitionPhase {
@@ -301,59 +253,12 @@ pub(in crate::ui::shell) struct PageEditorSidebarTransition {
     pub(in crate::ui::shell) duration: Duration,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum LocalVaultStatus {
-    Disabled,
-    Locked,
-    Unlocked,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum LocalVaultPassphrasePopupMode {
-    PrimaryAction,
-    ChangePassphrase,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SecretRevealTarget {
-    SyncGithubToken,
-    SyncWebdavPassword,
-    HostPassword,
-    SyncPassphrase,
-    SyncPassphraseConfirmation,
-    LocalVaultCurrentPassphrase,
-    LocalVaultPassphrase,
-    LocalVaultPassphraseConfirmation,
-    AiProviderApiKey(String),
-    WebSearchApiKey,
-}
-
-impl SecretRevealTarget {
-    pub(in crate::ui::shell) fn uses_stored_secret(&self) -> bool {
-        matches!(
-            self,
-            Self::SyncGithubToken
-                | Self::SyncWebdavPassword
-                | Self::HostPassword
-                | Self::AiProviderApiKey(_)
-                | Self::WebSearchApiKey
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum WorkspaceSidePanelTransitionPhase {
-    Entering,
-    Exiting,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct WorkspaceSidePanelTransition {
-    pub(in crate::ui::shell) phase: WorkspaceSidePanelTransitionPhase,
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-}
-
+use crate::ui::components::animation::{
+    WorkspaceSidePanelTransition, WorkspaceSidePanelTransitionPhase,
+};
+use crate::ui::contracts::security::{
+    LocalVaultPassphrasePopupMode, LocalVaultStatus, SecretRevealTarget,
+};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::ui::shell) struct ForwardProfileSelectItem {
     id: String,
@@ -553,12 +458,8 @@ impl SelectItem for ManagedKeySelectItem {
 use trusted_hosts::{PendingKnownHostDeleteState, TrustedHostFilter, TrustedHostsController};
 
 // Phase 5: remove these logical Shell seams with the shared presentation imports.
-#[path = "features/snippets.rs"]
-mod snippets;
 use snippets::{PendingSnippetDeleteState, SnippetsController};
 
-#[path = "features/forwarding.rs"]
-mod forwarding;
 use forwarding::{
     ForwardingController, ForwardingControllerArgs, PendingPortForwardRuleDeleteState,
 };

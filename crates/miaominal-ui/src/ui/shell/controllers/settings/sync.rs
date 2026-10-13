@@ -23,7 +23,7 @@ enum ManualSyncGate {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) enum SyncProviderConfigSaveDraft {
+pub(in crate::ui) enum SyncProviderConfigSaveDraft {
     GithubGist {
         token: String,
         gist_id: Option<String>,

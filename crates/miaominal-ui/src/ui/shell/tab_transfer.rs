@@ -1,81 +1,11 @@
+//! Physical detached-window operations and feature-port wiring. Workspace owns
+//! resource extraction, installation, rollback and source completion.
+use super::*;
+use crate::ui::workspace::transaction::{TransferPhase, TransferTransaction};
+use crate::ui::workspace::transfer::{WorkspaceTransferExt, WorkspaceTransferHost};
 use std::{cell::RefCell, rc::Rc};
 
-use gpui_kit::{Context, Window};
-
-use super::*;
-use crate::ui::i18n;
-
-enum DetachedTabPayload {
-    Session(Box<TransferredSessionTab>),
-    Sftp(Box<TransferredSftpTab>),
-}
-
-struct DetachedTabEntry {
-    original_index: usize,
-    tab: TabState,
-    payload: DetachedTabPayload,
-}
-
-struct DetachedSourceState {
-    root_id: TabId,
-    root_index: usize,
-    active_topbar_before: Option<TabId>,
-    affected_monitor_profiles: Vec<String>,
-}
-
-struct DetachedTabBundle {
-    source: DetachedSourceState,
-    entries: Vec<DetachedTabEntry>,
-    workspace: Option<TabWorkspaceState>,
-    session_ui: Option<TransferredSessionWorkspaceUi>,
-    sftp_ui: Option<TransferredSftpWindowUi>,
-}
-
-impl DetachedTabBundle {
-    fn root_id(&self) -> TabId {
-        self.source.root_id
-    }
-
-    fn max_tab_id(&self) -> TabId {
-        self.entries
-            .iter()
-            .map(|entry| entry.tab.id)
-            .max()
-            .unwrap_or(self.source.root_id)
-    }
-}
-
-fn tab_kind_can_open_in_new_window(
-    kind: TabKindTag,
-    placement: TabPlacement,
-    session_purpose: Option<SessionPurpose>,
-) -> bool {
-    if placement != TabPlacement::TopLevel {
-        return false;
-    }
-    match kind {
-        TabKindTag::Sftp => true,
-        TabKindTag::Session => session_purpose == Some(SessionPurpose::Terminal),
-        TabKindTag::LocalTerminal => session_purpose == Some(SessionPurpose::Terminal),
-        TabKindTag::Hosts => false,
-    }
-}
-
 impl AppView {
-    pub(in crate::ui::shell) fn can_open_tab_in_new_window(&self, tab_id: TabId, cx: &App) -> bool {
-        let Some(tab) = self.workspace.tabs.get(tab_id) else {
-            return false;
-        };
-        let session_purpose = tab
-            .is_session()
-            .then(|| self.controllers.session.read(cx).tab_purpose(tab_id))
-            .flatten();
-        if !tab_kind_can_open_in_new_window(tab.kind, tab.placement, session_purpose) {
-            return false;
-        }
-        !tab.is_sftp() || self.sftp_tab(tab_id, cx).is_some()
-    }
-
     pub(in crate::ui::shell) fn open_tab_in_new_window(
         &mut self,
         tab_id: TabId,
@@ -85,538 +15,267 @@ impl AppView {
         if !self.can_open_tab_in_new_window(tab_id, cx) {
             return;
         }
-
         let target = match crate::ui::windowing::open_detached_window(cx) {
             Ok(target) => target,
             Err(error) => {
-                log::error!("failed to open detached tab window: {error:?}");
-                self.shell.status_message = i18n::string_args(
-                    "chrome.messages.open_in_new_window_failed",
-                    &[("error", &error.to_string())],
-                );
-                cx.notify();
+                self.report_transfer_failure(error.to_string(), cx);
                 return;
             }
         };
-
-        let bundle = match self.extract_detached_tab_bundle(tab_id, window, cx) {
-            Some(bundle) => bundle,
-            None => {
-                let (target_window, _) = target.into_parts();
-                let _ = target_window.update(cx, |_, window, _| window.remove_window());
-                return;
-            }
+        let Some(bundle) = self.extract_detached_tab_bundle(tab_id, window, cx) else {
+            let (target_window, _) = target.into_parts();
+            let _ = target_window.update(cx, |_, window, _| window.remove_window());
+            return;
         };
-        let source = DetachedSourceState {
-            root_id: bundle.source.root_id,
-            root_index: bundle.source.root_index,
-            active_topbar_before: bundle.source.active_topbar_before,
-            affected_monitor_profiles: bundle.source.affected_monitor_profiles.clone(),
-        };
-        let bundle = Rc::new(RefCell::new(Some(bundle)));
-        let target_bundle = bundle.clone();
+        let source = bundle.source();
+        let transaction = Rc::new(RefCell::new(TransferTransaction::prepare(bundle)));
+        let target_transaction = transaction.clone();
         let (target_window, target_view) = target.into_parts();
-        let install_result = target_window.update(cx, move |_, target_window, cx| {
+        // WindowHandle::update rejects a closed/type-changed window before
+        // invoking this closure. Destination preflight also returns the complete
+        // bundle, so every failed install still has one source-owned payload.
+        let result = target_window.update(cx, move |_, target_window, cx| {
             target_view.update(cx, |target, cx| {
-                let bundle = target_bundle
-                    .borrow_mut()
-                    .take()
-                    .expect("detached tab bundle is installed exactly once");
-                target.install_detached_tab_bundle(bundle, target_window, cx);
-            });
+                target_transaction.borrow_mut().install(|bundle| {
+                    target
+                        .install_detached_tab_bundle(bundle, target_window, cx)
+                        .map_err(|bundle| {
+                            (
+                                "destination window contains live resources".to_string(),
+                                bundle,
+                            )
+                        })
+                })
+            })?;
             target_window.activate_window();
+            Ok::<(), String>(())
         });
-
-        let install_error = install_result.err().map(|error| error.to_string());
-        if let Some(error) = install_error {
-            log::error!("failed to install detached tab window: {error}");
-            if let Some(bundle) = bundle.borrow_mut().take() {
+        let error = match result {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error),
+            Err(error) => Some(error.to_string()),
+        };
+        if let Some(error) = error {
+            if let Some(bundle) = transaction.borrow_mut().rollback() {
                 self.restore_detached_tab_bundle(bundle, window, cx);
             }
-            self.shell.status_message = i18n::string_args(
-                "chrome.messages.open_in_new_window_failed",
-                &[("error", &error)],
-            );
-            let _ = target_window.update(cx, |_, target_window, _| {
-                target_window.remove_window();
-            });
-            cx.notify();
+            self.report_transfer_failure(error, cx);
+            let _ = target_window.update(cx, |_, target_window, _| target_window.remove_window());
             return;
         }
-
+        transaction.borrow_mut().commit();
+        debug_assert_eq!(transaction.borrow().phase(), TransferPhase::Committed);
         self.finish_detached_tab_source(source, window, cx);
     }
 
-    fn extract_detached_tab_bundle(
-        &mut self,
-        root_id: TabId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<DetachedTabBundle> {
-        let root_index = self.workspace.tabs.index_of(root_id)?;
-        if !self.can_open_tab_in_new_window(root_id, cx) {
-            return None;
-        }
-        let active_topbar_before = self.workspace.active_topbar_tab;
-        let owned_indices = self.owned_tab_indices_for_topbar(root_index);
+    fn report_transfer_failure(&mut self, error: String, cx: &mut Context<Self>) {
+        log::error!("failed to install detached tab window: {error}");
+        self.shell.status_message = i18n::string_args(
+            "chrome.messages.open_in_new_window_failed",
+            &[("error", &error)],
+        );
+        cx.notify();
+    }
+}
 
-        for index in &owned_indices {
-            let tab = self.workspace.tabs.at(*index)?;
-            if tab.is_session() && self.controllers.session.read(cx).tab(tab.id).is_none() {
-                return None;
-            }
-            if tab.is_sftp() && self.controllers.sftp.read(cx).tab(tab.id).is_none() {
-                return None;
-            }
-        }
-
-        let root_is_session = self
-            .workspace
-            .tabs
-            .get(root_id)
-            .is_some_and(|tab| tab.is_session());
-        let root_is_sftp = self
-            .workspace
-            .tabs
-            .get(root_id)
-            .is_some_and(|tab| tab.is_sftp());
-        let mut affected_monitor_profiles = owned_indices
-            .iter()
-            .filter_map(|index| {
-                let tab_id = self.workspace.tabs.id_at(*index)?;
-                let session = self.controllers.session.read(cx).tab(tab_id)?;
-                (session.purpose == SessionPurpose::Terminal).then(|| session.profile_id.clone())
-            })
-            .collect::<Vec<_>>();
-        affected_monitor_profiles.sort();
-        affected_monitor_profiles.dedup();
-        let active_root = active_topbar_before == Some(root_id);
-        let visible_sftp_tab_id = active_root
-            .then(|| {
-                if root_is_sftp {
-                    Some(root_id)
-                } else if root_is_session
-                    && self.controllers.session.read(cx).side_panel_open()
-                    && self.controllers.session.read(cx).side_panel_view()
-                        == SessionSidePanelView::Sftp
-                {
-                    self.session_side_panel_sftp_tab_id(cx).filter(|tab_id| {
-                        self.workspace
-                            .tabs
-                            .get(*tab_id)
-                            .is_some_and(|tab| tab.owner() == Some(root_id))
-                    })
-                } else {
-                    None
-                }
-            })
-            .flatten();
-        let sftp_ui = visible_sftp_tab_id.and_then(|tab_id| {
-            self.controllers.sftp.update(cx, |controller, cx| {
-                controller.take_window_ui_for_transfer(tab_id, window, cx)
-            })
-        });
-        let session_ui = (active_root && root_is_session).then(|| {
-            self.controllers.session.update(cx, |controller, cx| {
-                controller.take_workspace_ui_for_transfer(window, cx)
-            })
-        });
-
-        let workspace = if root_is_session {
-            if active_topbar_before == Some(root_id) {
-                Some(self.park_loaded_workspace(cx))
-            } else {
-                self.workspace
-                    .take_parked_workspace(root_id)
-                    .or_else(|| Some(TabWorkspaceState::new(Some(root_id), cx.focus_handle())))
-            }
-        } else {
-            None
-        };
-
-        let mut entries = owned_indices
-            .iter()
-            .filter_map(|index| {
+impl WorkspaceTransferHost for AppView {
+    fn transfer_state(&self) -> &WorkspaceModel {
+        &self.workspace
+    }
+    fn transfer_state_mut(&mut self) -> &mut WorkspaceModel {
+        &mut self.workspace
+    }
+    fn transfer_session_purpose(&self, id: TabId, cx: &App) -> Option<SessionPurpose> {
+        self.controllers.session.read(cx).tab_purpose(id)
+    }
+    fn transfer_has_session(&self, id: TabId, cx: &App) -> bool {
+        self.controllers.session.read(cx).tab(id).is_some()
+    }
+    fn transfer_has_sftp(&self, id: TabId, cx: &App) -> bool {
+        self.controllers.sftp.read(cx).tab(id).is_some()
+    }
+    fn transfer_terminal_monitor_profile(&self, id: TabId, cx: &App) -> Option<String> {
+        let controller = self.controllers.session.read(cx);
+        let tab = controller.tab(id)?;
+        (tab.purpose == SessionPurpose::Terminal).then(|| tab.profile_id.clone())
+    }
+    fn transfer_visible_sftp_sidecar(&self, root: TabId, cx: &App) -> Option<TabId> {
+        let session = self.controllers.session.read(cx);
+        (session.side_panel_open() && session.side_panel_view() == SessionSidePanelView::Sftp)
+            .then(|| self.session_side_panel_sftp_tab_id(cx))
+            .flatten()
+            .filter(|id| {
                 self.workspace
                     .tabs
-                    .state(self.workspace.tabs.id_at(*index)?)
-                    .map(|tab| (*index, tab))
+                    .get(*id)
+                    .is_some_and(|tab| tab.owner() == Some(root))
             })
-            .collect::<Vec<_>>();
-        entries.sort_by_key(|(index, _)| *index);
-
-        let mut transferred = Vec::with_capacity(entries.len());
-        for (original_index, tab) in entries {
-            let payload = if tab.is_session() {
-                DetachedTabPayload::Session(Box::new(
-                    self.controllers
-                        .session
-                        .read(cx)
-                        .take_tab_for_transfer(tab.id)
-                        .expect("validated session transfer payload remains available"),
-                ))
-            } else {
-                DetachedTabPayload::Sftp(Box::new(
-                    self.controllers
-                        .sftp
-                        .read(cx)
-                        .take_tab_for_transfer(tab.id)
-                        .expect("validated SFTP transfer payload remains available"),
-                ))
-            };
-            self.workspace
-                .tabs
-                .remove_id(tab.id)
-                .expect("validated transfer metadata remains available");
-            transferred.push(DetachedTabEntry {
-                original_index,
-                tab,
-                payload,
-            });
-        }
-
-        Some(DetachedTabBundle {
-            source: DetachedSourceState {
-                root_id,
-                root_index,
-                active_topbar_before,
-                affected_monitor_profiles,
-            },
-            entries: transferred,
-            workspace,
-            session_ui,
-            sftp_ui,
+    }
+    fn transfer_take_session(&mut self, id: TabId, cx: &App) -> Option<TransferredSessionTab> {
+        self.controllers.session.read(cx).take_tab_for_transfer(id)
+    }
+    fn transfer_take_sftp(&mut self, id: TabId, cx: &App) -> Option<TransferredSftpTab> {
+        self.controllers.sftp.read(cx).take_tab_for_transfer(id)
+    }
+    fn transfer_install_session(
+        &mut self,
+        id: TabId,
+        payload: TransferredSessionTab,
+        cx: &mut Context<Self>,
+    ) {
+        let installed = self.controllers.session.update(cx, |controller, cx| {
+            controller.insert_transferred_tab(payload, cx)
+        });
+        debug_assert_eq!(installed, id);
+    }
+    fn transfer_install_sftp(
+        &mut self,
+        id: TabId,
+        payload: TransferredSftpTab,
+        cx: &mut Context<Self>,
+    ) {
+        let installed = self.controllers.sftp.update(cx, |controller, cx| {
+            controller.insert_transferred_tab(payload, cx)
+        });
+        debug_assert_eq!(installed, id);
+    }
+    fn transfer_take_session_ui(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TransferredSessionWorkspaceUi {
+        self.controllers.session.update(cx, |controller, cx| {
+            controller.take_workspace_ui_for_transfer(window, cx)
         })
     }
-
-    fn install_detached_tab_bundle(
+    fn transfer_take_sftp_ui(
         &mut self,
-        mut bundle: DetachedTabBundle,
+        id: TabId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        // A detached view is freshly bootstrapped with only a resource-free Hosts tab. There are
-        // no session or SFTP controller payloads to retire here, so dropping that metadata
-        // directly is intentional. Keep the assertions close to this shortcut so a future
-        // bootstrap change cannot silently introduce leaked controller resources.
-        let existing_ids = self.workspace.tabs.ids().collect::<Vec<_>>();
-        for tab_id in existing_ids {
-            debug_assert!(
-                self.workspace
-                    .tabs
-                    .get(tab_id)
-                    .is_some_and(|tab| tab.is_hosts())
-            );
-            debug_assert!(self.controllers.session.read(cx).tab(tab_id).is_none());
-            debug_assert!(self.controllers.sftp.read(cx).tab(tab_id).is_none());
-            self.workspace
-                .tabs
-                .remove_id(tab_id)
-                .expect("fresh detached bootstrap tab remains registered");
-        }
-        self.workspace.active_topbar_tab = None;
-        self.reset_loaded_workspace(cx);
-
-        let root_id = bundle.root_id();
-        let max_tab_id = bundle.max_tab_id();
-        let affected_monitor_profiles = bundle.source.affected_monitor_profiles.clone();
-        bundle.entries.sort_by_key(|entry| entry.original_index);
-        for entry in bundle.entries {
-            let tab_id = entry.tab.id;
-            match entry.payload {
-                DetachedTabPayload::Session(transferred) => {
-                    self.controllers.session.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, *transferred, cx);
-                    });
-                }
-                DetachedTabPayload::Sftp(transferred) => {
-                    self.controllers.sftp.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, *transferred, cx);
-                    });
-                }
-            }
-            self.workspace.tabs.push(entry.tab);
-        }
-
-        self.workspace.active_topbar_tab = Some(root_id);
-        self.restore_active_topbar_sidebar_section(cx);
-        self.workspace.advance_next_tab_id_past(max_tab_id);
-        if let Some(mut workspace) = bundle.workspace {
-            Self::prepare_transferred_workspace_for_window(&mut workspace, cx);
-            self.restore_loaded_workspace(workspace);
-        } else {
-            self.reset_loaded_workspace(cx);
-        }
-
-        if let Some(session_ui) = bundle.session_ui.take() {
-            let active_tab_id = self.workspace.workspace.active_tab;
-            self.controllers.session.update(cx, |controller, cx| {
-                controller.restore_workspace_ui_after_transfer(
-                    session_ui,
-                    active_tab_id,
-                    window,
-                    cx,
-                );
-            });
-        }
-
-        self.workspace.topbar_previous_visible_tabs.clear();
-        self.workspace.topbar_entering_tabs.clear();
-        self.workspace.topbar_exiting_tabs.clear();
-        self.workspace.topbar_active_transition = None;
-        self.workspace.topbar_visible_active_tab_id = Some(root_id);
-        self.sync_transferred_sftp_browser(root_id, window, cx);
-        if let Some(sftp_ui) = bundle.sftp_ui.take() {
-            self.controllers.sftp.update(cx, |controller, cx| {
-                controller.restore_window_ui_after_transfer(sftp_ui, window, cx);
-            });
-        }
-        self.rebind_terminal_focus_reporting(window, cx);
-        self.sync_terminal_focus_reporting(window, cx);
-        self.sync_session_port_snapshot(cx);
-        for profile_id in affected_monitor_profiles {
-            self.refresh_profile_monitoring(&profile_id, None, cx);
-        }
-        self.workspace
-            .workspace
-            .active_pane
-            .terminal_focus
-            .focus(window, cx);
-        cx.notify();
-    }
-
-    fn restore_detached_tab_bundle(
-        &mut self,
-        mut bundle: DetachedTabBundle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        bundle.entries.sort_by_key(|entry| entry.original_index);
-        for entry in bundle.entries {
-            let tab_id = entry.tab.id;
-            match entry.payload {
-                DetachedTabPayload::Session(transferred) => {
-                    self.controllers.session.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, *transferred, cx);
-                    });
-                }
-                DetachedTabPayload::Sftp(transferred) => {
-                    self.controllers.sftp.update(cx, |controller, cx| {
-                        controller.insert_transferred_tab(tab_id, *transferred, cx);
-                    });
-                }
-            }
-            self.workspace.tabs.insert(entry.original_index, entry.tab);
-        }
-
-        if let Some(workspace) = bundle.workspace {
-            if bundle.source.active_topbar_before == Some(bundle.source.root_id) {
-                self.restore_loaded_workspace(workspace);
-            } else {
-                self.workspace
-                    .park_workspace(bundle.source.root_id, workspace);
-            }
-        }
-        self.workspace.active_topbar_tab = bundle.source.active_topbar_before;
-        self.restore_active_topbar_sidebar_section(cx);
-        if let Some(session_ui) = bundle.session_ui.take() {
-            let active_tab_id = self.workspace.workspace.active_tab;
-            self.controllers.session.update(cx, |controller, cx| {
-                controller.restore_workspace_ui_after_transfer(
-                    session_ui,
-                    active_tab_id,
-                    window,
-                    cx,
-                );
-            });
-        }
-        if let Some(root_id) = self.workspace.active_topbar_tab {
-            self.sync_transferred_sftp_browser(root_id, window, cx);
-        }
-        if let Some(sftp_ui) = bundle.sftp_ui.take() {
-            self.controllers.sftp.update(cx, |controller, cx| {
-                controller.restore_window_ui_after_transfer(sftp_ui, window, cx);
-            });
-        }
-        self.rebind_terminal_focus_reporting(window, cx);
-        self.sync_terminal_focus_reporting(window, cx);
-        self.sync_session_port_snapshot(cx);
-        for profile_id in &bundle.source.affected_monitor_profiles {
-            self.refresh_profile_monitoring(profile_id, None, cx);
-        }
-        cx.notify();
-    }
-
-    fn finish_detached_tab_source(
-        &mut self,
-        source: DetachedSourceState,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.prune_closed_tab_references();
-        if source.active_topbar_before == Some(source.root_id) {
-            self.workspace.active_topbar_tab = None;
-            if let Some(next_index) = self.nearest_visible_tab(
-                source
-                    .root_index
-                    .min(self.workspace.tabs.len().saturating_sub(1)),
-            ) {
-                self.workspace.active_topbar_tab = self.workspace.tabs.id_at(next_index);
-                if self
-                    .workspace
-                    .tabs
-                    .at(next_index)
-                    .is_some_and(|tab| tab.is_session())
-                {
-                    self.load_topbar_workspace(next_index, cx);
-                } else {
-                    self.reset_loaded_workspace(cx);
-                }
-            } else {
-                self.reset_loaded_workspace(cx);
-            }
-        }
-
-        let has_top_level_tab = self.workspace.tabs.iter().any(|tab| tab.is_top_level());
-        if !has_top_level_tab {
-            match self.window_role {
-                AppWindowRole::Primary => self.open_hosts_tab(cx),
-                AppWindowRole::Detached => {
-                    window.remove_window();
-                    return;
-                }
-            }
-        }
-
-        self.restore_active_topbar_sidebar_section(cx);
-
-        if let Some(root_id) = self.workspace.active_topbar_tab {
-            self.sync_transferred_sftp_browser(root_id, window, cx);
-        }
-
-        self.rebind_terminal_focus_reporting(window, cx);
-        self.sync_terminal_focus_reporting(window, cx);
-        self.sync_session_port_snapshot(cx);
-        for profile_id in source.affected_monitor_profiles {
-            self.refresh_profile_monitoring(&profile_id, None, cx);
-        }
-        self.shell.status_message = i18n::string("chrome.messages.opened_in_new_window");
-        cx.notify();
-    }
-
-    fn sync_transferred_sftp_browser(
-        &mut self,
-        root_id: TabId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let browser_tab_id = self
-            .workspace
-            .tabs
-            .get(root_id)
-            .filter(|tab| tab.is_sftp())
-            .map(|tab| tab.id)
-            .or_else(|| {
-                (self.controllers.session.read(cx).side_panel_open()
-                    && self.controllers.session.read(cx).side_panel_view()
-                        == SessionSidePanelView::Sftp)
-                    .then(|| self.session_side_panel_sftp_tab_id(cx))
-                    .flatten()
-            });
-        let Some(tab_id) = browser_tab_id else {
-            return;
-        };
-        let prompt_download_destination = self.should_prompt_sftp_download_destination(tab_id, cx);
+    ) -> Option<TransferredSftpWindowUi> {
         self.controllers.sftp.update(cx, |controller, cx| {
-            controller.set_download_destination_prompt_tab(tab_id, prompt_download_destination);
-            controller.sync_path_inputs_for_tab(tab_id, window, cx);
-            controller.sync_tables_for_tab(tab_id, cx);
+            controller.take_window_ui_for_transfer(id, window, cx)
+        })
+    }
+    fn transfer_restore_session_ui(
+        &mut self,
+        ui: TransferredSessionWorkspaceUi,
+        active: Option<TabId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.controllers.session.update(cx, |controller, cx| {
+            controller.restore_workspace_ui_after_transfer(ui, active, window, cx)
         });
     }
-
-    pub fn prepare_detached_window_close(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.window_role != AppWindowRole::Detached {
-            return;
-        }
-        let tab_ids = self.workspace.tabs.ids().collect::<Vec<_>>();
-        for tab_id in &tab_ids {
-            if self
-                .workspace
-                .tabs
-                .get(*tab_id)
-                .is_some_and(|tab| tab.is_session())
-            {
-                let _ = self
-                    .controllers
-                    .session
-                    .read(cx)
-                    .retire_tab_resources(*tab_id);
-            } else if self
-                .workspace
-                .tabs
-                .get(*tab_id)
-                .is_some_and(|tab| tab.is_sftp())
-                && let Some(sftp) = self.controllers.sftp.read(cx).remove_tab_state(*tab_id)
-                && let Some(commands) = sftp.commands.as_ref()
-                && let Err(error) = commands.close()
-            {
-                log::debug!("failed to close detached SFTP tab {tab_id} cleanly: {error:?}");
+    fn transfer_restore_sftp_ui(
+        &mut self,
+        ui: TransferredSftpWindowUi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.restore_window_ui_after_transfer(ui, window, cx)
+        });
+    }
+    fn transfer_retire_resources(&mut self, id: TabId, kind: TabKindTag, cx: &mut Context<Self>) {
+        match kind {
+            TabKindTag::Session | TabKindTag::LocalTerminal => {
+                self.controllers.session.read(cx).retire_tab_resources(id);
             }
+            TabKindTag::Sftp => self.controllers.sftp.read(cx).retire_tab_resources(id),
+            TabKindTag::Hosts => {}
         }
-        for tab_id in tab_ids {
-            let _ = self.remove_tab_payload_and_metadata(tab_id, cx);
-        }
-        self.workspace.active_topbar_tab = None;
+    }
+    fn transfer_prepare_workspace_for_window(
+        &mut self,
+        state: &mut TabWorkspaceState,
+        cx: &mut Context<Self>,
+    ) {
+        Self::prepare_transferred_workspace_for_window(state, cx);
+    }
+    fn transfer_window_is_detached(&self) -> bool {
+        self.window_role == AppWindowRole::Detached
+    }
+    fn transfer_remove_window(&mut self, window: &mut Window) {
+        window.remove_window();
+    }
+    fn transfer_set_status(&mut self, status: String) {
+        self.shell.status_message = status;
+    }
+    fn transfer_refresh_monitoring(&mut self, profile: &str, cx: &mut Context<Self>) {
+        self.refresh_profile_monitoring(profile, None, cx);
+    }
+    fn transfer_owned_tab_indices_for_topbar(&self, root: usize) -> Vec<usize> {
+        self.owned_tab_indices_for_topbar(root)
+    }
+    fn transfer_park_loaded_workspace(&mut self, cx: &mut Context<Self>) -> TabWorkspaceState {
+        self.park_loaded_workspace(cx)
+    }
+    fn transfer_restore_loaded_workspace(&mut self, state: TabWorkspaceState) {
+        self.restore_loaded_workspace(state);
+    }
+    fn transfer_reset_loaded_workspace(&mut self, cx: &mut Context<Self>) {
         self.reset_loaded_workspace(cx);
+    }
+    fn transfer_load_topbar_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.load_topbar_workspace(index, cx);
+    }
+    fn transfer_prune_closed_tab_references(&mut self) {
+        self.prune_closed_tab_references();
+    }
+    fn transfer_nearest_visible_tab(&self, index: usize) -> Option<usize> {
+        self.nearest_visible_tab(index)
+    }
+    fn transfer_open_hosts_tab(&mut self, cx: &mut Context<Self>) {
+        self.open_hosts_tab(cx);
+    }
+    fn transfer_restore_active_topbar_sidebar_section(&mut self, cx: &mut Context<Self>) {
+        self.restore_active_topbar_sidebar_section(cx);
+    }
+    fn transfer_sync_transferred_sftp_browser(
+        &mut self,
+        root: TabId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let browser = self
+            .workspace
+            .tabs
+            .get(root)
+            .filter(|tab| tab.is_sftp())
+            .map(|tab| tab.id)
+            .or_else(|| self.transfer_visible_sftp_sidecar(root, cx));
+        let Some(id) = browser else {
+            return;
+        };
+        let prompt = self.should_prompt_sftp_download_destination(id, cx);
+        self.controllers.sftp.update(cx, |controller, cx| {
+            controller.set_download_destination_prompt_tab(id, prompt);
+            controller.sync_path_inputs_for_tab(id, window, cx);
+            controller.sync_tables_for_tab(id, cx);
+        });
+    }
+    fn transfer_rebind_terminal_focus_reporting(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rebind_terminal_focus_reporting(window, cx);
+    }
+    fn transfer_sync_terminal_focus_reporting(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_terminal_focus_reporting(window, cx);
+    }
+    fn transfer_sync_session_port_snapshot(&self, cx: &App) {
         self.sync_session_port_snapshot(cx);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn detached_window_menu_only_accepts_terminal_workspaces_and_standalone_sftp() {
-        assert!(tab_kind_can_open_in_new_window(
-            TabKindTag::Session,
-            TabPlacement::TopLevel,
-            Some(SessionPurpose::Terminal),
-        ));
-        assert!(tab_kind_can_open_in_new_window(
-            TabKindTag::Sftp,
-            TabPlacement::TopLevel,
-            None,
-        ));
-        assert!(!tab_kind_can_open_in_new_window(
-            TabKindTag::Hosts,
-            TabPlacement::TopLevel,
-            None,
-        ));
-        assert!(!tab_kind_can_open_in_new_window(
-            TabKindTag::Session,
-            TabPlacement::TopLevel,
-            Some(SessionPurpose::PortForwarding),
-        ));
-        assert!(!tab_kind_can_open_in_new_window(
-            TabKindTag::Session,
-            TabPlacement::TopLevel,
-            Some(SessionPurpose::ConnectionTest),
-        ));
-        assert!(!tab_kind_can_open_in_new_window(
-            TabKindTag::Session,
-            TabPlacement::WorkspacePane {
-                owner: TabId::new(1),
-                pane: PaneId(2),
-            },
-            Some(SessionPurpose::Terminal),
-        ));
-        assert!(!tab_kind_can_open_in_new_window(
-            TabKindTag::Sftp,
-            TabPlacement::SessionSidecar {
-                owner: TabId::new(1),
-            },
-            None,
-        ));
+    fn transfer_remove_tab_payload_and_metadata(&mut self, id: TabId, cx: &mut Context<Self>) {
+        self.remove_tab_payload_and_metadata(id, cx);
     }
 }
+use crate::ui::i18n;

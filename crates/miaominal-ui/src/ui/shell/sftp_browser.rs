@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SftpBrowserSide {
+pub(in crate::ui) enum SftpBrowserSide {
     Local,
     Remote,
 }

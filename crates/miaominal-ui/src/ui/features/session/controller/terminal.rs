@@ -12,17 +12,17 @@ use miaominal_terminal::{
 
 use super::{SessionConnectionState, SessionController};
 use crate::ui::{
+    contracts::{AppCommand, TabId},
     i18n,
-    shell::{AppCommand, TabId},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TerminalViewportState {
-    pub(in crate::ui::shell) columns: usize,
-    pub(in crate::ui::shell) screen_lines: usize,
-    pub(in crate::ui::shell) display_offset: usize,
-    pub(in crate::ui::shell) history_size: usize,
-    pub(in crate::ui::shell) generation: u64,
+pub(in crate::ui) struct TerminalViewportState {
+    pub(in crate::ui) columns: usize,
+    pub(in crate::ui) screen_lines: usize,
+    pub(in crate::ui) display_offset: usize,
+    pub(in crate::ui) history_size: usize,
+    pub(in crate::ui) generation: u64,
 }
 
 enum TerminalWriteResult {
@@ -58,7 +58,7 @@ impl TerminalWriteResult {
 }
 
 impl SessionController {
-    pub(in crate::ui::shell) fn terminal_snapshot(
+    pub(in crate::ui) fn terminal_snapshot(
         &self,
         tab_id: TabId,
         focused: bool,
@@ -67,11 +67,11 @@ impl SessionController {
             .map(|session| session.terminal.snapshot(focused))
     }
 
-    pub(in crate::ui::shell) fn terminal_state(&self, tab_id: TabId) -> Option<TerminalState> {
+    pub(in crate::ui) fn terminal_state(&self, tab_id: TabId) -> Option<TerminalState> {
         self.tab(tab_id).map(|session| session.terminal.clone())
     }
 
-    pub(in crate::ui::shell) fn terminal_viewport_state(
+    pub(in crate::ui) fn terminal_viewport_state(
         &self,
         tab_id: TabId,
     ) -> Option<TerminalViewportState> {
@@ -85,7 +85,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn terminal_link_at(
+    pub(in crate::ui) fn terminal_link_at(
         &self,
         tab_id: TabId,
         line: usize,
@@ -94,15 +94,12 @@ impl SessionController {
         self.tab(tab_id)?.terminal.link_at(line, column)
     }
 
-    pub(in crate::ui::shell) fn terminal_input_modes(
-        &self,
-        tab_id: TabId,
-    ) -> Option<TerminalInputModes> {
+    pub(in crate::ui) fn terminal_input_modes(&self, tab_id: TabId) -> Option<TerminalInputModes> {
         self.tab(tab_id)
             .map(|session| session.terminal.input_modes())
     }
 
-    pub(in crate::ui::shell) fn terminal_mouse_mode(
+    pub(in crate::ui) fn terminal_mouse_mode(
         &self,
         tab_id: TabId,
     ) -> Option<(MouseProtocol, MouseEncoding)> {
@@ -113,16 +110,12 @@ impl SessionController {
         ))
     }
 
-    pub(in crate::ui::shell) fn terminal_alternate_scroll_active(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn terminal_alternate_scroll_active(&self, tab_id: TabId) -> bool {
         self.tab(tab_id)
             .is_some_and(|session| session.terminal.alternate_scroll_active())
     }
 
-    pub(in crate::ui::shell) fn scroll_terminal(
-        &self,
-        tab_id: TabId,
-        scroll: TerminalScroll,
-    ) -> bool {
+    pub(in crate::ui) fn scroll_terminal(&self, tab_id: TabId, scroll: TerminalScroll) -> bool {
         let Some(mut session) = self.tab_mut(tab_id) else {
             return false;
         };
@@ -130,7 +123,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn resize_terminal_for_viewport(
+    pub(in crate::ui) fn resize_terminal_for_viewport(
         &self,
         tab_id: TabId,
         columns: usize,
@@ -186,7 +179,7 @@ impl SessionController {
         (size_changed, None)
     }
 
-    pub(in crate::ui::shell) fn scroll_terminal_to_display_offset(
+    pub(in crate::ui) fn scroll_terminal_to_display_offset(
         &self,
         tab_id: TabId,
         target_offset: usize,
@@ -198,7 +191,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn scroll_terminal_display_offset_by(
+    pub(in crate::ui) fn scroll_terminal_display_offset_by(
         &self,
         tab_id: TabId,
         delta: i32,
@@ -212,7 +205,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn start_terminal_selection(
+    pub(in crate::ui) fn start_terminal_selection(
         &self,
         tab_id: TabId,
         line: i32,
@@ -229,7 +222,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn terminal_free_type_target(
+    pub(in crate::ui) fn terminal_free_type_target(
         &self,
         tab_id: TabId,
         line: i32,
@@ -241,7 +234,7 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn start_terminal_free_type_selection(
+    pub(in crate::ui) fn start_terminal_free_type_selection(
         &self,
         tab_id: TabId,
         target: TerminalFreeTypeTarget,
@@ -258,7 +251,7 @@ impl SessionController {
             .start_free_type_selection(target.line, target.column, target.side, kind)
     }
 
-    pub(in crate::ui::shell) fn update_terminal_selection(
+    pub(in crate::ui) fn update_terminal_selection(
         &self,
         tab_id: TabId,
         line: i32,
@@ -272,7 +265,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn clear_terminal_selection(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn clear_terminal_selection(&self, tab_id: TabId) -> bool {
         let Some(mut session) = self.tab_mut(tab_id) else {
             return false;
         };
@@ -283,17 +276,17 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn terminal_has_selection(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn terminal_has_selection(&self, tab_id: TabId) -> bool {
         self.tab(tab_id)
             .is_some_and(|session| session.terminal.has_selection())
     }
 
-    pub(in crate::ui::shell) fn terminal_has_free_type_selection(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn terminal_has_free_type_selection(&self, tab_id: TabId) -> bool {
         self.tab(tab_id)
             .is_some_and(|session| session.terminal.has_free_type_selection())
     }
 
-    pub(in crate::ui::shell) fn terminal_selection_contains(
+    pub(in crate::ui) fn terminal_selection_contains(
         &self,
         tab_id: TabId,
         line: i32,
@@ -304,14 +297,14 @@ impl SessionController {
         })
     }
 
-    pub(in crate::ui::shell) fn clear_terminal_free_type_selection(&self, tab_id: TabId) -> bool {
+    pub(in crate::ui) fn clear_terminal_free_type_selection(&self, tab_id: TabId) -> bool {
         let Some(mut session) = self.tab_mut(tab_id) else {
             return false;
         };
         session.terminal.clear_free_type_selection()
     }
 
-    pub(in crate::ui::shell) fn clear_all_terminal_free_type_selections(&self) -> bool {
+    pub(in crate::ui) fn clear_all_terminal_free_type_selections(&self) -> bool {
         let mut changed = false;
         for session in self.tabs.borrow_mut().values_mut() {
             changed |= session.terminal.clear_free_type_selection();
@@ -319,11 +312,11 @@ impl SessionController {
         changed
     }
 
-    pub(in crate::ui::shell) fn terminal_selection_text(&self, tab_id: TabId) -> Option<String> {
+    pub(in crate::ui) fn terminal_selection_text(&self, tab_id: TabId) -> Option<String> {
         self.tab(tab_id)?.terminal.selection_text()
     }
 
-    pub(in crate::ui::shell) fn copy_terminal_selection(
+    pub(in crate::ui) fn copy_terminal_selection(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -349,7 +342,7 @@ impl SessionController {
         true
     }
 
-    pub(in crate::ui::shell) fn paste_terminal_clipboard(
+    pub(in crate::ui) fn paste_terminal_clipboard(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -365,7 +358,7 @@ impl SessionController {
         self.paste_terminal_text(tab_id, text, cx)
     }
 
-    pub(in crate::ui::shell) fn paste_terminal_selection_or_clipboard(
+    pub(in crate::ui) fn paste_terminal_selection_or_clipboard(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -385,7 +378,7 @@ impl SessionController {
         self.paste_terminal_text(tab_id, text, cx)
     }
 
-    pub(in crate::ui::shell) fn send_terminal_input(
+    pub(in crate::ui) fn send_terminal_input(
         &mut self,
         tab_id: TabId,
         bytes: Vec<u8>,
@@ -451,7 +444,7 @@ impl SessionController {
         was_scrolled
     }
 
-    pub(in crate::ui::shell) fn send_terminal_text_input(
+    pub(in crate::ui) fn send_terminal_text_input(
         &mut self,
         tab_id: TabId,
         text: String,
@@ -474,7 +467,7 @@ impl SessionController {
         self.send_terminal_input(tab_id, text.into_bytes(), cx)
     }
 
-    pub(in crate::ui::shell) fn send_terminal_free_type_cursor(
+    pub(in crate::ui) fn send_terminal_free_type_cursor(
         &mut self,
         tab_id: TabId,
         target: TerminalFreeTypeTarget,
@@ -487,7 +480,7 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn send_terminal_free_type_delete(
+    pub(in crate::ui) fn send_terminal_free_type_delete(
         &mut self,
         tab_id: TabId,
         cx: &mut Context<Self>,
@@ -499,7 +492,7 @@ impl SessionController {
         )
     }
 
-    pub(in crate::ui::shell) fn send_terminal_free_type_collapse(
+    pub(in crate::ui) fn send_terminal_free_type_collapse(
         &mut self,
         tab_id: TabId,
         collapse_to_end: bool,
@@ -565,7 +558,7 @@ impl SessionController {
         None
     }
 
-    pub(in crate::ui::shell) fn send_terminal_selection_drop(
+    pub(in crate::ui) fn send_terminal_selection_drop(
         &mut self,
         tab_id: TabId,
         target: TerminalFreeTypeTarget,
@@ -600,7 +593,7 @@ impl SessionController {
         false
     }
 
-    pub(in crate::ui::shell) fn send_terminal_selection_cross_pane_drop(
+    pub(in crate::ui) fn send_terminal_selection_cross_pane_drop(
         &mut self,
         source_tab_id: TabId,
         target_tab_id: TabId,
@@ -755,7 +748,7 @@ impl SessionController {
         false
     }
 
-    pub(in crate::ui::shell) fn paste_terminal_text(
+    pub(in crate::ui) fn paste_terminal_text(
         &mut self,
         tab_id: TabId,
         text: String,
@@ -889,7 +882,7 @@ impl SessionController {
         success
     }
 
-    pub(in crate::ui::shell) fn send_terminal_mouse_report(
+    pub(in crate::ui) fn send_terminal_mouse_report(
         &mut self,
         tab_id: TabId,
         bytes: Vec<u8>,
@@ -913,7 +906,7 @@ impl SessionController {
         }
     }
 
-    pub(in crate::ui::shell) fn send_terminal_focus_report(
+    pub(in crate::ui) fn send_terminal_focus_report(
         &mut self,
         tab_id: TabId,
         focused: bool,

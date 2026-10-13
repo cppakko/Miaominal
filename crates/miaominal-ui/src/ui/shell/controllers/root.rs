@@ -765,7 +765,7 @@ impl AppView {
                         let Some(PortForwardSessionStart { tab, feedback }) = start else {
                             return;
                         };
-                        this.register_session_tab_metadata(tab, cx);
+                        this.register_session_tab_metadata(tab.into(), cx);
                         this.shell.status_message = feedback;
                         cx.notify();
                     });
@@ -1026,6 +1026,9 @@ impl AppView {
                 }
             }
             AppCommand::RebuildApplication => self.schedule_application_rebuild(cx),
+            AppCommand::SessionNotificationRequested(notification) => {
+                super::super::session::publish_session_notification(notification.clone(), cx);
+            }
             AppCommand::OverlayDismissed(snapshot) => self.start_dialog_exit(snapshot.clone(), cx),
             AppCommand::OpenTab(request) => self.handle_tab_open_request(request, cx),
             AppCommand::CloseTab(tab_id) => {

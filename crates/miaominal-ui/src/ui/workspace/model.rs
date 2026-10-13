@@ -1,40 +1,42 @@
-use super::panes::{
-    PaneId, PaneSplitAnimation, PaneSplitDragState, PaneTabDropTarget, PaneViewState, ParkedPane,
-    TerminalPaneFreeTypeDropTarget,
-};
-use super::{
-    ClosedSessionTabState, PageEditorSidebarKind, PrimaryViewKind, PrimaryViewTransition,
-    SessionProfile, SidebarSection, TopbarActiveTabTransition, TopbarTabEnterTransition,
+use super::panes::{PaneSplitAnimation, PaneSplitDragState, PaneTabDropTarget, ParkedPane};
+use super::presentation::{
+    PrimaryViewKind, PrimaryViewTransition, TopbarActiveTabTransition, TopbarTabEnterTransition,
     TopbarTabExitTransition, TopbarTabSnapshot,
 };
+use crate::ui::contracts::navigation::SidebarSection;
+pub(crate) use crate::ui::contracts::workspace::{
+    PaneId, SplitAxis, SplitDirection, TabId, TabKindTag, TabPlacement,
+};
+use crate::ui::contracts::{ClosedSessionTabState, PageEditorSidebarKind, SessionTabDescriptor};
+use crate::ui::features::session::{PaneViewState, TerminalPaneFreeTypeDropTarget};
 #[cfg(test)]
-use super::{SessionController, SessionTabState};
+use crate::ui::features::session::{SessionController, SessionTabState};
 use crate::ui::i18n;
 use gpui_kit::{FocusHandle, ScrollHandle};
+use miaominal_core::profile::SessionProfile;
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     ops::{Deref, DerefMut},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TabDescriptor {
-    pub(in crate::ui::shell) title: String,
-    pub(in crate::ui::shell) status: String,
-    pub(in crate::ui::shell) kind: TabKindTag,
-    pub(in crate::ui::shell) placement: TabPlacement,
+pub(crate) struct TabDescriptor {
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) kind: TabKindTag,
+    pub(crate) placement: TabPlacement,
     sidebar_section: SidebarSection,
     page_editor_sidebar: Option<PageEditorSidebarKind>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct TabState {
-    pub(in crate::ui::shell) id: TabId,
+pub(crate) struct TabState {
+    pub(crate) id: TabId,
     descriptor: TabDescriptor,
 }
 
 impl TabState {
-    pub(in crate::ui::shell) fn new(
+    pub(crate) fn new(
         id: TabId,
         title: String,
         status: String,
@@ -74,8 +76,8 @@ impl DerefMut for TabState {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct RegisteredTab<'a> {
-    pub(in crate::ui::shell) id: TabId,
+pub(crate) struct RegisteredTab<'a> {
+    pub(crate) id: TabId,
     descriptor: &'a TabDescriptor,
 }
 
@@ -87,7 +89,7 @@ impl Deref for RegisteredTab<'_> {
     }
 }
 
-pub(in crate::ui::shell) struct RegisteredTabMut<'a> {
+pub(crate) struct RegisteredTabMut<'a> {
     descriptor: &'a mut TabDescriptor,
 }
 
@@ -106,7 +108,7 @@ impl DerefMut for RegisteredTabMut<'_> {
 }
 
 impl TabState {
-    pub(in crate::ui::shell) fn new_hosts(id: TabId) -> Self {
+    pub(crate) fn new_hosts(id: TabId) -> Self {
         let title = i18n::string("tabs.initial.hosts_tab_title");
         let status = i18n::string("navigation.section.hosts.title");
 
@@ -115,32 +117,32 @@ impl TabState {
 }
 
 impl TabDescriptor {
-    pub(in crate::ui::shell) fn is_hosts(&self) -> bool {
+    pub(crate) fn is_hosts(&self) -> bool {
         self.kind == TabKindTag::Hosts
     }
 
-    pub(in crate::ui::shell) fn is_session(&self) -> bool {
+    pub(crate) fn is_session(&self) -> bool {
         matches!(self.kind, TabKindTag::Session | TabKindTag::LocalTerminal)
     }
 
-    pub(in crate::ui::shell) fn is_local_terminal(&self) -> bool {
+    pub(crate) fn is_local_terminal(&self) -> bool {
         self.kind == TabKindTag::LocalTerminal
     }
 
-    pub(in crate::ui::shell) fn is_sftp(&self) -> bool {
+    pub(crate) fn is_sftp(&self) -> bool {
         self.kind == TabKindTag::Sftp
     }
 
-    pub(in crate::ui::shell) fn is_top_level(&self) -> bool {
+    pub(crate) fn is_top_level(&self) -> bool {
         self.placement == TabPlacement::TopLevel
     }
 
-    pub(in crate::ui::shell) fn owner(&self) -> Option<TabId> {
+    pub(crate) fn owner(&self) -> Option<TabId> {
         self.placement.owner()
     }
 }
 
-pub(in crate::ui::shell) enum ClosedTabBundle {
+pub(crate) enum ClosedTabBundle {
     Hosts,
     Sftp {
         profile: SessionProfile,
@@ -152,73 +154,54 @@ pub(in crate::ui::shell) enum ClosedTabBundle {
     },
 }
 
-pub(in crate::ui::shell) struct ClosedSftpTabState {
-    pub(in crate::ui::shell) tab_id: TabId,
-    pub(in crate::ui::shell) owner: TabId,
-    pub(in crate::ui::shell) profile: SessionProfile,
+pub(crate) struct ClosedSftpTabState {
+    pub(crate) tab_id: TabId,
+    pub(crate) owner: TabId,
+    pub(crate) profile: SessionProfile,
 }
 
-pub(in crate::ui::shell) struct WorkspaceModel {
-    pub(in crate::ui::shell) tabs: TabRegistry,
-    pub(in crate::ui::shell) active_topbar_tab: Option<TabId>,
-    pub(in crate::ui::shell) topbar_tab_scroll_handle: ScrollHandle,
-    pub(in crate::ui::shell) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
-    pub(in crate::ui::shell) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
-    pub(in crate::ui::shell) topbar_exiting_tabs: Vec<TopbarTabExitTransition>,
-    pub(in crate::ui::shell) topbar_active_transition: Option<TopbarActiveTabTransition>,
-    pub(in crate::ui::shell) topbar_visible_active_tab_id: Option<TabId>,
-    pub(in crate::ui::shell) next_tab_id: TabId,
-    pub(in crate::ui::shell) workspace: TabWorkspaceState,
-    pub(in crate::ui::shell) parked_workspaces: HashMap<TabId, TabWorkspaceState>,
-    pub(in crate::ui::shell) recently_closed_tabs: Vec<ClosedTabBundle>,
-    pub(in crate::ui::shell) renaming_tab: Option<TabId>,
-    pub(in crate::ui::shell) primary_view_transition: Option<PrimaryViewTransition>,
-    pub(in crate::ui::shell) visible_primary_view: Option<PrimaryViewKind>,
-    pub(in crate::ui::shell) terminal_originated_selection_drag: Option<PaneId>,
-    pub(in crate::ui::shell) terminal_free_type_drop_target: Option<TerminalPaneFreeTypeDropTarget>,
+pub(crate) struct WorkspaceModel {
+    pub(crate) tabs: TabRegistry,
+    pub(crate) active_topbar_tab: Option<TabId>,
+    pub(crate) topbar_tab_scroll_handle: ScrollHandle,
+    pub(crate) topbar_previous_visible_tabs: Vec<TopbarTabSnapshot>,
+    pub(crate) topbar_entering_tabs: Vec<TopbarTabEnterTransition>,
+    pub(crate) topbar_exiting_tabs: Vec<TopbarTabExitTransition>,
+    pub(crate) topbar_active_transition: Option<TopbarActiveTabTransition>,
+    pub(crate) topbar_visible_active_tab_id: Option<TabId>,
+    pub(crate) next_tab_id: TabId,
+    pub(crate) workspace: TabWorkspaceState,
+    pub(crate) parked_workspaces: HashMap<TabId, TabWorkspaceState>,
+    pub(crate) recently_closed_tabs: Vec<ClosedTabBundle>,
+    pub(crate) renaming_tab: Option<TabId>,
+    pub(crate) primary_view_transition: Option<PrimaryViewTransition>,
+    pub(crate) visible_primary_view: Option<PrimaryViewKind>,
+    pub(crate) terminal_originated_selection_drag: Option<PaneId>,
+    pub(crate) terminal_free_type_drop_target: Option<TerminalPaneFreeTypeDropTarget>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct WorkspacePaneSwap {
-    pub(in crate::ui::shell) promoted_tab_id: TabId,
-    pub(in crate::ui::shell) moved_tab_id: TabId,
-    pub(in crate::ui::shell) moved_order_index: usize,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(in crate::ui::shell) struct TabId(usize);
-
-impl TabId {
-    pub(in crate::ui::shell) const fn new(raw: usize) -> Self {
-        Self(raw)
-    }
-
-    pub(in crate::ui::shell) const fn raw(self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for TabId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
+pub(crate) struct WorkspacePaneSwap {
+    pub(crate) promoted_tab_id: TabId,
+    pub(crate) moved_tab_id: TabId,
+    pub(crate) moved_order_index: usize,
 }
 
 fn take_next_tab_id(next_tab_id: &mut TabId) -> TabId {
     let tab_id = *next_tab_id;
-    next_tab_id.0 = next_tab_id.0.saturating_add(1);
+    *next_tab_id = TabId::new(next_tab_id.raw().saturating_add(1));
     tab_id
 }
 
 /// Stable tab storage. Display order is independent from identity, so moving a
 /// tab never invalidates references held by panes or background tasks.
-pub(in crate::ui::shell) struct TabRegistry {
+pub(crate) struct TabRegistry {
     entries: HashMap<TabId, TabDescriptor>,
     order: Vec<TabId>,
 }
 
 impl TabRegistry {
-    pub(in crate::ui::shell) fn from_tabs(tabs: impl IntoIterator<Item = TabState>) -> Self {
+    pub(crate) fn from_tabs(tabs: impl IntoIterator<Item = TabState>) -> Self {
         let mut registry = Self {
             entries: HashMap::new(),
             order: Vec::new(),
@@ -229,47 +212,45 @@ impl TabRegistry {
         registry
     }
 
-    pub(in crate::ui::shell) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.order.len()
     }
 
-    pub(in crate::ui::shell) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
 
-    pub(in crate::ui::shell) fn get(&self, tab_id: TabId) -> Option<RegisteredTab<'_>> {
+    pub(crate) fn get(&self, tab_id: TabId) -> Option<RegisteredTab<'_>> {
         self.entries.get(&tab_id).map(|descriptor| RegisteredTab {
             id: tab_id,
             descriptor,
         })
     }
 
-    pub(in crate::ui::shell) fn get_mut(&mut self, tab_id: TabId) -> Option<RegisteredTabMut<'_>> {
+    pub(crate) fn get_mut(&mut self, tab_id: TabId) -> Option<RegisteredTabMut<'_>> {
         self.entries
             .get_mut(&tab_id)
             .map(|descriptor| RegisteredTabMut { descriptor })
     }
 
-    pub(in crate::ui::shell) fn at(&self, index: usize) -> Option<RegisteredTab<'_>> {
+    pub(crate) fn at(&self, index: usize) -> Option<RegisteredTab<'_>> {
         let tab_id = self.id_at(index)?;
         self.get(tab_id)
     }
 
-    pub(in crate::ui::shell) fn index_of(&self, tab_id: TabId) -> Option<usize> {
+    pub(crate) fn index_of(&self, tab_id: TabId) -> Option<usize> {
         self.order.iter().position(|candidate| *candidate == tab_id)
     }
 
-    pub(in crate::ui::shell) fn id_at(&self, index: usize) -> Option<TabId> {
+    pub(crate) fn id_at(&self, index: usize) -> Option<TabId> {
         self.order.get(index).copied()
     }
 
-    pub(in crate::ui::shell) fn ids(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = TabId> + ExactSizeIterator + '_ {
+    pub(crate) fn ids(&self) -> impl DoubleEndedIterator<Item = TabId> + ExactSizeIterator + '_ {
         self.order.iter().copied()
     }
 
-    pub(in crate::ui::shell) fn iter(
+    pub(crate) fn iter(
         &self,
     ) -> impl DoubleEndedIterator<Item = RegisteredTab<'_>> + ExactSizeIterator {
         self.order.iter().map(|tab_id| {
@@ -284,7 +265,7 @@ impl TabRegistry {
         })
     }
 
-    pub(in crate::ui::shell) fn push(&mut self, tab: TabState) {
+    pub(crate) fn push(&mut self, tab: TabState) {
         let (tab_id, descriptor) = tab.into_parts();
         assert!(
             self.entries.insert(tab_id, descriptor).is_none(),
@@ -293,7 +274,7 @@ impl TabRegistry {
         self.order.push(tab_id);
     }
 
-    pub(in crate::ui::shell) fn insert(&mut self, index: usize, tab: TabState) {
+    pub(crate) fn insert(&mut self, index: usize, tab: TabState) {
         let (tab_id, descriptor) = tab.into_parts();
         assert!(
             self.entries.insert(tab_id, descriptor).is_none(),
@@ -302,7 +283,7 @@ impl TabRegistry {
         self.order.insert(index.min(self.order.len()), tab_id);
     }
 
-    pub(in crate::ui::shell) fn remove(&mut self, index: usize) -> TabState {
+    pub(crate) fn remove(&mut self, index: usize) -> TabState {
         let tab_id = self.order.remove(index);
         let descriptor = self
             .entries
@@ -314,7 +295,7 @@ impl TabRegistry {
         }
     }
 
-    pub(in crate::ui::shell) fn replace(&mut self, index: usize, tab: TabState) -> TabState {
+    pub(crate) fn replace(&mut self, index: usize, tab: TabState) -> TabState {
         let previous_id = self.order[index];
         let (next_id, descriptor) = tab.into_parts();
         if previous_id != next_id {
@@ -335,7 +316,7 @@ impl TabRegistry {
         }
     }
 
-    pub(in crate::ui::shell) fn remove_id(&mut self, tab_id: TabId) -> Option<TabState> {
+    pub(crate) fn remove_id(&mut self, tab_id: TabId) -> Option<TabState> {
         let index = self.index_of(tab_id)?;
         self.order.remove(index);
         self.entries.remove(&tab_id).map(|descriptor| TabState {
@@ -344,16 +325,16 @@ impl TabRegistry {
         })
     }
 
-    pub(in crate::ui::shell) fn swap(&mut self, left: usize, right: usize) {
+    pub(crate) fn swap(&mut self, left: usize, right: usize) {
         self.order.swap(left, right);
     }
 
-    pub(in crate::ui::shell) fn move_to(&mut self, from: usize, to: usize) {
+    pub(crate) fn move_to(&mut self, from: usize, to: usize) {
         let tab_id = self.order.remove(from);
         self.order.insert(to, tab_id);
     }
 
-    pub(in crate::ui::shell) fn state(&self, tab_id: TabId) -> Option<TabState> {
+    pub(crate) fn state(&self, tab_id: TabId) -> Option<TabState> {
         self.entries
             .get(&tab_id)
             .cloned()
@@ -364,7 +345,7 @@ impl TabRegistry {
     }
 }
 
-pub(in crate::ui::shell) fn remember_sidebar_section(
+pub(crate) fn remember_sidebar_section(
     tabs: &mut TabRegistry,
     active_topbar_tab: Option<TabId>,
     section: SidebarSection,
@@ -377,7 +358,7 @@ pub(in crate::ui::shell) fn remember_sidebar_section(
     }
 }
 
-pub(in crate::ui::shell) fn restored_sidebar_section(
+pub(crate) fn restored_sidebar_section(
     tabs: &TabRegistry,
     active_topbar_tab: Option<TabId>,
 ) -> Option<SidebarSection> {
@@ -389,7 +370,7 @@ pub(in crate::ui::shell) fn restored_sidebar_section(
     )
 }
 
-pub(in crate::ui::shell) fn remember_page_editor_sidebar(
+pub(crate) fn remember_page_editor_sidebar(
     tabs: &mut TabRegistry,
     active_topbar_tab: Option<TabId>,
     sidebar: Option<PageEditorSidebarKind>,
@@ -402,7 +383,7 @@ pub(in crate::ui::shell) fn remember_page_editor_sidebar(
     }
 }
 
-pub(in crate::ui::shell) fn restored_page_editor_sidebar(
+pub(crate) fn restored_page_editor_sidebar(
     tabs: &TabRegistry,
     active_topbar_tab: Option<TabId>,
 ) -> Option<PageEditorSidebarKind> {
@@ -413,7 +394,7 @@ pub(in crate::ui::shell) fn restored_page_editor_sidebar(
 }
 
 impl WorkspaceModel {
-    pub(in crate::ui::shell) fn new(
+    pub(crate) fn new(
         initial_tab: TabState,
         next_tab_id: TabId,
         workspace: TabWorkspaceState,
@@ -441,32 +422,25 @@ impl WorkspaceModel {
         }
     }
 
-    pub(in crate::ui::shell) fn allocate_tab_id(&mut self) -> TabId {
+    pub(crate) fn allocate_tab_id(&mut self) -> TabId {
         take_next_tab_id(&mut self.next_tab_id)
     }
 
-    pub(in crate::ui::shell) fn advance_next_tab_id_past(&mut self, tab_id: TabId) {
+    pub(crate) fn advance_next_tab_id_past(&mut self, tab_id: TabId) {
         if self.next_tab_id.raw() <= tab_id.raw() {
             self.next_tab_id = TabId::new(tab_id.raw().saturating_add(1));
         }
     }
 
-    pub(in crate::ui::shell) fn park_workspace(
-        &mut self,
-        owner: TabId,
-        workspace: TabWorkspaceState,
-    ) {
+    pub(crate) fn park_workspace(&mut self, owner: TabId, workspace: TabWorkspaceState) {
         self.parked_workspaces.insert(owner, workspace);
     }
 
-    pub(in crate::ui::shell) fn take_parked_workspace(
-        &mut self,
-        owner: TabId,
-    ) -> Option<TabWorkspaceState> {
+    pub(crate) fn take_parked_workspace(&mut self, owner: TabId) -> Option<TabWorkspaceState> {
         self.parked_workspaces.remove(&owner)
     }
 
-    pub(in crate::ui::shell) fn sync_workspace_placements(
+    pub(crate) fn sync_workspace_placements(
         &mut self,
         owner: TabId,
         workspace: &TabWorkspaceState,
@@ -488,7 +462,7 @@ impl WorkspaceModel {
         }
     }
 
-    pub(in crate::ui::shell) fn swap_top_level_tab_with_pane(
+    pub(crate) fn swap_top_level_tab_with_pane(
         &mut self,
         source_tab_id: TabId,
         target_tab_id: TabId,
@@ -523,56 +497,31 @@ impl WorkspaceModel {
         })
     }
 
-    pub(in crate::ui::shell) fn push_hosts_tab(&mut self, tab: TabState) {
+    pub(crate) fn push_hosts_tab(&mut self, tab: TabState) {
         debug_assert_eq!(tab.kind, TabKindTag::Hosts);
         self.tabs.push(tab);
     }
 
-    pub(in crate::ui::shell) fn push_sftp_tab(&mut self, tab: TabState) {
+    pub(crate) fn push_sftp_tab(&mut self, tab: TabState) {
         debug_assert_eq!(tab.kind, TabKindTag::Sftp);
         self.tabs.push(tab);
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum TabKindTag {
-    Hosts,
-    Session,
-    Sftp,
-    LocalTerminal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum TabPlacement {
-    TopLevel,
-    WorkspacePane { owner: TabId, pane: PaneId },
-    SessionSidecar { owner: TabId },
-    Background,
-}
-
-impl TabPlacement {
-    fn owner(self) -> Option<TabId> {
-        match self {
-            Self::WorkspacePane { owner, .. } | Self::SessionSidecar { owner } => Some(owner),
-            Self::TopLevel | Self::Background => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) struct ClosePlan {
+pub(crate) struct ClosePlan {
     root: TabId,
     tabs: Vec<TabId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum ClosePlanStep {
+pub(crate) enum ClosePlanStep {
     Retire(TabId),
     Commit(TabId),
 }
 
 impl ClosePlan {
-    pub(in crate::ui::shell) fn new(root: TabId, tabs: impl IntoIterator<Item = TabId>) -> Self {
+    pub(crate) fn new(root: TabId, tabs: impl IntoIterator<Item = TabId>) -> Self {
         let mut seen = HashSet::new();
         let mut tabs = tabs
             .into_iter()
@@ -584,7 +533,7 @@ impl ClosePlan {
         Self { root, tabs }
     }
 
-    pub(in crate::ui::shell) fn from_tabs(root: TabId, tabs: &[TabState]) -> Option<Self> {
+    pub(crate) fn from_tabs(root: TabId, tabs: &[TabState]) -> Option<Self> {
         tabs.iter().any(|tab| tab.id == root).then_some(())?;
 
         let mut closing = HashSet::from([root]);
@@ -611,7 +560,7 @@ impl ClosePlan {
         ))
     }
 
-    pub(in crate::ui::shell) fn root(&self) -> TabId {
+    pub(crate) fn root(&self) -> TabId {
         self.root
     }
 
@@ -620,7 +569,7 @@ impl ClosePlan {
         &self.tabs
     }
 
-    pub(in crate::ui::shell) fn resource_first_steps(&self) -> Vec<ClosePlanStep> {
+    pub(crate) fn resource_first_steps(&self) -> Vec<ClosePlanStep> {
         self.tabs
             .iter()
             .rev()
@@ -631,7 +580,7 @@ impl ClosePlan {
     }
 }
 
-pub(in crate::ui::shell) fn reopened_tab_id(
+pub(crate) fn reopened_tab_id(
     closed: Option<TabId>,
     reopened: &HashMap<TabId, TabId>,
 ) -> Option<TabId> {
@@ -639,7 +588,7 @@ pub(in crate::ui::shell) fn reopened_tab_id(
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct PaneSplitAnimationTarget {
+pub(crate) struct PaneSplitAnimationTarget {
     pub path: Vec<usize>,
     pub child_index: usize,
     pub new_child_index: usize,
@@ -650,35 +599,8 @@ pub(in crate::ui::shell) struct PaneSplitAnimationTarget {
     pub to_flex_b: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SplitAxis {
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::shell) enum SplitDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl SplitDirection {
-    pub fn axis(self) -> SplitAxis {
-        match self {
-            Self::Left | Self::Right => SplitAxis::Horizontal,
-            Self::Up | Self::Down => SplitAxis::Vertical,
-        }
-    }
-
-    pub fn places_new_before(self) -> bool {
-        matches!(self, Self::Left | Self::Up)
-    }
-}
-
 #[derive(Debug)]
-pub(in crate::ui::shell) enum PaneLayout {
+pub(crate) enum PaneLayout {
     Leaf(PaneId),
     Split {
         axis: SplitAxis,
@@ -971,11 +893,11 @@ impl PaneLayout {
     }
 }
 
-pub(in crate::ui::shell) fn collapsed_split_flex(total_flex: f32) -> f32 {
+pub(crate) fn collapsed_split_flex(total_flex: f32) -> f32 {
     (total_flex * 0.02).max(0.001).min(total_flex * 0.45)
 }
 
-pub(in crate::ui::shell) struct TabWorkspaceState {
+pub(crate) struct TabWorkspaceState {
     pub active_tab: Option<TabId>,
     pub active_pane_id: PaneId,
     pub active_pane: PaneViewState,
@@ -1006,7 +928,7 @@ impl TabWorkspaceState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::shell::{ParkedPane, SftpTabState};
+    use crate::ui::contracts::sftp::SftpTabState;
 
     fn tab(id: usize, placement: TabPlacement) -> TabState {
         tab_with_kind(id, placement, TabKindTag::Session)
@@ -1329,7 +1251,11 @@ mod tests {
         let sftp_tab = TabState::new_sftp(sftp_id, &profile);
         let sftp = SftpTabState::new(&profile);
         (
-            TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), session_tab, sftp_tab]),
+            TabRegistry::from_tabs([
+                TabState::new_hosts(TabId::new(0)),
+                session_tab.into(),
+                sftp_tab,
+            ]),
             HashMap::from([(session_id, session)]),
             HashMap::from([(sftp_id, sftp)]),
             session_id,
@@ -1393,7 +1319,7 @@ mod tests {
             miaominal_terminal::TerminalState::default(),
             false,
         );
-        let mut tabs = TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), old_tab]);
+        let mut tabs = TabRegistry::from_tabs([TabState::new_hosts(TabId::new(0)), old_tab.into()]);
         let mut session_tabs = HashMap::from([(old_id, old_session)]);
         tabs.remove_id(old_id).expect("old tab exists");
         session_tabs.remove(&old_id).expect("old payload exists");
@@ -1405,7 +1331,7 @@ mod tests {
             miaominal_terminal::TerminalState::default(),
             false,
         );
-        tabs.push(reopened_tab);
+        tabs.push(reopened_tab.into());
         session_tabs.insert(reopened_id, reopened_session);
 
         assert_ne!(old_id, reopened_id);
@@ -1745,7 +1671,7 @@ mod tests {
         layout.split(PaneId(2), SplitDirection::Down, PaneId(3));
         let mut ids = Vec::new();
         layout.collect_pane_ids(&mut ids);
-        ids.sort_by_key(|id| id.0);
+        ids.sort_by_key(|id| id.raw());
         assert_eq!(ids, vec![PaneId(1), PaneId(2), PaneId(3)]);
     }
 
@@ -1784,5 +1710,41 @@ mod tests {
             .close_animation_target(PaneId(2))
             .expect("expected animation target for pane 2");
         assert_eq!(target.axis, SplitAxis::Horizontal);
+    }
+}
+
+impl From<SessionTabDescriptor> for TabState {
+    fn from(value: SessionTabDescriptor) -> Self {
+        Self::new(
+            value.id(),
+            value.title().to_owned(),
+            value.status().to_owned(),
+            value.kind(),
+            value.placement(),
+        )
+    }
+}
+
+impl TabState {
+    pub(crate) fn session_descriptor(&self) -> SessionTabDescriptor {
+        SessionTabDescriptor::new(
+            self.id,
+            self.title.clone(),
+            self.status.clone(),
+            self.kind,
+            self.placement,
+        )
+    }
+}
+
+impl TabState {
+    pub(in crate::ui) fn new_sftp(id: TabId, profile: &SessionProfile) -> Self {
+        Self::new(
+            id,
+            profile.connection_label(),
+            i18n::string("tabs.initial.sftp_connecting"),
+            TabKindTag::Sftp,
+            TabPlacement::TopLevel,
+        )
     }
 }

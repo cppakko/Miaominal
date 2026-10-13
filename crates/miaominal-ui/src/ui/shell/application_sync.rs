@@ -302,7 +302,7 @@ impl AppView {
             else {
                 continue;
             };
-            self.insert_session_tab(tab, session, cx);
+            self.insert_session_tab(tab.into(), session, cx);
         }
     }
 

@@ -1,7 +1,9 @@
-use crate::ui::shell::{App, HostKeyDecision, HostKeyPrompt, SessionController};
+use crate::ui::features::session::SessionController;
+use gpui_kit::App;
+use miaominal_ssh::{HostKeyDecision, HostKeyPrompt};
 
 impl SessionController {
-    pub(in crate::ui::shell) fn render_trusted_host_key_prompt(
+    pub(in crate::ui) fn render_trusted_host_key_prompt(
         &self,
         on_decision: impl Fn(HostKeyDecision, &mut App) + Clone + 'static,
         prompt: &HostKeyPrompt,

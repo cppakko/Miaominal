@@ -1,13 +1,13 @@
 use super::super::workspace::SplitDirection;
 use super::super::*;
-use super::terminal_element::{terminal_font, terminal_font_size};
+use crate::ui::features::session::view::canvas::{terminal_font, terminal_font_size};
 use miaominal_terminal as terminal;
 use miaominal_terminal::{
     TerminalInputModes, TerminalScroll, terminal_cell_width_default, terminal_line_height_default,
 };
 
 pub(in crate::ui::shell) use miaominal_terminal::{
-    TerminalKeyEvent, TerminalKeyStroke, TerminalKeyPhase, TerminalModifiers,
+    TerminalKeyEvent, TerminalKeyPhase, TerminalKeyStroke, TerminalModifiers,
 };
 
 /// Convert a GPUI keystroke into the platform-neutral terminal key stroke.

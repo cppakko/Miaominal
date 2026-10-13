@@ -9,7 +9,7 @@ use miaominal_secrets::SecretKind;
 use miaominal_settings::{AiProviderConfig, AiProviderKind};
 
 #[derive(Clone, Debug)]
-pub(in crate::ui::shell) struct AiProviderSaveDraft {
+pub(in crate::ui) struct AiProviderSaveDraft {
     pub(in crate::ui::shell) provider: AiProviderConfig,
     pub(in crate::ui::shell) api_key: String,
 }

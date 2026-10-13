@@ -2,9 +2,9 @@ use gpui_kit::Context;
 
 use super::*;
 
-pub(in crate::ui::shell) struct PortForwardSessionStart {
-    pub(in crate::ui::shell) tab: TabState,
-    pub(in crate::ui::shell) feedback: String,
+pub(in crate::ui) struct PortForwardSessionStart {
+    pub(in crate::ui) tab: SessionTabDescriptor,
+    pub(in crate::ui) feedback: String,
 }
 
 fn port_forward_failure_notification(
@@ -32,7 +32,7 @@ fn should_notify_port_forward_failure(
 }
 
 impl SessionController {
-    pub(in crate::ui::shell) fn profile_requires_local_vault_unlock(
+    pub(in crate::ui) fn profile_requires_local_vault_unlock(
         &self,
         profile: &SessionProfile,
     ) -> bool {
@@ -93,7 +93,7 @@ impl SessionController {
         Some((tab_id, title))
     }
 
-    pub(in crate::ui::shell) fn start_port_forward_session(
+    pub(in crate::ui) fn start_port_forward_session(
         &self,
         tab_id: TabId,
         profile_id: &str,
@@ -122,14 +122,13 @@ impl SessionController {
             Err(error) => {
                 log::warn!("failed to start global port-forward session: {error:?}");
                 let error = error.to_string();
-                crate::ui::shell::session::publish_session_notification(
+                cx.emit(AppCommand::SessionNotificationRequested(
                     port_forward_failure_notification(
                         tab_id,
                         &Self::rule_summary_label(&rule),
                         &error,
                     ),
-                    cx,
-                );
+                ));
                 cx.emit(AppCommand::Feedback(i18n::string_args(
                     "session.messages.port_forwarding_failed_for",
                     &[("title", &profile.name), ("error", &error)],
@@ -145,7 +144,7 @@ impl SessionController {
             .port_forward_manager()
             .command_sender(profile_id, rule_id);
         let (mut tab, session) = Self::build_port_forwarding_tab(tab_id, &profile, &rule, commands);
-        tab.status = runtime_snapshot.status_message.clone();
+        tab = tab.with_status(runtime_snapshot.status_message.clone());
         self.insert_tab(tab_id, session);
         // The forwarding worker can fail before the shell registers this background tab. Consume
         // that first snapshot here so its notification is not lost after the state becomes Failed.
@@ -153,10 +152,10 @@ impl SessionController {
             self.apply_port_forward_manager_snapshot(&self.port_forward_manager().snapshot(), true);
         for (updated_tab_id, status, notification) in startup_updates {
             if updated_tab_id == tab_id {
-                tab.status = status;
+                tab = tab.with_status(status);
             }
             if let Some(notification) = notification {
-                crate::ui::shell::session::publish_session_notification(notification, cx);
+                cx.emit(AppCommand::SessionNotificationRequested(notification));
             }
         }
         let synced_sessions = self.sync_current_port_forward_rules_for_profile(&profile.id);
@@ -170,7 +169,7 @@ impl SessionController {
         Some(PortForwardSessionStart { tab, feedback })
     }
 
-    pub(in crate::ui::shell) fn apply_port_forward_manager_snapshot(
+    pub(in crate::ui) fn apply_port_forward_manager_snapshot(
         &self,
         snapshot: &PortForwardManagerSnapshot,
         allow_prompt: bool,
@@ -267,11 +266,11 @@ impl SessionController {
         updates
     }
 
-    pub(in crate::ui::shell) fn build_port_forward_status_tab(
+    pub(in crate::ui) fn build_port_forward_status_tab(
         &self,
         tab_id: TabId,
         runtime: &miaominal_services::PortForwardRuntimeSnapshot,
-    ) -> Option<(TabState, SessionTabState)> {
+    ) -> Option<(SessionTabDescriptor, SessionTabState)> {
         let profile = self
             .profiles
             .borrow()
@@ -283,7 +282,7 @@ impl SessionController {
             .command_sender(&runtime.key.profile_id, &runtime.key.rule_id);
         let (mut tab, session) =
             Self::build_port_forwarding_tab(tab_id, &profile, &runtime.rule, commands);
-        tab.status = runtime.status_message.clone();
+        tab = tab.with_status(runtime.status_message.clone());
         Some((tab, session))
     }
 }
@@ -326,7 +325,7 @@ impl crate::ui::contracts::ForwardingRuntime for SessionForwardingRuntime {
     }
 }
 impl SessionController {
-    pub(in crate::ui::shell) fn forwarding_port(
+    pub(in crate::ui) fn forwarding_port(
         owner: &Entity<Self>,
     ) -> crate::ui::contracts::ForwardingRuntimePort {
         crate::ui::contracts::ForwardingRuntimePort::new(Rc::new(SessionForwardingRuntime(

@@ -68,14 +68,7 @@ impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui::shell) struct TerminalSearchAnimation {
-    pub(in crate::ui::shell) started_at: Instant,
-    pub(in crate::ui::shell) duration: Duration,
-    pub(in crate::ui::shell) from: f32,
-    pub(in crate::ui::shell) to: f32,
-}
-
+pub(in crate::ui::shell) use crate::ui::components::animation::TerminalSearchAnimation;
 pub(in crate::ui::shell) struct WorkspaceForms {
     pub(in crate::ui::shell) rename_input: Entity<InputState>,
 }

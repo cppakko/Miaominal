@@ -3,21 +3,30 @@ use std::time::Instant;
 use gpui_kit::{Context, FocusHandle, Window};
 
 use super::SessionController;
-use crate::ui::{
-    i18n,
-    shell::{OVERLAY_ENTER_DURATION, TabId, TerminalSearchAnimation, set_input_value},
-};
+use crate::ui::components::animation::{OVERLAY_ENTER_DURATION, TerminalSearchAnimation};
+use crate::ui::components::forms::set_input_value;
+use crate::ui::contracts::workspace::TabId;
+use crate::ui::i18n;
 
 impl SessionController {
-    pub(in crate::ui::shell) fn sync_terminal_search_target(&self, tab_id: Option<TabId>) {
-        if !self.terminal_search_open() {
+    pub(crate) fn sync_terminal_search_target(&self, tab_id: Option<TabId>, cx: &gpui_kit::App) {
+        let Some(forms) = self.forms.as_ref() else {
+            return;
+        };
+        if !forms.borrow().search.open {
             return;
         }
-        let tab_id = tab_id.filter(|tab_id| self.tab(*tab_id).is_some());
+        let tab_id = tab_id.filter(|id| self.tab(*id).is_some());
+        if self.search_target.get() == tab_id {
+            return;
+        }
+        self.clear_terminal_search_target();
         self.search_target.set(tab_id);
+        let pattern = forms.borrow().search.input.read(cx).value().to_string();
+        self.apply_terminal_search(&pattern);
     }
 
-    pub(in crate::ui::shell) fn open_terminal_search(
+    pub(in crate::ui) fn open_terminal_search(
         &mut self,
         tab_id: TabId,
         window: &mut Window,
@@ -48,7 +57,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn close_terminal_search(
+    pub(in crate::ui) fn close_terminal_search(
         &mut self,
         terminal_focus: &FocusHandle,
         window: &mut Window,
@@ -75,6 +84,17 @@ impl SessionController {
     }
 
     pub(super) fn update_terminal_search(&mut self, pattern: String, cx: &mut Context<Self>) {
+        self.apply_terminal_search(&pattern);
+        cx.notify();
+    }
+
+    fn apply_terminal_search(&self, pattern: &str) {
+        {
+            let mut search = self.terminal_search_mut();
+            search.total = 0;
+            search.current = None;
+            search.status = None;
+        }
         let Some(tab_id) = self.search_target.get() else {
             return;
         };
@@ -114,10 +134,9 @@ impl SessionController {
             search.current = next_current;
             search.status = next_status;
         }
-        cx.notify();
     }
 
-    pub(in crate::ui::shell) fn terminal_search_next(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn terminal_search_next(&mut self, cx: &mut Context<Self>) {
         let Some(tab_id) = self.search_target.get() else {
             return;
         };
@@ -139,7 +158,7 @@ impl SessionController {
         cx.notify();
     }
 
-    pub(in crate::ui::shell) fn terminal_search_prev(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn terminal_search_prev(&mut self, cx: &mut Context<Self>) {
         let Some(tab_id) = self.search_target.get() else {
             return;
         };
