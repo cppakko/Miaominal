@@ -1,6 +1,8 @@
 use crate::ui::assets::AppIcon;
 use anyhow::{Result, anyhow};
-use gpui_kit::component::{Icon, IconName, Root};
+#[cfg(test)]
+use gpui_kit::component::Root;
+use gpui_kit::component::{Icon, IconName};
 use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},

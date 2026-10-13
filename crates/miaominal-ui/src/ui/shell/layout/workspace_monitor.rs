@@ -3,7 +3,7 @@ use crate::ui::i18n;
 use gpui_kit::component::{
     ActiveTheme, Size,
     plot::{
-        Grid, IntoPlot, Plot, StrokeStyle,
+        Curve, Grid, IntoPlot, Plot,
         scale::{Scale, ScaleLinear, ScalePoint},
         shape::Area,
     },
@@ -127,7 +127,7 @@ impl Plot for MonitorTrendChart {
         let height = bounds.size.height.as_f32();
         let y_max = self.y_max.max(1.0);
         let labels = monitor_axis_labels(&self.primary, &self.secondary);
-        let y = ScaleLinear::new(vec![0.0, y_max], vec![height - 3.0, 3.0]);
+        let y = ScaleLinear::new(vec![0.0, y_max], [height - 3.0, 3.0]);
         let grid_ticks = self
             .y_ticks
             .iter()
@@ -150,8 +150,8 @@ impl Plot for MonitorTrendChart {
                 continue;
             }
 
-            let x = ScalePoint::new(labels.clone(), vec![0.0, width]);
-            let y = ScaleLinear::new(vec![0.0, y_max], vec![height - 3.0, 3.0]);
+            let x = ScalePoint::new(labels.clone(), [0.0, width]);
+            let y = ScaleLinear::new(vec![0.0, y_max], [height - 3.0, 3.0]);
             let stroke = rgb(color);
             let fill = linear_gradient(
                 0.0,
@@ -166,7 +166,7 @@ impl Plot for MonitorTrendChart {
                 .y1(move |point| y.tick(&point.value))
                 .fill(fill)
                 .stroke(stroke)
-                .stroke_style(StrokeStyle::Linear)
+                .curve(Curve::Linear)
                 .paint(&bounds, window);
         }
     }

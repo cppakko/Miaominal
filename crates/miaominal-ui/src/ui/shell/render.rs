@@ -143,10 +143,6 @@ impl Render for AppView {
                         cx,
                     )
                 }))
-                .when_some(
-                    Root::render_notification_layer(window, cx),
-                    |this, layer| this.child(layer),
-                )
                 .into_any_element();
         }
         let has_active_session = self.has_active_session();
@@ -514,10 +510,6 @@ impl Render for AppView {
                     cx,
                 )
             }))
-            .when_some(
-                Root::render_notification_layer(window, cx),
-                |this, layer| this.child(layer),
-            )
             .into_any_element()
     }
 }

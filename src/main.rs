@@ -8,7 +8,6 @@ mod app;
 use futures::StreamExt;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui_kit::WindowDecorations;
-use gpui_kit::component::Root;
 #[cfg(target_os = "macos")]
 use gpui_kit::point;
 use gpui_kit::{
@@ -20,7 +19,6 @@ use miaominal_ui::AppAssets;
 use std::io::Cursor;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::sync::{Arc, LazyLock};
-use std::{cell::RefCell, rc::Rc};
 use tokio::runtime::Handle as TokioHandle;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -112,32 +110,24 @@ fn ensure_graphical_session() -> Result<(), String> {
 }
 
 fn open_main_window(cx: &mut App, runtime: TokioHandle) -> AnyWindowHandle {
-    cx.open_window(app_window_options(cx), |window, cx| {
+    let (handle, _) = gpui_kit::open_window(app_window_options(cx), cx, |window, cx| {
         miaominal_ui::configure_main_window_close(window, cx);
-        let view = cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx));
-        cx.new(|cx| Root::new(view, window, cx))
+        cx.new(|cx| miaominal_ui::AppView::new(runtime.clone(), window, cx))
     })
-    .expect("failed to open main window")
-    .into()
+    .expect("failed to open main window");
+    handle
 }
 
 fn open_detached_window(
     cx: &mut App,
     runtime: TokioHandle,
 ) -> anyhow::Result<miaominal_ui::DetachedWindowTarget> {
-    let view_slot = Rc::new(RefCell::new(None));
-    let closure_view_slot = view_slot.clone();
-    let handle = cx.open_window(app_window_options(cx), move |window, cx| {
+    let (handle, view) = gpui_kit::open_window(app_window_options(cx), cx, move |window, cx| {
         let view = cx.new(|cx| miaominal_ui::AppView::new_detached(runtime, window, cx));
         miaominal_ui::configure_detached_window_close(&view, window, cx);
-        closure_view_slot.borrow_mut().replace(view.clone());
-        cx.new(|cx| Root::new(view, window, cx))
+        view
     })?;
-    let view = view_slot
-        .borrow_mut()
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("detached window view was not initialized"))?;
-    Ok(miaominal_ui::DetachedWindowTarget::new(handle.into(), view))
+    Ok(miaominal_ui::DetachedWindowTarget::new(handle, view))
 }
 
 fn activate_main_window(cx: &mut App, runtime: TokioHandle) {
