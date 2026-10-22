@@ -49,7 +49,7 @@ futures = "0.3"
 httparse = "1"
 flate2 = "1"
 fs2 = "0.4.3"
-gpui-kit = { version = "0.7.3", default-features = false }
+gpui-kit = { version = "0.8.0", default-features = false }
 image = { version = "0.25", default-features = false }
 keyring = { version = "4.1.2", features = [
     "apple-native-keyring-store",
