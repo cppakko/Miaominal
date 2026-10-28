@@ -1,12 +1,17 @@
 pub(crate) mod animation;
 pub(crate) mod host_key_prompt;
+pub(in crate::ui) mod shell_tokens;
 pub(crate) mod system_file_icons;
 pub(crate) mod tokens;
 
 #[path = "components/badge.rs"]
 mod badge;
+#[path = "components/card_grid.rs"]
+mod card_grid;
 #[path = "components/card_surface.rs"]
 mod card_surface;
+#[path = "components/catalog_card.rs"]
+pub(in crate::ui) mod catalog_card;
 #[path = "components/dialog.rs"]
 mod dialog;
 #[path = "components/editor_button.rs"]
@@ -45,8 +50,11 @@ mod segmented_switch;
 mod setting_field_with_reset_action;
 #[path = "components/text_input.rs"]
 mod text_input;
+#[path = "components/view_mode_motion.rs"]
+mod view_mode_motion;
 
 pub(crate) use badge::{badge, compact_badge};
+pub(in crate::ui) use card_grid::{card_grid, card_grid_columns};
 pub(crate) use card_surface::card_surface;
 pub(crate) use dialog::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, basic_dialog_action_button,
@@ -83,6 +91,7 @@ pub(crate) use text_input::{
 };
 
 pub(crate) mod forms;
+pub(in crate::ui) use view_mode_motion::animated_card_collection;
 pub(crate) mod progress_panel;
 
 pub(in crate::ui) mod empty_state;

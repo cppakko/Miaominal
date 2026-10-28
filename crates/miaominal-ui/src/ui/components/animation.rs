@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 pub(in crate::ui) const SHORT_FEEDBACK_DURATION: Duration = Duration::from_millis(120);
 pub(in crate::ui) const CONTAINER_TRANSITION_DURATION: Duration = Duration::from_millis(180);
 pub(in crate::ui) const OVERLAY_ENTER_DURATION: Duration = Duration::from_millis(220);
+pub(in crate::ui) const EDITOR_SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(260);
 pub(in crate::ui) const LIST_ENTER_DURATION: Duration = Duration::from_millis(160);
 
 const PAGE_CONTAINER_SCENE: &str = "page-container";
