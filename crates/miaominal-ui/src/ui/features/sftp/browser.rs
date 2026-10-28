@@ -130,6 +130,7 @@ pub(in crate::ui) struct SftpBrowserTableDelegate {
     loading: bool,
     sort_state: Option<(usize, ColumnSort)>,
     available_width: Pixels,
+    scroll_clearance_rows: usize,
     hidden_columns: HashSet<usize>,
     visible_col_map: Vec<usize>,
     pending_select_modifiers: SftpBrowserSelectionModifiers,
@@ -160,6 +161,7 @@ impl SftpBrowserTableDelegate {
             loading: false,
             sort_state: None,
             available_width: px(0.),
+            scroll_clearance_rows: 0,
             hidden_columns,
             visible_col_map,
             pending_select_modifiers: SftpBrowserSelectionModifiers::default(),
@@ -194,6 +196,10 @@ impl SftpBrowserTableDelegate {
 
     pub(in crate::ui) fn row_count(&self) -> usize {
         self.rows.len()
+    }
+
+    pub(super) fn set_scroll_clearance_rows(&mut self, rows: usize) {
+        self.scroll_clearance_rows = rows;
     }
 
     pub(in crate::ui) fn directory_paths_in_selection(
@@ -507,6 +513,11 @@ impl TableDelegate for SftpBrowserTableDelegate {
 
     fn rows_count(&self, _: &App) -> usize {
         self.rows.len()
+            + if self.rows.is_empty() {
+                0
+            } else {
+                self.scroll_clearance_rows
+            }
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
@@ -663,6 +674,10 @@ impl TableDelegate for SftpBrowserTableDelegate {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
+        if row_ix >= self.rows.len() {
+            // Scroll-only space below the files; it has no file actions or selection.
+            return div().id(("sftp-scroll-clearance", row_ix));
+        }
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
         let row_path = self

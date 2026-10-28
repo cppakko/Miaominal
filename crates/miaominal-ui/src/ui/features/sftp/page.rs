@@ -1,5 +1,6 @@
 use super::*;
 use crate::ui::components::empty_state::compact_empty_state;
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use crate::ui::i18n;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,10 @@ use gpui_kit::component::{
 };
 
 const SFTP_SPLIT_GAP: f32 = 6.0;
+const SFTP_BROWSER_SPLIT_LINE_WIDTH: f32 = 2.0;
+const SFTP_BROWSER_SPLIT_LINE_INSET: f32 = 12.0;
+const SFTP_PANEL_RADIUS: f32 = 8.0;
+
 const SFTP_ACTION_BUTTON_GAP: f32 = 4.0;
 const SFTP_MIN_SPLIT_FLEX: f32 = 0.05;
 const SFTP_DEFAULT_LOCAL_PANEL_FLEX: f32 = 0.5;
@@ -33,6 +38,33 @@ const SFTP_BREADCRUMB_SEPARATOR_WITH_GAPS_WIDTH: f32 = 26.0;
 const SFTP_BREADCRUMB_WIDTH_SAFETY_MARGIN: f32 = 8.0;
 const SFTP_REMOTE_FAVORITES_PANEL_WIDTH: f32 = 220.0;
 const SFTP_REMOTE_FAVORITES_SLIDE_OFFSET: f32 = 24.0;
+
+#[derive(IntoElement)]
+struct SftpBrowserTable {
+    table: Entity<TableState<SftpBrowserTableDelegate>>,
+    has_floating_menu: bool,
+}
+
+impl gpui_kit::RenderOnce for SftpBrowserTable {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let clearance_rows = if self.has_floating_menu {
+            (space(ShellMetrics::SESSION_PANEL_MENU_CLEARANCE).to_pixels(window.rem_size())
+                / gpui_kit::component::Size::Small.table_row_height())
+            .ceil() as usize
+        } else {
+            0
+        };
+        self.table.update(cx, |table, _| {
+            table
+                .delegate_mut()
+                .set_scroll_clearance_rows(clearance_rows);
+        });
+        DataTable::new(&self.table)
+            .with_size(gpui_kit::component::Size::Small)
+            .bordered(false)
+            .scrollbar_visible(true, true)
+    }
+}
 
 fn remote_delete_confirmation_message_key(entries: &[(String, bool)]) -> &'static str {
     match (
@@ -721,7 +753,7 @@ fn sftp_path_bar(
 fn sftp_panel_card() -> Div {
     let roles = miaominal_settings::current_theme().material.roles;
 
-    card_surface(roles.surface_container_highest, 8.0)
+    card_surface(roles.surface_container_highest, SFTP_PANEL_RADIUS)
         .size_full()
         .min_w(px(0.0))
         .min_h(px(0.0))
@@ -789,9 +821,35 @@ fn sftp_split_bar(
 
     let roles = miaominal_settings::current_theme().material.roles;
     let marker = SftpSplitDragMarker { divider };
-    let mut bar = div().id(bar_id).flex_shrink_0().occlude();
+    let mut bar = div().id(bar_id.clone()).flex_shrink_0().occlude();
     bar = match divider {
-        SftpSplitDivider::BrowserPanels => bar.w(px(SFTP_SPLIT_GAP)).h_full().cursor_col_resize(),
+        // The browser panels sit directly under the active top tab, whose
+        // canvas-colored surface flows down into them. A chrome-colored gap
+        // here would cut a notch into the tab when the divider moves below
+        // it, so the two panels share one continuous canvas surface and the
+        // handle is drawn as an inset hairline instead.
+        SftpSplitDivider::BrowserPanels => bar
+            .w(px(SFTP_SPLIT_GAP))
+            .h_full()
+            .relative()
+            .bg(ShellColors::current().canvas)
+            .cursor_col_resize()
+            .group(bar_id.clone())
+            .child(
+                div()
+                    .absolute()
+                    .top(px(SFTP_BROWSER_SPLIT_LINE_INSET))
+                    .bottom(px(SFTP_BROWSER_SPLIT_LINE_INSET))
+                    .left(px((SFTP_SPLIT_GAP - SFTP_BROWSER_SPLIT_LINE_WIDTH) / 2.0))
+                    .w(px(SFTP_BROWSER_SPLIT_LINE_WIDTH))
+                    .rounded(px(SFTP_BROWSER_SPLIT_LINE_WIDTH))
+                    .bg(if is_dragging {
+                        rgb(roles.primary)
+                    } else {
+                        rgb(roles.outline_variant)
+                    })
+                    .group_hover(bar_id, move |style| style.bg(rgb(roles.primary))),
+            ),
         SftpSplitDivider::ProgressCenter => bar.h(px(SFTP_SPLIT_GAP)).w_full().cursor_row_resize(),
     };
 
@@ -807,26 +865,32 @@ fn sftp_split_bar(
             });
         },
     )
-    .hover(move |this| {
-        if is_dragging {
+    .hover(move |this| match divider {
+        SftpSplitDivider::BrowserPanels => this.cursor_col_resize(),
+        SftpSplitDivider::ProgressCenter if is_dragging => {
             this.bg(color_with_alpha(roles.primary, 0x22))
-        } else {
-            match divider {
-                SftpSplitDivider::BrowserPanels => this
-                    .cursor_col_resize()
-                    .bg(color_with_alpha(roles.primary, 0x14)),
-                SftpSplitDivider::ProgressCenter => this
-                    .cursor_row_resize()
-                    .bg(color_with_alpha(roles.primary, 0x14)),
-            }
         }
+        SftpSplitDivider::ProgressCenter => this
+            .cursor_row_resize()
+            .bg(color_with_alpha(roles.primary, 0x14)),
     })
     .on_drag(marker, |m, _offset, _window, cx| cx.new(|_| m.clone()))
     .into_any_element()
 }
 
+/// Which vertical edge of a browser panel is fused with its neighbour across
+/// the browser split handle. Fused edges are drawn square so both panels read
+/// as one continuous canvas surface.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SftpPanelJoin {
+    None,
+    Right,
+    Left,
+}
+
 struct SftpBrowserSection<P, T, C, M> {
     section_id: ElementId,
+    join: SftpPanelJoin,
     title: SharedString,
     show_title: bool,
     icon: AppIcon,
@@ -849,6 +913,7 @@ where
     let roles = miaominal_settings::current_theme().material.roles;
     let SftpBrowserSection {
         section_id,
+        join,
         title,
         show_title,
         icon,
@@ -861,6 +926,13 @@ where
     } = section;
 
     sftp_panel_card()
+        .bg(ShellColors::current().canvas)
+        .when(join == SftpPanelJoin::Right, |this| {
+            this.rounded_tr(px(0.0)).rounded_br(px(0.0))
+        })
+        .when(join == SftpPanelJoin::Left, |this| {
+            this.rounded_tl(px(0.0)).rounded_bl(px(0.0))
+        })
         .id(section_id)
         .flex()
         .flex_col()
@@ -2641,12 +2713,10 @@ impl SftpController {
                     });
                 }
             })
-            .child(
-                DataTable::new(&self.remote_table())
-                    .with_size(gpui_kit::component::Size::Small)
-                    .bordered(false)
-                    .scrollbar_visible(true, true),
-            )
+            .child(SftpBrowserTable {
+                table: self.remote_table(),
+                has_floating_menu: true,
+            })
             .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
@@ -2709,6 +2779,7 @@ impl SftpController {
 
         sftp_browser_section(SftpBrowserSection {
             section_id: SharedString::from(format!("remote-sftp-section-{tab_id}")).into(),
+            join: SftpPanelJoin::None,
             title: i18n::string("sftp.ui.remote_section").into(),
             show_title: true,
             icon: AppIcon::FolderSymlink,
@@ -3096,12 +3167,10 @@ impl SftpController {
                     });
                 }
             })
-            .child(
-                DataTable::new(&self.local_table())
-                    .with_size(gpui_kit::component::Size::Small)
-                    .bordered(false)
-                    .scrollbar_visible(true, true),
-            )
+            .child(SftpBrowserTable {
+                table: self.local_table(),
+                has_floating_menu: false,
+            })
             .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
@@ -3250,12 +3319,10 @@ impl SftpController {
                     });
                 }
             })
-            .child(
-                DataTable::new(&self.remote_table())
-                    .with_size(gpui_kit::component::Size::Small)
-                    .bordered(false)
-                    .scrollbar_visible(true, true),
-            )
+            .child(SftpBrowserTable {
+                table: self.remote_table(),
+                has_floating_menu: false,
+            })
             .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
@@ -3359,6 +3426,7 @@ impl SftpController {
                     .child(sftp_browser_section(SftpBrowserSection {
                         section_id: SharedString::from(format!("local-sftp-section-{tab_id}"))
                             .into(),
+                        join: SftpPanelJoin::Right,
                         title: i18n::string("sftp.ui.local_section").into(),
                         show_title: true,
                         icon: AppIcon::Computer,
@@ -3402,6 +3470,7 @@ impl SftpController {
                     .child(sftp_browser_section(SftpBrowserSection {
                         section_id: SharedString::from(format!("remote-sftp-section-{tab_id}"))
                             .into(),
+                        join: SftpPanelJoin::Left,
                         title: i18n::string("sftp.ui.remote_section").into(),
                         show_title: true,
                         icon: AppIcon::FolderSymlink,
@@ -3435,7 +3504,8 @@ impl SftpController {
         div()
             .size_full()
             .relative()
-            .bg(rgb(roles.surface_container))
+            .px(space(8.0))
+            .bg(ShellColors::current().chrome)
             .capture_any_mouse_down(cx.listener(
                 move |this, event: &MouseDownEvent, _window, cx| {
                     if event.button == MouseButton::Left {
