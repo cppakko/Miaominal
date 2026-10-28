@@ -1,5 +1,7 @@
+#[cfg(test)]
+use gpui_kit::InteractiveElement as _;
 use gpui_kit::component::{
-    Sizable, Size, StyleSized as _,
+    ActiveTheme as _, Sizable, Size, StyleSized as _,
     input::{Editor, EditorState, Input, InputState, Textarea, TextareaState},
     label::Label,
 };
@@ -99,20 +101,31 @@ fn input_text_size(size: Size, window: &Window) -> Pixels {
     }
 }
 
-fn code_editor_gutter_width(size: Size, folding: bool, window: &mut Window) -> Pixels {
-    const LINE_NUMBER_LEN: usize = 5;
-    const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(10.0);
+fn code_editor_gutter_width(
+    line_count: usize,
+    font_size: Pixels,
+    font_family: &SharedString,
+    folding: bool,
+    window: &mut Window,
+) -> Pixels {
+    // Mirrors gpui-base's `layout_line_numbers`: three digits are reserved for
+    // small documents, growing up to seven, followed by a 6px margin. A foldable
+    // editor adds the fold icon hitbox.
+    const MIN_LINE_NUMBER_DIGITS: usize = 3;
+    const MAX_LINE_NUMBER_DIGITS: usize = 7;
+    const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(6.0);
     const FOLD_ICON_HITBOX_WIDTH: Pixels = px(18.0);
 
-    let style = window.text_style();
-    let font_size = input_text_size(size, window);
-    let line_number = "+".repeat(LINE_NUMBER_LEN);
+    let digits = (line_count.max(1).ilog10() as usize + 1)
+        .clamp(MIN_LINE_NUMBER_DIGITS, MAX_LINE_NUMBER_DIGITS);
+    let mut font = window.text_style().font();
+    font.family = font_family.clone();
     let shaped_line = window.text_system().shape_line(
-        SharedString::from(line_number),
+        SharedString::from("+".repeat(digits)),
         font_size,
         &[TextRun {
-            len: LINE_NUMBER_LEN,
-            font: style.font(),
+            len: digits,
+            font,
             color: black(),
             background_color: None,
             underline: None,
@@ -152,7 +165,9 @@ fn render_hinted_control(
     hint_center_y: bool,
     hide_hint_on_focus: bool,
     container_h_full: bool,
-    window: &mut Window,
+    text_metrics: Option<(Pixels, Pixels)>,
+    hint_font: Option<SharedString>,
+    hint_color: Option<gpui_kit::Hsla>,
 ) -> impl IntoElement {
     let default_hint_x = size.input_px();
     let default_hint_y = size.input_py();
@@ -168,29 +183,37 @@ fn render_hinted_control(
         .child(control)
         .when(is_empty && (!hide_hint_on_focus || !is_focused), |this| {
             this.when_some(hint, |this, hint| {
-                let gutter_width = match hint.layout {
-                    InputHintLayout::Plain => px(0.0),
-                    InputHintLayout::CodeEditor { folding } => {
-                        code_editor_gutter_width(size, folding, window)
-                    }
-                };
-
-                this.child(
-                    div()
-                        .absolute()
-                        .left(hint_left + gutter_width)
-                        .right(hint_right)
-                        .top(hint_top)
-                        .bottom(hint_bottom)
-                        .flex()
-                        .when(hint_center_y, |this| this.items_center())
-                        .overflow_hidden()
-                        .child(
-                            Label::new(hint.hint)
-                                .input_text_size(size)
-                                .text_color(rgb(input_hint_foreground())),
-                        ),
-                )
+                let element = div()
+                    .absolute()
+                    .left(hint_left)
+                    .right(hint_right)
+                    .top(hint_top)
+                    // Single-line hints share the input's vertical center;
+                    // multiline hints stay within the first line's box.
+                    .when_some(
+                        text_metrics.filter(|_| !hint_center_y),
+                        |this, (_, height)| this.h(height),
+                    )
+                    .when(hint_center_y || text_metrics.is_none(), |this| {
+                        this.bottom(hint_bottom)
+                    })
+                    .flex()
+                    .when(hint_center_y, |this| this.items_center())
+                    .overflow_hidden()
+                    .child(
+                        Label::new(hint.hint)
+                            .input_text_size(size)
+                            .when_some(hint_font, |label, family| label.font_family(family))
+                            .when_some(text_metrics, |label, (size, height)| {
+                                label.text_size(size).line_height(height)
+                            })
+                            .text_color(
+                                hint_color.unwrap_or_else(|| rgb(input_hint_foreground()).into()),
+                            ),
+                    );
+                #[cfg(test)]
+                let element = element.debug_selector(|| "input-hint".into());
+                this.child(element)
             })
         })
 }
@@ -207,6 +230,8 @@ pub(crate) struct HintedInput {
     hint_center_y: bool,
     hide_hint_on_focus: bool,
     container_h_full: bool,
+    text_metrics: Option<(Pixels, Pixels)>,
+    hint_color: Option<gpui_kit::Hsla>,
 }
 
 impl HintedInput {
@@ -222,11 +247,25 @@ impl HintedInput {
             hint_center_y: true,
             hide_hint_on_focus: false,
             container_h_full: false,
+            text_metrics: None,
+            hint_color: None,
         }
     }
 
     pub(crate) fn appearance(mut self, appearance: bool) -> Self {
         self.input = self.input.appearance(appearance);
+        self
+    }
+
+    /// Apply the same typography to entered text and its separately drawn hint.
+    pub(crate) fn text_metrics(mut self, size: Pixels, line_height: Pixels) -> Self {
+        self.input = self.input.text_size(size).line_height(line_height);
+        self.text_metrics = Some((size, line_height));
+        self
+    }
+
+    pub(crate) fn hint_color(mut self, color: gpui_kit::Hsla) -> Self {
+        self.hint_color = Some(color);
         self
     }
 
@@ -289,7 +328,9 @@ impl RenderOnce for HintedInput {
             self.hint_center_y,
             self.hide_hint_on_focus,
             self.container_h_full,
-            window,
+            self.text_metrics,
+            None,
+            self.hint_color,
         )
     }
 }
@@ -298,9 +339,7 @@ impl RenderOnce for HintedInput {
 pub(crate) struct HintedTextarea {
     textarea: Textarea,
     state: Entity<TextareaState>,
-    hint_left: Option<Pixels>,
-    hint_top: Option<Pixels>,
-    hint_bottom: Option<Pixels>,
+    outer_padding: Pixels,
 }
 
 impl HintedTextarea {
@@ -308,9 +347,7 @@ impl HintedTextarea {
         Self {
             textarea: Textarea::new(state).bordered(false).border_0(),
             state: state.clone(),
-            hint_left: None,
-            hint_top: None,
-            hint_bottom: None,
+            outer_padding: px(0.0),
         }
     }
 
@@ -319,18 +356,11 @@ impl HintedTextarea {
         self
     }
 
-    pub(crate) fn hint_left(mut self, left: Pixels) -> Self {
-        self.hint_left = Some(left);
-        self
-    }
-
-    pub(crate) fn hint_top(mut self, top: Pixels) -> Self {
-        self.hint_top = Some(top);
-        self
-    }
-
-    pub(crate) fn hint_bottom(mut self, bottom: Pixels) -> Self {
-        self.hint_bottom = Some(bottom);
+    /// Declare the padding the caller applies around the textarea (for example
+    /// via `.p_1()`). The hint is inset by this padding plus the textarea's own
+    /// text insets so it starts exactly where typed text and the caret do.
+    pub(crate) fn outer_padding(mut self, padding: Pixels) -> Self {
+        self.outer_padding = padding;
         self
     }
 }
@@ -346,20 +376,32 @@ impl RenderOnce for HintedTextarea {
         let hint = input_hint(self.state.entity_id(), cx);
         let is_empty = self.state.read(cx).value().is_empty();
         let is_focused = self.state.focus_handle(cx).is_focused(window);
+        let size = Size::default();
+        let left = self.outer_padding + size.input_px();
+        let right = self.outer_padding + size.input_px();
+        let top = self.outer_padding + size.input_py();
+        // The textarea lays text out with a fixed 1.25rem line height; match it
+        // so the hint shares the first line's baseline with typed text.
+        let metrics = (
+            input_text_size(size, window),
+            rems(1.25).to_pixels(window.rem_size()),
+        );
         render_hinted_control(
             self.textarea,
             hint,
             is_empty,
             is_focused,
-            Size::default(),
-            self.hint_left,
+            size,
+            Some(left),
+            Some(right),
+            Some(top),
+            Some(top),
+            false,
+            false,
+            false,
+            Some(metrics),
             None,
-            self.hint_top,
-            self.hint_bottom,
-            false,
-            false,
-            false,
-            window,
+            None,
         )
     }
 }
@@ -368,8 +410,7 @@ impl RenderOnce for HintedTextarea {
 pub(crate) struct HintedEditor {
     editor: Editor,
     state: Entity<EditorState>,
-    hint_top: Option<Pixels>,
-    hint_bottom: Option<Pixels>,
+    outer_padding: Pixels,
     container_h_full: bool,
 }
 
@@ -378,8 +419,7 @@ impl HintedEditor {
         Self {
             editor: Editor::new(state).bordered(false).border_0(),
             state: state.clone(),
-            hint_top: None,
-            hint_bottom: None,
+            outer_padding: px(0.0),
             container_h_full: false,
         }
     }
@@ -389,13 +429,11 @@ impl HintedEditor {
         self
     }
 
-    pub(crate) fn hint_top(mut self, top: Pixels) -> Self {
-        self.hint_top = Some(top);
-        self
-    }
-
-    pub(crate) fn hint_bottom(mut self, bottom: Pixels) -> Self {
-        self.hint_bottom = Some(bottom);
+    /// Declare the padding the caller applies around the editor (for example
+    /// via `.p_3()`). The hint is inset by this padding plus the editor's own
+    /// text insets so it lines up with typed text and the caret.
+    pub(crate) fn outer_padding(mut self, padding: Pixels) -> Self {
+        self.outer_padding = padding;
         self
     }
 
@@ -414,22 +452,207 @@ impl Styled for HintedEditor {
 impl RenderOnce for HintedEditor {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let hint = input_hint(self.state.entity_id(), cx);
-        let is_empty = self.state.read(cx).value().is_empty();
+        let value = self.state.read(cx).value();
+        let is_empty = value.is_empty();
         let is_focused = self.state.focus_handle(cx).is_focused(window);
+        let size = Size::default();
+        // The editor renders code in the theme's mono font at its own size and
+        // line height, which is what its caret and typed text follow.
+        let font_size = cx.theme().mono_font_size;
+        let font_family = cx.theme().mono_font_family.clone();
+        // Mirrors the editor's internal paddings: code editors use a narrower
+        // left inset than plain inputs, then indent the text past the gutter.
+        let gutter = match hint.as_ref().map(|hint| hint.layout) {
+            Some(InputHintLayout::CodeEditor { folding }) => code_editor_gutter_width(
+                // `Rope::lines_len` counts lines the same way: a trailing
+                // newline opens another, empty line.
+                value.split('\n').count(),
+                font_size,
+                &font_family,
+                folding,
+                window,
+            ),
+            _ => px(0.0),
+        };
+        let left = self.outer_padding + size.input_px().min(px(6.0)) + gutter;
+        let right = self.outer_padding + size.input_px();
+        let top = self.outer_padding + size.input_py();
         render_hinted_control(
             self.editor,
             hint,
             is_empty,
             is_focused,
-            Size::default(),
-            None,
-            None,
-            self.hint_top,
-            self.hint_bottom,
-            true,
+            size,
+            Some(left),
+            Some(right),
+            Some(top),
+            Some(top),
+            false,
             false,
             self.container_h_full,
-            window,
+            // gpui-component's `EDITOR_LINE_HEIGHT`.
+            Some((font_size, (font_size * 1.5).round())),
+            Some(font_family),
+            None,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::component::input::EditorState;
+    use gpui_kit::{AppContext as _, Bounds, Context, Render, TestAppContext};
+
+    /// Asserts the drawn hint starts on the same line and column as the caret.
+    fn assert_hint_matches_caret(cx: &mut gpui_kit::VisualTestContext, caret: Bounds<Pixels>) {
+        let hint = cx.debug_bounds("input-hint").expect("hint must render");
+        let left = f32::from(hint.left() - caret.left()).abs();
+        assert!(left < 0.5, "hint starts {left}px from the caret");
+        let caret_center = caret.top() + caret.size.height / 2.0;
+        let hint_center = hint.top() + hint.size.height / 2.0;
+        let top = f32::from(caret_center - hint_center).abs();
+        assert!(top < 1.5, "hint line is {top}px off the caret line");
+    }
+
+    struct EditorProbe {
+        state: Entity<EditorState>,
+    }
+
+    impl Render for EditorProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(320.0))
+                    .h(px(120.0))
+                    .child(
+                        HintedEditor::new(&self.state)
+                            .size_full()
+                            .appearance(false)
+                            .p_3()
+                            .outer_padding(px(12.0))
+                            .container_h_full(),
+                    ),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn editor_hint_starts_at_the_caret(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut state = None;
+        let (_root, cx) = cx.add_window_view(|window, cx| {
+            // The startup-command and snippet editors disable folding.
+            let editor = cx.new(|cx| EditorState::new(window, cx).folding(false));
+            register_code_editor_input_hint(&editor, "hint", false, cx);
+            state = Some(editor.clone());
+            EditorProbe { state: editor }
+        });
+        let state = state.unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.focus(&state.read(cx).focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx).clear(cx);
+        });
+
+        let caret = state.read_with(cx, |state, _| {
+            let geometry = state.prepaint_caret_geometry().expect("prepaint must run");
+            geometry.cursor_bounds()
+        });
+        assert_hint_matches_caret(cx, caret);
+    }
+
+    struct TextareaProbe {
+        state: Entity<TextareaState>,
+    }
+
+    impl Render for TextareaProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div().absolute().top_0().left_0().w(px(320.0)).child(
+                    HintedTextarea::new(&self.state)
+                        .appearance(false)
+                        .p_1()
+                        .outer_padding(px(4.0)),
+                ),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn textarea_hint_starts_at_the_caret(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut state = None;
+        let (_root, cx) = cx.add_window_view(|window, cx| {
+            let textarea = cx.new(|cx| TextareaState::new(window, cx));
+            register_textarea_hint(&textarea, "hint", cx);
+            state = Some(textarea.clone());
+            TextareaProbe { state: textarea }
+        });
+        let state = state.unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.focus(&state.read(cx).focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx).clear(cx);
+        });
+
+        let caret = state.read_with(cx, |state, _| {
+            let geometry = state.prepaint_caret_geometry().expect("prepaint must run");
+            geometry.cursor_bounds()
+        });
+        assert_hint_matches_caret(cx, caret);
+    }
+
+    struct InputProbe {
+        state: Entity<InputState>,
+    }
+
+    impl Render for InputProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(320.0))
+                    .child(HintedInput::new(&self.state).large()),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn input_hint_starts_at_the_caret(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut state = None;
+        let (_root, cx) = cx.add_window_view(|window, cx| {
+            let input = cx.new(|cx| InputState::new(window, cx));
+            register_input_hint(&input, "hint", cx);
+            state = Some(input.clone());
+            InputProbe { state: input }
+        });
+        let state = state.unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.focus(&state.read(cx).focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx).clear(cx);
+        });
+
+        let caret = state.read_with(cx, |state, _| {
+            let geometry = state.prepaint_caret_geometry().expect("prepaint must run");
+            geometry.cursor_bounds()
+        });
+        assert_hint_matches_caret(cx, caret);
     }
 }

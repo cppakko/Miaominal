@@ -364,9 +364,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                             .w_full()
                                             .appearance(false)
                                             .p_1()
-                                            .hint_left(px(4.0))
-                                            .hint_top(px(4.0))
-                                            .hint_bottom(px(4.0)),
+                                            .outer_padding(px(4.0)),
                                     ),
                                 )
                                 .on_key_down({

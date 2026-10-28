@@ -218,8 +218,7 @@ pub(crate) fn surface_text_editor(
                 .size_full()
                 .appearance(false)
                 .p_3()
-                .hint_top(px(12.0))
-                .hint_bottom(px(12.0))
+                .outer_padding(px(12.0))
                 .container_h_full(),
         )
 }
