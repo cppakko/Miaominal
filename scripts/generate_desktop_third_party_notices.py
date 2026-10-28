@@ -162,6 +162,15 @@ def generate() -> dict[str, str]:
                 errors.append(f"{pkg['name']} {pkg['version']}: {error}")
         if errors:
             raise ValueError("Missing license evidence:\n" + "\n".join(sorted(errors)))
+    # two-face's syntax/theme licenses are embedded in a binary archive, so the
+    # ordinary license-file scan cannot read them. Include its pinned full list.
+    for pkg in packages:
+        if pkg["name"] == "two-face":
+            directory = Path(pkg["manifest_path"]).parent
+            revision = json.loads((directory / ".cargo_vcs_info.json").read_text())["git"]["sha1"]
+            origin = f"https://raw.githubusercontent.com/CosmicHorrorDev/two-face/{revision}/generated/acknowledgements_full.md"
+            component = next(row for row in components if row["name"] == f"two-face@{pkg['version']}")
+            component["documents"].append(collector.document("Embedded syntax and theme licenses", origin, collector.text(collector.download(origin))))
     lucide = "https://raw.githubusercontent.com/lucide-icons/lucide/" + LUCIDE_LICENSE_REVISION + "/LICENSE"
     components.append({"name": "Lucide SVG icons (bundled files)", "kind": "bundled-assets", "declared_license": "ISC; original Feather portions MIT",
                        "source": lucide, "copyrights": [], "documents": [collector.document("Lucide and Feather icon licenses", lucide, collector.text(collector.download(lucide)))]})

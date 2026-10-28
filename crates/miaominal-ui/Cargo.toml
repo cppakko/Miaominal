@@ -13,19 +13,7 @@ futures.workspace = true
 gpui-kit = { workspace = true, features = [
     "assets",
     "component",
-    "tree-sitter-bash",
-    "tree-sitter-c",
-    "tree-sitter-cpp",
-    "tree-sitter-css",
-    "tree-sitter-diff",
-    "tree-sitter-go",
-    "tree-sitter-html",
-    "tree-sitter-java",
-    "tree-sitter-javascript",
-    "tree-sitter-markdown",
-    "tree-sitter-python",
-    "tree-sitter-rust",
-    "tree-sitter-typescript",
+    "syntect",
 ] }
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 log.workspace = true

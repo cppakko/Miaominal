@@ -1638,39 +1638,6 @@
       "copyrights": []
     },
     {
-      "name": "atomic@0.5.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0/MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/atomic/0.5.3/download",
-      "upstream": "https://github.com/Amanieu/atomic-rs",
-      "developers": [
-        "Amanieu d'Antras <amanieu@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/atomic/0.5.3/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/atomic/0.5.3/download!/LICENSE-MIT",
-          "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2016 Amanieu d'Antras"
-      ]
-    },
-    {
       "name": "atspi-common@0.13.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0 OR MIT",
@@ -2749,35 +2716,6 @@
       "copyrights": []
     },
     {
-      "name": "bzip2@0.6.1",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/bzip2/0.6.1/download",
-      "upstream": "https://github.com/trifectatechfoundation/bzip2-rs",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/bzip2/0.6.1/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/bzip2/0.6.1/download!/LICENSE-MIT",
-          "sha256": "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "cairo-rs@0.18.5",
       "kind": "cargo",
       "declared_license": "MIT",
@@ -2958,41 +2896,6 @@
         }
       ],
       "copyrights": []
-    },
-    {
-      "name": "cgl@0.3.2",
-      "kind": "cargo",
-      "declared_license": "MIT / Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/cgl/0.3.2/download",
-      "upstream": "https://github.com/servo/cgl-rs",
-      "developers": [
-        "The Servo Project Developers"
-      ],
-      "documents": [
-        {
-          "title": "COPYING",
-          "source": "https://crates.io/api/v1/crates/cgl/0.3.2/download!/COPYING",
-          "sha256": "ec82b96487e9e778ee610c7ab245162464782cfa1f555c2299333f8dbe5c036a"
-        },
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/cgl/0.3.2/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/cgl/0.3.2/download!/LICENSE-MIT",
-          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2013 The Servo Project Developers. See the COPYRIGHT",
-        "Copyright 2014 The Servo Project Developers. See the COPYRIGHT"
-      ]
     },
     {
       "name": "chacha20@0.10.0",
@@ -3671,33 +3574,6 @@
       ]
     },
     {
-      "name": "core-graphics2@0.5.2",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/core-graphics2/0.5.2/download",
-      "upstream": "https://github.com/rust-media/apple-media-rs",
-      "developers": [
-        "Zhou Wei <zhouwei@ehom.net>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/core-graphics2/0.5.2/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/core-graphics2/0.5.2/download!/LICENSE-MIT",
-          "sha256": "4646dda6399fccb0a3bf6b42b58ce3fa4371f4e490d5e5c69a67084015b351de"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "core-graphics@0.24.0",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -3768,33 +3644,6 @@
       "copyrights": [
         "Copyright 2013 The Servo Project Developers. See the COPYRIGHT"
       ]
-    },
-    {
-      "name": "core-video@0.5.2",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/core-video/0.5.2/download",
-      "upstream": "https://github.com/rust-media/apple-media-rs",
-      "developers": [
-        "Zhou Wei <zhouwei@ehom.net>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/core-video/0.5.2/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/core-video/0.5.2/download!/LICENSE-MIT",
-          "sha256": "4646dda6399fccb0a3bf6b42b58ce3fa4371f4e490d5e5c69a67084015b351de"
-        }
-      ],
-      "copyrights": []
     },
     {
       "name": "core_maths@0.1.1",
@@ -4059,35 +3908,6 @@
         {
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/crossbeam-epoch/0.9.18/download!/LICENSE-MIT",
-          "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "crossbeam-queue@0.3.12",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/crossbeam-queue/0.3.12/download",
-      "upstream": "https://github.com/crossbeam-rs/crossbeam",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/crossbeam-queue/0.3.12/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/crossbeam-queue/0.3.12/download!/LICENSE-MIT",
           "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab"
         }
       ],
@@ -5717,37 +5537,6 @@
       "copyrights": []
     },
     {
-      "name": "erased-serde@0.4.10",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/erased-serde/0.4.10/download",
-      "upstream": "https://github.com/dtolnay/erased-serde",
-      "developers": [
-        "David Tolnay <dtolnay@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/erased-serde/0.4.10/download!/LICENSE-APACHE",
-          "sha256": "b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/erased-serde/0.4.10/download!/LICENSE-MIT",
-          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "errno@0.3.14",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -6323,68 +6112,6 @@
       "copyrights": []
     },
     {
-      "name": "filetime@0.2.27",
-      "kind": "cargo",
-      "declared_license": "MIT/Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/filetime/0.2.27/download",
-      "upstream": "https://github.com/alexcrichton/filetime",
-      "developers": [
-        "Alex Crichton <alex@alexcrichton.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/filetime/0.2.27/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/filetime/0.2.27/download!/LICENSE-MIT",
-          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "fixedbitset@0.5.7",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/fixedbitset/0.5.7/download",
-      "upstream": "https://github.com/petgraph/fixedbitset",
-      "developers": [
-        "bluss"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/fixedbitset/0.5.7/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/fixedbitset/0.5.7/download!/LICENSE-MIT",
-          "sha256": "ce592787ff2321feab698a4c612237f4378cc658ebb1d472913e5802cc47afb4"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "flate2@1.1.9",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -6939,7 +6666,7 @@
       "copyrights": []
     },
     {
-      "name": "futures-channel@0.3.32",
+      "name": "futures-channel@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -6950,18 +6677,18 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-channel/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-channel/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-channel/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-channel/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-channel/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-channel/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
@@ -6970,7 +6697,7 @@
       ]
     },
     {
-      "name": "futures-concurrency@7.7.1",
+      "name": "futures-core@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -6981,56 +6708,25 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-concurrency/7.7.1/download",
-      "upstream": "https://github.com/yoshuawuyts/futures-concurrency",
-      "developers": [
-        "Yoshua Wuyts <yoshuawuyts@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-concurrency/7.7.1/download!/LICENSE-APACHE",
-          "sha256": "6b286a8c17b82bbcba94eeb9a0c883bcc9117790599a182d23b7ce666042fc38"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-concurrency/7.7.1/download!/LICENSE-MIT",
-          "sha256": "24e5860bf589d8501643e6ea51ffb3df66db2867492b09033d486183efbfa970"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "futures-core@0.3.32",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/futures-core/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-core/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-core/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-core/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-core/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-core/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "futures-executor@0.3.32",
+      "name": "futures-executor@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7041,25 +6737,25 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-executor/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-executor/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-executor/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-executor/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-executor/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-executor/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "futures-io@0.3.32",
+      "name": "futures-io@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7070,18 +6766,18 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-io/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-io/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-io/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-io/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-io/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-io/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
@@ -7125,7 +6821,7 @@
       "copyrights": []
     },
     {
-      "name": "futures-macro@0.3.32",
+      "name": "futures-macro@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7136,25 +6832,25 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-macro/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-macro/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-macro/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-macro/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-macro/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-macro/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "futures-sink@0.3.32",
+      "name": "futures-sink@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7165,25 +6861,25 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-sink/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-sink/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-sink/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-sink/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-sink/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-sink/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "futures-task@0.3.32",
+      "name": "futures-task@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7194,18 +6890,18 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-task/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-task/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-task/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-task/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-task/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-task/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
@@ -7243,7 +6939,7 @@
       "copyrights": []
     },
     {
-      "name": "futures-util@0.3.32",
+      "name": "futures-util@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7254,25 +6950,25 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures-util/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures-util/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures-util/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures-util/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures-util/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures-util/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "futures@0.3.32",
+      "name": "futures@0.3.34",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -7283,18 +6979,18 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/futures/0.3.32/download",
+      "source": "https://crates.io/api/v1/crates/futures/0.3.34/download",
       "upstream": "https://github.com/rust-lang/futures-rs",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/futures/0.3.32/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/futures/0.3.34/download!/LICENSE-APACHE",
           "sha256": "8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/futures/0.3.32/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/futures/0.3.34/download!/LICENSE-MIT",
           "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
         }
       ],
@@ -8031,7 +7727,7 @@
       "copyrights": []
     },
     {
-      "name": "gpui-base@0.6.0",
+      "name": "gpui-base@0.8.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8042,20 +7738,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-base/0.6.0/download",
+      "source": "https://crates.io/api/v1/crates/gpui-base/0.8.0/download",
       "upstream": "https://github.com/longbridge/gpui-kit",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-base/0.6.0/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-base/0.8.0/download!/LICENSE-APACHE",
           "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-component-macros@0.6.0",
+      "name": "gpui-component-macros@0.8.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8066,20 +7762,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-component-macros/0.6.0/download",
+      "source": "https://crates.io/api/v1/crates/gpui-component-macros/0.8.0/download",
       "upstream": null,
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-component-macros/0.6.0/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-component-macros/0.8.0/download!/LICENSE-APACHE",
           "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-component@0.6.0",
+      "name": "gpui-component@0.8.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8090,20 +7786,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-component/0.6.0/download",
+      "source": "https://crates.io/api/v1/crates/gpui-component/0.8.0/download",
       "upstream": "https://github.com/longbridge/gpui-kit",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-component/0.6.0/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-component/0.8.0/download!/LICENSE-APACHE",
           "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-kit-assets@0.6.0",
+      "name": "gpui-kit-assets@0.8.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8114,20 +7810,74 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-kit-assets/0.6.0/download",
+      "source": "https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download",
+      "upstream": "https://github.com/longbridge/gpui-kit",
+      "developers": [],
+      "documents": [
+        {
+          "title": "LICENSE-LUCIDE",
+          "source": "https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download!/LICENSE-LUCIDE",
+          "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+        },
+        {
+          "title": "assets/icons/copyright.svg",
+          "source": "https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download!/assets/icons/copyright.svg",
+          "sha256": "c48dd4821477080b092fcf209b3c45314c0405f0b5830a3f84b02ef02d0a7823"
+        }
+      ],
+      "copyrights": []
+    },
+    {
+      "name": "gpui-kit@0.8.0",
+      "kind": "cargo",
+      "declared_license": "Apache-2.0",
+      "targets": [
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/gpui-kit/0.8.0/download",
       "upstream": "https://github.com/longbridge/gpui-kit",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://raw.githubusercontent.com/longbridge/gpui-kit/6d802393b4f247c11777aa27c7a46504a1b46d30/LICENSE-APACHE",
+          "source": "https://raw.githubusercontent.com/longbridge/gpui-kit/1676826d9d49b90f4d7b6808b69924f58796f6f1/LICENSE-APACHE",
           "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811"
+        },
+        {
+          "title": "LICENSE-DOCS.md",
+          "source": "https://raw.githubusercontent.com/longbridge/gpui-kit/1676826d9d49b90f4d7b6808b69924f58796f6f1/LICENSE-DOCS.md",
+          "sha256": "8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-kit@0.6.0",
+      "name": "gpui-pre-apple@0.3.9",
+      "kind": "cargo",
+      "declared_license": "Apache-2.0",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/gpui-pre-apple/0.3.9/download",
+      "upstream": "https://github.com/zed-industries/zed",
+      "developers": [],
+      "documents": [
+        {
+          "title": "LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-apple/0.3.9/download!/LICENSE-APACHE",
+          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
+        }
+      ],
+      "copyrights": []
+    },
+    {
+      "name": "gpui-pre-collections@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8138,40 +7888,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-kit/0.6.0/download",
-      "upstream": "https://github.com/longbridge/gpui-kit",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://raw.githubusercontent.com/longbridge/gpui-kit/94a313a72a2513aee2780240cd322d552b2395f0/LICENSE-APACHE",
-          "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-apple@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-apple/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-collections/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-apple/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-collections/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-collections@0.3.3",
+      "name": "gpui-pre-derive-refineable@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8182,20 +7912,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-collections/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-collections/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-derive-refineable@0.3.3",
+      "name": "gpui-pre-http-client@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8206,81 +7936,33 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-http-client-tls@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-http-client-tls/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-http-client-tls/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-http-client@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-linux@0.3.3",
+      "name": "gpui-pre-linux@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-linux/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-linux/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-linux/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-linux/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
@@ -8290,71 +7972,27 @@
       ]
     },
     {
-      "name": "gpui-pre-macos@0.3.3",
+      "name": "gpui-pre-macos@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-macos/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-macos/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-macos/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-macos/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-macros@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-macros/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-macros/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-media@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-media/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-media/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-perf@0.3.3",
+      "name": "gpui-pre-macros@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8365,20 +8003,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-perf/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-macros/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-perf/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-macros/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-platform@0.3.3",
+      "name": "gpui-pre-platform@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8389,20 +8027,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-platform/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-platform/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-platform/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-platform/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-refineable@0.3.3",
+      "name": "gpui-pre-refineable@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8413,20 +8051,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-reqwest-client@0.3.3",
+      "name": "gpui-pre-scheduler@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8437,51 +8075,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-reqwest-client/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-reqwest-client/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-reqwest@0.12.15",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-reqwest/0.12.15/download",
-      "upstream": "https://github.com/seanmonstar/reqwest",
-      "developers": [
-        "Sean McArthur <sean@seanmonstar.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-reqwest/0.12.15/download!/LICENSE-APACHE",
-          "sha256": "2ffc690bebe151fe6d903da809e36b6de0d692e075461f2862ef6bc6e51f7035"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-reqwest/0.12.15/download!/LICENSE-MIT",
-          "sha256": "34f17d90673854314276164d17a4861400d4528066eb458a003fdb15ef98fbbe"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-scheduler@0.3.3",
+      "name": "gpui-pre-shared-string@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8492,20 +8099,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-shared-string@0.3.3",
+      "name": "gpui-pre-sum-tree@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8516,20 +8123,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-sum-tree@0.3.3",
+      "name": "gpui-pre-util@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8540,108 +8147,60 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-util/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-util/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-util-macros@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-util-macros/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-util-macros/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-util@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-util/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-util/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre-wgpu@0.3.3",
+      "name": "gpui-pre-wgpu@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-windows@0.3.3",
+      "name": "gpui-pre-windows@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
         "x86_64-pc-windows-msvc",
         "aarch64-pc-windows-msvc"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-windows/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-windows/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-windows/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-windows/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-zlog@0.3.3",
+      "name": "gpui-pre-ztracing-macro@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8652,20 +8211,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-zlog/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-zlog/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-ztracing-macro@0.3.3",
+      "name": "gpui-pre-ztracing@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8676,20 +8235,20 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
       "copyrights": []
     },
     {
-      "name": "gpui-pre-ztracing@0.3.3",
+      "name": "gpui-pre@0.3.9",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
@@ -8700,31 +8259,7 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.3/download",
-      "upstream": "https://github.com/zed-industries/zed",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.3/download!/LICENSE-APACHE",
-          "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "gpui-pre@0.3.3",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/gpui-pre/0.3.3/download",
+      "source": "https://crates.io/api/v1/crates/gpui-pre/0.3.9/download",
       "upstream": "https://github.com/zed-industries/zed",
       "developers": [
         "Nathan Sobo <nathan@zed.dev>"
@@ -8732,7 +8267,7 @@
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/gpui-pre/0.3.3/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/gpui-pre/0.3.9/download!/LICENSE-APACHE",
           "sha256": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a"
         }
       ],
@@ -10279,31 +9814,6 @@
       "copyrights": []
     },
     {
-      "name": "inotify@0.10.2",
-      "kind": "cargo",
-      "declared_license": "ISC",
-      "targets": [
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu"
-      ],
-      "source": "https://crates.io/api/v1/crates/inotify/0.10.2/download",
-      "upstream": "https://github.com/hannobraun/inotify",
-      "developers": [
-        "Hanno Braun <mail@hannobraun.de>",
-        "Félix Saparelli <me@passcod.name>",
-        "Cristian Kubis <cristian.kubis@tsunix.de>",
-        "Frank Denis <github@pureftpd.org>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/inotify/0.10.2/download!/LICENSE",
-          "sha256": "7f78b31de4e7a3e2ac8de40e2b409eda313f03637aa62b8416fbde9bdc5ce4c9"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "inotify@0.11.2",
       "kind": "cargo",
       "declared_license": "ISC",
@@ -10470,40 +9980,6 @@
         }
       ],
       "copyrights": []
-    },
-    {
-      "name": "io-surface@0.16.1",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/io-surface/0.16.1/download",
-      "upstream": "https://github.com/servo/core-foundation-rs",
-      "developers": [
-        "The Servo Project Developers"
-      ],
-      "documents": [
-        {
-          "title": "COPYRIGHT",
-          "source": "https://crates.io/api/v1/crates/io-surface/0.16.1/download!/COPYRIGHT",
-          "sha256": "ec82b96487e9e778ee610c7ab245162464782cfa1f555c2299333f8dbe5c036a"
-        },
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/io-surface/0.16.1/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/io-surface/0.16.1/download!/LICENSE-MIT",
-          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2013 The Servo Project Developers. See the COPYRIGHT"
-      ]
     },
     {
       "name": "ipnet@2.12.0",
@@ -11087,64 +10563,6 @@
       ]
     },
     {
-      "name": "leak@0.1.2",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 OR MIT",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/leak/0.1.2/download",
-      "upstream": "https://github.com/jmesmon/leak.git",
-      "developers": [
-        "Cody P Schafer <dev@codyps.com>"
-      ],
-      "documents": [
-        {
-          "title": "License declaration in published source archive",
-          "source": "https://crates.io/api/v1/crates/leak/0.1.2/download!/Cargo.toml",
-          "sha256": "8800b6172da0ce015fdc69cbe3fdc48c22f4223babe254e207255c681c83e8dd"
-        },
-        {
-          "title": "Standard Apache-2.0 text (no standalone license in source archive)",
-          "source": "https://raw.githubusercontent.com/spdx/license-list-data/60e0de29cbcf3e83bf9d5e299972a1969516d918/text/Apache-2.0.txt",
-          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
-        }
-      ],
-      "copyrights": [],
-      "selected_license": "Apache-2.0",
-      "license_evidence": "Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained."
-    },
-    {
-      "name": "leaky-cow@0.1.1",
-      "kind": "cargo",
-      "declared_license": "MIT / Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/leaky-cow/0.1.1/download",
-      "upstream": "https://github.com/notriddle/rust-leaky-cow",
-      "developers": [
-        "Michael Howell <michael@notriddle.com>"
-      ],
-      "documents": [
-        {
-          "title": "License declaration in published source archive",
-          "source": "https://crates.io/api/v1/crates/leaky-cow/0.1.1/download!/Cargo.toml",
-          "sha256": "085f4c01ae6bdce024442ad218281657ca042f84d4e84b2d30bcaa2412bfead9"
-        },
-        {
-          "title": "Standard Apache-2.0 text (no standalone license in source archive)",
-          "source": "https://raw.githubusercontent.com/spdx/license-list-data/60e0de29cbcf3e83bf9d5e299972a1969516d918/text/Apache-2.0.txt",
-          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
-        }
-      ],
-      "copyrights": [],
-      "selected_license": "Apache-2.0",
-      "license_evidence": "Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained."
-    },
-    {
       "name": "lebe@0.5.3",
       "kind": "cargo",
       "declared_license": "BSD-3-Clause",
@@ -11222,30 +10640,6 @@
         "Copyright 2017-2021 qDot",
         "Copyright 2021 Tauri Programme within The Commons Conservancy"
       ]
-    },
-    {
-      "name": "libbz2-rs-sys@0.2.3",
-      "kind": "cargo",
-      "declared_license": "bzip2-1.0.6",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/libbz2-rs-sys/0.2.3/download",
-      "upstream": "https://github.com/trifectatechfoundation/libbzip2-rs",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/libbz2-rs-sys/0.2.3/download!/LICENSE",
-          "sha256": "d7ad1d46fc65500b88096ad63ff018123ea856e46c96e5b985eb7158481c7a65"
-        }
-      ],
-      "copyrights": []
     },
     {
       "name": "libc@0.2.185",
@@ -11852,30 +11246,30 @@
       "license_evidence": "Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained."
     },
     {
-      "name": "mach2@0.5.0",
+      "name": "mach2@0.6.0",
       "kind": "cargo",
       "declared_license": "BSD-2-Clause OR MIT OR Apache-2.0",
       "targets": [
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/mach2/0.5.0/download",
+      "source": "https://crates.io/api/v1/crates/mach2/0.6.0/download",
       "upstream": "https://github.com/JohnTitor/mach2",
       "developers": [],
       "documents": [
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/mach2/0.5.0/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/mach2/0.6.0/download!/LICENSE-APACHE",
           "sha256": "b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e"
         },
         {
           "title": "LICENSE-BSD",
-          "source": "https://crates.io/api/v1/crates/mach2/0.5.0/download!/LICENSE-BSD",
+          "source": "https://crates.io/api/v1/crates/mach2/0.6.0/download!/LICENSE-BSD",
           "sha256": "044983df14c97f2f9570766aaf977b3cdfc4a06cf1f36b776331c5ff89b4fb89"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/mach2/0.5.0/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/mach2/0.6.0/download!/LICENSE-MIT",
           "sha256": "3f9f0f7e5a5911a8042e32c83ff5d061ce1ffd02e8a207ec2135a44ad73b4191"
         }
       ],
@@ -12845,37 +12239,6 @@
       "copyrights": []
     },
     {
-      "name": "notify-types@1.0.1",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/notify-types/1.0.1/download",
-      "upstream": "https://github.com/notify-rs/notify.git",
-      "developers": [
-        "Daniel Faust <hessijames@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/notify-types/1.0.1/download!/LICENSE-APACHE",
-          "sha256": "7ebd41b9bcb764647508f32011f0e5502764f6f4b492c303dd71ca304b336b2d"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/notify-types/1.0.1/download!/LICENSE-MIT",
-          "sha256": "b63e167d61ced1d872a588c5ac764b0dda477d62209dc4f6b6bfea5517d0a24c"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "notify-types@2.1.0",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -12907,34 +12270,6 @@
       "copyrights": []
     },
     {
-      "name": "notify@7.0.0",
-      "kind": "cargo",
-      "declared_license": "CC0-1.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/notify/7.0.0/download",
-      "upstream": "https://github.com/notify-rs/notify.git",
-      "developers": [
-        "Félix Saparelli <me@passcod.name>",
-        "Daniel Faust <hessijames@gmail.com>",
-        "Aron Heinecke <Ox0p54r36@t-online.de>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-CC0",
-          "source": "https://crates.io/api/v1/crates/notify/7.0.0/download!/LICENSE-CC0",
-          "sha256": "29f359024dacaa3361dcddf5a9316e8458028ff062b63105a61e04a16566f968"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "notify@8.2.0",
       "kind": "cargo",
       "declared_license": "CC0-1.0",
@@ -12958,35 +12293,6 @@
           "title": "LICENSE-CC0",
           "source": "https://crates.io/api/v1/crates/notify/8.2.0/download!/LICENSE-CC0",
           "sha256": "29f359024dacaa3361dcddf5a9316e8458028ff062b63105a61e04a16566f968"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "nu-ansi-term@0.50.3",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/nu-ansi-term/0.50.3/download",
-      "upstream": "https://github.com/nushell/nu-ansi-term",
-      "developers": [
-        "ogham@bsago.me",
-        "Ryan Scheel (Havvy) <ryan.havvy@gmail.com>",
-        "Josh Triplett <josh@joshtriplett.org>",
-        "The Nushell Project Developers"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/nu-ansi-term/0.50.3/download!/LICENSE",
-          "sha256": "cfdb7491dfa8800a1d561957d6a072ad63a6305ffa48386d04eae8eac8d65e8a"
         }
       ],
       "copyrights": []
@@ -13492,26 +12798,6 @@
       "copyrights": []
     },
     {
-      "name": "objc2-core-location@0.3.2",
-      "kind": "cargo",
-      "declared_license": "Zlib OR Apache-2.0 OR MIT",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/objc2-core-location/0.3.2/download",
-      "upstream": "https://github.com/madsmtm/objc2",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE.md",
-          "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
-          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "objc2-core-text@0.3.2",
       "kind": "cargo",
       "declared_license": "Zlib OR Apache-2.0 OR MIT",
@@ -13624,6 +12910,26 @@
       "copyrights": []
     },
     {
+      "name": "objc2-metal@0.3.2",
+      "kind": "cargo",
+      "declared_license": "Zlib OR Apache-2.0 OR MIT",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/objc2-metal/0.3.2/download",
+      "upstream": "https://github.com/madsmtm/objc2",
+      "developers": [],
+      "documents": [
+        {
+          "title": "LICENSE.md",
+          "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ],
+      "copyrights": []
+    },
+    {
       "name": "objc2-quartz-core@0.3.2",
       "kind": "cargo",
       "declared_license": "Zlib OR Apache-2.0 OR MIT",
@@ -13632,6 +12938,26 @@
         "x86_64-apple-darwin"
       ],
       "source": "https://crates.io/api/v1/crates/objc2-quartz-core/0.3.2/download",
+      "upstream": "https://github.com/madsmtm/objc2",
+      "developers": [],
+      "documents": [
+        {
+          "title": "LICENSE.md",
+          "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ],
+      "copyrights": []
+    },
+    {
+      "name": "objc2-security@0.3.2",
+      "kind": "cargo",
+      "declared_license": "Zlib OR Apache-2.0 OR MIT",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/objc2-security/0.3.2/download",
       "upstream": "https://github.com/madsmtm/objc2",
       "developers": [],
       "documents": [
@@ -14965,37 +14291,6 @@
       "copyrights": []
     },
     {
-      "name": "pollster@0.2.5",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0/MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/pollster/0.2.5/download",
-      "upstream": "https://github.com/zesterer/pollster",
-      "developers": [
-        "Joshua Barretto <joshua.s.barretto@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/pollster/0.2.5/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/pollster/0.2.5/download!/LICENSE-MIT",
-          "sha256": "cc02a53316678ca2575cc69d12daa7b1833935d4b7742c31fbab7bd74a481077"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "pollster@0.4.0",
       "kind": "cargo",
       "declared_license": "Apache-2.0/MIT",
@@ -15144,32 +14439,6 @@
           "title": "LICENSE.md",
           "source": "https://crates.io/api/v1/crates/portable-pty/0.9.0/download!/LICENSE.md",
           "sha256": "191c46fcf52061382b1c51a70311eb9081381cc158e5899f3739473a9432185b"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "postage@0.5.0",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/postage/0.5.0/download",
-      "upstream": "https://github.com/austinjones/postage-rs",
-      "developers": [
-        "Austin Jones <implAustin@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/postage/0.5.0/download!/LICENSE",
-          "sha256": "d4a0afb0c4ac483ff4718d3591a9e4429912538920f5062032320e398fc06dd9"
         }
       ],
       "copyrights": []
@@ -16694,93 +15963,6 @@
       "copyrights": []
     },
     {
-      "name": "ring@0.17.14",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 AND ISC",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/ring/0.17.14/download",
-      "upstream": "https://github.com/briansmith/ring",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/LICENSE",
-          "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a"
-        },
-        {
-          "title": "LICENSE-BoringSSL",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/LICENSE-BoringSSL",
-          "sha256": "0d872bb68596964630ba03fe6e4c9370181f9e8696971d419d3de55a3b984679"
-        },
-        {
-          "title": "LICENSE-other-bits",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/LICENSE-other-bits",
-          "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
-        },
-        {
-          "title": "src/polyfill/once_cell/LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/src/polyfill/once_cell/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "src/polyfill/once_cell/LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/src/polyfill/once_cell/LICENSE-MIT",
-          "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc"
-        },
-        {
-          "title": "third_party/fiat/LICENSE",
-          "source": "https://crates.io/api/v1/crates/ring/0.17.14/download!/third_party/fiat/LICENSE",
-          "sha256": "9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f"
-        }
-      ],
-      "copyrights": [
-        "Copyright (c) 2014, 2015, Google Inc.",
-        "Copyright (c) 2014, Google Inc.",
-        "Copyright (c) 2016, Google Inc.",
-        "Copyright (c) 2019, Google Inc.",
-        "Copyright 2015 Brian Smith.",
-        "Copyright 2015-2016 Brian Smith.",
-        "Copyright 2015-2017 Brian Smith.",
-        "Copyright 2015-2019 Brian Smith.",
-        "Copyright 2015-2021 Brian Smith.",
-        "Copyright 2015-2022 Brian Smith.",
-        "Copyright 2015-2023 Brian Smith.",
-        "Copyright 2015-2024 Brian Smith.",
-        "Copyright 2015-2025 Brian Smith.",
-        "Copyright 2016 Brian Smith.",
-        "Copyright 2016 David Judd.",
-        "Copyright 2016 Simon Sapin.",
-        "Copyright 2016-2019 Brian Smith.",
-        "Copyright 2016-2021 Brian Smith.",
-        "Copyright 2016-2023 Brian Smith.",
-        "Copyright 2016-2024 Brian Smith.",
-        "Copyright 2016-2025 Brian Smith.",
-        "Copyright 2017 Brian Smith.",
-        "Copyright 2017-2023 Brian Smith.",
-        "Copyright 2017-2025 Brian Smith.",
-        "Copyright 2018 Brian Smith.",
-        "Copyright 2018 Trent Clarke.",
-        "Copyright 2018-2024 Brian Smith.",
-        "Copyright 2018-2025 Brian Smith.",
-        "Copyright 2019-2024 Brian Smith.",
-        "Copyright 2019-2025 Brian Smith.",
-        "Copyright 2020-2024 Brian Smith.",
-        "Copyright 2021 Brian Smith.",
-        "Copyright 2022 Brian Smith.",
-        "Copyright 2023 Brian Smith.",
-        "Copyright 2024 Brian Smith.",
-        "Copyright 2024-2025 Brian Smith.",
-        "Copyright 2025 Brian Smith."
-      ]
-    },
-    {
       "name": "ropey@2.0.0-beta.1",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -17363,12 +16545,8 @@
       "kind": "cargo",
       "declared_license": "Apache-2.0 OR ISC OR MIT",
       "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
+        "aarch64-unknown-linux-gnu"
       ],
       "source": "https://crates.io/api/v1/crates/rustls-native-certs/0.8.3/download",
       "upstream": "https://github.com/rustls/rustls-native-certs",
@@ -17392,45 +16570,6 @@
         {
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/rustls-native-certs/0.8.3/download!/LICENSE-MIT",
-          "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "rustls-pemfile@2.2.0",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 OR ISC OR MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/rustls-pemfile/2.2.0/download",
-      "upstream": "https://github.com/rustls/pemfile",
-      "developers": [],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/rustls-pemfile/2.2.0/download!/LICENSE",
-          "sha256": "e1da6bc3092fe4be62352c00a7692cbc30bab30d9a89e8d6349b945b06904009"
-        },
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/rustls-pemfile/2.2.0/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-ISC",
-          "source": "https://crates.io/api/v1/crates/rustls-pemfile/2.2.0/download!/LICENSE-ISC",
-          "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/rustls-pemfile/2.2.0/download!/LICENSE-MIT",
           "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c"
         }
       ],
@@ -17715,29 +16854,6 @@
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/same-file/1.0.6/download!/LICENSE-MIT",
           "sha256": "cb3c929a05e6cbc9de9ab06a4c57eeb60ca8c724bef6c138c87d3a577e27aa14"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "schannel@0.1.29",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/schannel/0.1.29/download",
-      "upstream": "https://github.com/steffengy/schannel-rs",
-      "developers": [
-        "Steven Fackler <sfackler@gmail.com>",
-        "Steffen Butzer <steffen.butzer@outlook.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE.md",
-          "source": "https://crates.io/api/v1/crates/schannel/0.1.29/download!/LICENSE.md",
-          "sha256": "aa72991ac35b4de0034da0afe943e62b48c4092fc2ba13ae47806d8e9a4ad551"
         }
       ],
       "copyrights": []
@@ -18279,37 +17395,6 @@
       "copyrights": []
     },
     {
-      "name": "serde_fmt@1.1.0",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 OR MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/serde_fmt/1.1.0/download",
-      "upstream": "https://github.com/KodrAus/serde_fmt.git",
-      "developers": [
-        "Ashley Mannix <ashleymannix@live.com.au>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/serde_fmt/1.1.0/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/serde_fmt/1.1.0/download!/LICENSE-MIT",
-          "sha256": "782a2a0d52424b8cc0fb414052517c2889e879225e38e520bc1e96f225359e59"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "serde_json@1.0.150",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -18529,9 +17614,7 @@
         "x86_64-pc-windows-msvc",
         "aarch64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
+        "aarch64-unknown-linux-gnu"
       ],
       "source": "https://crates.io/api/v1/crates/sha1_smol/1.0.1/download",
       "upstream": "https://github.com/mitsuhiko/sha1-smol",
@@ -18639,32 +17722,6 @@
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/sha3/0.11.0/download!/LICENSE-MIT",
           "sha256": "6462612d92b861384dcd378168a7a0ef3ef28876d3d380d382cb5a3091e360b8"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "sharded-slab@0.1.7",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/sharded-slab/0.1.7/download",
-      "upstream": "https://github.com/hawkw/sharded-slab",
-      "developers": [
-        "Eliza Weisman <eliza@buoyant.io>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/sharded-slab/0.1.7/download!/LICENSE",
-          "sha256": "eafbfa606bc005ed7fd2f623d65af17ffe4ef7c017221ac14405bf4140771ea9"
         }
       ],
       "copyrights": []
@@ -18876,6 +17933,34 @@
           "title": "LICENSE.md",
           "source": "https://crates.io/api/v1/crates/simd-adler32/0.3.9/download!/LICENSE.md",
           "sha256": "42a35170233e83e18856792e748de4c1ce4a63b2afce9a370c89ef3fe23f9f2d"
+        }
+      ],
+      "copyrights": []
+    },
+    {
+      "name": "similar@2.7.0",
+      "kind": "cargo",
+      "declared_license": "Apache-2.0",
+      "targets": [
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/similar/2.7.0/download",
+      "upstream": "https://github.com/mitsuhiko/similar",
+      "developers": [
+        "Armin Ronacher <armin.ronacher@active-4.com>",
+        "Pierre-Étienne Meunier <pe@pijul.org>",
+        "Brandon Williams <bwilliams.eng@gmail.com>"
+      ],
+      "documents": [
+        {
+          "title": "LICENSE",
+          "source": "https://crates.io/api/v1/crates/similar/2.7.0/download!/LICENSE",
+          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
         }
       ],
       "copyrights": []
@@ -19393,9 +18478,7 @@
         "x86_64-pc-windows-msvc",
         "aarch64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
+        "aarch64-unknown-linux-gnu"
       ],
       "source": "https://crates.io/api/v1/crates/static_assertions/1.1.0/download",
       "upstream": "https://github.com/nvzqz/static-assertions-rs",
@@ -19443,37 +18526,6 @@
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/str_indices/0.4.4/download!/LICENSE-MIT",
           "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "streaming-iterator@0.1.9",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/streaming-iterator/0.1.9/download",
-      "upstream": "https://github.com/sfackler/streaming-iterator",
-      "developers": [
-        "Steven Fackler <sfackler@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/streaming-iterator/0.1.9/download!/LICENSE-APACHE",
-          "sha256": "a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/streaming-iterator/0.1.9/download!/LICENSE-MIT",
-          "sha256": "34cb64162194d52a8412e96d8693ebf43a67d019c6b5bd76da3bb377ba7507aa"
         }
       ],
       "copyrights": []
@@ -19822,6 +18874,37 @@
       "copyrights": []
     },
     {
+      "name": "syn@3.0.5",
+      "kind": "cargo",
+      "declared_license": "MIT OR Apache-2.0",
+      "targets": [
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "source": "https://crates.io/api/v1/crates/syn/3.0.5/download",
+      "upstream": "https://github.com/dtolnay/syn",
+      "developers": [
+        "David Tolnay <dtolnay@gmail.com>"
+      ],
+      "documents": [
+        {
+          "title": "LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/syn/3.0.5/download!/LICENSE-APACHE",
+          "sha256": "b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e"
+        },
+        {
+          "title": "LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/syn/3.0.5/download!/LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "copyrights": []
+    },
+    {
       "name": "sync_wrapper@1.0.2",
       "kind": "cargo",
       "declared_license": "Apache-2.0",
@@ -19956,35 +19039,6 @@
         {
           "title": "LICENSE-MIT",
           "source": "https://crates.io/api/v1/crates/system-configuration-sys/0.6.0/download!/LICENSE-MIT",
-          "sha256": "000cbb5bea6f21829c8f0d9e1fe87410bd5ef0453412ffc017845982a3e19824"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2017 Amagicom AB."
-      ]
-    },
-    {
-      "name": "system-configuration@0.6.1",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/system-configuration/0.6.1/download",
-      "upstream": "https://github.com/mullvad/system-configuration-rs",
-      "developers": [
-        "Mullvad VPN"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/system-configuration/0.6.1/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/system-configuration/0.6.1/download!/LICENSE-MIT",
           "sha256": "000cbb5bea6f21829c8f0d9e1fe87410bd5ef0453412ffc017845982a3e19824"
         }
       ],
@@ -20241,39 +19295,6 @@
         }
       ],
       "copyrights": []
-    },
-    {
-      "name": "thread_local@1.1.9",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/thread_local/1.1.9/download",
-      "upstream": "https://github.com/Amanieu/thread_local-rs",
-      "developers": [
-        "Amanieu d'Antras <amanieu@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/thread_local/1.1.9/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/thread_local/1.1.9/download!/LICENSE-MIT",
-          "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2017 Amanieu d'Antras"
-      ]
     },
     {
       "name": "tiff@0.11.3",
@@ -21207,73 +20228,6 @@
       "copyrights": []
     },
     {
-      "name": "tracing-log@0.2.0",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tracing-log/0.2.0/download",
-      "upstream": "https://github.com/tokio-rs/tracing",
-      "developers": [
-        "Tokio Contributors <team@tokio.rs>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tracing-log/0.2.0/download!/LICENSE",
-          "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tracing-subscriber@0.3.23",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tracing-subscriber/0.3.23/download",
-      "upstream": "https://github.com/tokio-rs/tracing",
-      "developers": [
-        "Eliza Weisman <eliza@buoyant.io>",
-        "David Barsky <me@davidbarsky.com>",
-        "Tokio Contributors <team@tokio.rs>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tracing-subscriber/0.3.23/download!/LICENSE",
-          "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1"
-        }
-      ],
-      "copyrights": [
-        "Copyright © 1993,2004 Sun Microsystems or",
-        "Copyright © 1994 David Burren. It is licensed under a BSD license.",
-        "Copyright © 1999-2019, Arm Limited.",
-        "Copyright © 2001-2008 Ville Laurikari and licensed",
-        "Copyright © 2003-2009 Bruce D. Evans or",
-        "Copyright © 2003-2009 Steven G. Kargl or",
-        "Copyright © 2003-2011 David Schultz or",
-        "Copyright © 2005-2020 Rich Felker, et al.",
-        "Copyright © 2008",
-        "Copyright © 2008 Stephen L. Moshier or",
-        "Copyright © 2011",
-        "Copyright © 2017-2018 Arm Limited"
-      ]
-    },
-    {
       "name": "tracing@0.1.44",
       "kind": "cargo",
       "declared_license": "MIT",
@@ -21333,442 +20287,6 @@
       "copyrights": [
         "Copyright 2022-2022 Tauri Programme within The Commons Conservancy"
       ]
-    },
-    {
-      "name": "tree-sitter-bash@0.23.3",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-bash/0.23.3/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-bash",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/487734f87fd87118028a65a4599352fa99c9cde8/LICENSE",
-          "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-c@0.24.2",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-c/0.24.2/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-c",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tree-sitter-c/0.24.2/download!/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-cpp@0.23.4",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-cpp/0.23.4/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-cpp",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-css@0.23.2",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-css/0.23.2/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-css",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/c0d581e32d183a536731ed6c3a72758b27e20411/LICENSE",
-          "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-diff@0.1.0",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-diff/0.1.0/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-diff",
-      "developers": [
-        "Michael Davis <mcarsondavis@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-diff/4867e8470e1b0ad7364c4e3ffab762c361bbb635/LICENSE",
-          "sha256": "bb98faf5a86e9458536a6c745e02b53775d01066f1e51dda4ae220a3c0b050f4"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-go@0.23.4",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-go/0.23.4/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-go",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/3c3775faa968158a8b4ac190a7fda867fd5fb748/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-html@0.23.2",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-html/0.23.2/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-html",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/5a5ca8551a179998360b4a4ca2c0f366a35acc03/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-java@0.23.5",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-java/0.23.5/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-java",
-      "developers": [
-        "Ayman Nadeem <aymannadeem@github.com>",
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/94703d5a6bed02b98e438d7cad1136c01a60ba2c/LICENSE",
-          "sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-javascript@0.23.1",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-javascript/0.23.1/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-javascript",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/3a837b6f3658ca3618f2022f8707e29739c91364/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-json@0.24.8",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-json/0.24.8/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-json",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-language@0.1.7",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-language/0.1.7/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tree-sitter-language/0.1.7/download!/LICENSE",
-          "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-md@0.5.3",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-md/0.5.3/download",
-      "upstream": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
-      "developers": [
-        "MDeiml"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/f969cd3ae3f9fbd4e43205431d0ae286014c05b5/LICENSE",
-          "sha256": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-python@0.23.6",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-python/0.23.6/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-python",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/bffb65a8cfe4e46290331dfef0dbf0ef3679de11/LICENSE",
-          "sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-rust@0.24.2",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-rust/0.24.2/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-rust",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tree-sitter-rust/0.24.2/download!/LICENSE",
-          "sha256": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter-typescript@0.23.2",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter-typescript/0.23.2/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter-typescript",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
-          "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "tree-sitter@0.26.9",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/tree-sitter/0.26.9/download",
-      "upstream": "https://github.com/tree-sitter/tree-sitter",
-      "developers": [
-        "Max Brunsfeld <maxbrunsfeld@gmail.com>",
-        "Amaan Qureshi <amaanq12@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/tree-sitter/0.26.9/download!/LICENSE",
-          "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
-        },
-        {
-          "title": "src/unicode/LICENSE",
-          "source": "https://crates.io/api/v1/crates/tree-sitter/0.26.9/download!/src/unicode/LICENSE",
-          "sha256": "6a18c5fac70d7860b57f5b72b4e2c9a1ba6b3d2741eef7ff9767c5379364f10d"
-        }
-      ],
-      "copyrights": []
     },
     {
       "name": "triomphe@0.1.15",
@@ -21865,7 +20383,7 @@
       "copyrights": []
     },
     {
-      "name": "typeid@1.0.3",
+      "name": "two-face@0.4.5",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
       "targets": [
@@ -21876,21 +20394,24 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/typeid/1.0.3/download",
-      "upstream": "https://github.com/dtolnay/typeid",
-      "developers": [
-        "David Tolnay <dtolnay@gmail.com>"
-      ],
+      "source": "https://crates.io/api/v1/crates/two-face/0.4.5/download",
+      "upstream": "https://github.com/CosmicHorrorDev/two-face",
+      "developers": [],
       "documents": [
         {
+          "title": "Embedded syntax and theme licenses",
+          "source": "https://raw.githubusercontent.com/CosmicHorrorDev/two-face/4f766bcb4499f6340e8d6dd715ab64f52c6e8ca4/generated/acknowledgements_full.md",
+          "sha256": "afcfb536e62c5f78af45aad96498f658e8494f151ae0835440f3be5a91c2b00b"
+        },
+        {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/typeid/1.0.3/download!/LICENSE-APACHE",
-          "sha256": "b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e"
+          "source": "https://crates.io/api/v1/crates/two-face/0.4.5/download!/LICENSE-APACHE",
+          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/typeid/1.0.3/download!/LICENSE-MIT",
-          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+          "source": "https://crates.io/api/v1/crates/two-face/0.4.5/download!/LICENSE-MIT",
+          "sha256": "aa1a8099209547c3bfa01e9976e2075e45dcc71b9b677bde86b356cb89a05069"
         }
       ],
       "copyrights": []
@@ -22147,8 +20668,12 @@
       "kind": "cargo",
       "declared_license": "Apache-2.0",
       "targets": [
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu"
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
       ],
       "source": "https://crates.io/api/v1/crates/unicode-linebreak/0.1.5/download",
       "upstream": "https://github.com/axelf4/unicode-linebreak",
@@ -22165,7 +20690,7 @@
       "copyrights": []
     },
     {
-      "name": "unicode-properties@0.1.4",
+      "name": "unicode-properties@0.1.3",
       "kind": "cargo",
       "declared_license": "MIT/Apache-2.0",
       "targets": [
@@ -22176,7 +20701,7 @@
         "aarch64-apple-darwin",
         "x86_64-apple-darwin"
       ],
-      "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.4/download",
+      "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.3/download",
       "upstream": "https://github.com/unicode-rs/unicode-properties",
       "developers": [
         "Charles Lew <crlf0710@gmail.com>",
@@ -22185,17 +20710,17 @@
       "documents": [
         {
           "title": "COPYRIGHT",
-          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.4/download!/COPYRIGHT",
+          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.3/download!/COPYRIGHT",
           "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d"
         },
         {
           "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.4/download!/LICENSE-APACHE",
+          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.3/download!/LICENSE-APACHE",
           "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
         },
         {
           "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.4/download!/LICENSE-MIT",
+          "source": "https://crates.io/api/v1/crates/unicode-properties/0.1.3/download!/LICENSE-MIT",
           "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
         }
       ],
@@ -22345,46 +20870,6 @@
       ],
       "copyrights": [
         "Copyright 2012-2025 The Rust Project Developers. See the COPYRIGHT"
-      ]
-    },
-    {
-      "name": "unicode-xid@0.2.6",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/unicode-xid/0.2.6/download",
-      "upstream": "https://github.com/unicode-rs/unicode-xid",
-      "developers": [
-        "erick.tryzelaar <erick.tryzelaar@gmail.com>",
-        "kwantam <kwantam@gmail.com>",
-        "Manish Goregaokar <manishsmail@gmail.com>"
-      ],
-      "documents": [
-        {
-          "title": "COPYRIGHT",
-          "source": "https://crates.io/api/v1/crates/unicode-xid/0.2.6/download!/COPYRIGHT",
-          "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d"
-        },
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/unicode-xid/0.2.6/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/unicode-xid/0.2.6/download!/LICENSE-MIT",
-          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
-        }
-      ],
-      "copyrights": [
-        "Copyright 2012-2024 The Rust Project Developers. See the COPYRIGHT"
       ]
     },
     {
@@ -22711,68 +21196,6 @@
         "Copyright 2013-2014 The Rust Project Developers.",
         "Copyright 2018 The Uuid Project Developers."
       ]
-    },
-    {
-      "name": "value-bag-serde1@1.12.0",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 OR MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/value-bag-serde1/1.12.0/download",
-      "upstream": null,
-      "developers": [
-        "Ashley Mannix <ashleymannix@live.com.au>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/value-bag-serde1/1.12.0/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/value-bag-serde1/1.12.0/download!/LICENSE-MIT",
-          "sha256": "5d1bf69a3993489f96efc2ec5af6252cc4f5ff524b023ab6a43a08414f23ddb0"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "value-bag@1.12.0",
-      "kind": "cargo",
-      "declared_license": "Apache-2.0 OR MIT",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
-      ],
-      "source": "https://crates.io/api/v1/crates/value-bag/1.12.0/download",
-      "upstream": "https://github.com/sval-rs/value-bag",
-      "developers": [
-        "Ashley Mannix <ashleymannix@live.com.au>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE-APACHE",
-          "source": "https://crates.io/api/v1/crates/value-bag/1.12.0/download!/LICENSE-APACHE",
-          "sha256": "143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4"
-        },
-        {
-          "title": "LICENSE-MIT",
-          "source": "https://crates.io/api/v1/crates/value-bag/1.12.0/download!/LICENSE-MIT",
-          "sha256": "5d1bf69a3993489f96efc2ec5af6252cc4f5ff524b023ab6a43a08414f23ddb0"
-        }
-      ],
-      "copyrights": []
     },
     {
       "name": "vte@0.15.0",
@@ -23356,11 +21779,7 @@
       "declared_license": "MIT",
       "targets": [
         "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin"
+        "aarch64-pc-windows-msvc"
       ],
       "source": "https://crates.io/api/v1/crates/which/8.0.6/download",
       "upstream": "https://github.com/harryfei/which-rs.git",
@@ -23641,33 +22060,6 @@
       "copyrights": []
     },
     {
-      "name": "windows-link@0.1.3",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/windows-link/0.1.3/download",
-      "upstream": "https://github.com/microsoft/windows-rs",
-      "developers": [
-        "Microsoft"
-      ],
-      "documents": [
-        {
-          "title": "license-apache-2.0",
-          "source": "https://crates.io/api/v1/crates/windows-link/0.1.3/download!/license-apache-2.0",
-          "sha256": "cb3b46a575dd9b39f881706288addc2e61e94c54658993da30cee083c0bb336f"
-        },
-        {
-          "title": "license-mit",
-          "source": "https://crates.io/api/v1/crates/windows-link/0.1.3/download!/license-mit",
-          "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "windows-link@0.2.1",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -23749,33 +22141,6 @@
       "copyrights": []
     },
     {
-      "name": "windows-registry@0.4.0",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/windows-registry/0.4.0/download",
-      "upstream": "https://github.com/microsoft/windows-rs",
-      "developers": [
-        "Microsoft"
-      ],
-      "documents": [
-        {
-          "title": "license-apache-2.0",
-          "source": "https://crates.io/api/v1/crates/windows-registry/0.4.0/download!/license-apache-2.0",
-          "sha256": "cb3b46a575dd9b39f881706288addc2e61e94c54658993da30cee083c0bb336f"
-        },
-        {
-          "title": "license-mit",
-          "source": "https://crates.io/api/v1/crates/windows-registry/0.4.0/download!/license-mit",
-          "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "windows-registry@0.6.1",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -23822,33 +22187,6 @@
         {
           "title": "license-mit",
           "source": "https://crates.io/api/v1/crates/windows-result/0.2.0/download!/license-mit",
-          "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "windows-result@0.3.4",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/windows-result/0.3.4/download",
-      "upstream": "https://github.com/microsoft/windows-rs",
-      "developers": [
-        "Microsoft"
-      ],
-      "documents": [
-        {
-          "title": "license-apache-2.0",
-          "source": "https://crates.io/api/v1/crates/windows-result/0.3.4/download!/license-apache-2.0",
-          "sha256": "cb3b46a575dd9b39f881706288addc2e61e94c54658993da30cee083c0bb336f"
-        },
-        {
-          "title": "license-mit",
-          "source": "https://crates.io/api/v1/crates/windows-result/0.3.4/download!/license-mit",
           "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
         }
       ],
@@ -23907,33 +22245,6 @@
       "copyrights": []
     },
     {
-      "name": "windows-strings@0.3.1",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/windows-strings/0.3.1/download",
-      "upstream": "https://github.com/microsoft/windows-rs",
-      "developers": [
-        "Microsoft"
-      ],
-      "documents": [
-        {
-          "title": "license-apache-2.0",
-          "source": "https://crates.io/api/v1/crates/windows-strings/0.3.1/download!/license-apache-2.0",
-          "sha256": "cb3b46a575dd9b39f881706288addc2e61e94c54658993da30cee083c0bb336f"
-        },
-        {
-          "title": "license-mit",
-          "source": "https://crates.io/api/v1/crates/windows-strings/0.3.1/download!/license-mit",
-          "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
-        }
-      ],
-      "copyrights": []
-    },
-    {
       "name": "windows-strings@0.5.1",
       "kind": "cargo",
       "declared_license": "MIT OR Apache-2.0",
@@ -23953,33 +22264,6 @@
         {
           "title": "license-mit",
           "source": "https://crates.io/api/v1/crates/windows-strings/0.5.1/download!/license-mit",
-          "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "windows-sys@0.52.0",
-      "kind": "cargo",
-      "declared_license": "MIT OR Apache-2.0",
-      "targets": [
-        "x86_64-pc-windows-msvc",
-        "aarch64-pc-windows-msvc"
-      ],
-      "source": "https://crates.io/api/v1/crates/windows-sys/0.52.0/download",
-      "upstream": "https://github.com/microsoft/windows-rs",
-      "developers": [
-        "Microsoft"
-      ],
-      "documents": [
-        {
-          "title": "license-apache-2.0",
-          "source": "https://crates.io/api/v1/crates/windows-sys/0.52.0/download!/license-apache-2.0",
-          "sha256": "cb3b46a575dd9b39f881706288addc2e61e94c54658993da30cee083c0bb336f"
-        },
-        {
-          "title": "license-mit",
-          "source": "https://crates.io/api/v1/crates/windows-sys/0.52.0/download!/license-mit",
           "sha256": "3d4ada4e04d153d74f5bc4e5e6aebd12ef20077716529c36089dc07f14fd0dcf"
         }
       ],
@@ -24416,28 +22700,6 @@
           "title": "LICENSE",
           "source": "https://crates.io/api/v1/crates/writeable/0.6.3/download!/LICENSE",
           "sha256": "f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2"
-        }
-      ],
-      "copyrights": []
-    },
-    {
-      "name": "x11-clipboard@0.9.3",
-      "kind": "cargo",
-      "declared_license": "MIT",
-      "targets": [
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu"
-      ],
-      "source": "https://crates.io/api/v1/crates/x11-clipboard/0.9.3/download",
-      "upstream": "https://github.com/quininer/x11-clipboard",
-      "developers": [
-        "quininer kel <quininer@live.com>"
-      ],
-      "documents": [
-        {
-          "title": "LICENSE",
-          "source": "https://crates.io/api/v1/crates/x11-clipboard/0.9.3/download!/LICENSE",
-          "sha256": "c15542052ccc46a0af594f6b40d08e7bedddf95dd81ca89b436b1ec5cf476ad7"
         }
       ],
       "copyrights": []
@@ -25644,9 +23906,6 @@
     "0816e154b159ba255c563f7c8c7df5bbb8cc5fc96f5ab8cf9f4743b4f41fe7eb": {
       "sha256": "0816e154b159ba255c563f7c8c7df5bbb8cc5fc96f5ab8cf9f4743b4f41fe7eb"
     },
-    "085f4c01ae6bdce024442ad218281657ca042f84d4e84b2d30bcaa2412bfead9": {
-      "sha256": "085f4c01ae6bdce024442ad218281657ca042f84d4e84b2d30bcaa2412bfead9"
-    },
     "08b4e449f10fabbcc8b6db900eea04383d4e24206109c1269d3aea6fb6ba1cd1": {
       "sha256": "08b4e449f10fabbcc8b6db900eea04383d4e24206109c1269d3aea6fb6ba1cd1"
     },
@@ -25688,9 +23947,6 @@
     },
     "0d25d03b5ab49576178ad0cae7a2648d12c17ad0452fe49c07e55e4b59aa5257": {
       "sha256": "0d25d03b5ab49576178ad0cae7a2648d12c17ad0452fe49c07e55e4b59aa5257"
-    },
-    "0d872bb68596964630ba03fe6e4c9370181f9e8696971d419d3de55a3b984679": {
-      "sha256": "0d872bb68596964630ba03fe6e4c9370181f9e8696971d419d3de55a3b984679"
     },
     "0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7": {
       "sha256": "0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7"
@@ -25893,9 +24149,6 @@
     "2d56a37f3d1e461f6b1539ab94e0e6bcc55443e376098aee85ac3b2890860290": {
       "sha256": "2d56a37f3d1e461f6b1539ab94e0e6bcc55443e376098aee85ac3b2890860290"
     },
-    "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1": {
-      "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
-    },
     "2e3bbb7d7c5c396368dd0853a790ec29ce5b8647163dde42a0493fb0d6556b2b": {
       "sha256": "2e3bbb7d7c5c396368dd0853a790ec29ce5b8647163dde42a0493fb0d6556b2b"
     },
@@ -25917,9 +24170,6 @@
     "319736510aa7dbd6f49546f6ee57c787dbe2c7dfa0507dfbd543375f86a4416d": {
       "sha256": "319736510aa7dbd6f49546f6ee57c787dbe2c7dfa0507dfbd543375f86a4416d"
     },
-    "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36": {
-      "sha256": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36"
-    },
     "31dc8e96da19f1bb02bb4b6cd18d35c50287fa778c4722efd349ae2f2d5938be": {
       "sha256": "31dc8e96da19f1bb02bb4b6cd18d35c50287fa778c4722efd349ae2f2d5938be"
     },
@@ -25938,14 +24188,8 @@
     "33f702959c0ea91c08b21b65cf1f08b6c122ec9e6db0b5db784a7b367d942330": {
       "sha256": "33f702959c0ea91c08b21b65cf1f08b6c122ec9e6db0b5db784a7b367d942330"
     },
-    "34cb64162194d52a8412e96d8693ebf43a67d019c6b5bd76da3bb377ba7507aa": {
-      "sha256": "34cb64162194d52a8412e96d8693ebf43a67d019c6b5bd76da3bb377ba7507aa"
-    },
     "34da4cab7ff30ef38fd413da49c787c83a32f782db304c93687567f168060725": {
       "sha256": "34da4cab7ff30ef38fd413da49c787c83a32f782db304c93687567f168060725"
-    },
-    "34f17d90673854314276164d17a4861400d4528066eb458a003fdb15ef98fbbe": {
-      "sha256": "34f17d90673854314276164d17a4861400d4528066eb458a003fdb15ef98fbbe"
     },
     "3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897": {
       "sha256": "3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897"
@@ -26040,9 +24284,6 @@
     "45f522cacecb1023856e46df79ca625dfc550c94910078bd8aec6e02880b3d42": {
       "sha256": "45f522cacecb1023856e46df79ca625dfc550c94910078bd8aec6e02880b3d42"
     },
-    "4646dda6399fccb0a3bf6b42b58ce3fa4371f4e490d5e5c69a67084015b351de": {
-      "sha256": "4646dda6399fccb0a3bf6b42b58ce3fa4371f4e490d5e5c69a67084015b351de"
-    },
     "46f625f4d016803aaa90bdf51bf106ed76f42257302d4d680f4a6f412f2aa5c9": {
       "sha256": "46f625f4d016803aaa90bdf51bf106ed76f42257302d4d680f4a6f412f2aa5c9"
     },
@@ -26051,9 +24292,6 @@
     },
     "485215d5d9408bdaed32850aac9e7e3f7b2cca1af0c6a7d8c39c9a5bb83a7af1": {
       "sha256": "485215d5d9408bdaed32850aac9e7e3f7b2cca1af0c6a7d8c39c9a5bb83a7af1"
-    },
-    "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559": {
-      "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
     },
     "4a56dbdbc12054fd33b7a2634a45cbbe6fe12f5e6f4081002cbfa527f7220c70": {
       "sha256": "4a56dbdbc12054fd33b7a2634a45cbbe6fe12f5e6f4081002cbfa527f7220c70"
@@ -26096,12 +24334,6 @@
     },
     "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b": {
       "sha256": "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b"
-    },
-    "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804": {
-      "sha256": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804"
-    },
-    "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7": {
-      "sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7"
     },
     "544b3aed1fd723d0cadea567affdcfe0431e43e18d997a718f9d67256b814fde": {
       "sha256": "544b3aed1fd723d0cadea567affdcfe0431e43e18d997a718f9d67256b814fde"
@@ -26147,9 +24379,6 @@
     },
     "5cc390ab5e5e6507f467368cbab1297552d64bfd863f4b496c7928508bcfefd8": {
       "sha256": "5cc390ab5e5e6507f467368cbab1297552d64bfd863f4b496c7928508bcfefd8"
-    },
-    "5d1bf69a3993489f96efc2ec5af6252cc4f5ff524b023ab6a43a08414f23ddb0": {
-      "sha256": "5d1bf69a3993489f96efc2ec5af6252cc4f5ff524b023ab6a43a08414f23ddb0"
     },
     "5d5050b4897d9f5b5e7055fca74329a98183620f45d803f9bed81d9e24956968": {
       "sha256": "5d5050b4897d9f5b5e7055fca74329a98183620f45d803f9bed81d9e24956968"
@@ -26208,9 +24437,6 @@
     "688a07efeb906f5cc0666fd7c006fa577a0b44fc5e76a2df5072870d2cef878d": {
       "sha256": "688a07efeb906f5cc0666fd7c006fa577a0b44fc5e76a2df5072870d2cef878d"
     },
-    "6a18c5fac70d7860b57f5b72b4e2c9a1ba6b3d2741eef7ff9767c5379364f10d": {
-      "sha256": "6a18c5fac70d7860b57f5b72b4e2c9a1ba6b3d2741eef7ff9767c5379364f10d"
-    },
     "6a2e0ade09a7d5f816f11566fee2b151b32235a7fad52b41d49cce96f833c1a9": {
       "sha256": "6a2e0ade09a7d5f816f11566fee2b151b32235a7fad52b41d49cce96f833c1a9"
     },
@@ -26249,9 +24475,6 @@
     },
     "6d41e05f1d54fe726997cb0334ec539f1dff50600b1d5d90462ec2b392770ced": {
       "sha256": "6d41e05f1d54fe726997cb0334ec539f1dff50600b1d5d90462ec2b392770ced"
-    },
-    "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc": {
-      "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc"
     },
     "6ef40ce213364039bb992742f8ca4ee2660f9f32669707f403cdd0f0b035a098": {
       "sha256": "6ef40ce213364039bb992742f8ca4ee2660f9f32669707f403cdd0f0b035a098"
@@ -26306,9 +24529,6 @@
     },
     "776aa6f89099bf24a9bceac4b7d9ad8946c017161de770698b5a5cc8de0254a6": {
       "sha256": "776aa6f89099bf24a9bceac4b7d9ad8946c017161de770698b5a5cc8de0254a6"
-    },
-    "782a2a0d52424b8cc0fb414052517c2889e879225e38e520bc1e96f225359e59": {
-      "sha256": "782a2a0d52424b8cc0fb414052517c2889e879225e38e520bc1e96f225359e59"
     },
     "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d": {
       "sha256": "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d"
@@ -26400,9 +24620,6 @@
     "87b0433f3bb6cd0fee9c36ed955b98cc0e0225c278e6661d8da05c5d7bc150ff": {
       "sha256": "87b0433f3bb6cd0fee9c36ed955b98cc0e0225c278e6661d8da05c5d7bc150ff"
     },
-    "8800b6172da0ce015fdc69cbe3fdc48c22f4223babe254e207255c681c83e8dd": {
-      "sha256": "8800b6172da0ce015fdc69cbe3fdc48c22f4223babe254e207255c681c83e8dd"
-    },
     "8811bcec8c5b5262bd309874eed9d865545fc8a7dfafcf538a18e6b30968db2e": {
       "sha256": "8811bcec8c5b5262bd309874eed9d865545fc8a7dfafcf538a18e6b30968db2e"
     },
@@ -26420,6 +24637,9 @@
     },
     "8a9c00a7990a1f3a64003d166882c8d1eb1e3e1775a264d89f2e7285510ba169": {
       "sha256": "8a9c00a7990a1f3a64003d166882c8d1eb1e3e1775a264d89f2e7285510ba169"
+    },
+    "8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f": {
+      "sha256": "8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f"
     },
     "8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36": {
       "sha256": "8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36"
@@ -26559,8 +24779,8 @@
     "a94bf521d21b7db984c8b141b6f9341bbedbe24e617c1a55d952f8ef613ef1cd": {
       "sha256": "a94bf521d21b7db984c8b141b6f9341bbedbe24e617c1a55d952f8ef613ef1cd"
     },
-    "aa72991ac35b4de0034da0afe943e62b48c4092fc2ba13ae47806d8e9a4ad551": {
-      "sha256": "aa72991ac35b4de0034da0afe943e62b48c4092fc2ba13ae47806d8e9a4ad551"
+    "aa1a8099209547c3bfa01e9976e2075e45dcc71b9b677bde86b356cb89a05069": {
+      "sha256": "aa1a8099209547c3bfa01e9976e2075e45dcc71b9b677bde86b356cb89a05069"
     },
     "aa893340d14b9844625be6a50ac644169a01b52f0211cbf81b09e1874c8cd81d": {
       "sha256": "aa893340d14b9844625be6a50ac644169a01b52f0211cbf81b09e1874c8cd81d"
@@ -26601,6 +24821,9 @@
     "af975c9737b3bdcdcf7ec3512b3dc936f91cc58a3c9152a8e4b0803f667df6b9": {
       "sha256": "af975c9737b3bdcdcf7ec3512b3dc936f91cc58a3c9152a8e4b0803f667df6b9"
     },
+    "afcfb536e62c5f78af45aad96498f658e8494f151ae0835440f3be5a91c2b00b": {
+      "sha256": "afcfb536e62c5f78af45aad96498f658e8494f151ae0835440f3be5a91c2b00b"
+    },
     "b07ae3da5c432331d0584e674cd77552cb001134c247786f2668e7917316aa7c": {
       "sha256": "b07ae3da5c432331d0584e674cd77552cb001134c247786f2668e7917316aa7c"
     },
@@ -26618,9 +24841,6 @@
     },
     "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5": {
       "sha256": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5"
-    },
-    "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a": {
-      "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a"
     },
     "b3ec01ad0869c5c50937bc68780cd0bb44e235ad858dfa54a7a381dced9b115a": {
       "sha256": "b3ec01ad0869c5c50937bc68780cd0bb44e235ad858dfa54a7a381dced9b115a"
@@ -26679,9 +24899,6 @@
     "bb7d16c928ad39fd073ae51d636ef8b62ec893ccea4058a0b5829bec76ad1fca": {
       "sha256": "bb7d16c928ad39fd073ae51d636ef8b62ec893ccea4058a0b5829bec76ad1fca"
     },
-    "bb98faf5a86e9458536a6c745e02b53775d01066f1e51dda4ae220a3c0b050f4": {
-      "sha256": "bb98faf5a86e9458536a6c745e02b53775d01066f1e51dda4ae220a3c0b050f4"
-    },
     "bdebaf9156a298f8fdab56dd26cb5144673de522d80f4c0d88e0039145f147f9": {
       "sha256": "bdebaf9156a298f8fdab56dd26cb5144673de522d80f4c0d88e0039145f147f9"
     },
@@ -26700,9 +24917,6 @@
     "c138726a726ac37bae09d0f8a48e74e8e3aa8a8952fcd10fae0fb224cc1c05f1": {
       "sha256": "c138726a726ac37bae09d0f8a48e74e8e3aa8a8952fcd10fae0fb224cc1c05f1"
     },
-    "c15542052ccc46a0af594f6b40d08e7bedddf95dd81ca89b436b1ec5cf476ad7": {
-      "sha256": "c15542052ccc46a0af594f6b40d08e7bedddf95dd81ca89b436b1ec5cf476ad7"
-    },
     "c27cb4df201e3f85a6bef8fedb5b2357acfd9bed19b271c5f6fdfcf774d62cd0": {
       "sha256": "c27cb4df201e3f85a6bef8fedb5b2357acfd9bed19b271c5f6fdfcf774d62cd0"
     },
@@ -26712,11 +24926,11 @@
     "c3fbe6b3ba4ffe05a2afc603e971c9ce38e52481634a858110351595217cf027": {
       "sha256": "c3fbe6b3ba4ffe05a2afc603e971c9ce38e52481634a858110351595217cf027"
     },
+    "c48dd4821477080b092fcf209b3c45314c0405f0b5830a3f84b02ef02d0a7823": {
+      "sha256": "c48dd4821477080b092fcf209b3c45314c0405f0b5830a3f84b02ef02d0a7823"
+    },
     "c55cb43f2497b2c0f6debf561c58c90e51b5cde7de0c76bf3c1a927e6ce60bec": {
       "sha256": "c55cb43f2497b2c0f6debf561c58c90e51b5cde7de0c76bf3c1a927e6ce60bec"
-    },
-    "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78": {
-      "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
     },
     "c695a20d7feb2463ecc9f0a966c88ed1581e364e1e22796e0ded020b571fa43b": {
       "sha256": "c695a20d7feb2463ecc9f0a966c88ed1581e364e1e22796e0ded020b571fa43b"
@@ -26729,9 +24943,6 @@
     },
     "c77a4cf9da729987d0fe7ccd811e3bd27393914ddf3d23467c18cc22954513b3": {
       "sha256": "c77a4cf9da729987d0fe7ccd811e3bd27393914ddf3d23467c18cc22954513b3"
-    },
-    "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e": {
-      "sha256": "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e"
     },
     "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365": {
       "sha256": "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365"
@@ -26775,14 +24986,8 @@
     "ce3ff5339a951131e636d24c25e1d46d2b793ea6831ff668ffbe003eeca2f4d7": {
       "sha256": "ce3ff5339a951131e636d24c25e1d46d2b793ea6831ff668ffbe003eeca2f4d7"
     },
-    "ce592787ff2321feab698a4c612237f4378cc658ebb1d472913e5802cc47afb4": {
-      "sha256": "ce592787ff2321feab698a4c612237f4378cc658ebb1d472913e5802cc47afb4"
-    },
     "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b": {
       "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b"
-    },
-    "cfdb7491dfa8800a1d561957d6a072ad63a6305ffa48386d04eae8eac8d65e8a": {
-      "sha256": "cfdb7491dfa8800a1d561957d6a072ad63a6305ffa48386d04eae8eac8d65e8a"
     },
     "d0fb27c23e807f1fc6f506d161984b294a1f05c9888ae31f056d1712685948ad": {
       "sha256": "d0fb27c23e807f1fc6f506d161984b294a1f05c9888ae31f056d1712685948ad"
@@ -26811,20 +25016,11 @@
     "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745": {
       "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
     },
-    "d4a0afb0c4ac483ff4718d3591a9e4429912538920f5062032320e398fc06dd9": {
-      "sha256": "d4a0afb0c4ac483ff4718d3591a9e4429912538920f5062032320e398fc06dd9"
-    },
     "d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef": {
       "sha256": "d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef"
     },
     "d6fde6c28ecbccfc7f6d97c0badbb14bbea2cc8f5e81a8c1537204bdfed9a6d5": {
       "sha256": "d6fde6c28ecbccfc7f6d97c0badbb14bbea2cc8f5e81a8c1537204bdfed9a6d5"
-    },
-    "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f": {
-      "sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
-    },
-    "d7ad1d46fc65500b88096ad63ff018123ea856e46c96e5b985eb7158481c7a65": {
-      "sha256": "d7ad1d46fc65500b88096ad63ff018123ea856e46c96e5b985eb7158481c7a65"
     },
     "d848c165548bd3f33419b71c3c3bb7cacec620d93383483393410688cba68431": {
       "sha256": "d848c165548bd3f33419b71c3c3bb7cacec620d93383483393410688cba68431"
@@ -26864,9 +25060,6 @@
     },
     "e100f7104b0df01d9ca81432d47c21ec30c86ab8b3d706f6c5c61f5a3c0a661c": {
       "sha256": "e100f7104b0df01d9ca81432d47c21ec30c86ab8b3d706f6c5c61f5a3c0a661c"
-    },
-    "e1da6bc3092fe4be62352c00a7692cbc30bab30d9a89e8d6349b945b06904009": {
-      "sha256": "e1da6bc3092fe4be62352c00a7692cbc30bab30d9a89e8d6349b945b06904009"
     },
     "e20fa2b8e0a2565f24a792b94b4bf4b6c2b9d36f781d8a9516e218a036e6677a": {
       "sha256": "e20fa2b8e0a2565f24a792b94b4bf4b6c2b9d36f781d8a9516e218a036e6677a"
@@ -26916,9 +25109,6 @@
     "eaf40297c75da471f7cda1f3458e8d91b4b2ec866e609527a13acfa93b638652": {
       "sha256": "eaf40297c75da471f7cda1f3458e8d91b4b2ec866e609527a13acfa93b638652"
     },
-    "eafbfa606bc005ed7fd2f623d65af17ffe4ef7c017221ac14405bf4140771ea9": {
-      "sha256": "eafbfa606bc005ed7fd2f623d65af17ffe4ef7c017221ac14405bf4140771ea9"
-    },
     "eb227437252b2a7a9c1fc342c93ade1f3d7ce38cc6dd754f613db07d53ceff0b": {
       "sha256": "eb227437252b2a7a9c1fc342c93ade1f3d7ce38cc6dd754f613db07d53ceff0b"
     },
@@ -26951,9 +25141,6 @@
     },
     "efa52eb70a774b62c50cf50f5e57e2625c29d375d09b91132f4f020e47b9944e": {
       "sha256": "efa52eb70a774b62c50cf50f5e57e2625c29d375d09b91132f4f020e47b9944e"
-    },
-    "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f": {
-      "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
     },
     "f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc": {
       "sha256": "f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc"

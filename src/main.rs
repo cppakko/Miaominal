@@ -308,7 +308,6 @@ fn main() {
     application.run(move |cx: &mut App| {
         gpui_kit::init(cx);
         miaominal_ui::initialize_application_state(application_runtime.clone(), cx);
-        miaominal_ui::init_markdown(cx);
         app::install_app_menus(cx);
 
         let detached_window_runtime = application_runtime.clone();

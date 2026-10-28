@@ -3,7 +3,6 @@ pub mod ui;
 pub use ui::assets::AppAssets;
 pub use ui::bridge_security_platform;
 pub use ui::i18n;
-pub use ui::init_markdown;
 pub use ui::{
     AppView, AppWindowRole, DetachedWindowTarget, configure_detached_window_close,
     configure_main_window_close, initialize_application_state, initialize_system_tray,

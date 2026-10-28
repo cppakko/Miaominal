@@ -176,7 +176,7 @@ pub(in crate::ui::features::agent) fn render_bash_highlighted_command_block(
         return render_tool_terminal_block_content(label, content, colors);
     }
 
-    // Use markdown code block for syntax highlighting via tree-sitter
+    // Use a markdown code block for syntax highlighting via syntect.
     let markdown_code = format!("```bash\n{}\n```", command);
     let content = div()
         .w_full()

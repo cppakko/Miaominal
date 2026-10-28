@@ -20,10 +20,3 @@ pub use system_tray::{
     quit_application, request_main_window_close, restore_main_window, sync_system_tray,
 };
 pub use windowing::{DetachedWindowTarget, register_detached_window_opener};
-
-pub fn init_markdown(_cx: &mut gpui_kit::App) {
-    // Initialize language registry for tree-sitter based code block syntax highlighting
-    // Languages are enabled via Cargo features: tree-sitter-rust, tree-sitter-python, etc.
-    use gpui_kit::component::highlighter::LanguageRegistry;
-    let _ = LanguageRegistry::singleton();
-}
