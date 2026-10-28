@@ -1,6 +1,7 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::animation::{BasicDialogConfig, render_basic_dialog_with_config};
 use crate::ui::components::icon_button;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::tokens::color_with_alpha;
 use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, basic_dialog_action_button,
@@ -875,14 +876,20 @@ impl SessionController {
 
         div()
             .absolute()
-            .right(px(20.0))
-            .bottom(px(20.0))
-            .child(fab_icon_button(AppIcon::Rotate, move |_window, cx| {
-                weak.update(cx, |this, cx| {
-                    this.reconnect_session_tab(tab_id, &profile_id, write_marker, cx);
-                })
-                .ok();
-            }))
+            .right(space(ShellMetrics::FAB_RIGHT_INSET))
+            .bottom(space(ShellMetrics::FAB_BOTTOM_INSET))
+            .child(fab_icon_button(
+                SharedString::from(format!("session-reconnect-fab-{tab_id}")),
+                AppIcon::Rotate,
+                i18n::string("session.workspace.reconnect_action"),
+                cx,
+                move |_window, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.reconnect_session_tab(tab_id, &profile_id, write_marker, cx);
+                    })
+                    .ok();
+                },
+            ))
             .into_any_element()
     }
 }

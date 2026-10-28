@@ -695,7 +695,6 @@ import_private_key_path = "Private key path to import"
 import_private_key_body = "Paste an OpenSSH private key here"
 import_public_key_body = "Paste an OpenSSH public key here"
 import_passphrase_optional = "Import passphrase (optional)"
-filter = "Search managed keys, ids, or agent identities..."
 deploy_location = "Remote folder path"
 deploy_filename = "Remote file name"
 deploy_command = "Optional deploy command template"
@@ -706,19 +705,14 @@ listen_host = "Listen host"
 listen_port = "Listen port"
 target_host = "Target host"
 target_port = "Target port"
-filter = "Search forwarding rules by label..."
 
 [placeholders.snippets]
 description_example = "Example: check network load"
 new_package_name = "New group name"
 script_body = "Write your script here..."
-filter = "Search descriptions, groups, or scripts..."
 
 [placeholders.hosts]
 filter = "Search connections, groups..."
-
-[placeholders.trusted]
-filter = "Search hosts, fingerprints, algorithms, profiles..."
 
 [placeholders.sftp]
 local_path = "Local path"
@@ -809,18 +803,11 @@ closed = "Closed"
 
 [session.footer]
 connected = "CONNECTED"
-offline = "OFFLINE"
-traffic = "U:{upload}  D:{download}"
 
 [session.footer.tooltips]
-connection_status = "Connection status: {status}"
 monitor_panel = "Toggle left panel"
-status_message = "Latest status: {message}"
-status_message_empty = "Latest status"
-terminal_size = "Terminal size: {size}"
-traffic = "Session traffic: {traffic}"
 agent_panel = "Toggle chat panel"
-connection_target = "Connection target: {target}"
+sftp_panel = "Open SFTP panel"
 
 [session.workspace]
 connecting_forwarding_rule = "Connecting forwarding rule"
@@ -1295,8 +1282,6 @@ download_selected = "Download selected remote items"
 edit_path = "Edit path"
 expand_transfer_children = "Expand file tasks"
 go_up = "Go up"
-hide_progress_center = "Hide transfer progress"
-hide_remote_favorites = "Hide remote favorites"
 pause_transfer = "Pause transfer"
 refresh_local = "Refresh local folder"
 refresh_remote = "Refresh remote folder"
@@ -1385,20 +1370,11 @@ delete_profile = "Delete profile"
 hint = "Local terminal profiles are stored on this device only and never join cloud sync."
 
 [hosts.page]
-groups = "Groups"
-recent_connections = "Recent Connections"
 favorites = "Favorites"
-active_connections = "Connections"
-local_terminals = "Local terminals"
 
 [hosts.empty]
-no_profiles = "No host profiles yet. Click the add button to create your first one."
-no_filter_matches = "No hosts match the current filters."
 
 [hosts.groups]
-fallback_icon = "GRP"
-host_count_one = "{count} Host"
-host_count_other = "{count} Hosts"
 
 [hosts.messages]
 cleared_group_filter = "Cleared group filter"
@@ -1425,6 +1401,7 @@ linked_profiles = "Linked profiles"
 no_profiles = "No saved Host profile points at this host and port."
 
 [trusted.actions]
+refresh = "Refresh trusted hosts"
 reject = "Reject"
 accept_once = "Accept once"
 trust_and_remember = "Trust & remember"
@@ -1524,6 +1501,7 @@ search_saved_hosts = "Search saved hosts"
 default = "Default"
 
 [hosts.editor.buttons]
+save = "Save"
 test_connection = "Test Connection"
 
 [hosts.editor.connection_test]
@@ -1542,21 +1520,23 @@ os_keyring_badge = "OS keyring"
 no_comment = "No comment"
 available_through_ssh_agent = "Available through the local SSH agent."
 
+[keychain.menu]
+rename = "Rename"
+delete = "Delete"
+
 [keychain.page]
+refresh = "Refresh keys"
 managed_keys = "Managed Keys"
 agent_identities = "Agent Identities"
 
 [keychain.empty]
 no_managed_keys_title = "No managed keys yet"
-no_managed_keys_copy = "Use the floating add button to open the sidebar, then generate or import your first managed key."
-no_matching_managed_keys_title = "No matching managed keys"
-no_matching_managed_keys_copy = "Adjust the search text to widen the managed-key results."
+no_managed_keys_copy = "Choose Create Managed Key in the bottom bar, then generate or import your first managed key."
 no_agent_identities_title = "No SSH agent identities"
 no_agent_identities_copy = "Start ssh-agent or Pageant, then refresh this page to pick an agent-backed identity."
-no_matching_agent_identities_title = "No matching agent identities"
-no_matching_agent_identities_copy = "Adjust the search text to widen the agent identity results."
 
 [keychain.editor]
+import_key = "Import key"
 title = "Create Managed Key"
 details = "Key details"
 os_keyring_ready = "OS keyring ready"
@@ -1651,7 +1631,6 @@ snippets = "Snippets"
 
 [snippets.empty]
 no_snippets = "No snippets yet. Click the add button to create your first reusable script."
-no_search_matches = "No snippets match the current search."
 no_package_matches = "No snippets match the selected group."
 
 [snippets.editor]
@@ -1847,7 +1826,6 @@ forwarding_rules = "Forwarding Rules"
 
 [forwarding.empty]
 no_hosts_available = "No hosts available yet. Save one in Hosts to enable tunnel creation."
-no_filter_matches = "No forwarding rules match the current filter."
 no_host_profiles = "No host profiles yet. Save one in Hosts before adding tunnel rules."
 no_rules = "No forwarding rules yet. Add one from the side panel."
 
@@ -2360,3 +2338,42 @@ password_required = "Enter a password for username/password authentication."
 label = "Entry proxy"
 direct = "Direct connection"
 missing_option = "Proxy missing ({id})"
+
+[view_mode]
+label = "View mode"
+grid = "Grid view"
+list = "List view"
+
+[hosts.home]
+connect = "Connect"
+edit = "Edit"
+more = "More actions for {name}"
+all = "All"
+quick = "Quick connect"
+collection = "All hosts"
+count = "{count} hosts"
+empty = "No SSH hosts yet"
+empty_group = "No hosts in this group"
+create = "New host"
+local = "Local terminal"
+connect_name = "Connect to {name}"
+ready = "Ready"
+summary = "{remote} SSH hosts · {local} local terminals"
+session_info = "Session information"
+
+[search]
+result_count = "{count} results"
+shortcuts = "↑ ↓ Select · Enter Open · Esc Close"
+placeholder = "Search hosts, forwarding, keys, scripts, settings…"
+clear = "Clear search"
+recent = "Recent connections"
+empty = "No matching results"
+hosts = "Hosts"
+keys = "Keys"
+forwards = "Port forwarding"
+snippets = "Snippets"
+trust = "Trusted hosts"
+settings = "Settings"
+
+[chrome]
+new_tab = "New tab"

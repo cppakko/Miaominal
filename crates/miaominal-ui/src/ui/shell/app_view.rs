@@ -29,12 +29,20 @@ pub struct AppView {
 }
 
 pub(in crate::ui::shell) struct ShellUiState {
+    pub(super) topbar_tab_focus: HashMap<TabId, FocusHandle>,
+    pub(super) search: Entity<crate::ui::features::search::SearchView>,
+    pub(super) search_tab: Option<TabId>,
+    pub(super) search_generation: Option<crate::ui::application::ApplicationGenerations>,
+    pub(super) unattached_search_query: String,
     pub(in crate::ui::shell) pane_animation_frame_pending: bool,
     pub(in crate::ui::shell) workspace_forms: WorkspaceForms,
     pub(in crate::ui::shell) shell_state: ShellState,
     pub(in crate::ui::shell) overlay_state: super::overlays::WindowOverlayState,
     pub(in crate::ui::shell) status_message: String,
     pub(in crate::ui::shell) deferred_app_command: Option<DeferredAppCommand>,
+    /// Motion of the bottom navigation dock's page command (width and enter).
+    pub(in crate::ui::shell) dock_action_motion:
+        std::rc::Rc<std::cell::RefCell<super::layout::sidebar::DockActionMotion>>,
 }
 
 impl AppView {
@@ -821,7 +829,10 @@ impl AppView {
             return;
         };
         self.shell.pane_animation_frame_pending = true;
-        window.request_animation_frame();
+        // `Context::on_next_frame` already wakes the platform frame source.
+        // Calling `request_animation_frame` here would try to resolve the
+        // current rendered view from an event/update callback, where GPUI has
+        // no rendered-view stack yet.
         cx.on_next_frame(window, move |this, window, cx| {
             this.shell.pane_animation_frame_pending = false;
             if this
@@ -896,8 +907,6 @@ impl AppView {
             }
             return;
         }
-
-        window.request_animation_frame();
     }
 
     pub(in crate::ui::shell) fn split_container_size(
@@ -1005,18 +1014,6 @@ impl AppView {
             .active_topbar_tab
             .and_then(|index| self.workspace.tabs.get(index))
             .is_some_and(|tab| tab.is_hosts())
-    }
-
-    pub(in crate::ui::shell) fn active_username(&self, cx: &App) -> String {
-        if let Some(profile) = self.active_profile(cx)
-            && !profile.username.trim().is_empty()
-        {
-            return profile.username.clone();
-        }
-
-        std::env::var("USERNAME")
-            .or_else(|_| std::env::var("USER"))
-            .unwrap_or_else(|_| "admin".into())
     }
 
     pub(in crate::ui::shell) fn window_title(&self, cx: &App) -> String {

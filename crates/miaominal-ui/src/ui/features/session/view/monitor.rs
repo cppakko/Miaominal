@@ -12,6 +12,7 @@ use gpui_kit::component::{
 use gpui_kit::{StatefulInteractiveElement, linear_color_stop, linear_gradient};
 use miaominal_core::forwarding::SessionMonitorPlatform;
 
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::tokens::color_with_alpha;
 use crate::ui::contracts::workspace::TabId;
 use crate::ui::features::session::{MonitorChartPoint, SessionController};
@@ -804,7 +805,7 @@ impl SessionController {
                                     .min_h_full()
                                     .px_3()
                                     .pt_2()
-                                    .pb_3()
+                                    .pb(space(ShellMetrics::SESSION_PANEL_MENU_CLEARANCE))
                                     .child(content),
                             ),
                     )

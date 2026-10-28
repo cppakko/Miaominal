@@ -67,6 +67,12 @@ mod bridge_security_notification;
 mod labels;
 mod onboarding;
 mod page;
+mod search;
+pub(in crate::ui) use search::search_entries;
+
+pub(in crate::ui) fn search_destination(id: &'static str) -> Option<SettingsDestination> {
+    search::search_destination(id).map(|_| SettingsDestination::SearchItem(id))
+}
 mod preferences;
 mod provider_labels;
 mod sync_status;

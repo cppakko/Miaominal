@@ -61,13 +61,16 @@ pub(crate) use dialog::{
     basic_dialog_panel, bottom_popup_panel,
 };
 pub(crate) use editor_button::{editor_button, editor_button_with_id};
-pub(crate) use editor_footer_actions::{EDITOR_FOOTER_ACTION_HEIGHT, editor_footer_actions};
-pub(crate) use fab_button::{fab_button, fab_icon_button};
+pub(crate) use editor_footer_actions::{
+    EDITOR_FOOTER_ACTION_HEIGHT, EditorFooterActionTone, editor_footer_actions,
+    editor_footer_button,
+};
+pub(crate) use fab_button::{dock_action_button, dock_icon_action_button, fab_icon_button};
 pub(crate) use font_family_picker::{FontFamilyPickerState, font_family_picker};
 pub(crate) use icon_button::{
-    IconButtonStyle, icon_button, icon_button_with_icon_size, icon_button_with_tooltip,
+    IconButtonStyle, footer_tool_button, icon_button, icon_button_with_icon_size,
+    icon_button_with_tooltip,
 };
-pub(crate) use icon_tile::{IconTileTone, icon_tile, page_muted_icon_tile};
 pub(crate) use input_hint::{
     HintedEditor, HintedInput, HintedTextarea, register_code_editor_input_hint,
     register_input_hint, register_textarea_hint,
@@ -76,9 +79,8 @@ pub(crate) use list_item_card::list_item_card;
 pub(crate) use md3_select::md3_select;
 pub(crate) use md3_spinner::md3_spinner;
 pub(crate) use md3_switch::md3_switch;
-pub(crate) use page_chrome::{
-    page_primary_icon_tile, page_section_title, page_view_mode_toolbar_item,
-};
+pub(in crate::ui) use page_chrome::view_mode_switcher;
+pub(crate) use page_chrome::{page_primary_icon_tile, page_section_title};
 pub(crate) use pill_label::pill_label;
 pub(crate) use search_input::{SearchInputStyle, search_filter_input};
 pub(crate) use section_card::SectionCard;
@@ -89,9 +91,9 @@ pub(crate) use text_input::{
     surface_text_editor, surface_text_editor_stack, surface_text_input,
     surface_text_input_action_stack, surface_text_input_stack,
 };
+pub(in crate::ui) use view_mode_motion::animated_card_collection;
 
 pub(crate) mod forms;
-pub(in crate::ui) use view_mode_motion::animated_card_collection;
 pub(crate) mod progress_panel;
 
 pub(in crate::ui) mod empty_state;

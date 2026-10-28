@@ -46,7 +46,6 @@ pub(in crate::ui) struct PendingManagedKeyRenameState {
 
 #[derive(Clone)]
 pub(in crate::ui) struct KeychainForms {
-    pub(in crate::ui) filter_input: Entity<InputState>,
     pub(in crate::ui) name_input: Entity<InputState>,
     pub(in crate::ui) rename_name_input: Entity<InputState>,
     pub(in crate::ui) import_path_input: Entity<InputState>,
@@ -98,7 +97,6 @@ pub(in crate::ui) struct KeychainController {
     pub(super) generation_task: Option<gpui_kit::Task<()>>,
     pub(super) import_task: Option<gpui_kit::Task<()>>,
     pub(super) deploy_task: Option<gpui_kit::Task<()>>,
-    _subscriptions: Vec<Subscription>,
     overlay_revisions: OverlayRevisionState,
 }
 
@@ -108,13 +106,6 @@ impl KeychainController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> KeychainForms {
-        let filter_input = new_input_state(
-            i18n::string("placeholders.keychain.filter"),
-            "",
-            false,
-            window,
-            cx,
-        );
         let name_input = new_input_state(
             i18n::string("placeholders.keychain.managed_key_name"),
             "",
@@ -226,7 +217,6 @@ impl KeychainController {
         );
 
         KeychainForms {
-            filter_input,
             name_input,
             rename_name_input,
             import_path_input,
@@ -262,7 +252,6 @@ impl KeychainController {
                 &self.forms.import_passphrase_input,
                 "placeholders.keychain.import_passphrase_optional",
             ),
-            (&self.forms.filter_input, "placeholders.keychain.filter"),
             (
                 &self.forms.deploy_location_input,
                 "placeholders.keychain.deploy_location",
@@ -304,14 +293,6 @@ impl KeychainController {
         cx: &mut Context<Self>,
     ) -> Self {
         let forms = Self::build_forms(&catalog, window, cx);
-        let filter_input = forms.filter_input.clone();
-        let filter_subscription =
-            cx.subscribe(&filter_input, |_: &mut Self, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
-            });
-
         Self {
             forms,
             managed_keys: args.managed_keys,
@@ -341,7 +322,6 @@ impl KeychainController {
             import_task: None,
             deploy_task: None,
             overlay_revisions: OverlayRevisionState::default(),
-            _subscriptions: vec![filter_subscription],
         }
     }
 

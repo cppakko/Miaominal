@@ -1,30 +1,21 @@
-use super::components::{
-    HostCardBadgeChip, HostCardGroupBadge, HostCardMetadata, HostCardTags, group_card,
-    host_card_with_action, host_list_row,
-};
+use super::components::host_card;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::empty_state::{empty_page, empty_state};
-use crate::ui::components::group_accent::{GroupAccentPalette, group_accent_palette};
-use crate::ui::components::metrics::HOST_CARD_WIDTH;
-use crate::ui::components::{
-    SearchInputStyle, page_section_title, page_view_mode_toolbar_item, search_filter_input,
-};
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, ShellTypography, space};
+use crate::ui::components::{animated_card_collection, view_mode_switcher};
 use crate::ui::contracts::navigation::ProfileViewMode;
 use crate::ui::features::hosts::HostsController;
 use crate::ui::i18n;
-use crate::ui::utils::truncate_with_ellipsis;
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{
+    Icon, Selectable, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, SharedString, Window, div, px};
+use gpui_kit::{App, Entity, SharedString, TestSupportExt as _, Window, div};
 use miaominal_core::profile::SessionProfile;
 use std::{collections::BTreeMap, rc::Rc};
-
-const HOST_CARD_TAG_ROW_UNIT_BUDGET: usize = 30;
-const HOST_CARD_TAG_BADGE_UNIT_OVERHEAD: usize = 4;
-const HOST_CARD_TAG_GAP_UNITS: usize = 1;
-const HOST_CARD_TAG_MIN_LABEL_UNITS: usize = 4;
 
 type HostPageAction = Rc<dyn Fn(String, &mut Window, &mut App)>;
 
@@ -82,6 +73,19 @@ fn build_host_context_menu(
         i18n::string("hosts.menu.add_to_favorites")
     };
 
+    let connect = actions.clone();
+    let edit = actions.clone();
+    let connect_id = profile_id.clone();
+    let edit_id = profile_id.clone();
+    let menu = menu
+        .item(
+            PopupMenuItem::new(i18n::string("hosts.home.connect"))
+                .on_click(move |_, window, cx| connect.connect(connect_id.clone(), window, cx)),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("hosts.home.edit"))
+                .on_click(move |_, window, cx| edit.edit(edit_id.clone(), window, cx)),
+        );
     let menu = menu.item(PopupMenuItem::new(fav_label).on_click(move |_, _, cx| {
         favorite_controller.update(cx, |controller, cx| {
             if let Some(index) = controller.profile_index(&favorite_id) {
@@ -126,306 +130,79 @@ fn build_host_context_menu(
         )
 }
 
-fn group_icon(group: &str) -> String {
-    let mut icon = String::new();
-    for token in group
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-    {
-        if let Some(ch) = token.chars().next() {
-            icon.push(ch.to_ascii_uppercase());
-        }
-        if icon.len() >= 3 {
-            break;
-        }
-    }
-
-    if icon.is_empty() {
-        for ch in group.chars().filter(|ch| ch.is_alphanumeric()) {
-            icon.push(ch.to_ascii_uppercase());
-            if icon.len() >= 3 {
-                break;
-            }
-        }
-    }
-
-    if icon.is_empty() {
-        i18n::string("hosts.groups.fallback_icon")
-    } else {
-        icon
-    }
-}
-
-fn group_accent(name: &str) -> GroupAccentPalette {
-    let material = miaominal_settings::current_theme().material;
-
-    group_accent_palette(name, &material)
-}
-
-fn profile_subtitle(profile: &SessionProfile) -> Option<String> {
-    let group = profile.group.trim();
-    (!group.is_empty()).then(|| group.to_string())
-}
-
-/// Local terminal profiles are listed in their own page section rather than
-/// mixed into the SSH host sections.
-fn sessions_of_kind<'a>(
-    sessions: &[(usize, &'a SessionProfile)],
-    local: bool,
-) -> Vec<(usize, &'a SessionProfile)> {
-    sessions
-        .iter()
-        .copied()
-        .filter(|(_, profile)| profile.is_local() == local)
-        .collect()
-}
-
-fn host_card_tag_display_units(label: &str) -> usize {
-    label
-        .chars()
-        .map(|character| if character.is_ascii() { 1 } else { 2 })
-        .sum()
-}
-
-fn host_card_tag_badge_units(label: &str) -> usize {
-    HOST_CARD_TAG_BADGE_UNIT_OVERHEAD + host_card_tag_display_units(label)
-}
-
-fn truncate_host_card_badge_to_units(label: &str, max_label_units: usize) -> String {
-    if host_card_tag_display_units(label) <= max_label_units {
-        return label.to_string();
-    }
-
-    if max_label_units <= 3 {
-        return "...".to_string();
-    }
-
-    let mut visible = String::new();
-    let mut used_units = 0;
-    let visible_units_budget = max_label_units.saturating_sub(3);
-
-    for character in label.chars() {
-        let character_units = if character.is_ascii() { 1 } else { 2 };
-        if used_units + character_units > visible_units_budget {
-            break;
-        }
-
-        visible.push(character);
-        used_units += character_units;
-    }
-
-    if visible.is_empty() {
-        "...".to_string()
-    } else {
-        format!("{visible}...")
-    }
-}
-
-fn prepare_host_card_tags(raw_tags: &[String], row_unit_budget: usize) -> HostCardTags {
-    let mut unique_tags = Vec::new();
-
-    for raw_tag in raw_tags {
-        let tag = raw_tag.trim();
-        if tag.is_empty()
-            || unique_tags
-                .iter()
-                .any(|existing: &String| existing.eq_ignore_ascii_case(tag))
-        {
-            continue;
-        }
-
-        unique_tags.push(tag.to_string());
-    }
-
-    let mut used_row_units = 0;
-    let mut visible = Vec::new();
-    let mut visible_source_count = 0;
-
-    for (index, tag) in unique_tags.iter().enumerate() {
-        let gap_before_tag_units = if visible.is_empty() {
-            0
+fn collection_columns(width: f32, quick: bool) -> u16 {
+    if quick {
+        if width > 920.0 {
+            4
+        } else if width > 520.0 {
+            2
         } else {
-            HOST_CARD_TAG_GAP_UNITS
-        };
-        let available_badge_units =
-            row_unit_budget.saturating_sub(used_row_units + gap_before_tag_units);
-        let full_badge_units = host_card_tag_badge_units(tag);
-
-        if full_badge_units <= available_badge_units {
-            visible.push(HostCardBadgeChip {
-                label: SharedString::from(tag.clone()),
-                tooltip: None,
-            });
-            used_row_units += gap_before_tag_units + full_badge_units;
-            visible_source_count = index + 1;
-            continue;
-        }
-
-        let available_label_units =
-            available_badge_units.saturating_sub(HOST_CARD_TAG_BADGE_UNIT_OVERHEAD);
-        if available_label_units < HOST_CARD_TAG_MIN_LABEL_UNITS {
-            break;
-        }
-
-        let label = truncate_host_card_badge_to_units(tag, available_label_units);
-        let truncated_badge_units = host_card_tag_badge_units(&label);
-        visible.push(HostCardBadgeChip {
-            tooltip: (label != *tag).then(|| SharedString::from(tag.clone())),
-            label: SharedString::from(label),
-        });
-        used_row_units += gap_before_tag_units + truncated_badge_units;
-        visible_source_count = index + 1;
-        break;
-    }
-
-    let overflow_count = unique_tags.len().saturating_sub(visible_source_count);
-    let overflow = if overflow_count > 0 {
-        let label = format!("+{overflow_count}");
-        let gap_units = if visible.is_empty() {
-            0
-        } else {
-            HOST_CARD_TAG_GAP_UNITS
-        };
-        if used_row_units + gap_units + host_card_tag_badge_units(&label) <= row_unit_budget {
-            Some(HostCardBadgeChip {
-                label: SharedString::from(label),
-                tooltip: Some(SharedString::from(
-                    unique_tags[visible_source_count..]
-                        .iter()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                )),
-            })
-        } else {
-            None
+            1
         }
     } else {
-        None
-    };
-
-    if overflow_count > 0
-        && overflow.is_none()
-        && let Some(last_visible) = visible.last_mut()
-    {
-        let tooltip_start = visible_source_count.saturating_sub(1);
-        last_visible.tooltip = Some(SharedString::from(
-            unique_tags[tooltip_start..]
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join(", "),
-        ));
-    }
-
-    HostCardTags { visible, overflow }
-}
-
-fn prepare_host_card_metadata(profile: &SessionProfile) -> HostCardMetadata {
-    let group_name = profile.group.trim();
-    let (group, tags_row_unit_budget) = if group_name.is_empty() {
-        (None, HOST_CARD_TAG_ROW_UNIT_BUDGET)
-    } else {
-        let available_label_units =
-            HOST_CARD_TAG_ROW_UNIT_BUDGET.saturating_sub(HOST_CARD_TAG_BADGE_UNIT_OVERHEAD);
-        let label = truncate_host_card_badge_to_units(group_name, available_label_units);
-        let group_units = host_card_tag_badge_units(&label);
-        let remaining_units = HOST_CARD_TAG_ROW_UNIT_BUDGET.saturating_sub(group_units);
-        let tags_row_unit_budget = remaining_units.saturating_sub(HOST_CARD_TAG_GAP_UNITS);
-
-        (
-            Some(HostCardGroupBadge {
-                badge: HostCardBadgeChip {
-                    tooltip: (label != group_name)
-                        .then(|| SharedString::from(group_name.to_string())),
-                    label: SharedString::from(label),
-                },
-            }),
-            tags_row_unit_budget,
-        )
-    };
-
-    HostCardMetadata {
-        group,
-        local_terminal: profile.is_local(),
-        tags: prepare_host_card_tags(&profile.tags, tags_row_unit_budget),
+        crate::ui::components::card_grid_columns(width)
     }
 }
 
-fn render_host_profile_item(
+fn profile_item(
     controller: Entity<HostsController>,
     actions: HostPageActions,
-    _index: usize,
     profile: &SessionProfile,
-    is_list: bool,
-    id_prefix: &'static str,
+    list: bool,
+    prefix: &'static str,
+    cx: &App,
 ) -> gpui_kit::AnyElement {
-    let display_title = truncate_with_ellipsis(&profile.name, if is_list { 40 } else { 18 });
-    let is_favorite = profile.is_favorite;
-    let item_id = SharedString::from(format!(
-        "{id_prefix}-{}-{}",
-        if is_list { "row" } else { "card" },
-        profile.id
-    ));
-    let badge_id_prefix = SharedString::from(format!("{id_prefix}-card-metadata-{}", profile.id));
-    let is_local = profile.is_local();
+    let id = SharedString::from(format!("{prefix}-{}", profile.id));
     let menu_id = profile.id.clone();
-    let connect_id = profile.id.clone();
-    let edit_id = profile.id.clone();
-    let menu_controller = controller;
-    let menu_actions = actions.clone();
-    let connect_actions = actions.clone();
-    let edit_actions = actions;
-
-    if is_list {
-        let subtitle = profile_subtitle(profile).map(SharedString::from);
-        div()
-            .id(item_id)
-            .w_full()
-            .context_menu(move |menu, _window, _cx| {
-                build_host_context_menu(
-                    menu,
-                    menu_controller.clone(),
-                    menu_actions.clone(),
-                    menu_id.clone(),
-                    is_favorite,
-                    is_local,
-                )
-            })
-            .child(host_list_row(
-                SharedString::from(display_title),
-                subtitle,
+    let more_id = menu_id.clone();
+    let connect_id = menu_id.clone();
+    let is_favorite = profile.is_favorite;
+    let is_local = profile.is_local();
+    let right_controller = controller.clone();
+    let right_actions = actions.clone();
+    let more_actions = actions.clone();
+    let more = Button::new(SharedString::from(format!("{id}:more")))
+        .ghost()
+        .child(Icon::new(AppIcon::MoreHorizontal).size(space(20.0)))
+        .text_color(ShellColors::current().muted)
+        .accessibility_label(i18n::string_args(
+            "hosts.home.more",
+            &[("name", &profile.name)],
+        ))
+        .size(space(40.0))
+        .rounded_full()
+        .dropdown_menu(move |menu, _, _| {
+            build_host_context_menu(
+                menu,
+                controller.clone(),
+                more_actions.clone(),
+                more_id.clone(),
+                is_favorite,
                 is_local,
-                Some(AppIcon::Edit),
-                move |window, cx| connect_actions.connect(connect_id.clone(), window, cx),
-                move |window, cx| edit_actions.edit(edit_id.clone(), window, cx),
-            ))
-            .into_any_element()
-    } else {
-        let metadata = prepare_host_card_metadata(profile);
-        div()
-            .id(item_id)
-            .w(px(HOST_CARD_WIDTH))
-            .context_menu(move |menu, _window, _cx| {
-                build_host_context_menu(
-                    menu,
-                    menu_controller.clone(),
-                    menu_actions.clone(),
-                    menu_id.clone(),
-                    is_favorite,
-                    is_local,
-                )
-            })
-            .child(host_card_with_action(
-                display_title,
-                metadata,
-                badge_id_prefix,
-                AppIcon::Edit,
-                move |window, cx| connect_actions.connect(connect_id.clone(), window, cx),
-                move |window, cx| edit_actions.edit(edit_id.clone(), window, cx),
-            ))
-            .into_any_element()
-    }
+            )
+        });
+    div()
+        .id(id.clone())
+        .min_w_0()
+        .context_menu(move |menu, _, _| {
+            build_host_context_menu(
+                menu,
+                right_controller.clone(),
+                right_actions.clone(),
+                menu_id.clone(),
+                is_favorite,
+                is_local,
+            )
+        })
+        .child(host_card(
+            id,
+            profile,
+            list,
+            more.into_any_element(),
+            cx,
+            move |window, cx| actions.connect(connect_id.clone(), window, cx),
+        ))
+        .into_any_element()
 }
 
 impl HostsController {
@@ -435,549 +212,298 @@ impl HostsController {
         on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
         on_edit: impl Fn(String, &mut Window, &mut App) + 'static,
         on_open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
+        available_width: f32,
+        inset: f32,
         cx: &App,
     ) -> gpui_kit::AnyElement {
+        let colors = ShellColors::current();
         let actions = HostPageActions::new(on_connect, on_edit, on_open_sftp);
-        let hosts_filter_input = self.panel_forms().hosts.filter_input;
-        let catalog_view = self.catalog_view();
+        let catalog = self.catalog_view();
         let profiles = self.profiles();
-        let filter_text = hosts_filter_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_ascii_lowercase();
-        let search_matched_sessions: Vec<_> = profiles
+        let remote: Vec<_> = profiles
             .iter()
-            .enumerate()
-            .filter(|(_, profile)| {
-                if filter_text.is_empty() {
-                    return true;
-                }
-
-                let haystack = format!(
-                    "{} {} {} {}",
-                    profile.name.to_ascii_lowercase(),
-                    profile.group.to_ascii_lowercase(),
-                    profile.host.to_ascii_lowercase(),
-                    profile.username.to_ascii_lowercase()
-                );
-                haystack.contains(&filter_text)
-            })
+            .filter(|profile| !profile.is_local())
             .collect();
-        let selected_group_filter = catalog_view.hosts_group_filter.as_deref();
-        let visible_sessions: Vec<_> = search_matched_sessions
+        let selected = catalog.hosts_group_filter.as_deref();
+        let visible: Vec<_> = remote
             .iter()
             .copied()
-            .filter(|(_, profile)| {
-                selected_group_filter.is_none_or(|group| profile.group.trim() == group)
-            })
+            .filter(|profile| selected.is_none_or(|group| profile.group.trim() == group))
             .collect();
-        let local_sessions = sessions_of_kind(&visible_sessions, true);
-        let remote_sessions = sessions_of_kind(&visible_sessions, false);
-        let favorite_sessions: Vec<_> = remote_sessions
+        let favorites: Vec<_> = visible
             .iter()
             .copied()
-            .filter(|(_, profile)| profile.is_favorite)
+            .filter(|profile| profile.is_favorite)
             .collect();
-        let recent_connections_count =
-            miaominal_settings::current_settings().recent_connections_count as usize;
-        let recent_sessions: Vec<_> = if recent_connections_count == 0 {
-            Vec::new()
-        } else {
-            let mut with_time: Vec<_> = profiles
-                .iter()
-                .enumerate()
-                .filter(|(_, profile)| !profile.is_local())
-                .filter_map(|(index, profile)| {
-                    profile.last_connected_at.map(|ts| (ts, index, profile))
-                })
-                .collect();
-            with_time.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-            with_time
-                .into_iter()
-                .take(recent_connections_count)
-                .map(|(_, index, profile)| (index, profile))
-                .collect()
-        };
-
-        if profiles.is_empty() {
-            return empty_page(AppIcon::Computer, i18n::string("hosts.empty.no_profiles"))
-                .into_any_element();
-        }
-
-        let mut grouped_sessions: BTreeMap<String, usize> = BTreeMap::new();
-        for (_, profile) in sessions_of_kind(&search_matched_sessions, false) {
-            let group = profile.group.trim();
-            if group.is_empty() {
-                continue;
+        let mut recent: Vec<_> = remote
+            .iter()
+            .copied()
+            .filter(|profile| profile.last_connected_at.is_some())
+            .collect();
+        recent.sort_by_key(|profile| std::cmp::Reverse(profile.last_connected_at));
+        recent.truncate(miaominal_settings::current_settings().recent_connections_count as usize);
+        recent.extend(profiles.iter().filter(|profile| profile.is_local()));
+        let mut groups = BTreeMap::<String, usize>::new();
+        for profile in &remote {
+            if !profile.group.trim().is_empty() {
+                *groups.entry(profile.group.trim().to_owned()).or_default() += 1;
             }
-
-            let entry = grouped_sessions.entry(group.to_string()).or_insert(0);
-            *entry += 1;
         }
-        let group_summaries: Vec<_> = grouped_sessions
-            .into_iter()
-            .map(|(group_name, host_count)| {
-                let host_count_text = host_count.to_string();
-                let count = if host_count == 1 {
-                    i18n::string_args(
-                        "hosts.groups.host_count_one",
-                        &[("count", &host_count_text)],
-                    )
-                } else {
-                    i18n::string_args(
-                        "hosts.groups.host_count_other",
-                        &[("count", &host_count_text)],
-                    )
-                };
+        let is_list = catalog.hosts_view_mode == ProfileViewMode::List;
+        let width =
+            (available_width - inset * 2.0 - 8.0).clamp(1.0, ShellMetrics::CONTENT_MAX_WIDTH);
+        let render_collection = |items: &[&SessionProfile], quick: bool, prefix| {
+            let children = items.iter().map(|profile| {
                 (
-                    group_icon(&group_name),
-                    count,
-                    group_name.clone(),
-                    group_accent(&group_name),
-                )
-            })
-            .collect();
-        let group_filter_controller = controller.clone();
-        let is_list = catalog_view.hosts_view_mode == ProfileViewMode::List;
-
-        let content = v_flex()
-            .w_full()
-            .gap_7()
-            .px_5()
-            .pb_8()
-            .when(!group_summaries.is_empty(), move |this| {
-                this.child(
-                    v_flex()
-                        .gap_4()
-                        .child(page_section_title(i18n::string("hosts.page.groups")))
-                        .child(
-                            div().flex().flex_wrap().gap_4().children(
-                                group_summaries
-                                    .into_iter()
-                                    .map(|(icon, count, title, accent)| {
-                                        let group_name = title.clone();
-                                        let is_selected =
-                                            selected_group_filter == Some(group_name.as_str());
-                                        group_card(icon, count, title, accent, is_selected, {
-                                            let controller = group_filter_controller.clone();
-                                            move |_, cx| {
-                                                let group_name = group_name.clone();
-                                                controller.update(cx, |controller, cx| {
-                                                    controller.toggle_hosts_group_filter(
-                                                        group_name.clone(),
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        })
-                                    }),
-                            ),
-                        ),
-                )
-            })
-            .when(
-                !recent_sessions.is_empty() && selected_group_filter.is_none(),
-                {
-                    let mut recent_connections = if is_list {
-                        v_flex().w_full().gap_2()
-                    } else {
-                        div().flex().flex_wrap().gap_4()
-                    };
-                    for (index, profile) in recent_sessions {
-                        recent_connections = recent_connections.child(render_host_profile_item(
-                            controller.clone(),
-                            actions.clone(),
-                            index,
-                            profile,
-                            is_list,
-                            "recent",
-                        ));
-                    }
-                    move |this| {
-                        this.child(
-                            v_flex()
-                                .gap_4()
-                                .child(page_section_title(i18n::string(
-                                    "hosts.page.recent_connections",
-                                )))
-                                .child(recent_connections),
-                        )
-                    }
-                },
-            )
-            .when(!favorite_sessions.is_empty(), {
-                let mut fav_connections = if is_list {
-                    v_flex().w_full().gap_2()
-                } else {
-                    div().flex().flex_wrap().gap_4()
-                };
-                for (index, profile) in favorite_sessions {
-                    fav_connections = fav_connections.child(render_host_profile_item(
+                    SharedString::from(format!("{prefix}-{}-layout", profile.id)),
+                    profile_item(
                         controller.clone(),
                         actions.clone(),
-                        index,
                         profile,
-                        is_list,
-                        "fav",
-                    ));
-                }
-                move |this| {
-                    this.child(
-                        v_flex()
-                            .gap_4()
-                            .child(page_section_title(i18n::string("hosts.page.favorites")))
-                            .child(fav_connections),
-                    )
-                }
-            })
-            .when(!local_sessions.is_empty(), {
-                let mut local_connections = if is_list {
-                    v_flex().w_full().gap_2()
+                        is_list && !quick,
+                        prefix,
+                        cx,
+                    ),
+                )
+            });
+            if !quick {
+                return animated_card_collection(
+                    prefix,
+                    catalog.hosts_view_mode,
+                    collection_columns(width, false),
+                    ShellMetrics::CARD_GAP,
+                    children.collect(),
+                )
+                .into_any_element();
+            }
+            div()
+                .w_full()
+                .grid()
+                .grid_cols(collection_columns(width, true))
+                .gap(space(12.0))
+                .children(children.map(|(_, child)| child))
+                .into_any_element()
+        };
+        let filter = |name: String, label: String, count: usize, active: bool| {
+            let controller = controller.clone();
+            Button::new(SharedString::from(format!("host-filter:{name}")))
+                .ghost()
+                .selected(active)
+                .h(space(37.0))
+                .px(space(16.0))
+                .rounded_full()
+                .flex_shrink_0()
+                .bg(if active {
+                    colors.selected
                 } else {
-                    div().flex().flex_wrap().gap_4()
-                };
-                for (index, profile) in local_sessions {
-                    local_connections = local_connections.child(render_host_profile_item(
-                        controller.clone(),
-                        actions.clone(),
-                        index,
-                        profile,
-                        is_list,
-                        "local",
-                    ));
-                }
-                move |this| {
-                    this.child(
-                        v_flex()
-                            .gap_4()
-                            .child(page_section_title(i18n::string(
-                                "hosts.page.local_terminals",
-                            )))
-                            .child(local_connections),
-                    )
-                }
-            })
-            .when(
-                !remote_sessions.is_empty() || visible_sessions.is_empty(),
-                {
-                    let mut connections = if is_list {
-                        v_flex().w_full().gap_2()
-                    } else {
-                        div().flex().flex_wrap().gap_4()
-                    };
-
-                    if remote_sessions.is_empty() {
-                        connections = connections.child(empty_state(
-                            AppIcon::Computer,
-                            i18n::string("hosts.empty.no_filter_matches"),
-                        ));
-                    } else {
-                        for (index, profile) in remote_sessions {
-                            connections = connections.child(render_host_profile_item(
-                                controller.clone(),
-                                actions.clone(),
-                                index,
-                                profile,
-                                is_list,
-                                "host",
-                            ));
+                    colors.navigation
+                })
+                .text_color(if active {
+                    colors.on_selected
+                } else {
+                    colors.muted
+                })
+                .when(active, |button| {
+                    button.child(Icon::new(AppIcon::Check).size(space(16.0)))
+                })
+                .child(
+                    div()
+                        .max_w(space(192.0))
+                        .truncate()
+                        .text_size(space(ShellTypography::BODY_SIZE))
+                        .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
+                        .when(active, |label| {
+                            label.font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                        })
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_size(space(ShellTypography::SUPPORTING_SIZE))
+                        .line_height(space(ShellTypography::SUPPORTING_LINE_HEIGHT))
+                        .child(count.to_string()),
+                )
+                .on_click(move |_, _, cx| {
+                    controller.update(cx, |controller, cx| {
+                        if name.is_empty() {
+                            controller.catalog_view.borrow_mut().hosts_group_filter = None;
+                            cx.notify();
+                        } else {
+                            controller.toggle_hosts_group_filter(name.clone(), cx);
                         }
-                    }
-
-                    move |this| {
-                        this.child(
-                            v_flex()
-                                .gap_4()
-                                .child(h_flex().w_full().items_center().gap_3().child(
-                                    page_section_title(i18n::string(
-                                        "hosts.page.active_connections",
-                                    )),
-                                ))
-                                .child(connections),
-                        )
-                    }
-                },
-            );
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_7()
-            .child(
+                    })
+                })
+        };
+        let controls = h_flex()
+            .id("host-group-filters")
+            .w_full()
+            .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+            .mx_auto()
+            .gap(space(8.0))
+            .pt(space(4.0))
+            .pb(space(16.0))
+            .overflow_x_scroll()
+            .child(filter(
+                String::new(),
+                i18n::string("hosts.home.all"),
+                remote.len(),
+                selected.is_none(),
+            ))
+            .children(groups.into_iter().map(|(name, count)| {
+                filter(
+                    name.clone(),
+                    name.clone(),
+                    count,
+                    selected == Some(name.as_str()),
+                )
+            }));
+        let mut content = v_flex()
+            .w_full()
+            .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+            .mx_auto()
+            .gap(space(24.0))
+            .pb(space(112.0));
+        if selected.is_none() && !self.editor_state().host_editor_open && !recent.is_empty() {
+            content = content.child(
                 v_flex()
-                    .w_full()
-                    .px_5()
-                    .gap_7()
+                    .gap(space(12.0))
+                    .child(section_heading(i18n::string("hosts.home.quick")))
+                    .child(div().py(space(4.0)).child(render_collection(
+                        &recent,
+                        true,
+                        "quick-host",
+                    ))),
+            );
+        }
+        if !favorites.is_empty() {
+            content = content.child(
+                v_flex()
+                    .gap(space(12.0))
+                    .child(section_heading(i18n::string("hosts.page.favorites")))
+                    .child(render_collection(&favorites, false, "favorite-host")),
+            );
+        }
+        let view_toggle = view_mode_switcher("hosts-view-mode", catalog.hosts_view_mode, {
+            let controller = controller.clone();
+            move |mode, _, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.set_hosts_view_mode(mode, cx)
+                })
+            }
+        });
+        let compact = width < 420.0;
+        let heading = div()
+            .w_full()
+            .min_h(space(40.0))
+            .flex()
+            .gap(space(12.0))
+            .when(compact, |row| row.flex_col().items_start())
+            .when(!compact, |row| row.items_center().justify_between())
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .max_w_full()
+                    .gap(space(12.0))
+                    .child(section_heading(
+                        selected
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| i18n::string("hosts.home.collection")),
+                    ))
                     .child(
-                        h_flex().w_full().justify_center().child(
-                            h_flex()
-                                .w_full()
-                                .max_w(px(576.0))
-                                .child(search_filter_input(
-                                    &hosts_filter_input,
-                                    SearchInputStyle::Pill,
-                                    None,
-                                )),
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_end()
-                            .gap_2()
-                            .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
-                                let controller = controller.clone();
-                                move |_, cx| {
-                                    controller.update(cx, |controller, cx| {
-                                        controller.set_hosts_view_mode(ProfileViewMode::Grid, cx);
-                                    });
-                                }
-                            }))
-                            .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
-                                let controller = controller.clone();
-                                move |_, cx| {
-                                    controller.update(cx, |controller, cx| {
-                                        controller.set_hosts_view_mode(ProfileViewMode::List, cx);
-                                    });
-                                }
-                            })),
+                        div()
+                            .flex_shrink_0()
+                            .text_size(space(12.0))
+                            .line_height(space(ShellTypography::SUPPORTING_LINE_HEIGHT))
+                            .px(space(8.0))
+                            .py(space(4.0))
+                            .rounded(space(8.0))
+                            .bg(colors.navigation)
+                            .text_color(colors.muted)
+                            .child(i18n::string_args(
+                                "hosts.home.count",
+                                &[("count", &visible.len().to_string())],
+                            )),
                     ),
             )
+            .child(view_toggle);
+        let library = if visible.is_empty() {
+            let controller = controller.clone();
+            v_flex()
+                .items_center()
+                .gap(space(12.0))
+                .py(space(40.0))
+                .child(section_heading(i18n::string(if remote.is_empty() {
+                    "hosts.home.empty"
+                } else {
+                    "hosts.home.empty_group"
+                })))
+                .child(
+                    Button::new("hosts-empty-create")
+                        .primary()
+                        .large()
+                        .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
+                        .h(space(40.0))
+                        .px(space(16.0))
+                        .rounded(miaominal_settings::scaled_font_size(12.0))
+                        .bg(colors.primary)
+                        .label(i18n::string("hosts.home.create"))
+                        .on_click(move |_, _, cx| {
+                            controller.update(cx, |controller, cx| {
+                                controller.request_new_profile_editor(cx)
+                            })
+                        }),
+                )
+                .into_any_element()
+        } else {
+            render_collection(&visible, false, "library-host").into_any_element()
+        };
+        content = content.child(v_flex().gap(space(12.0)).child(heading).child(library));
+        div()
+            .size_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .bg(colors.canvas)
+            .pt(space(8.0))
+            .child(div().px(space(inset + 4.0)).child(controls))
             .child(
                 div()
+                    .id("hosts-collection-scroll")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
-                    .pr_5()
-                    .child(div().size_full().overflow_y_scrollbar().child(content)),
+                    .child(
+                        div()
+                            .size_full()
+                            .overflow_y_scrollbar()
+                            .child(div().px(space(inset + 4.0)).pt(space(8.0)).child(content)),
+                    ),
             )
             .into_any_element()
     }
 }
 
+fn section_heading(text: String) -> impl IntoElement {
+    div()
+        .min_w_0()
+        .truncate()
+        .text_size(space(ShellTypography::TITLE_SIZE))
+        .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
+        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+        .text_color(ShellColors::current().foreground)
+        .child(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn profile_subtitle_uses_group_when_present() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "Production".into();
-        profile.host = "10.0.0.5".into();
-
-        assert_eq!(profile_subtitle(&profile), Some("Production".to_string()));
-    }
-
-    #[test]
-    fn profile_subtitle_is_none_without_group() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "   ".into();
-        profile.host = "10.0.0.5".into();
-
-        assert_eq!(profile_subtitle(&profile), None);
-    }
-
-    #[test]
-    fn profile_subtitle_does_not_fall_back_to_host() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.host = "192.168.1.10".into();
-
-        assert_eq!(profile_subtitle(&profile), None);
-    }
-
-    #[test]
-    fn sessions_of_kind_splits_local_terminals_from_host_profiles() {
-        let remote = SessionProfile::blank("remote-1", 1);
-        let local = SessionProfile::blank_local("local-1", 1);
-        let sessions = vec![(0usize, &remote), (1usize, &local)];
-
-        let locals = sessions_of_kind(&sessions, true);
-        assert_eq!(locals.len(), 1);
-        assert_eq!(locals[0].0, 1);
-
-        let remotes = sessions_of_kind(&sessions, false);
-        assert_eq!(remotes.len(), 1);
-        assert_eq!(remotes[0].0, 0);
-    }
-
-    #[test]
-    fn prepare_host_card_tags_deduplicates_and_keeps_visible_tags() {
-        let tags = vec![
-            " jump ".to_string(),
-            "JUMP".to_string(),
-            "ops".to_string(),
-            "db".to_string(),
-            "production".to_string(),
-        ];
-
-        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
-
-        assert_eq!(summary.visible.len(), 3);
-        assert_eq!(summary.visible[0].label.as_ref(), "jump");
-        assert_eq!(summary.visible[0].tooltip, None);
-        assert_eq!(summary.visible[1].label.as_ref(), "ops");
-        assert_eq!(summary.visible[1].tooltip, None);
-        assert_eq!(summary.visible[2].label.as_ref(), "db");
-        assert_eq!(summary.visible[2].tooltip, None);
-        assert_eq!(summary.overflow.as_ref().unwrap().label.as_ref(), "+1");
-        assert_eq!(
-            summary.overflow.as_ref().unwrap().tooltip.as_deref(),
-            Some("production")
-        );
-    }
-
-    #[test]
-    fn prepare_host_card_tags_does_not_remove_visible_tags_for_overflow() {
-        let tags = vec![
-            "jump".to_string(),
-            "private-link".to_string(),
-            "production".to_string(),
-        ];
-
-        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
-
-        assert_eq!(summary.visible.len(), 2);
-        assert_eq!(summary.visible[0].label.as_ref(), "jump");
-        assert_eq!(summary.visible[1].label.as_ref(), "private-link");
-        assert_eq!(
-            summary.visible[1].tooltip.as_deref(),
-            Some("private-link, production")
-        );
-        assert!(summary.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_tags_adds_tooltip_for_truncated_visible_tag() {
-        let tags = vec!["abcdefghijklmnopqrstuvwxyzabcd".to_string()];
-
-        let summary = prepare_host_card_tags(&tags, HOST_CARD_TAG_ROW_UNIT_BUDGET);
-
-        assert_eq!(summary.visible.len(), 1);
-        assert_eq!(
-            summary.visible[0].label.as_ref(),
-            "abcdefghijklmnopqrstuvw..."
-        );
-        assert_eq!(
-            summary.visible[0].tooltip.as_deref(),
-            Some("abcdefghijklmnopqrstuvwxyzabcd")
-        );
-        assert!(summary.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_places_group_before_tag_with_shared_budget() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "HK,HKG,BGP,RP-A".into();
-        profile.tags = vec!["cccc".into()];
-
-        let metadata = prepare_host_card_metadata(&profile);
-        let group = metadata.group.unwrap();
-
-        assert_eq!(group.badge.label.as_ref(), "HK,HKG,BGP,RP-A");
-        assert_eq!(group.badge.tooltip, None);
-        assert_eq!(metadata.tags.visible.len(), 1);
-        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
-        assert_eq!(metadata.tags.visible[0].tooltip, None);
-        assert!(metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_fits_short_second_tag_after_group() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "FinalShell".into();
-        profile.tags = vec!["cccc".into(), "a".into()];
-
-        let metadata = prepare_host_card_metadata(&profile);
-
-        assert_eq!(metadata.tags.visible.len(), 2);
-        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
-        assert_eq!(metadata.tags.visible[1].label.as_ref(), "a");
-        assert_eq!(metadata.tags.visible[0].tooltip, None);
-        assert_eq!(metadata.tags.visible[1].tooltip, None);
-        assert!(metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_keeps_first_tag_when_more_tags_do_not_fit() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "HK,HKG,BGP,RP-A".into();
-        profile.tags = vec!["cccc".into(), "dddd".into()];
-
-        let metadata = prepare_host_card_metadata(&profile);
-
-        assert_eq!(metadata.tags.visible.len(), 1);
-        assert_eq!(metadata.tags.visible[0].label.as_ref(), "cccc");
-        assert_eq!(
-            metadata.tags.visible[0].tooltip.as_deref(),
-            Some("cccc, dddd")
-        );
-        assert!(metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_prioritizes_long_group_over_tags() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.group = "abcdefghijklmnopqrstuvwxyzabcd".into();
-        profile.tags = vec!["ops".into(), "db".into()];
-
-        let metadata = prepare_host_card_metadata(&profile);
-        let group = metadata.group.unwrap();
-
-        assert_eq!(group.badge.label.as_ref(), "abcdefghijklmnopqrstuvw...");
-        assert_eq!(
-            group.badge.tooltip.as_deref(),
-            Some("abcdefghijklmnopqrstuvwxyzabcd")
-        );
-        assert!(metadata.tags.visible.is_empty());
-        assert!(metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_uses_full_row_for_tags_without_group() {
-        let mut profile = SessionProfile::blank("profile-1", 1);
-        profile.tags = vec!["jump".into(), "ops".into()];
-
-        let metadata = prepare_host_card_metadata(&profile);
-
-        assert!(metadata.group.is_none());
-        assert_eq!(metadata.tags.visible.len(), 2);
-        assert_eq!(metadata.tags.visible[0].label.as_ref(), "jump");
-        assert_eq!(metadata.tags.visible[1].label.as_ref(), "ops");
-        assert!(metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_metadata_handles_group_only_and_empty_metadata() {
-        let mut group_only = SessionProfile::blank("profile-1", 1);
-        group_only.group = "Production".into();
-
-        let group_only_metadata = prepare_host_card_metadata(&group_only);
-        assert_eq!(
-            group_only_metadata.group.unwrap().badge.label.as_ref(),
-            "Production"
-        );
-        assert!(group_only_metadata.tags.visible.is_empty());
-        assert!(group_only_metadata.tags.overflow.is_none());
-
-        let empty = SessionProfile::blank("profile-2", 2);
-        let empty_metadata = prepare_host_card_metadata(&empty);
-        assert!(empty_metadata.group.is_none());
-        assert!(empty_metadata.tags.visible.is_empty());
-        assert!(empty_metadata.tags.overflow.is_none());
-    }
-
-    #[test]
-    fn prepare_host_card_tags_shows_only_overflow_when_tags_do_not_fit() {
-        let tags = vec!["production".into(), "database".into()];
-
-        let summary = prepare_host_card_tags(&tags, 6);
-
-        assert!(summary.visible.is_empty());
-        assert_eq!(summary.overflow.as_ref().unwrap().label.as_ref(), "+2");
-        assert_eq!(
-            summary.overflow.as_ref().unwrap().tooltip.as_deref(),
-            Some("production, database")
-        );
+    fn grid_respects_card_minimum_and_quick_breakpoints() {
+        assert_eq!(collection_columns(1066.0, false), 3);
+        assert_eq!(collection_columns(720.0, false), 2);
+        assert_eq!(collection_columns(250.0, false), 1);
+        assert_eq!(collection_columns(921.0, true), 4);
+        assert_eq!(collection_columns(920.0, true), 2);
+        assert_eq!(collection_columns(520.0, true), 1);
     }
 }

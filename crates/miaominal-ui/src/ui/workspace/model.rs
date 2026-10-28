@@ -25,6 +25,7 @@ pub(crate) struct TabDescriptor {
     pub(crate) placement: TabPlacement,
     sidebar_section: SidebarSection,
     page_editor_sidebar: Option<PageEditorSidebarKind>,
+    management_query: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +51,7 @@ impl TabState {
                 placement,
                 sidebar_section: SidebarSection::Hosts,
                 page_editor_sidebar: None,
+                management_query: String::new(),
             },
         }
     }
@@ -115,6 +117,12 @@ impl TabState {
 }
 
 impl TabDescriptor {
+    pub(crate) fn management_query(&self) -> &str {
+        &self.management_query
+    }
+    pub(crate) fn set_management_query(&mut self, query: String) {
+        self.management_query = query;
+    }
     pub(crate) fn is_hosts(&self) -> bool {
         self.kind == TabKindTag::Hosts
     }
@@ -1950,5 +1958,29 @@ mod tests {
             .close_animation_target(PaneId(2))
             .expect("expected animation target for pane 2");
         assert_eq!(target.axis, SplitAxis::Horizontal);
+    }
+}
+
+#[cfg(test)]
+mod management_search_tests {
+    use super::*;
+    #[test]
+    fn queries_follow_tab_identity_and_are_released_on_close() {
+        let mut first = TabState::new_hosts(TabId::new(1));
+        first.set_management_query("production".into());
+        let mut second = TabState::new_hosts(TabId::new(2));
+        second.set_management_query("database".into());
+        let mut tabs = TabRegistry::from_tabs([first, second]);
+        tabs.move_to(0, 1);
+        assert_eq!(
+            tabs.get(TabId::new(1)).unwrap().management_query(),
+            "production"
+        );
+        assert_eq!(
+            tabs.get(TabId::new(2)).unwrap().management_query(),
+            "database"
+        );
+        tabs.remove_id(TabId::new(1));
+        assert!(tabs.get(TabId::new(1)).is_none());
     }
 }

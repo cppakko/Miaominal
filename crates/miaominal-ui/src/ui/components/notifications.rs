@@ -1,8 +1,8 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::tokens::color_with_alpha;
 use crate::ui::components::{
-    BasicDialogActionTone, badge, basic_dialog_action_button, compact_badge, icon_button,
-    icon_button_with_tooltip,
+    BasicDialogActionTone, badge, basic_dialog_action_button, compact_badge, footer_tool_button,
+    icon_button,
 };
 use crate::ui::i18n;
 use crate::ui::utils::format_local_timestamp;
@@ -390,6 +390,7 @@ struct NotificationCenterTrigger {
     badge_color: u32,
     roles: miaominal_settings::theme::Md3Roles,
     tooltip: SharedString,
+    focus_handle: gpui_kit::FocusHandle,
 }
 
 impl Selectable for NotificationCenterTrigger {
@@ -404,27 +405,16 @@ impl Selectable for NotificationCenterTrigger {
 }
 
 impl RenderOnce for NotificationCenterTrigger {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .id("notification-center-trigger")
             .relative()
-            .size(px(24.0))
+            .size(crate::ui::components::shell_tokens::space(32.0))
             .child(
-                icon_button_with_tooltip(
-                    IconName::Bell,
-                    self.tooltip,
-                    24.0,
-                    8.0,
-                    Some(self.roles.surface_container),
-                    Some(self.roles.on_surface_variant),
-                    Some(self.roles.outline_variant),
-                    |_, _| {},
-                )
-                .id("notification-center-trigger-button")
-                .hover(move |this| {
-                    this.bg(rgb(self.roles.surface_container_highest))
-                        .border_color(rgb(self.roles.primary))
-                }),
+                footer_tool_button("notification-center-trigger-button", self.selected, cx)
+                    .track_focus(&self.focus_handle)
+                    .icon(IconName::Bell)
+                    .accessibility_label(self.tooltip),
             )
             .when(self.unread > 0, |this| {
                 this.child(
@@ -686,7 +676,10 @@ fn style_notification(notification: Notification) -> Notification {
         .rounded(px(NOTIFICATION_CORNER_RADIUS))
 }
 
-pub(crate) fn render_notification_center_popover(cx: &App) -> impl IntoElement {
+pub(crate) fn render_notification_center_popover(
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     let unread = notification_center_unread(cx);
     let priority = notification_center_highest_unread(cx);
     let material = miaominal_settings::current_theme().material;
@@ -703,12 +696,20 @@ pub(crate) fn render_notification_center_popover(cx: &App) -> impl IntoElement {
         badge_color,
         roles,
         tooltip: i18n::string("notifications.center.title").into(),
+        focus_handle: window
+            .use_keyed_state("notification-center-trigger-focus", cx, |_, cx| {
+                cx.focus_handle()
+            })
+            .read(cx)
+            .clone(),
     };
+    let trigger_focus = trigger.focus_handle.clone();
 
     Popover::new("notification-center-popover")
         .anchor(Anchor::BottomRight)
         .appearance(false)
         .trigger(trigger)
+        .track_focus(&trigger_focus)
         .on_open_change(|open, window, cx| {
             if *open {
                 mark_all_notifications_read(cx);

@@ -146,19 +146,6 @@ pub(super) fn forward_rule_display_label(rule: &PortForwardRule) -> String {
     forward_rule_custom_label(rule).unwrap_or_else(|| rule_summary(rule))
 }
 
-pub(super) fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
-    let chars: Vec<_> = value.chars().collect();
-    if chars.len() <= max_chars {
-        return value.to_string();
-    }
-
-    let visible: String = chars
-        .into_iter()
-        .take(max_chars.saturating_sub(3))
-        .collect();
-    format!("{visible}...")
-}
-
 pub(super) fn route_direction_icon(kind: PortForwardKind) -> AppIcon {
     match kind {
         PortForwardKind::Local => AppIcon::Upload,

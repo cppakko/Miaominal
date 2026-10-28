@@ -67,10 +67,11 @@ pub(in crate::ui) enum PageEditorSidebarKind {
     KnownHosts,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui) enum SettingsDestination {
     SshBridgeSecurity,
     Sync,
+    SearchItem(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

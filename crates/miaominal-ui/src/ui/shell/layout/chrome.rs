@@ -1,15 +1,14 @@
 use super::super::*;
+use crate::ui::components::footer_tool_button;
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, ShellTypography, space};
 use crate::ui::contracts::session::SessionTabSnapshot;
 use crate::ui::i18n;
-use gpui_kit::{StatefulInteractiveElement, StyleRefinement, WindowControlArea, point};
+use gpui_kit::{StatefulInteractiveElement, TestSupportExt as _, WindowControlArea, point};
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_GAP: f32 = 8.0;
-const TOPBAR_SECTION_GAP: f32 = 12.0;
 const TOPBAR_ACTION_BUTTON_WIDTH: f32 = 36.0;
-const TOPBAR_HORIZONTAL_PADDING: f32 = 32.0;
 const TOPBAR_WINDOW_CONTROLS_WIDTH: f32 = TOPBAR_ACTION_BUTTON_WIDTH * 3.0 + TOPBAR_TAB_GAP * 2.0;
-const TOPBAR_TAB_STRIP_INNER_PADDING: f32 = 8.0;
 const MACOS_TRAFFIC_LIGHT_PADDING: f32 = 71.0;
 
 fn topbar_window_controls_width(window: &Window) -> f32 {
@@ -30,14 +29,6 @@ fn window_controls_on_left() -> bool {
 
 fn show_macos_traffic_light_space(window: &Window) -> bool {
     cfg!(target_os = "macos") && !window.is_fullscreen()
-}
-
-fn footer_tooltip(
-    text: impl Into<SharedString>,
-) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
-    let text = text.into();
-
-    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 /// File name shown for a local terminal target in the status footer.
@@ -95,6 +86,19 @@ fn blend_rgb(from: u32, to: u32, progress: f32) -> u32 {
     (mix(from_red, to_red) << 16) | (mix(from_green, to_green) << 8) | mix(from_blue, to_blue)
 }
 
+fn profile_shell_label(shell: &str) -> String {
+    let name = local_shell_file_name(shell);
+    if name.is_empty() {
+        i18n::string("hosts.home.local")
+    } else {
+        name
+    }
+}
+
+fn snapshot_supports_sftp(kind: TopbarTabVisualKind) -> bool {
+    kind == TopbarTabVisualKind::Session
+}
+
 fn topbar_tab_icon(kind: TopbarTabVisualKind) -> Option<AppIcon> {
     match kind {
         TopbarTabVisualKind::Hosts => None,
@@ -125,10 +129,6 @@ fn tab_needs_attention(session: Option<&SessionTabSnapshot>) -> bool {
     session.is_some_and(|session| session.needs_attention())
 }
 
-fn tab_is_connected_status(session: Option<&SessionTabSnapshot>) -> bool {
-    session.is_some_and(|session| session.connected())
-}
-
 pub(in crate::ui::shell) fn tab_status_indicator_color(
     tab: &TabDescriptor,
     session: Option<&SessionTabSnapshot>,
@@ -142,18 +142,6 @@ pub(in crate::ui::shell) fn tab_status_indicator_color(
         Some(roles.primary)
     } else {
         None
-    }
-}
-
-pub(super) fn tab_status_color(tab: &TabDescriptor, session: Option<&SessionTabSnapshot>) -> u32 {
-    let roles = miaominal_settings::current_theme().material.roles;
-
-    if tab_is_error_status(tab, session) {
-        roles.error
-    } else if tab_needs_attention(session) || tab_is_connected_status(session) {
-        roles.primary
-    } else {
-        roles.on_surface_variant
     }
 }
 
@@ -179,6 +167,46 @@ fn format_bytes(n: u64) -> String {
     } else {
         format!("{n} B")
     }
+}
+
+struct FooterMetrics {
+    dimensions: Option<String>,
+    traffic: Option<String>,
+}
+
+fn footer_metrics(
+    session: Option<&SessionTabSnapshot>,
+    sftp_bytes: Option<(u64, u64)>,
+    local: bool,
+) -> FooterMetrics {
+    let dimensions =
+        session.map(|session| format!("{} × {}", session.columns(), session.screen_lines()));
+    let bytes = session
+        .filter(|_| !local)
+        .map(|session| (session.bytes_out(), session.bytes_in()))
+        .or(sftp_bytes);
+    FooterMetrics {
+        dimensions,
+        traffic: bytes.map(|(uploaded, downloaded)| {
+            format!(
+                "↑ {} · ↓ {}",
+                format_bytes(uploaded),
+                format_bytes(downloaded)
+            )
+        }),
+    }
+}
+
+fn new_host_action(
+    cx: &App,
+    on_create: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    crate::ui::components::dock_action_button(
+        "hosts-create-fab",
+        i18n::string("hosts.home.create"),
+        cx,
+        on_create,
+    )
 }
 
 fn scroll_topbar_tabs(scroll_handle: &ScrollHandle, event: &ScrollWheelEvent) -> bool {
@@ -280,7 +308,6 @@ fn topbar_add_button<V: TopbarHost>(
     entity: Entity<V>,
     scroll_handle: ScrollHandle,
 ) -> impl IntoElement {
-    let roles = miaominal_settings::current_theme().material.roles;
     let scroll_entity = entity.clone();
 
     div()
@@ -296,17 +323,17 @@ fn topbar_add_button<V: TopbarHost>(
                 .ghost()
                 .occlude()
                 .flex_shrink_0()
-                .w(px(TOPBAR_ACTION_BUTTON_WIDTH))
-                .h(px(TOPBAR_ACTION_BUTTON_WIDTH))
+                .w(space(32.0))
+                .h(space(32.0))
                 .rounded(px(99.0))
-                .bg(rgb(roles.surface_container_highest))
+                .accessibility_label(i18n::string("chrome.new_tab"))
                 .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
                     if scroll_topbar_tabs(&scroll_handle, event) {
                         scroll_entity.update(cx, |_, cx| cx.notify());
                         cx.stop_propagation();
                     }
                 })
-                .child(Icon::from(AppIcon::Plus))
+                .child(Icon::from(AppIcon::Plus).size(space(20.0)))
                 .on_click(move |_, window, cx| {
                     entity.update(cx, |this, cx| {
                         this.handle_topbar_action(TopbarAction::OpenHosts, window, cx);
@@ -315,28 +342,33 @@ fn topbar_add_button<V: TopbarHost>(
         )
 }
 
-fn topbar_drag_region(id: &'static str) -> impl IntoElement {
+fn topbar_drag_surface() -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
-        .id(SharedString::from(id))
-        .flex_1()
-        .min_w(px(0.0))
-        .h_full()
+        .id("topbar-window-drag")
+        // The complete empty titlebar surface, including padding and tab gaps,
+        // is native chrome. Interactive children occlude this hitbox.
         .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
-            if event.click_count == 1 {
-                window.start_window_move();
-            }
-            cx.stop_propagation();
-        })
-        .on_mouse_up(MouseButton::Left, |event: &MouseUpEvent, window, cx| {
-            if event.click_count == 2 {
-                if cfg!(target_os = "macos") {
-                    window.titlebar_double_click();
-                } else {
-                    window.zoom_window();
-                }
-            }
-            cx.stop_propagation();
+        // Windows forwards non-client presses through GPUI before DefWindowProc.
+        // Stopping them here prevents the native move/zoom loop; start_window_move
+        // is a no-op on Windows. Let the OS handle its caption events instead.
+        .when(!cfg!(target_os = "windows"), |element| {
+            element
+                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
+                    if event.click_count == 1 {
+                        window.start_window_move();
+                    }
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(MouseButton::Left, |event: &MouseUpEvent, window, cx| {
+                    if event.click_count == 2 {
+                        if cfg!(target_os = "macos") {
+                            window.titlebar_double_click();
+                        } else {
+                            window.zoom_window();
+                        }
+                    }
+                    cx.stop_propagation();
+                })
         })
 }
 
@@ -451,17 +483,20 @@ fn window_control_button(
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let is_windows = cfg!(target_os = "windows");
+    let hover_background = ShellColors::current().hover;
 
     div()
         .id(SharedString::from(id))
-        .size(px(36.0))
+        .w(space(40.0))
+        .h(space(32.0))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(16.0))
-        .bg(rgb(roles.surface_container_highest))
-        .text_color(rgb(roles.on_surface))
+        .rounded(space(8.0))
+        .bg(ShellColors::current().chrome)
+        .text_color(rgb(roles.on_surface_variant))
         .cursor_pointer()
+        .hover(move |this| this.bg(hover_background))
         .active(|this| this.opacity(0.85))
         .occlude()
         .when(is_windows, |this| this.window_control_area(control_area))
@@ -473,7 +508,7 @@ fn window_control_button(
                 cx.stop_propagation();
             })
         })
-        .child(Icon::from(icon).small())
+        .child(Icon::from(icon).size(space(20.0)))
         .on_click(move |_, window, cx| on_click(window, cx))
 }
 
@@ -537,7 +572,7 @@ fn window_controls_group(
         let close_entity = entity.clone();
         h_flex()
             .items_center()
-            .gap(px(TOPBAR_TAB_GAP))
+            .gap(space(4.0))
             .child(window_control_button(
                 "window-close",
                 AppIcon::Close,
@@ -560,7 +595,7 @@ fn window_controls_group(
         let close_entity = entity;
         h_flex()
             .items_center()
-            .gap(px(TOPBAR_TAB_GAP))
+            .gap(space(4.0))
             .child(window_control_button(
                 "window-minimize",
                 AppIcon::Minimize,
@@ -612,9 +647,15 @@ pub(in crate::ui::shell) trait ChromeAppViewExt: Sized {
         cx: &App,
     ) -> impl IntoElement;
 
-    fn render_status_footer(&self, entity: Entity<Self>, cx: &App) -> impl IntoElement;
+    fn render_status_footer(
+        &self,
+        entity: Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement;
 
-    fn render_fab(&self, entity: Entity<Self>) -> impl IntoElement;
+    /// The hosts page's create command, docked into the bottom navigation bar.
+    fn render_new_host_action(&self, cx: &App) -> AnyElement;
 }
 
 impl ChromeAppViewExt for AppView {
@@ -804,1011 +845,755 @@ impl ChromeAppViewExt for AppView {
         window: &mut Window,
         cx: &App,
     ) -> impl IntoElement {
-        let window_role = self.window_role;
-        let roles = miaominal_settings::current_theme().material.roles;
-        let topbar_title_line_height = miaominal_settings::scaled_line_height(14.0).as_f32();
-        let topbar_rename_height = topbar_tab_rename_height(topbar_title_line_height);
-        let topbar_height = top_bar_height();
-        let topbar_tab_strip_height = topbar_height - 8.0;
-        let topbar_scroll_handle = self.workspace.topbar_tab_scroll_handle.clone();
-        let topbar_scroll_handle_for_tabs = topbar_scroll_handle.clone();
-        let current_active_tab_id = self
-            .workspace
-            .active_topbar_tab
-            .and_then(|index| self.workspace.tabs.get(index))
-            .filter(|tab| tab.is_top_level())
-            .map(|tab| tab.id);
-        let visible_tabs = self.collect_visible_topbar_tabs(current_active_tab_id, cx);
-        self.sync_topbar_tab_animation_state(&visible_tabs, current_active_tab_id, window);
-        let exiting_tabs = self.topbar_exiting_tabs_render_state(current_active_tab_id);
-        let topbar_tab_count = visible_tabs.len();
-        let tabs_inline_width = topbar_tab_count as f32 * TOPBAR_TAB_WIDTH
-            + topbar_tab_count.saturating_sub(1) as f32 * TOPBAR_TAB_GAP;
-        let inline_add_button_width = if topbar_tab_count > 0 {
-            TOPBAR_TAB_GAP + TOPBAR_ACTION_BUTTON_WIDTH
+        let colors = ShellColors::current();
+        let active = self.workspace.active_topbar_tab;
+        let tabs = self.collect_visible_topbar_tabs(active, cx);
+        let active_changed = self.workspace.topbar_visible_active_tab_id != active;
+        let tab_layout_animating = !self.workspace.topbar_entering_tabs.is_empty()
+            || !self.workspace.topbar_exiting_tabs.is_empty();
+        self.sync_topbar_tab_animation_state(&tabs, active, window);
+        if (active_changed
+            || tab_layout_animating
+            || !self.workspace.topbar_entering_tabs.is_empty())
+            && let Some(index) = tabs
+                .iter()
+                .position(|tab| Some(tab.snapshot.tab_id) == active)
+        {
+            self.workspace
+                .topbar_tab_scroll_handle
+                .scroll_to_item(index);
+        }
+        self.shell
+            .topbar_tab_focus
+            .retain(|id, _| tabs.iter().any(|tab| tab.snapshot.tab_id == *id));
+        for tab in &tabs {
+            self.shell
+                .topbar_tab_focus
+                .entry(tab.snapshot.tab_id)
+                .or_insert_with(|| cx.focus_handle());
+        }
+        let scale = f32::from(window.rem_size()) / 14.0;
+        let width = f32::from(window.bounds().size.width) / scale;
+        let tab_width = if width <= 850.0 {
+            ShellMetrics::COMPACT_TAB_WIDTH
         } else {
-            TOPBAR_ACTION_BUTTON_WIDTH
+            ShellMetrics::TAB_WIDTH
         };
-        let window_controls_width = topbar_window_controls_width(window);
-        let window_controls_gap = if window_controls_width > 0.0 {
-            TOPBAR_SECTION_GAP
+        let scroll = self.workspace.topbar_tab_scroll_handle.clone();
+        let controls_width = if cfg!(target_os = "macos") {
+            topbar_window_controls_width(window) / scale
         } else {
-            0.0
+            128.0
         };
-        let topbar_left_section_width = (f32::from(window.bounds().size.width)
-            - TOPBAR_HORIZONTAL_PADDING
-            - window_controls_gap
-            - window_controls_width)
-            .max(0.0);
-        let pin_add_button =
-            tabs_inline_width + inline_add_button_width + TOPBAR_TAB_STRIP_INNER_PADDING
-                > topbar_left_section_width;
-
-        div()
-            .relative()
-            .h(px(topbar_height))
-            .w_full()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .bg(rgb(roles.surface_container))
-            .px_2()
-            .when(cfg!(target_os = "macos"), |this| {
-                this.on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
-                    if event.click_count == 1 {
-                        window.start_window_move();
-                    }
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(MouseButton::Left, |event: &MouseUpEvent, window, cx| {
-                    if event.click_count == 2 {
-                        window.titlebar_double_click();
-                    }
-                    cx.stop_propagation();
-                })
-            })
-            .when(
-                cfg!(any(target_os = "linux", target_os = "freebsd")),
-                |this| {
-                    this.on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
-                        if event.click_count == 1 {
-                            window.start_window_move();
+        let strip_width = (tabs.len() as f32 * (tab_width + 12.0) + 4.0)
+            .min((width - controls_width - 88.0).max(0.0));
+        let rename_height = miaominal_settings::scaled_line_height(24.0);
+        let role = self.window_role;
+        let tab_elements = tabs
+            .iter()
+            .map(|visible| {
+                let snapshot = &visible.snapshot;
+                let tab_id = snapshot.tab_id;
+                let is_active = active == Some(tab_id);
+                let tab_focus = self.shell.topbar_tab_focus[&tab_id].clone();
+                let visibility = self.topbar_tab_visibility(tab_id);
+                let strength = self.topbar_active_strength(tab_id, active);
+                let roles = miaominal_settings::current_theme().material.roles;
+                let tab_background: gpui_kit::Hsla = rgb(blend_rgb(
+                    roles.surface_container_high,
+                    roles.surface,
+                    strength,
+                ))
+                .into();
+                let is_renaming = self.workspace.renaming_tab == Some(tab_id);
+                let activate = entity.clone();
+                let close = entity.clone();
+                let middle_close = entity.clone();
+                let menu = entity.clone();
+                let drop_target = entity.clone();
+                let keyboard = entity.clone();
+                let wheel_entity = entity.clone();
+                let wheel_scroll = scroll.clone();
+                let can_detach = self.can_open_tab_in_new_window(tab_id, cx);
+                let supports_sftp = snapshot_supports_sftp(snapshot.kind);
+                let payload = DraggedTab {
+                    source_tab_id: tab_id,
+                    source_index: visible.tab_index,
+                    source_pane_id: self.active_pane_id(),
+                    is_active,
+                    title: snapshot.title.clone(),
+                    status_color: snapshot.status_color,
+                };
+                let title = if is_renaming {
+                    HintedInput::new(&self.shell.workspace_forms.rename_input)
+                        .appearance(false)
+                        .xsmall()
+                        .h(rename_height)
+                        .w_full()
+                        .into_any_element()
+                } else {
+                    Button::new(SharedString::from(format!("top-tab-label-{tab_id}")))
+                        .custom(
+                            gpui_kit::component::button::ButtonCustomVariant::new(cx).foreground(
+                                if is_active {
+                                    colors.foreground
+                                } else {
+                                    colors.muted
+                                },
+                            ),
+                        )
+                        .tab_stop(false)
+                        .accessibility_label(snapshot.title.clone())
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .px_0()
+                        .text_color(if is_active {
+                            colors.foreground
+                        } else {
+                            colors.muted
+                        })
+                        .when_some(snapshot.status_color, |button, color| {
+                            button.child(status_indicator(color, 6.0))
+                        })
+                        .child(
+                            Icon::new(topbar_tab_icon(snapshot.kind).unwrap_or(AppIcon::Computer))
+                                .size(space(16.0))
+                                .when(is_active, |icon| icon.text_color(colors.primary)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(space(ShellTypography::BODY_SIZE))
+                                .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
+                                .when(is_active, |label| {
+                                    label.font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                })
+                                .child(snapshot.title.clone()),
+                        )
+                        .on_click(move |_, window, cx| {
+                            activate.update(cx, |this, cx| {
+                                this.handle_topbar_action(
+                                    TopbarAction::Activate(tab_id),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                        .into_any_element()
+                };
+                let corner = |left: bool| {
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .size(space(8.0))
+                        .bg(colors.canvas)
+                        .when(left, |element| element.left(space(-8.0)))
+                        .when(!left, |element| element.right(space(-8.0)))
+                        .child(
+                            div()
+                                .size_full()
+                                .bg(colors.chrome)
+                                .when(left, |element| element.rounded_br(space(8.0)))
+                                .when(!left, |element| element.rounded_bl(space(8.0))),
+                        )
+                };
+                div()
+                    .id(SharedString::from(format!("top-tab-{tab_id}")))
+                    .test_support()
+                    .occlude()
+                    // Tabs occlude the native caption hitbox. Forward wheel input
+                    // here too, since that occlusion also hides the scroll strip.
+                    .on_scroll_wheel(move |event, _, cx| {
+                        if scroll_topbar_tabs(&wheel_scroll, event) {
+                            wheel_entity.update(cx, |_, cx| cx.notify());
+                            cx.stop_propagation();
+                        }
+                    })
+                    .role(gpui_kit::Role::Tab)
+                    .aria_label(snapshot.title.clone())
+                    .aria_selected(is_active)
+                    .track_focus(&tab_focus)
+                    .tab_stop(is_active)
+                    .focus(move |style| style.border_1().border_color(colors.primary))
+                    .relative()
+                    .w(space(tab_width * visibility))
+                    .opacity(visibility)
+                    .h(space(ShellMetrics::TAB_HEIGHT))
+                    .flex_shrink_0()
+                    .rounded_t(space(16.0))
+                    .bg(tab_background)
+                    .when(!is_active, |element| {
+                        element
+                            .hover(|style| style.bg(colors.hover))
+                            .active(|style| style.bg(colors.selected))
+                    })
+                    .when(is_active, |element| {
+                        element.child(corner(true)).child(corner(false))
+                    })
+                    .on_key_down(move |event, window, cx| {
+                        if is_renaming
+                            || event.keystroke.modifiers.control
+                            || event.keystroke.modifiers.alt
+                            || event.keystroke.modifiers.platform
+                            || event.keystroke.modifiers.shift
+                        {
+                            return;
+                        }
+                        let direction = event.keystroke.key.as_str();
+                        if !matches!(
+                            direction,
+                            "left" | "right" | "home" | "end" | "enter" | "space"
+                        ) {
+                            return;
+                        }
+                        keyboard.update(cx, |this, cx| {
+                            let ids: Vec<_> = this
+                                .workspace
+                                .tabs
+                                .iter()
+                                .filter(|tab| tab.is_top_level())
+                                .map(|tab| tab.id)
+                                .collect();
+                            let Some(ix) = ids.iter().position(|id| *id == tab_id) else {
+                                return;
+                            };
+                            let next = match direction {
+                                "home" => 0,
+                                "end" => ids.len() - 1,
+                                "left" => (ix + ids.len() - 1) % ids.len(),
+                                "enter" | "space" => ix,
+                                _ => (ix + 1) % ids.len(),
+                            };
+                            this.handle_topbar_action(
+                                TopbarAction::Activate(ids[next]),
+                                window,
+                                cx,
+                            );
+                            this.workspace.topbar_tab_scroll_handle.scroll_to_item(next);
+                            if let Some(focus) = this.shell.topbar_tab_focus.get(&ids[next]) {
+                                window.focus(focus, cx);
+                            }
+                        });
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_up(MouseButton::Middle, move |_, window, cx| {
+                        if !topbar_pointer_up_should_be_ignored(cx) {
+                            close_topbar_tab(&middle_close, tab_id, window, cx);
                         }
                         cx.stop_propagation();
                     })
-                },
-            )
-            .when(!cfg!(target_os = "macos"), |this| this.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .bottom_0()
-                    .left_0()
-                    .window_control_area(WindowControlArea::Drag)
-                    .on_mouse_up(MouseButton::Left, |event: &MouseUpEvent, window, _| {
-                        if event.click_count == 2 {
-                            if cfg!(target_os = "macos") {
-                                window.titlebar_double_click();
-                            } else {
-                                window.zoom_window();
-                            }
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .capture_any_mouse_down(|event, window, _| {
+                        if matches!(event.button, MouseButton::Right | MouseButton::Middle) {
+                            // Keep the menu's restore target on the current view,
+                            // not the nested label/close button's clipped focus ring.
+                            // Middle-click closes the tab, so it must not focus the
+                            // nested title button and flash its focus ring either.
+                            window.prevent_default();
                         }
-                    }),
-            ))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap(px(TOPBAR_SECTION_GAP))
-                    .when(show_macos_traffic_light_space(window), |this| {
-                        this.child(window_controls_group(
-                            entity.clone(),
-                            window_role,
-                            window,
-                        ))
+                    })
+                    .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .when(!is_renaming, |element| {
+                        element.on_drag(payload, |payload, _, _, cx| cx.new(|_| payload.clone()))
+                    })
+                    .drag_over::<DraggedTab>(move |mut style, payload, _, _| {
+                        if payload.source_tab_id != tab_id {
+                            style.background = Some(colors.selected.into());
+                        }
+                        style
+                    })
+                    .on_drop::<DraggedTab>(move |payload, _, cx| {
+                        drop_target.update(cx, |this, cx| {
+                            if let (Some(from), Some(to)) = (
+                                this.workspace.tabs.index_of(payload.source_tab_id),
+                                this.workspace.tabs.index_of(tab_id),
+                            ) {
+                                this.reorder_tab(from, to, cx);
+                            }
+                        })
+                    })
+                    .context_menu(move |popup, _, _| {
+                        build_tab_context_menu(
+                            popup,
+                            menu.clone(),
+                            tab_id,
+                            supports_sftp,
+                            can_detach,
+                        )
                     })
                     .child(
                         h_flex()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .items_center()
-                            .gap(px(TOPBAR_TAB_GAP))
-                            .on_scroll_wheel({
-                                let scroll_handle = topbar_scroll_handle.clone();
-                                let entity = entity.clone();
-                                move |event: &ScrollWheelEvent, _, cx| {
-                                    if scroll_topbar_tabs(&scroll_handle, event) {
-                                        entity.update(cx, |_, cx| cx.notify());
-                                        cx.stop_propagation();
-                                    }
-                                }
-                            })
+                            .size_full()
+                            .px(space(8.0))
+                            .pl(space(16.0))
+                            .gap(space(8.0))
+                            .child(title)
                             .child(
-                                div()
-                                    .relative()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .h(px(topbar_tab_strip_height))
-                                    .px_1()
-                                    .py(px(4.0))
-                                    .rounded(px(24.0))
-                                    .overflow_x_hidden()
-                                    .child(
-                                        h_flex()
-                                            .id("top-tabs-strip")
-                                            .relative()
-                                            .w_full()
-                                            .min_w(px(0.0))
-                                            .h_full()
-                                            .items_center()
-                                            .gap(px(TOPBAR_TAB_GAP))
-                                            .overflow_x_scroll()
-                                            .track_scroll(&topbar_scroll_handle)
-                                            .children(visible_tabs.iter().map({
-                                                let entity = entity.clone();
-                                                let topbar_scroll_handle = topbar_scroll_handle_for_tabs.clone();
-                                                move |visible_tab| {
-                                                    let index = visible_tab.tab_index;
-                                                    let tab = self
-                                                        .workspace
-                                                        .tabs
-                                                        .at(index)
-                                                        .expect("visible topbar tab remains registered");
-                                                    let snapshot = &visible_tab.snapshot;
-                                                    let activate_entity = entity.clone();
-                                                    let middle_close_entity = entity.clone();
-                                                    let content_middle_close_entity = entity.clone();
-                                                    let close_entity = entity.clone();
-                                                    let close_middle_entity = entity.clone();
-                                                    let menu_entity = entity.clone();
-                                                    let drop_entity = entity.clone();
-                                                    let scroll_entity = entity.clone();
-                                                    let rename_scroll_entity = entity.clone();
-                                                    let close_scroll_entity = entity.clone();
-                                                    let tab_scroll_handle = topbar_scroll_handle.clone();
-                                                    let rename_scroll_handle = topbar_scroll_handle.clone();
-                                                    let close_scroll_handle = topbar_scroll_handle.clone();
-                                                    let tab_id = snapshot.tab_id;
-                                                    let tab_visibility = self.topbar_tab_visibility(tab_id);
-                                                    let active_strength = self.topbar_active_strength(
-                                                        tab_id,
-                                                        current_active_tab_id,
-                                                    );
-                                                    let is_active = current_active_tab_id == Some(tab_id);
-                                                    let supports_sftp_tab = snapshot.kind == TopbarTabVisualKind::Session;
-                                                    let can_open_in_new_window =
-                                                        self.can_open_tab_in_new_window(tab_id, cx);
-                                                    let tab_kind_icon = topbar_tab_icon(snapshot.kind);
-                                                    let is_renaming = self.workspace.renaming_tab == Some(tab_id);
-                                                    let status_color = snapshot.status_color;
-                                                    let tab_foreground_color = blend_rgb(
-                                                        roles.on_surface_variant,
-                                                        roles.on_secondary_container,
-                                                        active_strength,
-                                                    );
-                                                    let display_title = tab.title.clone();
-                                                    let tab_background = blend_rgb(
-                                                        roles.surface_container_low,
-                                                        roles.secondary_container,
-                                                        active_strength,
-                                                    );
-                                                    let tab_hover_background = blend_rgb(
-                                                        roles.surface_container_high,
-                                                        roles.secondary_container,
-                                                        active_strength,
-                                                    );
-                                                    let drag_payload = DraggedTab {
-                                                        source_tab_id: tab_id,
-                                                        source_index: index,
-                                                        source_pane_id: self.active_pane_id(),
-                                                        is_active,
-                                                        title: display_title.clone(),
-                                                        status_color,
-                                                    };
-
-                                                    let title_child: gpui_kit::AnyElement = if is_renaming {
-                                                        div()
-                                                            .flex_1()
-                                                            .min_w(px(0.0))
-                                                            .overflow_hidden()
-                                                            .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
-                                                                if scroll_topbar_tabs(&rename_scroll_handle, event) {
-                                                                    rename_scroll_entity.update(cx, |_, cx| cx.notify());
-                                                                    cx.stop_propagation();
-                                                                }
-                                                            })
-                                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                                                cx.stop_propagation();
-                                                            })
-                                                            .child(
-                                                                HintedInput::new(&self.shell.workspace_forms.rename_input)
-                                                                    .appearance(false)
-                                                                    .border_1()
-                                                                    .border_color(rgb(roles.primary))
-                                                                    .bg(rgb(roles.surface_container_highest))
-                                                                    .rounded(px(2.0))
-                                                                    .xsmall()
-                                                                    .h(px(topbar_rename_height))
-                                                                    .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                                                    .line_height(px(topbar_title_line_height))
-                                                                    .text_color(rgb(roles.on_surface))
-                                                                    .w_full(),
-                                                            )
-                                                            .into_any_element()
-                                                    } else {
-                                                        div()
-                                                            .id(SharedString::from(format!(
-                                                                "top-tab-title-{tab_id}"
-                                                            )))
-                                                            .flex_1()
-                                                            .min_w(px(0.0))
-                                                            .h(px(topbar_title_line_height))
-                                                            .truncate()
-                                                            .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                                            .line_height(px(topbar_title_line_height))
-                                                            .text_color(rgb(tab_foreground_color))
-                                                            .child(display_title)
-                                                            .into_any_element()
-                                                    };
-                                                    let animated_tab = div()
-                                                        .id(SharedString::from(format!("top-tab-{tab_id}")))
-                                                        .w_full()
-                                                        .h_full()
-                                                        .p_1()
-                                                        .rounded(px(20.0))
-                                                        .bg(rgb(tab_background))
-                                                        .occlude()
-                                                        .cursor_pointer()
-                                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                                            cx.stop_propagation();
-                                                        })
-                                                        .on_mouse_up(MouseButton::Left, |_, _, cx| {
-                                                            cx.stop_propagation();
-                                                        })
-                                                        .active(|this| this.opacity(0.92))
-                                                        .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
-                                                            if scroll_topbar_tabs(&tab_scroll_handle, event) {
-                                                                scroll_entity.update(cx, |_, cx| cx.notify());
-                                                                cx.stop_propagation();
-                                                            }
-                                                        })
-                                                        .on_mouse_down(MouseButton::Middle, |_, _, cx| {
-                                                            cx.stop_propagation();
-                                                        })
-                                                        .on_mouse_up(
-                                                            MouseButton::Middle,
-                                                            move |_, window, cx| {
-                                                                if topbar_pointer_up_should_be_ignored(cx) {
-                                                                    return;
-                                                                }
-                                                                close_topbar_tab(
-                                                                    &middle_close_entity,
-                                                                    tab_id,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                cx.stop_propagation();
-                                                            },
-                                                        )
-                                                        .hover(move |this| {
-                                                            this.bg(rgb(tab_hover_background))
-                                                        })
-                                                        .when(!is_renaming, |this| {
-                                                            this.on_drag(
-                                                                drag_payload,
-                                                                |drag, _, _, cx| {
-                                                                    cx.new(|_| drag.clone())
-                                                                },
-                                                            )
-                                                        })
-                                                        .drag_over::<DraggedTab>(
-                                                            move |style: StyleRefinement, payload: &DraggedTab, _, _| {
-                                                                if payload.source_tab_id == tab_id {
-                                                                    return style;
-                                                                }
-
-                                                                let mut refined = style;
-                                                                refined.background = Some(color_with_alpha(roles.primary, 0x18).into());
-                                                                if payload.source_index < index {
-                                                                    refined.border_widths.right = Some(px(3.0).into());
-                                                                } else if payload.source_index > index {
-                                                                    refined.border_widths.left = Some(px(3.0).into());
-                                                                }
-                                                                refined.border_color = Some(rgb(roles.primary).into());
-                                                                refined
-                                                            },
-                                                        )
-                                                        .on_drop::<DraggedTab>(
-                                                            move |payload: &DraggedTab, _, cx| {
-                                                                let entity = drop_entity.clone();
-                                                                let source_id = payload.source_tab_id;
-                                                                entity.update(cx, |this, cx| {
-                                                                    let from = match this
-                                                                        .workspace.tabs
-                                                                        .iter()
-                                                                        .position(|t| t.id == source_id)
-                                                                    {
-                                                                        Some(idx) => idx,
-                                                                        None => return,
-                                                                    };
-                                                                    let target = this
-                                                                        .workspace.tabs
-                                                                        .index_of(tab_id);
-                                                                    let Some(target) = target else {
-                                                                        return;
-                                                                    };
-                                                                    this.reorder_tab(from, target, cx);
-                                                                });
-                                                            },
-                                                        )
-                                                        .when(!is_renaming, |this| {
-                                                            this.tooltip(footer_tooltip(tab.title.clone()))
-                                                        })
-                                                        .context_menu(move |menu, _window, _cx| {
-                                                            build_tab_context_menu(
-                                                                menu,
-                                                                menu_entity.clone(),
-                                                                tab_id,
-                                                                supports_sftp_tab,
-                                                                can_open_in_new_window,
-                                                            )
-                                                        })
-                                                        .child(
-                                                            h_flex()
-                                                                .w_full()
-                                                                .h_full()
-                                                                .items_center()
-                                                                .gap(px(2.0))
-                                                                .child(
-                                                                    h_flex()
-                                                                        .flex_1()
-                                                                        .min_w(px(0.0))
-                                                                        .h_full()
-                                                                        .pl_3()
-                                                                        .pr_1()
-                                                                        .items_center()
-                                                                        .gap(px(6.0))
-                                                                        .text_color(rgb(tab_foreground_color))
-                                                                        .cursor_pointer()
-                                                                        .on_mouse_up(MouseButton::Left, move |_, window, cx| {
-                                                                            if topbar_pointer_up_should_be_ignored(cx) {
-                                                                                return;
-                                                                            }
-                                                                            activate_entity.update(
-                                                                                cx,
-                                                                                |this, cx| {
-                                                                                    this.handle_topbar_action(
-                                                                                        TopbarAction::Activate(tab_id),
-                                                                                        window,
-                                                                                        cx,
-                                                                                    )
-                                                                                },
-                                                                            );
-                                                                        })
-                                                                        .when(!is_renaming, |this| {
-                                                                            this.on_mouse_down(MouseButton::Middle, |_, _, cx| {
-                                                                                cx.stop_propagation();
-                                                                            })
-                                                                            .on_mouse_up(
-                                                                                MouseButton::Middle,
-                                                                                move |_, window, cx| {
-                                                                                    if topbar_pointer_up_should_be_ignored(cx) {
-                                                                                        return;
-                                                                                    }
-                                                                                    close_topbar_tab(
-                                                                                        &content_middle_close_entity,
-                                                                                        tab_id,
-                                                                                        window,
-                                                                                        cx,
-                                                                                    );
-                                                                                    cx.stop_propagation();
-                                                                                },
-                                                                            )
-                                                                        })
-                                                                        .when_some(status_color, |this, color| {
-                                                                            this.child(status_indicator(color, 7.0))
-                                                                        })
-                                                                        .when_some(tab_kind_icon, |this, icon| {
-                                                                            this.child(
-                                                                                div()
-                                                                                    .flex_shrink_0()
-                                                                                    .child(Icon::new(icon).small()),
-                                                                            )
-                                                                        })
-                                                                        .child(title_child),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .flex_shrink_0()
-                                                                        .size(px(20.0))
-                                                                        .rounded(px(999.0))
-                                                                        .flex()
-                                                                        .items_center()
-                                                                        .justify_center()
-                                                                        .cursor_pointer()
-                                                                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                                                                        .text_color(rgb(tab_foreground_color))
-                                                                        .occlude()
-                                                                        .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
-                                                                            if scroll_topbar_tabs(&close_scroll_handle, event) {
-                                                                                close_scroll_entity.update(cx, |_, cx| cx.notify());
-                                                                                cx.stop_propagation();
-                                                                            }
-                                                                        })
-                                                                        .hover(move |this| {
-                                                                            this.bg(color_with_alpha(
-                                                                                tab_foreground_color,
-                                                                                if is_active { 0x18 } else { 0x12 },
-                                                                            ))
-                                                                        })
-                                                                        .child(Icon::from(AppIcon::Close).small())
-                                                                        .on_mouse_down(MouseButton::Middle, |_, _, cx| {
-                                                                            cx.stop_propagation();
-                                                                        })
-                                                                        .on_mouse_up(MouseButton::Middle, move |_, window, cx| {
-                                                                            if topbar_pointer_up_should_be_ignored(cx) {
-                                                                                return;
-                                                                            }
-                                                                            close_topbar_tab(
-                                                                                &close_middle_entity,
-                                                                                tab_id,
-                                                                                window,
-                                                                                cx,
-                                                                            );
-                                                                            cx.stop_propagation();
-                                                                        })
-                                                                        .on_mouse_up(MouseButton::Left, move |_, window, cx| {
-                                                                            if topbar_pointer_up_should_be_ignored(cx) {
-                                                                                return;
-                                                                            }
-                                                                            close_topbar_tab(
-                                                                                &close_entity,
-                                                                                tab_id,
-                                                                                window,
-                                                                                cx,
-                                                                            );
-                                                                            cx.stop_propagation();
-                                                                        }),
-                                                                ),
-                                                        );
-
-                                                    let bubble_side_inset =
-                                                        (1.0 - tab_visibility) * 14.0;
-                                                    let bubble_vertical_offset =
-                                                        (1.0 - tab_visibility) * 18.0;
-                                                    let bubble_opacity = 0.12 + tab_visibility * 0.88;
-
-                                                    div()
-                                                        .id(SharedString::from(format!(
-                                                            "top-tab-shell-{tab_id}"
-                                                        )))
-                                                        .relative()
-                                                        .flex_shrink_0()
-                                                        .w(px(TOPBAR_TAB_WIDTH))
-                                                        .h_full()
-                                                        .overflow_hidden()
-                                                        .child(
-                                                            div()
-                                                                .absolute()
-                                                                .top(px(bubble_vertical_offset))
-                                                                .right(px(bubble_side_inset))
-                                                                .bottom(px(-bubble_vertical_offset))
-                                                                .left(px(bubble_side_inset))
-                                                                .opacity(bubble_opacity)
-                                                                .child(animated_tab),
-                                                        )
-                                                }
-                                            }))
-                                            .children(exiting_tabs.iter().map(|tab| {
-                                                let snapshot = &tab.snapshot;
-                                                let tab_foreground_color = blend_rgb(
-                                                    roles.on_surface_variant,
-                                                    roles.on_secondary_container,
-                                                    tab.active_strength,
-                                                );
-                                                let tab_background = blend_rgb(
-                                                    roles.surface_container_low,
-                                                    roles.secondary_container,
-                                                    tab.active_strength,
-                                                );
-                                                let tab_kind_icon = topbar_tab_icon(snapshot.kind);
-
-                                                div()
-                                                    .id(SharedString::from(format!(
-                                                        "top-tab-exiting-{}",
-                                                        snapshot.tab_id
-                                                    )))
-                                                    .absolute()
-                                                    .left(px(
-                                                        snapshot.visible_index as f32
-                                                            * (TOPBAR_TAB_WIDTH + TOPBAR_TAB_GAP),
-                                                    ))
-                                                    .top(px(0.0))
-                                                    .bottom(px(0.0))
-                                                    .w(px(TOPBAR_TAB_WIDTH * tab.visibility))
-                                                    .min_w(px(0.0))
-                                                    .overflow_hidden()
-                                                    .child(
-                                                        div()
-                                                            .absolute()
-                                                            .top(px((1.0 - tab.visibility) * 4.0))
-                                                            .left(px(0.0))
-                                                            .bottom(px(0.0))
-                                                            .w(px(TOPBAR_TAB_WIDTH))
-                                                            .opacity(0.18 + tab.visibility * 0.82)
-                                                            .child(
-                                                                div()
-                                                                    .w(px(TOPBAR_TAB_WIDTH))
-                                                                    .h_full()
-                                                                    .p_1()
-                                                                    .rounded(px(20.0))
-                                                                    .bg(rgb(tab_background))
-                                                                    .child(
-                                                                        h_flex()
-                                                                            .w_full()
-                                                                            .h_full()
-                                                                            .items_center()
-                                                                            .gap(px(2.0))
-                                                                            .child(
-                                                                                h_flex()
-                                                                                    .flex_1()
-                                                                                    .min_w(px(0.0))
-                                                                                    .h_full()
-                                                                                    .pl_3()
-                                                                                    .pr_1()
-                                                                                    .items_center()
-                                                                                    .gap(px(6.0))
-                                                                                    .text_color(rgb(tab_foreground_color))
-                                                                                    .when_some(
-                                                                                        snapshot.status_color,
-                                                                                        |this, color| {
-                                                                                            this.child(status_indicator(color, 7.0))
-                                                                                        },
-                                                                                    )
-                                                                                    .when_some(
-                                                                                        tab_kind_icon,
-                                                                                        |this, icon| {
-                                                                                            this.child(
-                                                                                                div()
-                                                                                                    .flex_shrink_0()
-                                                                                                    .child(Icon::new(icon).small()),
-                                                                                            )
-                                                                                        },
-                                                                                    )
-                                                                                    .child(
-                                                                                        div()
-                                                                                            .flex_1()
-                                                                                            .min_w(px(0.0))
-                                                                                            .h(px(topbar_title_line_height))
-                                                                                            .truncate()
-                                                                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                                                                            .line_height(px(topbar_title_line_height))
-                                                                                            .text_color(rgb(tab_foreground_color))
-                                                                                            .child(snapshot.title.clone()),
-                                                                                    ),
-                                                                            )
-                                                                            .child(
-                                                                                div()
-                                                                                    .flex_shrink_0()
-                                                                                    .size(px(20.0))
-                                                                                    .rounded(px(999.0))
-                                                                                    .flex()
-                                                                                    .items_center()
-                                                                                    .justify_center()
-                                                                                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                                                                                    .text_color(rgb(tab_foreground_color))
-                                                                                    .child(Icon::from(AppIcon::Close).small()),
-                                                                            ),
-                                                                    ),
-                                                            ),
-                                                    )
-                                            }))
-                                            .when(!pin_add_button, |this| {
-                                                this.child(topbar_add_button(
-                                                    entity.clone(),
-                                                    topbar_scroll_handle.clone(),
-                                                ))
-                                            })
-                                            .when(cfg!(target_os = "macos"), |this| {
-                                                this.child(topbar_drag_region("top-tabs-trailing-drag"))
-                                            })
-                                    )
-                            )
-                            .when(pin_add_button, |this| {
-                                this.child(topbar_add_button(
-                                    entity.clone(),
-                                    topbar_scroll_handle.clone(),
-                                ))
-                            })
+                                Button::new(SharedString::from(format!("close-tab-{tab_id}")))
+                                    .ghost()
+                                    .accessibility_label(i18n::string("chrome.menu.close_tab"))
+                                    .tab_stop(is_active)
+                                    .child(Icon::new(AppIcon::Close).size(space(20.0)))
+                                    .size(space(28.0))
+                                    .rounded_full()
+                                    .text_color(colors.muted)
+                                    .on_click(move |_, window, cx| {
+                                        close_topbar_tab(&close, tab_id, window, cx);
+                                        cx.stop_propagation();
+                                    }),
+                            ),
                     )
-                    .when(!window_controls_on_left(), |this| {
-                        this.child(window_controls_group(
-                            entity.clone(),
-                            window_role,
-                            window,
-                        ))
+            })
+            .collect::<Vec<_>>();
+        let mut tab_elements = tab_elements
+            .into_iter()
+            .map(IntoElement::into_any_element)
+            .collect::<Vec<_>>();
+        for exiting in self.topbar_exiting_tabs_render_state(active) {
+            let index = exiting.snapshot.visible_index.min(tab_elements.len());
+            let roles = miaominal_settings::current_theme().material.roles;
+            tab_elements.insert(
+                index,
+                div()
+                    .w(space(tab_width * exiting.visibility))
+                    .h(space(ShellMetrics::TAB_HEIGHT))
+                    .flex_shrink_0()
+                    .opacity(exiting.visibility)
+                    .rounded_t(space(16.0))
+                    .bg(rgb(blend_rgb(
+                        roles.surface_container_high,
+                        roles.surface,
+                        exiting.active_strength,
+                    )))
+                    .child(
+                        div()
+                            .px(space(16.0))
+                            .py(space(12.0))
+                            .truncate()
+                            .child(exiting.snapshot.title),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let scroll_entity = entity.clone();
+        let scroll_wheel = scroll.clone();
+        let chrome_scroll = scroll.clone();
+        let chrome_entity = entity.clone();
+        topbar_drag_surface()
+            .test_support()
+            .on_scroll_wheel(move |event, _, cx| {
+                if scroll_topbar_tabs(&chrome_scroll, event) {
+                    chrome_entity.update(cx, |_, cx| cx.notify());
+                    cx.stop_propagation();
+                }
+            })
+            .h(space(ShellMetrics::TOPBAR_HEIGHT))
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .items_end()
+            .pt(space(8.0))
+            .px(space(ShellMetrics::titlebar_inset(width)))
+            .gap(space(4.0))
+            .bg(colors.chrome)
+            .when(show_macos_traffic_light_space(window), |element| {
+                element.child(window_controls_group(entity.clone(), role, window))
+            })
+            .child(
+                h_flex()
+                    .id("top-tabs-strip")
+                    .w(space(strip_width))
+                    .flex_shrink_0()
+                    .min_w_0()
+                    .h_full()
+                    .items_end()
+                    .gap(space(12.0))
+                    .px(space(8.0))
+                    .overflow_x_scroll()
+                    .track_scroll(&scroll)
+                    .children(tab_elements)
+                    .on_scroll_wheel(move |event, _, cx| {
+                        if scroll_topbar_tabs(&scroll_wheel, event) {
+                            scroll_entity.update(cx, |_, cx| cx.notify());
+                            cx.stop_propagation();
+                        }
                     }),
             )
+            .child(
+                div()
+                    .pb(space(8.0))
+                    .child(topbar_add_button(entity.clone(), scroll)),
+            )
+            .child(div().flex_1().min_w_0().h_full())
+            .when(!window_controls_on_left(), |element| {
+                element.child(
+                    // Center the 32px controls in the full topbar rather than in
+                    // the tab row, which sits below the 8px top padding.
+                    div()
+                        .pb(space((ShellMetrics::TOPBAR_HEIGHT - 32.0) / 2.0))
+                        .child(window_controls_group(entity, role, window)),
+                )
+            })
     }
 
-    fn render_status_footer(&self, entity: Entity<Self>, cx: &App) -> impl IntoElement {
-        let material = miaominal_settings::current_theme().material;
-        let roles = material.roles;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
-        let active_session_tab = self
-            .active_terminal_session_index(cx)
-            .and_then(|index| self.workspace.tabs.at(index));
-        let active_session_tab_id = active_session_tab.map(|tab| tab.id);
-        let active_session = active_session_tab.and_then(|tab| self.session_tab(tab.id, cx));
-        let is_local_terminal_tab = active_session_tab.is_some_and(|tab| tab.is_local_terminal());
-        let panel_session = active_session.is_some() && !is_local_terminal_tab;
-        let active_sftp = self.workspace.active_topbar_tab.and_then(|tab_id| {
+    fn render_status_footer(
+        &self,
+        entity: Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        use gpui_kit::component::popover::Popover;
+        let colors = ShellColors::current();
+        let active_tab = self
+            .workspace
+            .active_topbar_tab
+            .and_then(|id| self.workspace.tabs.get(id));
+        let session = active_tab.and_then(|tab| self.session_tab(tab.id, cx));
+        let sftp = active_tab.and_then(|tab| {
             self.controllers
                 .sftp
                 .read(cx)
-                .chrome_snapshot(tab_id)
-                .map(|sftp| (tab_id, sftp))
+                .chrome_snapshot(tab.id)
+                .map(|snapshot| (tab.id, snapshot))
         });
-
-        let active_sftp_tab = self
-            .workspace
-            .active_topbar_tab
-            .and_then(|tab_id| self.workspace.tabs.get(tab_id))
-            .filter(|tab| tab.is_sftp());
-        let (connection_label, connection_color) = active_session_tab
-            .map(|tab| {
-                let session = active_session.as_ref();
-                let status = tab.status.as_str();
-                let label = if tab_is_connected_status(session) {
-                    i18n::string("session.footer.connected")
-                } else {
-                    if status.is_ascii() {
-                        status.to_ascii_uppercase()
-                    } else {
-                        status.to_string()
-                    }
-                };
-                (label, tab_status_color(&tab, session))
-            })
-            .or_else(|| {
-                active_sftp_tab.map(|tab| {
-                    let status = tab.status.as_str();
-                    let label = if status.is_ascii() {
-                        status.to_ascii_uppercase()
-                    } else {
-                        status.to_string()
-                    };
-                    (label, tab_status_color(&tab, None))
+        let workspace = session.is_some() || sftp.is_some();
+        let local = active_tab.is_some_and(|tab| tab.is_local_terminal());
+        let connected = session.as_ref().is_some_and(|session| session.connected())
+            || sftp.as_ref().is_some_and(|(_, state)| state.connected());
+        let profile = active_tab.and_then(|tab| {
+            self.controllers
+                .session
+                .read(cx)
+                .reopen_profile_for_tab(tab.id)
+                .or_else(|| {
+                    self.controllers
+                        .sftp
+                        .read(cx)
+                        .reopen_profile_for_tab(tab.id, tab.owner())
                 })
-            })
-            .unwrap_or_else(|| (i18n::string("session.footer.offline"), text_muted));
-        let connection_tooltip = i18n::string_args(
-            "session.footer.tooltips.connection_status",
-            &[("status", &connection_label)],
-        );
-        let (connection_target, connection_target_detail) = self
-            .active_profile(cx)
+        });
+        let label = if !workspace {
+            i18n::string("hosts.home.ready")
+        } else if local && connected {
+            profile_shell_label(
+                profile
+                    .as_ref()
+                    .map(|profile| profile.local_shell.as_str())
+                    .unwrap_or_default(),
+            )
+        } else if connected {
+            i18n::string("session.footer.connected")
+        } else {
+            active_tab.map(|tab| tab.status.clone()).unwrap_or_default()
+        };
+        let name = active_tab.map(|tab| tab.title.clone()).unwrap_or_default();
+        let endpoint = profile
+            .as_ref()
             .map(|profile| {
                 if profile.is_local() {
-                    let detail = profile.summary();
-                    let shell = profile.local_shell.trim();
-                    let target = if shell.is_empty() {
-                        detail.clone()
-                    } else {
-                        local_shell_file_name(shell)
-                    };
-                    return (target, detail);
-                }
-                let username = if profile.username.trim().is_empty() {
-                    self.active_username(cx)
+                    profile.local_shell.clone()
                 } else {
-                    profile.username.clone()
-                };
-                let target = format!("{username}@{}", profile.host);
-                (target.clone(), target)
+                    format!("{}@{}:{}", profile.username, profile.host, profile.port)
+                }
             })
-            .unwrap_or_else(|| ("--".into(), "--".into()));
-
-        let pty_label = active_session
-            .as_ref()
-            .map(|session| format!("{}x{}", session.columns(), session.screen_lines()));
-        let traffic_label = active_session
-            .as_ref()
-            .filter(|_| !is_local_terminal_tab)
-            .map(|session| {
-                i18n::string_args(
-                    "session.footer.traffic",
-                    &[
-                        ("upload", &format_bytes(session.bytes_out())),
-                        ("download", &format_bytes(session.bytes_in())),
-                    ],
-                )
-            });
-        let status_message_tooltip = if self.shell.status_message.trim().is_empty() {
-            i18n::string("session.footer.tooltips.status_message_empty")
-        } else {
+            .unwrap_or_default();
+        let FooterMetrics {
+            dimensions,
+            traffic,
+        } = footer_metrics(
+            session.as_ref(),
+            sftp.as_ref()
+                .map(|(_, state)| (state.uploaded(), state.downloaded())),
+            local,
+        );
+        let profiles = self.controllers.hosts.read(cx).profiles();
+        let context = if workspace {
+            if self.shell.status_message.is_empty() {
+                name.clone()
+            } else {
+                self.shell.status_message.clone()
+            }
+        } else if self.shell.shell_state.sidebar_section == SidebarSection::Hosts {
             i18n::string_args(
-                "session.footer.tooltips.status_message",
-                &[("message", &self.shell.status_message)],
+                "hosts.home.summary",
+                &[
+                    (
+                        "remote",
+                        &profiles
+                            .iter()
+                            .filter(|profile| !profile.is_local())
+                            .count()
+                            .to_string(),
+                    ),
+                    (
+                        "local",
+                        &profiles
+                            .iter()
+                            .filter(|profile| profile.is_local())
+                            .count()
+                            .to_string(),
+                    ),
+                ],
             )
+        } else {
+            self.shell.shell_state.sidebar_section.title()
         };
-        let monitor_toggle_entity = entity.clone();
-        let agent_toggle_entity = entity.clone();
-        let progress_controller = self.controllers.sftp.clone();
-        let progress_session_controller = self.controllers.session.clone();
-        let favorites_controller = self.controllers.sftp.clone();
-        let favorites_panel_toggle = active_sftp
-            .as_ref()
-            .map(|(tab_id, sftp)| (*tab_id, sftp.favorites_panel_visible()));
-        let active_sftp_tab_id = active_sftp.as_ref().map(|(tab_id, _)| *tab_id);
-        let progress_center_open = active_sftp
-            .as_ref()
-            .map(|(_, sftp)| sftp.progress_center_visible())
-            .unwrap_or_else(|| {
-                active_session
-                    .as_ref()
-                    .is_some_and(|session| session.sftp_progress_visible())
+        drop(profiles);
+        let wide =
+            f32::from(window.bounds().size.width) / (f32::from(window.rem_size()) / 14.0) > 1100.0;
+        let detail_name = name.clone();
+        let detail_dimensions = dimensions.clone();
+        let detail_traffic = traffic.clone();
+        let session_info = Popover::new("footer-session-info")
+            .anchor(gpui_kit::Anchor::BottomRight)
+            .trigger(
+                Button::new("footer-session-info-trigger")
+                    .ghost()
+                    .accessibility_label(i18n::string("hosts.home.session_info"))
+                    .h(space(32.0))
+                    .max_w(space(if wide { 224.0 } else { 144.0 }))
+                    .text_color(colors.muted)
+                    .child(
+                        Icon::new(if local {
+                            AppIcon::Computer
+                        } else {
+                            AppIcon::LaptopMinimal
+                        })
+                        .small(),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(space(12.0))
+                            .child(name),
+                    )
+                    .child(Icon::new(AppIcon::ChevronUp).small()),
+            )
+            .content(move |_, _, _| {
+                v_flex()
+                    .w(space(320.0))
+                    .p(space(16.0))
+                    .gap(space(12.0))
+                    .child(
+                        div()
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .child(i18n::string("hosts.home.session_info")),
+                    )
+                    .child(div().child(detail_name.clone()))
+                    .child(div().child(endpoint.clone()))
+                    .when_some(detail_dimensions.clone(), |column, value| {
+                        column.child(div().child(value))
+                    })
+                    .when_some(detail_traffic.clone(), |column, value| {
+                        column.child(div().child(value))
+                    })
             });
-        let progress_center_tooltip = if progress_center_open {
+        let monitor = entity.clone();
+        let agent = entity.clone();
+        let session_id = self
+            .active_terminal_session_index(cx)
+            .and_then(|index| self.workspace.tabs.id_at(index));
+        let session_progress = self.controllers.session.clone();
+        let progress = self.controllers.sftp.clone();
+        let favorites = self.controllers.sftp.clone();
+        let favorite_toggle = sftp
+            .as_ref()
+            .map(|(id, state)| (*id, state.favorites_panel_visible()));
+        let progress_open = sftp
+            .as_ref()
+            .map(|(_, state)| state.progress_center_visible())
+            .unwrap_or_else(|| {
+                session_id
+                    .and_then(|id| self.session_tab(id, cx))
+                    .is_some_and(|state| state.sftp_progress_visible())
+            });
+        let sftp_id = sftp.as_ref().map(|(id, _)| *id);
+        let sftp_tooltip = if progress_open {
             i18n::string("sftp.tooltips.hide_progress_center")
         } else {
             i18n::string("sftp.tooltips.show_progress_center")
         };
-
+        let tool = |id, icon, label: String, selected: bool| {
+            footer_tool_button(id, selected, cx)
+                .icon(icon)
+                .tooltip(label.clone())
+                .accessibility_label(label)
+        };
         div()
-            .h(px(STATUS_BAR_HEIGHT))
             .w_full()
             .flex_shrink_0()
-            .bg(rgb(roles.surface_container))
-            .px_2()
+            .px(space(8.0))
+            .pb(space(8.0))
+            .bg(colors.chrome)
             .child(
                 h_flex()
                     .w_full()
-                    .h_full()
-                    .items_center()
-                    .gap_3()
-                    .when_some(favorites_panel_toggle, |this, (tab_id, panel_open)| {
-                        let tooltip = if panel_open {
-                            i18n::string("sftp.tooltips.hide_remote_favorites")
-                        } else {
-                            i18n::string("sftp.tooltips.show_remote_favorites")
-                        };
-                        this.child(
-                            div().id("sftp-favorites-panel-toggle").child(
-                                icon_button_with_tooltip(
-                                    AppIcon::FolderOpen,
-                                    tooltip,
-                                    24.0,
-                                    8.0,
-                                    Some(if panel_open {
-                                        roles.secondary_container
-                                    } else {
-                                        roles.surface_container
-                                    }),
-                                    Some(if panel_open {
-                                        roles.on_secondary_container
-                                    } else {
-                                        text_muted
-                                    }),
-                                    Some(if panel_open {
-                                        roles.primary
-                                    } else {
-                                        roles.outline_variant
-                                    }),
-                                    move |_window, cx| {
-                                        favorites_controller.update(cx, |controller, cx| {
-                                            controller.toggle_favorites_panel(tab_id, cx);
-                                        });
-                                    },
-                                )
-                                .id("sftp-favorites-panel-toggle-button")
-                                .hover(move |this| {
-                                    this.bg(rgb(roles.surface_container_highest))
-                                        .border_color(rgb(roles.primary))
-                                }),
-                            ),
-                        )
-                    })
-                    .when(!is_local_terminal_tab, |this| {
-                        this.child(
-                            h_flex()
-                                .id("status-footer-connection-status")
-                                .items_center()
-                                .gap_2()
-                                .tooltip(footer_tooltip(connection_tooltip))
-                                .child(
-                                    div()
-                                        .size(px(6.0))
-                                        .rounded(px(999.0))
-                                        .bg(rgb(connection_color)),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                                        .text_color(rgb(roles.on_surface_variant))
-                                        .child(connection_label),
-                                ),
-                        )
-                    })
-                    .when(panel_session, |this| {
-                        this.child(
-                            div().id("session-monitor-panel-toggle").child(
-                                icon_button_with_tooltip(
-                                    AppIcon::Computer,
-                                    i18n::string("session.footer.tooltips.monitor_panel"),
-                                    24.0,
-                                    8.0,
-                                    Some(roles.surface_container),
-                                    Some(text_muted),
-                                    Some(roles.outline_variant),
-                                    move |_window, cx| {
-                                        monitor_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_session_side_panel(cx);
-                                            cx.notify();
-                                        });
-                                    },
-                                )
-                                .id("session-monitor-panel-toggle-button")
-                                .hover(move |this| {
-                                    this.bg(rgb(roles.surface_container_highest))
-                                        .border_color(rgb(roles.primary))
-                                }),
-                            ),
-                        )
-                    })
+                    .min_h(space(36.0))
+                    .px(space(16.0))
+                    .gap(space(if wide { 16.0 } else { 8.0 }))
+                    .rounded_b(space(16.0))
+                    .bg(colors.footer)
+                    .text_size(space(ShellTypography::SUPPORTING_SIZE))
+                    .line_height(space(ShellTypography::SUPPORTING_LINE_HEIGHT))
                     .child(
-                        div()
-                            .id("status-footer-status-message")
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .tooltip(footer_tooltip(status_message_tooltip))
-                            .child(self.shell.status_message.clone()),
+                        h_flex()
+                            .flex_shrink_0()
+                            .min_w_0()
+                            .max_w(space(if wide { 240.0 } else { 144.0 }))
+                            .gap(space(8.0))
+                            .child(div().flex_shrink_0().size(space(6.0)).rounded_full().bg(
+                                if connected {
+                                    colors.primary
+                                } else {
+                                    colors.muted
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(if connected {
+                                        colors.primary
+                                    } else {
+                                        colors.foreground
+                                    })
+                                    .child(label),
+                            ),
                     )
-                    .when_some(pty_label, |this, label| {
-                        let tooltip = i18n::string_args(
-                            "session.footer.tooltips.terminal_size",
-                            &[("size", &label)],
-                        );
-
-                        this.child(
-                            div()
-                                .id("status-footer-terminal-size")
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(text_muted))
-                                .tooltip(footer_tooltip(tooltip))
-                                .child(label),
-                        )
-                    })
-                    .when_some(traffic_label, |this, label| {
-                        let tooltip = i18n::string_args(
-                            "session.footer.tooltips.traffic",
-                            &[("traffic", &label)],
-                        );
-
-                        this.child(
-                            div()
-                                .id("status-footer-traffic")
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(text_muted))
-                                .tooltip(footer_tooltip(tooltip))
-                                .child(label),
-                        )
-                    })
-                    .when(panel_session, |this| {
-                        this.child(
-                            div().id("session-agent-panel-toggle").child(
-                                icon_button_with_tooltip(
-                                    AppIcon::Sparkles,
-                                    i18n::string("session.footer.tooltips.agent_panel"),
-                                    24.0,
-                                    8.0,
-                                    Some(roles.surface_container),
-                                    Some(text_muted),
-                                    Some(roles.outline_variant),
-                                    move |_window, cx| {
-                                        agent_toggle_entity.update(cx, |this, cx| {
-                                            this.toggle_session_agent_panel(cx);
-                                            cx.notify();
-                                        });
-                                    },
-                                )
-                                .id("session-agent-panel-toggle-button")
-                                .hover(move |this| {
-                                    this.bg(rgb(roles.surface_container_highest))
-                                        .border_color(rgb(roles.primary))
-                                }),
-                            ),
-                        )
-                    })
-                    .when(active_sftp.is_some() || panel_session, |this| {
-                        this.child(
-                            div().id("sftp-progress-center-toggle").child(
-                                icon_button_with_tooltip(
-                                    AppIcon::ArrowUpDown,
-                                    progress_center_tooltip,
-                                    24.0,
-                                    8.0,
-                                    Some(if progress_center_open {
-                                        roles.secondary_container
-                                    } else {
-                                        roles.surface_container
-                                    }),
-                                    Some(if progress_center_open {
-                                        roles.on_secondary_container
-                                    } else {
-                                        text_muted
-                                    }),
-                                    Some(if progress_center_open {
-                                        roles.primary
-                                    } else {
-                                        roles.outline_variant
-                                    }),
-                                    move |_window, cx| {
-                                        if let Some(tab_id) = active_sftp_tab_id {
-                                            progress_controller.update(cx, |controller, cx| {
-                                                let changed = controller.set_tab_progress_visible(
-                                                    tab_id,
-                                                    !progress_center_open,
-                                                );
-                                                if changed {
-                                                    cx.notify();
-                                                }
-                                            });
-                                        } else if let Some(tab_id) = active_session_tab_id {
-                                            progress_session_controller.update(
-                                                cx,
-                                                |controller, cx| {
-                                                    let changed = controller
-                                                        .set_sftp_progress_visible(
-                                                            tab_id,
-                                                            !progress_center_open,
-                                                        );
-                                                    if changed {
-                                                        cx.notify();
-                                                    }
-                                                },
-                                            );
-                                        }
-                                    },
-                                )
-                                .id("sftp-progress-center-toggle-button")
-                                .hover(move |this| {
-                                    this.bg(rgb(roles.surface_container_highest))
-                                        .border_color(rgb(roles.primary))
-                                }),
-                            ),
-                        )
-                    })
-                    .child(render_notification_center_popover(cx))
                     .child(
                         div()
-                            .id("status-footer-connection-target")
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(roles.on_surface_variant))
-                            .tooltip(footer_tooltip(i18n::string_args(
-                                "session.footer.tooltips.connection_target",
-                                &[("target", &connection_target_detail)],
-                            )))
-                            .child(connection_target),
+                            .id("status-footer-context")
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(colors.muted)
+                            .child(context),
+                    )
+                    .when(workspace, |row| {
+                        row.when(wide, |row| {
+                            row.when_some(dimensions, |row, value| {
+                                row.child(div().text_color(colors.muted).child(value))
+                            })
+                            .when_some(traffic, |row, value| {
+                                row.child(div().text_color(colors.muted).child(value))
+                            })
+                        })
+                        .child(session_info)
+                    })
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap(space(4.0))
+                            .when(workspace, |row| {
+                                row.when_some(favorite_toggle, |row, (id, open)| {
+                                    row.child(
+                                        tool(
+                                            "sftp-favorites-panel-toggle",
+                                            AppIcon::Folder,
+                                            i18n::string("sftp.tooltips.show_remote_favorites"),
+                                            open,
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                favorites.update(cx, |controller, cx| {
+                                                    controller.toggle_favorites_panel(id, cx)
+                                                })
+                                            },
+                                        ),
+                                    )
+                                })
+                                .when(session.is_some() && !local, |row| {
+                                    row.child(
+                                        tool(
+                                            "session-monitor-panel-toggle",
+                                            AppIcon::Computer,
+                                            i18n::string("session.footer.tooltips.monitor_panel"),
+                                            self.controllers.session.read(cx).side_panel_open()
+                                                && self
+                                                    .controllers
+                                                    .session
+                                                    .read(cx)
+                                                    .side_panel_view()
+                                                    == SessionSidePanelView::Monitor,
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                monitor.update(cx, |this, cx| {
+                                                    this.toggle_session_side_panel(cx);
+                                                    cx.notify();
+                                                })
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        tool(
+                                            "session-agent-panel-toggle",
+                                            AppIcon::Sparkles,
+                                            i18n::string("session.footer.tooltips.agent_panel"),
+                                            self.controllers.agent.read(cx).panel_open(),
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                agent.update(cx, |this, cx| {
+                                                    this.toggle_session_agent_panel(cx);
+                                                    cx.notify();
+                                                })
+                                            },
+                                        ),
+                                    )
+                                })
+                                .when(!local, |row| {
+                                    row.child(
+                                        tool(
+                                            "sftp-progress-center-toggle",
+                                            AppIcon::ArrowUpDown,
+                                            sftp_tooltip,
+                                            progress_open,
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                if let Some(id) = sftp_id {
+                                                    progress.update(cx, |controller, cx| {
+                                                        controller.set_tab_progress_visible(
+                                                            id,
+                                                            !progress_open,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                } else if let Some(id) = session_id {
+                                                    session_progress.update(
+                                                        cx,
+                                                        |controller, cx| {
+                                                            controller.set_sftp_progress_visible(
+                                                                id,
+                                                                !progress_open,
+                                                            );
+                                                            cx.notify();
+                                                        },
+                                                    );
+                                                }
+                                            },
+                                        ),
+                                    )
+                                })
+                            })
+                            .child(render_notification_center_popover(window, cx)),
                     ),
             )
     }
 
-    fn render_fab(&self, _entity: Entity<Self>) -> impl IntoElement {
+    fn render_new_host_action(&self, cx: &App) -> AnyElement {
         let controller = self.controllers.hosts.clone();
-        fab_button(move |_window, cx| {
+        new_host_action(cx, move |_, cx| {
             controller.update(cx, |controller, cx| {
-                controller.request_new_profile_editor(cx);
-            });
+                controller.request_new_profile_editor(cx)
+            })
         })
+        .into_any_element()
     }
 }
 
@@ -1832,6 +1617,24 @@ mod tests {
     }
 
     #[test]
+    fn footer_projects_ssh_local_and_standalone_sftp_metrics() {
+        let session = SessionTabSnapshot::new("fixture".into(), None, SessionPurpose::Terminal)
+            .with_connection(true, false, false)
+            .with_terminal(120, 32, 2048, 1024);
+        let ssh = footer_metrics(Some(&session), None, false);
+        assert_eq!(ssh.dimensions.as_deref(), Some("120 × 32"));
+        assert_eq!(ssh.traffic.as_deref(), Some("↑ 1.0 KB · ↓ 2.0 KB"));
+
+        let local = footer_metrics(Some(&session), None, true);
+        assert_eq!(local.dimensions.as_deref(), Some("120 × 32"));
+        assert!(local.traffic.is_none());
+
+        let sftp = footer_metrics(None, Some((512, 4096)), false);
+        assert!(sftp.dimensions.is_none());
+        assert_eq!(sftp.traffic.as_deref(), Some("↑ 512 B · ↓ 4.0 KB"));
+    }
+
+    #[test]
     fn delayed_topbar_action_resolves_reordered_tab_by_id() {
         let target = TabId::new(20);
         let mut tabs = TabRegistry::from_tabs([
@@ -1851,13 +1654,19 @@ mod tests {
 
     impl Render for AddButtonHost {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().relative().child(
-                div()
-                    .absolute()
-                    .top(px(10.0))
-                    .left(px(10.0))
-                    .child(topbar_add_button(cx.entity(), ScrollHandle::new())),
-            )
+            // Keep the add command independently operable inside native chrome.
+            topbar_drag_surface()
+                .test_support()
+                .w_full()
+                .h(px(56.0))
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(10.0))
+                        .left(px(10.0))
+                        .child(topbar_add_button(cx.entity(), ScrollHandle::new())),
+                )
         }
     }
 
@@ -1872,6 +1681,105 @@ mod tests {
                 self.opens.set(self.opens.get() + 1);
             }
         }
+    }
+
+    struct FabHost {
+        creates: Rc<Cell<usize>>,
+        connections: Rc<Cell<usize>>,
+    }
+
+    impl Render for FabHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let connections = self.connections.clone();
+            let creates = self.creates.clone();
+            div()
+                .size_full()
+                .relative()
+                .child(
+                    Button::new("underlying-host")
+                        .size_full()
+                        .label("Connect")
+                        .on_click(move |_, _, _| connections.set(connections.get() + 1)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .right_4()
+                        .bottom_4()
+                        .child(new_host_action(cx, move |_, _| {
+                            creates.set(creates.get() + 1)
+                        })),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn floating_create_does_not_connect_the_host_beneath_it(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(gpui_kit::init);
+        let creates = Rc::new(Cell::new(0));
+        let connections = Rc::new(Cell::new(0));
+        let created = creates.clone();
+        let connected = connections.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|_| FabHost {
+                creates: created,
+                connections: connected,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.click("hosts-create-fab", cx);
+            assert_eq!(creates.get(), 1);
+            assert_eq!(connections.get(), 0);
+            window.click("underlying-host", cx);
+            assert_eq!(connections.get(), 1);
+        });
+    }
+
+    #[gpui_kit::test]
+    #[cfg(target_os = "windows")]
+    fn caption_presses_reach_the_native_window_handler(cx: &mut TestAppContext) {
+        use gpui_kit::{InputEvent as _, test::TestWindowExt as _};
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| AddButtonHost {
+                opens: Rc::new(Cell::new(0)),
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            let bounds = window.find("topbar-window-drag").bounds();
+            assert_eq!(bounds.origin, point(px(0.0), px(0.0)));
+            assert_eq!(bounds.size.width, window.viewport_size().width);
+            assert_eq!(bounds.size.height, px(56.0));
+            for click_count in [1, 2] {
+                let down = window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(300.0), px(24.0)),
+                        button: MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(down.propagate, "caption press must reach DefWindowProc");
+                let up = window.dispatch_event(
+                    MouseUpEvent {
+                        position: point(px(300.0), px(24.0)),
+                        button: MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(up.propagate, "caption release must reach DefWindowProc");
+            }
+        });
     }
 
     #[gpui_kit::test]

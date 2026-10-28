@@ -564,6 +564,7 @@ impl Default for SftpLayoutState {
 
 #[derive(Clone)]
 pub(in crate::ui) struct SftpTabState {
+    connected: bool,
     pub(in crate::ui) profile_id: String,
     pub(in crate::ui) commands: Option<SftpCommandSender>,
     pub(in crate::ui) local_path: PathBuf,
@@ -601,6 +602,7 @@ pub(in crate::ui) struct SftpTabState {
 impl SftpTabState {
     pub(in crate::ui) fn new(profile: &SessionProfile) -> Self {
         Self {
+            connected: false,
             profile_id: profile.id.clone(),
             commands: None,
             local_path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -770,11 +772,23 @@ struct SftpTabHandoff {
 
 #[derive(Clone, Copy)]
 pub(in crate::ui) struct SftpTabChromeSnapshot {
+    connected: bool,
+    uploaded: u64,
+    downloaded: u64,
     favorites_panel_visible: bool,
     progress_center_visible: bool,
 }
 
 impl SftpTabChromeSnapshot {
+    pub(in crate::ui) fn connected(self) -> bool {
+        self.connected
+    }
+    pub(in crate::ui) fn uploaded(self) -> u64 {
+        self.uploaded
+    }
+    pub(in crate::ui) fn downloaded(self) -> u64 {
+        self.downloaded
+    }
     pub(in crate::ui) fn favorites_panel_visible(self) -> bool {
         self.favorites_panel_visible
     }
@@ -3623,6 +3637,19 @@ impl SftpController {
 
     pub(in crate::ui) fn chrome_snapshot(&self, tab_id: TabId) -> Option<SftpTabChromeSnapshot> {
         self.tab(tab_id).map(|tab| SftpTabChromeSnapshot {
+            connected: tab.connected,
+            uploaded: tab
+                .transfers
+                .iter()
+                .filter(|row| row.direction == TransferDirection::Upload)
+                .map(|row| row.bytes_complete)
+                .sum(),
+            downloaded: tab
+                .transfers
+                .iter()
+                .filter(|row| row.direction == TransferDirection::Download)
+                .map(|row| row.bytes_complete)
+                .sum(),
             favorites_panel_visible: tab.layout.favorites_panel_visible,
             progress_center_visible: tab.layout.progress_center_visible,
         })
@@ -3828,6 +3855,7 @@ impl SftpController {
                 {
                     return;
                 }
+                tab.connected = true;
                 tab.remote_directory_request_id = None;
                 tab.requested_remote_path = None;
                 tab_status = Some(i18n::string_args(
@@ -4088,6 +4116,7 @@ impl SftpController {
             SftpEvent::Closed => {
                 clear_host_key_prompt = true;
                 tab_status = Some(i18n::string("session.status.closed"));
+                tab.connected = false;
                 tab.commands = None;
                 tab.loading_remote = false;
                 tab.last_status = i18n::string("sftp.messages.session_closed");

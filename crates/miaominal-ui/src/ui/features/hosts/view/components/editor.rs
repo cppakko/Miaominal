@@ -1,7 +1,10 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::animation::render_rounded_prompt_overlay;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
-use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, editor_button, md3_spinner};
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
+use crate::ui::components::{
+    EditorFooterActionTone, editor_button, editor_footer_button, md3_spinner,
+};
 use crate::ui::components::{
     TextInputSurface, editor_footer_actions, icon_button, md3_select,
     surface_secret_text_input_stack, surface_text_editor_stack, surface_text_input,
@@ -788,10 +791,12 @@ impl HostsController {
         let mut footer_actions = Vec::new();
         if kind_layout.shows_test_connection() {
             footer_actions.push(
-                editor_button(
+                editor_footer_button(
+                    "host-editor-test-connection",
                     i18n::string("hosts.editor.buttons.test_connection"),
-                    false,
-                    true,
+                    None,
+                    EditorFooterActionTone::Text,
+                    cx,
                     on_test_connection,
                 )
                 .into_any_element(),
@@ -799,13 +804,12 @@ impl HostsController {
         }
         if show_delete {
             footer_actions.push(
-                icon_button(
-                    AppIcon::Trash,
-                    EDITOR_FOOTER_ACTION_HEIGHT,
-                    12.0,
-                    Some(roles.error_container),
-                    Some(roles.on_error_container),
-                    None,
+                editor_footer_button(
+                    "host-editor-delete",
+                    i18n::string("dialogs.profile_delete.confirm"),
+                    Some(AppIcon::Trash),
+                    EditorFooterActionTone::Destructive,
+                    cx,
                     {
                         let controller = controller.clone();
                         move |_, cx| {
@@ -819,13 +823,12 @@ impl HostsController {
             );
         }
         footer_actions.push(
-            icon_button(
-                AppIcon::Close,
-                EDITOR_FOOTER_ACTION_HEIGHT,
-                12.0,
-                None,
-                None,
-                None,
+            editor_footer_button(
+                "host-editor-cancel",
+                i18n::string("dialogs.common.cancel"),
+                Some(AppIcon::Close),
+                EditorFooterActionTone::Text,
+                cx,
                 {
                     let controller = controller.clone();
                     move |_, cx| {
@@ -838,20 +841,17 @@ impl HostsController {
             .into_any_element(),
         );
         footer_actions.push(
-            icon_button(
-                AppIcon::Check,
-                EDITOR_FOOTER_ACTION_HEIGHT,
-                12.0,
-                Some(roles.primary),
-                Some(roles.on_primary),
-                None,
+            editor_footer_button(
+                "host-editor-save",
+                i18n::string("hosts.editor.buttons.save"),
+                Some(AppIcon::Check),
+                EditorFooterActionTone::Primary,
+                cx,
                 on_save,
             )
-            .id("host-editor-save")
-            .test_support()
             .into_any_element(),
         );
-        let footer = editor_footer_actions(footer_actions).h_full();
+        let footer = editor_footer_actions(footer_actions);
         let connection_test_overlay = connection_test_in_progress.then(|| {
             let panel = v_flex()
                 .id("host-editor-connection-test-panel")
@@ -881,7 +881,9 @@ impl HostsController {
                 panel.into_any_element(),
                 "host-editor-connection-test",
                 None,
-                16.0,
+                f32::from(miaominal_settings::scaled_font_size(
+                    ShellMetrics::CARD_RADIUS,
+                )),
             )
         });
 
@@ -891,6 +893,7 @@ impl HostsController {
             .min_w(px(360.0))
             .h_full()
             .relative()
+            .rounded(space(ShellMetrics::CARD_RADIUS))
             .overflow_hidden()
             .bg(rgb(roles.surface_container))
             .child(

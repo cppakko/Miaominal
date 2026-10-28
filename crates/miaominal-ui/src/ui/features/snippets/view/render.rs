@@ -1,25 +1,32 @@
 use crate::ui::assets::AppIcon;
+use crate::ui::components::catalog_card::{
+    catalog_card_content, catalog_card_icon, catalog_card_subtitle, catalog_card_surface,
+    catalog_card_title,
+};
 use crate::ui::components::empty_state::{empty_page, empty_state};
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::tokens::color_with_alpha;
-use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SectionCard, editor_button, md3_select};
 use crate::ui::components::{
-    SearchInputStyle, TextInputSurface, card_surface, editor_footer_actions, fab_button,
-    field_label, icon_button, list_item_card, page_primary_icon_tile, page_section_title,
-    page_view_mode_toolbar_item, search_filter_input, surface_text_editor_stack,
-    surface_text_input, surface_text_input_stack,
+    EditorFooterActionTone, SectionCard, editor_footer_button, md3_select,
 };
+use crate::ui::components::{
+    TextInputSurface, dock_action_button, editor_footer_actions, field_label, icon_button,
+    list_item_card, page_section_title, surface_text_editor_stack, surface_text_input,
+    surface_text_input_stack, view_mode_switcher,
+};
+use crate::ui::components::{animated_card_collection, card_grid, card_grid_columns};
 use crate::ui::contracts::navigation::ProfileViewMode;
 use crate::ui::features::snippets::SnippetsController;
 use crate::ui::i18n;
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Div, Entity, MouseButton, SharedString, Window, div, px, rgb};
+use gpui_kit::{App, Entity, MouseButton, SharedString, Window, div, px, rgb};
 use miaominal_core::snippet::SnippetRecord;
 
-const SNIPPET_CARD_WIDTH: f32 = 332.0;
 const SNIPPET_EDITOR_HEIGHT: f32 = 240.0;
 
 fn snippets_truncate(value: &str, max_chars: usize) -> String {
@@ -44,15 +51,6 @@ fn snippet_script_preview(script: &str) -> String {
         .unwrap_or_else(|| i18n::string("snippets.preview.empty"))
 }
 
-fn snippets_card_shell(width: f32) -> Div {
-    let roles = miaominal_settings::current_theme().material.roles;
-
-    card_surface(roles.surface_container, 20.0)
-        .w(px(width))
-        .min_h(px(88.0))
-        .p_4()
-}
-
 fn snippet_package_card(
     title: String,
     snippet_count: usize,
@@ -60,12 +58,7 @@ fn snippet_package_card(
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
     let palette = group_accent_palette(&title, &material);
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
     let count = snippet_count.to_string();
     let count_label = if snippet_count == 1 {
         i18n::string_args("snippets.package_card.count_one", &[("count", &count)])
@@ -76,128 +69,79 @@ fn snippet_package_card(
     let icon = miaominal_core::snippet::package_initials(&title)
         .unwrap_or_else(|| i18n::string("snippets.package_card.fallback_icon"));
 
-    card_surface(
-        if is_selected {
-            palette.accent_container
-        } else {
-            roles.surface_container
-        },
-        20.0,
-    )
-    .id(item_id)
-    .w(px(SNIPPET_CARD_WIDTH))
-    .min_h(px(88.0))
-    .cursor_pointer()
-    .p_4()
-    .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
-        on_click(window, cx);
-    })
-    .child(
-        h_flex()
-            .size_full()
+    let mut card = catalog_card_surface()
+        .id(item_id)
+        .test_support()
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
+            on_click(window, cx);
+        });
+    if is_selected {
+        card = card.bg(rgb(palette.accent_container));
+    }
+    card.child(catalog_card_content(
+        div()
+            .size(px(ShellMetrics::CARD_ICON_SIZE))
+            .flex_shrink_0()
+            .rounded(px(ShellMetrics::CARD_ICON_RADIUS))
+            .bg(if is_selected {
+                rgb(palette.accent)
+            } else {
+                color_with_alpha(palette.accent, 0x28)
+            })
+            .flex()
             .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .size(px(44.0))
-                    .rounded(px(14.0))
-                    .bg(if is_selected {
-                        rgb(palette.accent)
-                    } else {
-                        color_with_alpha(palette.accent, 0x28)
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(miaominal_settings::FontSize::Input.scaled())
-                    .text_color(rgb(if is_selected {
-                        palette.on_accent
-                    } else {
-                        palette.accent
-                    }))
-                    .child(icon),
-            )
-            .child(
-                v_flex()
-                    .min_w(px(0.0))
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Title.scaled())
-                            .text_color(rgb(if is_selected {
-                                palette.on_accent_container
-                            } else {
-                                roles.on_surface
-                            }))
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(count_label),
-                    ),
-            ),
-    )
+            .justify_center()
+            .text_size(miaominal_settings::FontSize::Input.scaled())
+            .text_color(rgb(if is_selected {
+                palette.on_accent
+            } else {
+                palette.accent
+            }))
+            .child(icon),
+        catalog_card_title(title).when(is_selected, |title| {
+            title.text_color(rgb(palette.on_accent_container))
+        }),
+        Some(count_label.into()),
+        None,
+        None,
+    ))
 }
 
 fn snippet_command_card(
     snippet: &SnippetRecord,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
-    let preview = snippet_script_preview(&snippet.script);
+    let preview = snippet
+        .script
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| i18n::string("snippets.preview.empty"));
     let item_id = SharedString::from(format!("snippet-card-{}", snippet.id.as_str()));
 
-    snippets_card_shell(SNIPPET_CARD_WIDTH)
+    catalog_card_surface()
         .id(item_id)
+        .test_support()
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
             on_click(window, cx);
         })
-        .child(
-            h_flex()
-                .size_full()
-                .items_center()
-                .gap_3()
-                .child(page_primary_icon_tile(AppIcon::Notebook, 44.0, 14.0))
-                .child(
-                    v_flex()
-                        .min_w(px(0.0))
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Subtitle.scaled())
-                                .line_height(miaominal_settings::scaled_line_height(20.0))
-                                .text_color(rgb(roles.on_surface))
-                                .child(snippet.description.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .line_height(miaominal_settings::scaled_line_height(16.0))
-                                .text_color(rgb(text_muted))
-                                .child(preview),
-                        ),
-                ),
-        )
+        .child(catalog_card_content(
+            catalog_card_icon(AppIcon::Notebook),
+            catalog_card_title(snippet.description.clone()),
+            Some(preview.into()),
+            None,
+            None,
+        ))
 }
 
 fn snippet_list_row(
     snippet: &SnippetRecord,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
+    let roles = miaominal_settings::current_theme().material.roles;
     let preview = snippet_script_preview(&snippet.script);
     let package_label =
         (!snippet.package.trim().is_empty()).then(|| snippets_truncate(snippet.package.trim(), 20));
@@ -206,23 +150,13 @@ fn snippet_list_row(
     let item_id = SharedString::from(format!("snippet-row-{}", snippet.id.as_str()));
 
     list_item_card(
-        page_primary_icon_tile(AppIcon::Notebook, 44.0, 14.0).into_any_element(),
+        catalog_card_icon(AppIcon::Notebook).into_any_element(),
         v_flex()
             .flex_1()
             .min_w(px(0.0))
-            .gap_1()
-            .child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                    .text_color(rgb(roles.on_surface))
-                    .child(snippet.description.clone()),
-            )
-            .child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                    .text_color(rgb(text_muted))
-                    .child(preview),
-            )
+            .justify_center()
+            .child(catalog_card_title(snippet.description.clone()))
+            .child(catalog_card_subtitle(preview))
             .into_any_element(),
         Some(
             v_flex()
@@ -238,12 +172,7 @@ fn snippet_list_row(
                     )
                 })
                 .when_some(language_label, |this, language| {
-                    this.child(
-                        div()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                            .text_color(rgb(text_muted))
-                            .child(language),
-                    )
+                    this.child(catalog_card_subtitle(language))
                 })
                 .into_any_element(),
         ),
@@ -253,6 +182,7 @@ fn snippet_list_row(
         },
     )
     .id(item_id)
+    .test_support()
 }
 
 fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
@@ -264,26 +194,15 @@ impl SnippetsController {
         &self,
         controller: Entity<Self>,
         on_open_existing: impl Fn(String, &mut Window, &mut App) + Clone + 'static,
-        cx: &App,
+        available_width: f32,
+        _cx: &App,
     ) -> gpui_kit::AnyElement {
-        let snippets_forms = self.snippets_forms();
         let catalog_view = self.catalog_view();
         let snippets = self.snippets().clone();
-        let filter_text = snippets_forms
-            .filter_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_ascii_lowercase();
-        let search_matched_snippets: Vec<_> = snippets
-            .iter()
-            .enumerate()
-            .filter(|(_, snippet)| miaominal_core::snippet::matches_filter(snippet, &filter_text))
-            .collect();
         let selected_package_filter = catalog_view.snippets_package_filter.as_deref();
-        let mut package_summaries: Vec<_> = search_matched_snippets
+        let mut package_summaries: Vec<_> = snippets
             .iter()
-            .filter_map(|(_, snippet)| {
+            .filter_map(|snippet| {
                 let package = snippet.package.trim();
                 (!package.is_empty()).then(|| package.to_string())
             })
@@ -293,23 +212,22 @@ impl SnippetsController {
         let package_summaries: Vec<_> = package_summaries
             .into_iter()
             .map(|package| {
-                let count = search_matched_snippets
+                let count = snippets
                     .iter()
-                    .filter(|(_, snippet)| snippet.package.eq_ignore_ascii_case(package.as_str()))
+                    .filter(|snippet| snippet.package.eq_ignore_ascii_case(package.as_str()))
                     .count();
                 (package, count)
             })
             .collect();
 
-        let mut visible_snippets: Vec<_> = search_matched_snippets
+        let mut visible_snippets: Vec<_> = snippets
             .iter()
-            .copied()
-            .filter(|(_, snippet)| {
+            .filter(|snippet| {
                 selected_package_filter
                     .is_none_or(|package| snippet.package.eq_ignore_ascii_case(package))
             })
             .collect();
-        visible_snippets.sort_by(|(_, left), (_, right)| {
+        visible_snippets.sort_by(|left, right| {
             left.description
                 .to_ascii_lowercase()
                 .cmp(&right.description.to_ascii_lowercase())
@@ -325,53 +243,39 @@ impl SnippetsController {
         }
 
         let is_list = catalog_view.snippets_view_mode == ProfileViewMode::List;
-        let header =
-            v_flex()
-                .w_full()
-                .min_w(px(0.0))
-                .gap_6()
-                .px_5()
-                .child(
-                    h_flex().w_full().min_w(px(0.0)).justify_center().child(
-                        h_flex().w_full().min_w(px(0.0)).max_w(px(576.0)).child(
-                            search_filter_input(
-                                &snippets_forms.filter_input,
-                                SearchInputStyle::Pill,
-                                None,
-                            ),
-                        ),
-                    ),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .min_w(px(0.0))
-                        .justify_end()
-                        .gap_2()
-                        .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
+        let header = v_flex()
+            .w_full()
+            .min_w(px(0.0))
+            .gap_6()
+            .px(space(ShellMetrics::CATALOG_INSET))
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                    .mx_auto()
+                    .justify_end()
+                    .child(view_mode_switcher(
+                        "snippets-view-mode",
+                        catalog_view.snippets_view_mode,
+                        {
                             let controller = controller.clone();
-                            move |_, cx| {
+                            move |mode, _, cx| {
                                 controller.update(cx, |controller, cx| {
-                                    controller.set_snippets_view_mode(ProfileViewMode::Grid, cx);
+                                    controller.set_snippets_view_mode(mode, cx);
                                 });
                             }
-                        }))
-                        .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
-                            let controller = controller.clone();
-                            move |_, cx| {
-                                controller.update(cx, |controller, cx| {
-                                    controller.set_snippets_view_mode(ProfileViewMode::List, cx);
-                                });
-                            }
-                        })),
-                );
+                        },
+                    )),
+            );
 
         let content = v_flex()
             .w_full()
             .min_w(px(0.0))
+            .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+            .mx_auto()
             .gap_6()
-            .px_5()
-            .pb_8()
+            .pb(space(112.0))
             .when(!package_summaries.is_empty(), |this| {
                 this.child(
                     v_flex()
@@ -381,12 +285,9 @@ impl SnippetsController {
                         .text_size(miaominal_settings::FontSize::Input.scaled())
                         .child(page_section_title(i18n::string("snippets.page.packages")))
                         .child(
-                            div()
-                                .w_full()
-                                .min_w(px(0.0))
-                                .flex()
-                                .flex_wrap()
-                                .gap_4()
+                            card_grid(available_width)
+                                .id("snippet-packages-grid")
+                                .test_support()
                                 .children(package_summaries.into_iter().map(|(package, count)| {
                                     let package_name = package.clone();
                                     let is_selected =
@@ -422,42 +323,34 @@ impl SnippetsController {
                             .gap_3()
                             .child(page_section_title(i18n::string("snippets.page.snippets"))),
                     )
-                    .child(if search_matched_snippets.is_empty() {
-                        snippets_empty_state(i18n::string("snippets.empty.no_search_matches"))
-                            .into_any_element()
-                    } else if visible_snippets.is_empty() {
+                    .child(if visible_snippets.is_empty() {
                         snippets_empty_state(i18n::string("snippets.empty.no_package_matches"))
                             .into_any_element()
-                    } else if is_list {
-                        v_flex()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .gap_2()
-                            .children(visible_snippets.into_iter().map(|(_, snippet)| {
-                                let on_open_existing = on_open_existing.clone();
-                                let snippet_id = snippet.id.clone();
-                                snippet_list_row(snippet, move |window, cx| {
-                                    on_open_existing(snippet_id.clone(), window, cx);
-                                })
-                                .into_any_element()
-                            }))
-                            .into_any_element()
                     } else {
-                        div()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .flex()
-                            .flex_wrap()
-                            .gap_4()
-                            .children(visible_snippets.into_iter().map(|(_, snippet)| {
-                                let on_open_existing = on_open_existing.clone();
-                                let snippet_id = snippet.id.clone();
-                                snippet_command_card(snippet, move |window, cx| {
-                                    on_open_existing(snippet_id.clone(), window, cx);
+                        animated_card_collection(
+                            "snippets-grid",
+                            catalog_view.snippets_view_mode,
+                            card_grid_columns(available_width),
+                            8.0,
+                            visible_snippets
+                                .into_iter()
+                                .map(|snippet| {
+                                    let on_open_existing = on_open_existing.clone();
+                                    let snippet_id = snippet.id.clone();
+                                    let layout_id = format!("snippet-layout-{snippet_id}").into();
+                                    let on_open = move |window: &mut Window, cx: &mut App| {
+                                        on_open_existing(snippet_id.clone(), window, cx);
+                                    };
+                                    let item = if is_list {
+                                        snippet_list_row(snippet, on_open).into_any_element()
+                                    } else {
+                                        snippet_command_card(snippet, on_open).into_any_element()
+                                    };
+                                    (layout_id, item)
                                 })
-                                .into_any_element()
-                            }))
-                            .into_any_element()
+                                .collect(),
+                        )
+                        .into_any_element()
                     }),
             );
 
@@ -473,27 +366,39 @@ impl SnippetsController {
                     .child(header)
                     .child(
                         div()
+                            .id("snippets-collection-scroll")
+                            .test_support()
                             .flex_1()
                             .min_w(px(0.0))
                             .min_h(px(0.0))
-                            .child(div().size_full().overflow_y_scrollbar().child(content)),
+                            .child(div().size_full().overflow_y_scrollbar().child(
+                                div().px(space(ShellMetrics::CATALOG_INSET)).child(content),
+                            )),
                     ),
             )
             .into_any_element()
     }
 
-    pub(in crate::ui) fn render_snippets_fab(
+    /// The page's create command, docked into the bottom navigation bar.
+    pub(in crate::ui) fn render_snippets_dock_action(
         &self,
+        cx: &App,
         on_open: impl Fn(&mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        fab_button(on_open)
+    ) -> gpui_kit::AnyElement {
+        dock_action_button(
+            "snippets-create-fab",
+            i18n::string("snippets.editor.create_title"),
+            cx,
+            on_open,
+        )
+        .into_any_element()
     }
 
     pub(in crate::ui) fn render_snippets_editor_sidebar(
         &self,
         controller: Entity<Self>,
         on_save: impl Fn(&mut Window, &mut App) + 'static,
-        _cx: &App,
+        cx: &App,
     ) -> impl IntoElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let snippets = self.snippets().clone();
@@ -520,13 +425,12 @@ impl SnippetsController {
         let mut footer_actions = Vec::new();
         if is_editing {
             footer_actions.push(
-                icon_button(
-                    AppIcon::Trash,
-                    EDITOR_FOOTER_ACTION_HEIGHT,
-                    12.0,
-                    Some(roles.error_container),
-                    Some(roles.on_error_container),
-                    None,
+                editor_footer_button(
+                    "snippets-editor-delete",
+                    i18n::string("dialogs.snippet_delete.confirm"),
+                    Some(AppIcon::Trash),
+                    EditorFooterActionTone::Destructive,
+                    cx,
                     {
                         let controller = controller.clone();
                         move |_, cx| {
@@ -540,19 +444,33 @@ impl SnippetsController {
             );
         }
         footer_actions.push(
-            editor_button(i18n::string("snippets.editor.cancel"), false, true, {
-                let controller = controller.clone();
-                move |_, cx| {
-                    controller.update(cx, |controller, cx| {
-                        controller.close_snippets_editor(cx);
-                    });
-                }
-            })
+            editor_footer_button(
+                "snippets-editor-cancel",
+                i18n::string("snippets.editor.cancel"),
+                Some(AppIcon::Close),
+                EditorFooterActionTone::Text,
+                cx,
+                {
+                    let controller = controller.clone();
+                    move |_, cx| {
+                        controller.update(cx, |controller, cx| {
+                            controller.close_snippets_editor(cx);
+                        });
+                    }
+                },
+            )
             .into_any_element(),
         );
         footer_actions.push(
-            editor_button(i18n::string("snippets.editor.save"), true, true, on_save)
-                .into_any_element(),
+            editor_footer_button(
+                "snippets-editor-save",
+                i18n::string("snippets.editor.save"),
+                Some(AppIcon::Check),
+                EditorFooterActionTone::Primary,
+                cx,
+                on_save,
+            )
+            .into_any_element(),
         );
         let footer = editor_footer_actions(footer_actions);
 
@@ -561,6 +479,7 @@ impl SnippetsController {
             .w(px(EDITOR_DRAWER_WIDTH))
             .min_w(px(360.0))
             .h_full()
+            .rounded(space(ShellMetrics::CARD_RADIUS))
             .bg(rgb(roles.surface_container))
             .child(
                 v_flex()

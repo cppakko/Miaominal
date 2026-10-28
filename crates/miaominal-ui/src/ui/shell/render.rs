@@ -1,4 +1,6 @@
 use super::*;
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
+use gpui_kit::TestSupportExt as _;
 
 #[derive(Clone, Copy)]
 struct PageEditorSidebarRenderState {
@@ -18,11 +20,6 @@ struct PrimaryViewTransitionRenderState {
 struct PrimarySurfaceRenderState {
     has_active_session: bool,
     has_active_sftp_tab: bool,
-    show_host_editor_sidebar: bool,
-    show_port_forward_editor_sidebar: bool,
-    show_keychain_editor_sidebar: bool,
-    show_snippets_editor_sidebar: bool,
-    show_known_hosts_sidebar: bool,
 }
 
 fn suspended_page_editor_sidebar_kind(
@@ -59,12 +56,22 @@ fn page_editor_sidebar_matches_view(kind: PageEditorSidebarKind, view: PrimaryVi
 
 #[derive(Clone, Copy)]
 struct ShellBodyRenderState {
-    show_sidebar: bool,
+    view: PrimaryViewKind,
     page_editor_sidebar: Option<PageEditorSidebarRenderState>,
     primary_surface: PrimarySurfaceRenderState,
 }
 
 const PRIMARY_VIEW_GUTTER: f32 = 8.0;
+const EDITOR_SIDEBAR_CONTENT_DELAY: f32 = 0.08;
+const NAVIGATION_HIDDEN_OFFSET: f32 = 8.0;
+const NAVIGATION_INTERACTION_THRESHOLD: f32 = 0.05;
+
+fn page_editor_sidebar_content_visibility(layout_visibility: f32) -> f32 {
+    let progress = ((layout_visibility - EDITOR_SIDEBAR_CONTENT_DELAY)
+        / (1.0 - EDITOR_SIDEBAR_CONTENT_DELAY))
+        .clamp(0.0, 1.0);
+    progress * progress * (3.0 - 2.0 * progress)
+}
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -74,7 +81,7 @@ impl Render for AppView {
         }
 
         let entity = cx.entity();
-        let roles = miaominal_settings::current_theme().material.roles;
+        let _roles = miaominal_settings::current_theme().material.roles;
         let bottom_popup_viewport_height = f32::from(window.bounds().size.height);
         if self.controllers.settings.read(cx).show_onboarding() {
             let overlays = self.render_window_overlays(bottom_popup_viewport_height, window, cx);
@@ -101,8 +108,14 @@ impl Render for AppView {
         let primary_view_transition =
             self.primary_view_transition_render_state(desired_primary_view, window, cx);
         let primary_view_animating = primary_view_transition.animating;
-        let root_right_gutter = self.primary_view_root_right_gutter(primary_view_transition);
+        let interface_scale = f32::from(window.rem_size()) / 14.0;
+        let management_inset = ShellMetrics::management_inset(
+            f32::from(window.viewport_size().width) / interface_scale,
+        );
 
+        let search_visible = matches!(desired_primary_view,PrimaryViewKind::Sidebar(section) if section != SidebarSection::Settings);
+        self.sync_management_search(search_visible, window, cx);
+        let search_open = search_visible && self.shell.search.read(cx).is_open();
         let overlays = self.render_window_overlays(bottom_popup_viewport_height, window, cx);
 
         let current_page_editor_sidebar = if has_active_session || has_active_sftp_tab {
@@ -136,26 +149,6 @@ impl Render for AppView {
                     window,
                 )
             };
-        let show_host_editor_sidebar = matches!(
-            page_editor_sidebar,
-            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::Hosts
-        );
-        let show_port_forward_editor_sidebar = matches!(
-            page_editor_sidebar,
-            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::PortForwarding
-        );
-        let show_snippets_editor_sidebar = matches!(
-            page_editor_sidebar,
-            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::Snippets
-        );
-        let show_keychain_editor_sidebar = matches!(
-            page_editor_sidebar,
-            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::Keychain
-        );
-        let show_known_hosts_sidebar = matches!(
-            page_editor_sidebar,
-            Some(sidebar) if sidebar.kind == PageEditorSidebarKind::KnownHosts
-        );
         let shell_body = if primary_view_transition.animating {
             self.render_primary_view_transition(primary_view_transition, entity.clone(), window, cx)
         } else {
@@ -166,11 +159,6 @@ impl Render for AppView {
                 PrimarySurfaceRenderState {
                     has_active_session,
                     has_active_sftp_tab,
-                    show_host_editor_sidebar,
-                    show_port_forward_editor_sidebar,
-                    show_snippets_editor_sidebar,
-                    show_keychain_editor_sidebar,
-                    show_known_hosts_sidebar,
                 },
                 window,
                 cx,
@@ -188,7 +176,7 @@ impl Render for AppView {
             .flex()
             .flex_col()
             .font(miaominal_settings::interface_font())
-            .bg(rgb(roles.surface_container))
+            .bg(ShellColors::current().chrome)
             .on_mouse_move(move |event: &MouseMoveEvent, _window, cx| {
                 if event.pressed_button != Some(MouseButton::Left) {
                     recover_sftp_drag.update(cx, |controller, cx| {
@@ -214,13 +202,68 @@ impl Render for AppView {
                     });
                 },
             )
-            .pr(px(root_right_gutter))
             .capture_any_mouse_down(
                 cx.listener(|this, _, window, cx| this.remember_overlay_trigger_focus(window, cx)),
             )
             .child(self.render_top_bar(entity.clone(), window, cx))
-            .child(shell_body)
-            .child(self.render_status_footer(entity.clone(), cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .bg(ShellColors::current().canvas)
+                    .when(!has_active_sftp_tab, |this| {
+                        this.mx(space(8.0))
+                            .rounded_t(space(16.0))
+                            .pt(space(12.0))
+                            .pr(space(12.0))
+                    })
+                    .child(shell_body),
+            )
+            .child(self.render_status_footer(entity.clone(), window, cx))
+            .when(search_open, |root| {
+                let search = self.shell.search.clone();
+                root.child(
+                    div()
+                        .id("management-search-scrim")
+                        .test_support()
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .bg(ShellColors::current().scrim.opacity(
+                            if miaominal_settings::current_theme().material.dark {
+                                0.40
+                            } else {
+                                0.24
+                            },
+                        ))
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            search.update(cx, |search, cx| search.dismiss(true, window, cx));
+                            cx.stop_propagation();
+                        })
+                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation()),
+                )
+            })
+            .when(search_visible, |root| {
+                root.child(
+                    div()
+                        .absolute()
+                        .top(space(84.0))
+                        .left(space(management_inset))
+                        .right(px((20.0 + management_inset) * interface_scale
+                            + page_editor_sidebar.map_or(0.0, |sidebar| {
+                                EDITOR_DRAWER_WIDTH * sidebar.visibility
+                            })))
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                                .mx_auto()
+                                .child(self.shell.search.clone()),
+                        ),
+                )
+            })
             .child(overlays)
             .into_any_element()
     }
@@ -303,18 +346,6 @@ impl AppView {
             (PrimaryViewKind::Terminal(_), PrimaryViewKind::Terminal(_))
                 | (PrimaryViewKind::Sftp(_), PrimaryViewKind::Sftp(_))
         )
-    }
-
-    fn primary_view_root_right_gutter(&self, transition: PrimaryViewTransitionRenderState) -> f32 {
-        let from_uses_sidebar = matches!(transition.from, PrimaryViewKind::Sidebar(_));
-        let to_uses_sidebar = matches!(transition.to, PrimaryViewKind::Sidebar(_));
-
-        match (from_uses_sidebar, to_uses_sidebar) {
-            (true, true) => PRIMARY_VIEW_GUTTER,
-            (true, false) => PRIMARY_VIEW_GUTTER * (1.0 - transition.visibility),
-            (false, true) => PRIMARY_VIEW_GUTTER * transition.visibility,
-            (false, false) => 0.0,
-        }
     }
 
     fn finish_primary_view_transition(&mut self, desired: PrimaryViewKind, cx: &App) {
@@ -419,8 +450,23 @@ impl AppView {
     fn render_sidebar_primary_panel(
         &mut self,
         section: SidebarSection,
+        editor_sidebar_visibility: Option<f32>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let reference_scale = f32::from(window.rem_size()) / 14.0;
+        let editor_sidebar_visibility = editor_sidebar_visibility.unwrap_or_else(|| {
+            self.page_editor_sidebar_for_view(PrimaryViewKind::Sidebar(section), cx)
+                .map_or(0.0, |_| 1.0)
+        });
+        // Keep the catalog grid in step with the drawer. Reserving the full
+        // width as soon as the editor opens makes cards reflow before the
+        // drawer has visibly expanded.
+        let drawer_width = EDITOR_DRAWER_WIDTH * editor_sidebar_visibility / reference_scale;
+        let catalog_width = f32::from(window.viewport_size().width) / reference_scale
+            - ShellMetrics::MANAGEMENT_CHROME_WIDTH
+            - drawer_width
+            - ShellMetrics::CATALOG_INSET * 2.0;
         match section {
             SidebarSection::Hosts => {
                 let controller = self.controllers.hosts.clone();
@@ -450,6 +496,14 @@ impl AppView {
                             }
                         });
                     },
+                    (f32::from(window.bounds().size.width) / (f32::from(window.rem_size()) / 14.0)
+                        - ShellMetrics::MANAGEMENT_CHROME_WIDTH
+                        - drawer_width)
+                        .max(1.0),
+                    ShellMetrics::management_inset(
+                        f32::from(window.viewport_size().width)
+                            / (f32::from(window.rem_size()) / 14.0),
+                    ),
                     cx,
                 )
             }
@@ -457,19 +511,19 @@ impl AppView {
                 let controller = self.controllers.keychain.clone();
                 controller
                     .read(cx)
-                    .render_keychain_page(controller.clone(), cx)
+                    .render_keychain_page(controller.clone(), catalog_width, cx)
             }
             SidebarSection::PortForwarding => {
                 let controller = self.controllers.forwarding.clone();
                 controller
                     .read(cx)
-                    .render_forward_page(controller.clone(), cx)
+                    .render_forward_page(controller.clone(), catalog_width, cx)
             }
             SidebarSection::KnownHosts => {
                 let controller = self.controllers.trusted_hosts.clone();
                 controller
                     .read(cx)
-                    .render_trusted_page(controller.clone(), cx)
+                    .render_trusted_page(controller.clone(), catalog_width, cx)
             }
             SidebarSection::Settings => {
                 let settings = self.controllers.settings.clone();
@@ -487,6 +541,7 @@ impl AppView {
                             controller.open_existing_snippet_editor(&index, window, cx);
                         });
                     },
+                    catalog_width,
                     cx,
                 )
             }
@@ -497,6 +552,7 @@ impl AppView {
         &mut self,
         view: PrimaryViewKind,
         current_surface: Option<PrimarySurfaceRenderState>,
+        editor_sidebar_visibility: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (AnyElement, PrimarySurfaceRenderState) {
@@ -505,15 +561,30 @@ impl AppView {
                 let mut render_state = current_surface.unwrap_or(PrimarySurfaceRenderState {
                     has_active_session: false,
                     has_active_sftp_tab: false,
-                    show_host_editor_sidebar: false,
-                    show_port_forward_editor_sidebar: false,
-                    show_keychain_editor_sidebar: false,
-                    show_snippets_editor_sidebar: false,
-                    show_known_hosts_sidebar: false,
                 });
                 render_state.has_active_session = false;
                 render_state.has_active_sftp_tab = false;
-                (self.render_sidebar_primary_panel(section, cx), render_state)
+                (
+                    {
+                        let panel = self.render_sidebar_primary_panel(
+                            section,
+                            editor_sidebar_visibility,
+                            window,
+                            cx,
+                        );
+                        div()
+                            .flex()
+                            .flex_col()
+                            .size_full()
+                            .min_h_0()
+                            .when(section != SidebarSection::Settings, |panel| {
+                                panel.pt(space(88.0))
+                            })
+                            .child(panel)
+                            .into_any_element()
+                    },
+                    render_state,
+                )
             }
             PrimaryViewKind::Terminal(tab_id) => (
                 self.render_terminal_page_for_tab(tab_id, window, cx)
@@ -523,11 +594,6 @@ impl AppView {
                 PrimarySurfaceRenderState {
                     has_active_session: true,
                     has_active_sftp_tab: false,
-                    show_host_editor_sidebar: false,
-                    show_port_forward_editor_sidebar: false,
-                    show_keychain_editor_sidebar: false,
-                    show_snippets_editor_sidebar: false,
-                    show_known_hosts_sidebar: false,
                 },
             ),
             PrimaryViewKind::Sftp(tab_id) => {
@@ -551,11 +617,6 @@ impl AppView {
                     PrimarySurfaceRenderState {
                         has_active_session: false,
                         has_active_sftp_tab: true,
-                        show_host_editor_sidebar: false,
-                        show_port_forward_editor_sidebar: false,
-                        show_keychain_editor_sidebar: false,
-                        show_snippets_editor_sidebar: false,
-                        show_known_hosts_sidebar: false,
                     },
                 )
             }
@@ -571,13 +632,18 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (primary_panel, primary_surface) =
-            self.render_primary_view_panel(view, Some(current_surface), window, cx);
+        let (primary_panel, primary_surface) = self.render_primary_view_panel(
+            view,
+            Some(current_surface),
+            page_editor_sidebar.map(|sidebar| sidebar.visibility),
+            window,
+            cx,
+        );
         self.render_shell_body(
             entity,
             primary_panel,
             ShellBodyRenderState {
-                show_sidebar: matches!(view, PrimaryViewKind::Sidebar(_)),
+                view,
                 page_editor_sidebar,
                 primary_surface,
             },
@@ -651,7 +717,7 @@ impl AppView {
         window: &mut Window,
     ) -> Option<PageEditorSidebarRenderState> {
         let now = Instant::now();
-        let duration = super::support::OVERLAY_ENTER_DURATION;
+        let duration = super::support::EDITOR_SIDEBAR_TRANSITION_DURATION;
 
         match desired {
             Some(kind) => match self.shell.shell_state.page_editor_sidebar_transition {
@@ -776,11 +842,14 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ShellBodyRenderState {
-            show_sidebar,
+            view,
             page_editor_sidebar,
             primary_surface,
         } = render_state;
-        let roles = miaominal_settings::current_theme().material.roles;
+        let _roles = miaominal_settings::current_theme().material.roles;
+        let navigation_visibility = page_editor_sidebar
+            .map_or(1.0, |sidebar| 1.0 - sidebar.visibility)
+            .clamp(0.0, 1.0);
 
         div()
             .flex_1()
@@ -789,36 +858,68 @@ impl AppView {
             .flex()
             .min_w(px(0.0))
             .min_h(px(0.0))
-            .rounded(px(16.0))
-            .overflow_hidden()
-            .when(show_sidebar, |this| {
-                this.child(layout::sidebar::render_sidebar(
-                    self,
-                    self.controllers.settings.clone(),
-                ))
+            .when(!primary_surface.has_active_sftp_tab, |this| {
+                this.rounded(px(16.0))
             })
-            .when(
-                primary_surface.has_active_session || primary_surface.has_active_sftp_tab,
-                |this| this.pr_2().pl_2(),
-            )
+            .overflow_hidden()
+            .when(primary_surface.has_active_session, |this| {
+                this.pr_2().pl_2()
+            })
             .child(
                 div()
                     .flex_1()
                     .flex()
-                    .rounded(px(16.0))
+                    .when(!primary_surface.has_active_sftp_tab, |this| {
+                        this.rounded(px(16.0))
+                    })
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .bg(rgb(roles.surface_container))
-                    .child(self.render_primary_surface_layer(
-                        entity.clone(),
-                        primary_panel,
-                        primary_surface,
-                        cx,
-                    ))
+                    .bg(ShellColors::current().canvas)
+                    .child(self.render_primary_surface_layer(primary_panel, primary_surface))
                     .when_some(page_editor_sidebar, |this, sidebar| {
                         this.child(self.render_page_editor_sidebar(sidebar, entity.clone(), cx))
                     }),
             )
+            .when(
+                matches!(view, PrimaryViewKind::Sidebar(_))
+                    && navigation_visibility > NAVIGATION_INTERACTION_THRESHOLD,
+                |this| {
+                    let primary_action = (!primary_surface.has_active_session
+                        && !primary_surface.has_active_sftp_tab)
+                        .then(|| self.bottom_navigation_action(view, cx))
+                        .flatten();
+                    this.child(self.render_bottom_navigation(
+                        navigation_visibility,
+                        primary_action,
+                        cx,
+                    ))
+                },
+            )
+            .into_any_element()
+    }
+
+    fn render_bottom_navigation(
+        &self,
+        visibility: f32,
+        primary_action: Option<layout::sidebar::DockAction>,
+        cx: &App,
+    ) -> AnyElement {
+        let visibility = visibility.clamp(0.0, 1.0);
+        let hidden_offset = (1.0 - visibility) * NAVIGATION_HIDDEN_OFFSET;
+
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(-hidden_offset))
+            .h(space(ShellMetrics::NAV_BAR_HEIGHT))
+            .opacity(visibility)
+            .child(layout::sidebar::render_sidebar(
+                self,
+                self.controllers.settings.clone(),
+                primary_action,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -907,13 +1008,8 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (panel, mut state) = self.render_primary_view_panel(view, None, window, cx);
-        state.show_host_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Hosts);
-        state.show_port_forward_editor_sidebar =
-            sidebar == Some(PageEditorSidebarKind::PortForwarding);
-        state.show_snippets_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Snippets);
-        state.show_keychain_editor_sidebar = sidebar == Some(PageEditorSidebarKind::Keychain);
-        state.show_known_hosts_sidebar = sidebar == Some(PageEditorSidebarKind::KnownHosts);
+        let (panel, state) =
+            self.render_primary_view_panel(view, None, sidebar.map(|_| 1.0), window, cx);
 
         // The retained editor travels with its page at full width. Its independent
         // open animation must not restart after the page transition finishes.
@@ -921,7 +1017,7 @@ impl AppView {
             .size_full()
             .flex()
             .items_stretch()
-            .child(self.render_primary_surface_layer(entity.clone(), panel, state, cx))
+            .child(self.render_primary_surface_layer(panel, state))
             .when_some(sidebar, |this, kind| {
                 this.child(self.render_page_editor_sidebar(
                     PageEditorSidebarRenderState {
@@ -942,7 +1038,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
+        let _roles = miaominal_settings::current_theme().material.roles;
         let progress = transition.visibility;
         let from_uses_sidebar = matches!(transition.from, PrimaryViewKind::Sidebar(_));
         let to_uses_sidebar = matches!(transition.to, PrimaryViewKind::Sidebar(_));
@@ -953,13 +1049,18 @@ impl AppView {
             (false, true) => progress,
             (false, false) => 0.0,
         };
-        let full_surface_gutter = match (from_uses_sidebar, to_uses_sidebar) {
-            (true, true) => 0.0,
-            (true, false) => PRIMARY_VIEW_GUTTER * progress,
-            (false, true) => PRIMARY_VIEW_GUTTER * (1.0 - progress),
-            (false, false) => PRIMARY_VIEW_GUTTER,
+        let from_gutter = if matches!(transition.from, PrimaryViewKind::Terminal(_)) {
+            PRIMARY_VIEW_GUTTER
+        } else {
+            0.0
         };
-
+        let to_gutter = if matches!(transition.to, PrimaryViewKind::Terminal(_)) {
+            PRIMARY_VIEW_GUTTER
+        } else {
+            0.0
+        };
+        let full_surface_gutter = from_gutter + (to_gutter - from_gutter) * progress;
+        let has_sftp_surface = matches!(transition.to, PrimaryViewKind::Sftp(_));
         let incoming_sidebar = self.page_editor_sidebar_for_view(transition.to, cx);
         let outgoing_sidebar = self
             .shell
@@ -1012,43 +1113,19 @@ impl AppView {
             .flex()
             .min_w(px(0.0))
             .min_h(px(0.0))
-            .rounded(px(16.0))
+            .when(!has_sftp_surface, |this| this.rounded(px(16.0)))
             .overflow_hidden()
-            .when(sidebar_visibility > 0.0, |this| {
-                this.child(
-                    div()
-                        .relative()
-                        .h_full()
-                        .w(px(LEFT_RAIL_WIDTH * sidebar_visibility))
-                        .min_w(px(0.0))
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(0.0))
-                                .left(px(0.0))
-                                .bottom(px(0.0))
-                                .w(px(LEFT_RAIL_WIDTH))
-                                .opacity(sidebar_visibility)
-                                .child(layout::sidebar::render_sidebar(
-                                    self,
-                                    self.controllers.settings.clone(),
-                                )),
-                        ),
-                )
-            })
             .pl(px(full_surface_gutter))
             .pr(px(full_surface_gutter))
             .child(
                 div()
                     .flex_1()
                     .flex()
-                    .rounded(px(16.0))
+                    .when(!has_sftp_surface, |this| this.rounded(px(16.0)))
                     .overflow_hidden()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .bg(rgb(roles.surface_container))
+                    .bg(ShellColors::current().canvas)
                     .child(
                         div()
                             .size_full()
@@ -1074,6 +1151,26 @@ impl AppView {
                                     .child(outgoing_surface),
                             ),
                     ),
+            )
+            .when(
+                sidebar_visibility > NAVIGATION_INTERACTION_THRESHOLD
+                    && incoming_sidebar.is_none()
+                    && outgoing_sidebar.is_none(),
+                |this| {
+                    // Keep the docked command of the sidebar-side endpoint for
+                    // the whole transition so the dock width does not jump.
+                    let dock_view = if to_uses_sidebar {
+                        transition.to
+                    } else {
+                        transition.from
+                    };
+                    let primary_action = self.bottom_navigation_action(dock_view, cx);
+                    this.child(self.render_bottom_navigation(
+                        sidebar_visibility,
+                        primary_action,
+                        cx,
+                    ))
+                },
             )
             .into_any_element()
     }
@@ -1166,7 +1263,7 @@ impl AppView {
                 .controllers
                 .keychain
                 .read(cx)
-                .render_keychain_editor_sidebar(self.controllers.keychain.clone())
+                .render_keychain_editor_sidebar(self.controllers.keychain.clone(), cx)
                 .into_any_element(),
             PageEditorSidebarKind::KnownHosts => {
                 let controller = self.controllers.trusted_hosts.clone();
@@ -1185,8 +1282,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let visible_width = EDITOR_DRAWER_WIDTH * sidebar.visibility;
-        let slide_offset = 18.0 * (1.0 - sidebar.visibility);
-        let opacity = 0.28 + sidebar.visibility * 0.72;
+        let content_visibility = page_editor_sidebar_content_visibility(sidebar.visibility);
+        let slide_offset = 18.0 * (1.0 - content_visibility);
         let content = self.render_page_editor_sidebar_content(sidebar.kind, entity, cx);
 
         div()
@@ -1202,7 +1299,7 @@ impl AppView {
                     .top(px(0.0))
                     .right(px(-slide_offset))
                     .bottom(px(0.0))
-                    .opacity(opacity)
+                    .opacity(content_visibility)
                     .child(content),
             )
             .into_any_element()
@@ -1210,115 +1307,89 @@ impl AppView {
 
     fn render_primary_surface_layer(
         &self,
-        entity: Entity<Self>,
         panel: AnyElement,
         render_state: PrimarySurfaceRenderState,
-        cx: &App,
     ) -> AnyElement {
         let PrimarySurfaceRenderState {
             has_active_session,
             has_active_sftp_tab,
-            show_host_editor_sidebar,
-            show_port_forward_editor_sidebar,
-            show_keychain_editor_sidebar,
-            show_snippets_editor_sidebar,
-            show_known_hosts_sidebar,
         } = render_state;
 
         let roles = miaominal_settings::current_theme().material.roles;
 
+        // Page commands are docked in the bottom navigation bar, which is
+        // rendered once per frame, so transitions never duplicate their IDs.
         div()
             .size_full()
             .flex()
             .flex_col()
-            .rounded(px(16.0))
+            .when(!has_active_sftp_tab, |this| this.rounded(px(16.0)))
             .relative()
             .min_w(px(0.0))
             .min_h(px(0.0))
             .when(has_active_session, |this| {
-                this.bg(rgb(roles.surface_container))
+                this.bg(ShellColors::current().canvas)
             })
             .when(!has_active_session, |this| this.bg(rgb(roles.background)))
             .child(panel)
-            .when(
-                self.shell.shell_state.sidebar_section == SidebarSection::Hosts
-                    && !has_active_session
-                    && !has_active_sftp_tab
-                    && !show_host_editor_sidebar,
-                |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .right(px(28.0))
-                            .bottom(px(28.0))
-                            .child(self.render_fab(entity.clone())),
-                    )
-                },
-            )
-            .when(
-                self.shell.shell_state.sidebar_section == SidebarSection::PortForwarding
-                    && !has_active_session
-                    && !has_active_sftp_tab
-                    && !show_port_forward_editor_sidebar,
-                |this| {
-                    this.child(
-                        div().absolute().right(px(28.0)).bottom(px(28.0)).child(
-                            self.controllers
-                                .forwarding
-                                .read(cx)
-                                .render_forward_fab(self.controllers.forwarding.clone()),
-                        ),
-                    )
-                },
-            )
-            .when(
-                self.shell.shell_state.sidebar_section == SidebarSection::Keychain
-                    && !has_active_session
-                    && !has_active_sftp_tab
-                    && !show_keychain_editor_sidebar,
-                |this| {
-                    this.child(
-                        div().absolute().right(px(28.0)).bottom(px(28.0)).child(
-                            self.controllers
-                                .keychain
-                                .read(cx)
-                                .render_keychain_fab(self.controllers.keychain.clone()),
-                        ),
-                    )
-                },
-            )
-            .when(
-                self.shell.shell_state.sidebar_section == SidebarSection::Snippets
-                    && !has_active_session
-                    && !has_active_sftp_tab
-                    && !show_snippets_editor_sidebar,
-                |this| {
-                    this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
-                        let controller = self.controllers.snippets.clone();
-                        let open_controller = controller.clone();
-                        controller.read(cx).render_snippets_fab(move |window, cx| {
+            .into_any_element()
+    }
+
+    /// The page command docked at the trailing end of the bottom navigation bar.
+    fn bottom_navigation_action(
+        &self,
+        view: PrimaryViewKind,
+        cx: &App,
+    ) -> Option<layout::sidebar::DockAction> {
+        let PrimaryViewKind::Sidebar(section) = view else {
+            return None;
+        };
+        let key = match section {
+            SidebarSection::Hosts => "hosts",
+            SidebarSection::PortForwarding => "forwarding",
+            SidebarSection::Keychain => "keychain",
+            SidebarSection::Snippets => "snippets",
+            SidebarSection::KnownHosts => "known-hosts",
+            SidebarSection::Settings => "settings",
+        };
+        let element = match section {
+            SidebarSection::Hosts => Some(self.render_new_host_action(cx)),
+            SidebarSection::PortForwarding => Some(
+                self.controllers
+                    .forwarding
+                    .read(cx)
+                    .render_forward_dock_action(self.controllers.forwarding.clone(), cx),
+            ),
+            SidebarSection::Keychain => Some(
+                self.controllers
+                    .keychain
+                    .read(cx)
+                    .render_keychain_dock_action(self.controllers.keychain.clone(), cx),
+            ),
+            SidebarSection::Snippets => {
+                let controller = self.controllers.snippets.clone();
+                let open_controller = controller.clone();
+                Some(
+                    controller
+                        .read(cx)
+                        .render_snippets_dock_action(cx, move |window, cx| {
                             open_controller.update(cx, |controller, cx| {
                                 controller.open_snippets_editor(window, cx);
                             });
-                        })
-                    }))
-                },
-            )
-            .when(
-                self.shell.shell_state.sidebar_section == SidebarSection::KnownHosts
-                    && !has_active_session
-                    && !has_active_sftp_tab
-                    && !show_known_hosts_sidebar,
-                |this| {
-                    this.child(div().absolute().right(px(28.0)).bottom(px(28.0)).child({
-                        let controller = self.controllers.trusted_hosts.clone();
-                        controller
-                            .read(cx)
-                            .render_known_hosts_refresh_fab(controller.clone())
-                    }))
-                },
-            )
-            .into_any_element()
+                        }),
+                )
+            }
+            SidebarSection::KnownHosts => {
+                let controller = self.controllers.trusted_hosts.clone();
+                Some(
+                    controller
+                        .read(cx)
+                        .render_known_hosts_dock_action(controller.clone(), cx),
+                )
+            }
+            SidebarSection::Settings => None,
+        }?;
+        Some(layout::sidebar::DockAction { key, element })
     }
 }
 

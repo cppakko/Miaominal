@@ -47,6 +47,7 @@ mod overlays;
 mod pages;
 mod panes;
 mod render;
+mod search;
 mod session;
 
 pub(in crate::ui) mod state;
@@ -59,9 +60,7 @@ use crate::ui::workspace::model as workspace;
 use app_view::ShellUiState;
 pub use app_view::{AppView, AppWindowRole};
 
-pub(crate) use crate::ui::components::{
-    HintedInput, card_surface, fab_button, icon_button_with_tooltip,
-};
+pub(crate) use crate::ui::components::{HintedInput, card_surface};
 pub(in crate::ui::shell) use actions::{error_notification, success_notification};
 
 use containers::{AppViewSubscriptions, RootSubscriptions};

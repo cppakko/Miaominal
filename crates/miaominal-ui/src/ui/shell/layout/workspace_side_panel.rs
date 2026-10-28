@@ -208,6 +208,7 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
                 app.controllers.snippets.clone(),
                 terminal_port,
                 app.workspace.workspace.active_tab,
+                !is_local_terminal,
                 cx,
             )
         }
@@ -218,6 +219,7 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
 
     card_surface(roles.surface_container, 16.0)
         .id("session-workspace-side-panel")
+        .relative()
         .w(px(SESSION_MONITOR_PANEL_WIDTH))
         .h_full()
         .flex_shrink_0()
@@ -228,18 +230,29 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
             v_flex()
                 .size_full()
                 .overflow_hidden()
-                .child(div().flex_1().min_h(px(0.0)).child(content))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .h(px(56.0))
-                        .flex_shrink_0()
-                        .items_center()
-                        .justify_center()
-                        .px_3()
-                        .when(!is_local_terminal, |this| this.child(switch)),
-                ),
+                .child(div().flex_1().min_h(px(0.0)).child(content)),
         )
+        .when(!is_local_terminal, |this| {
+            this.child(
+                h_flex()
+                    .absolute()
+                    .left_3()
+                    .right_3()
+                    .bottom_3()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("session-side-panel-floating-menu")
+                            .occlude()
+                            .rounded_full()
+                            .bg(rgb(roles.surface_container_high))
+                            .p_1()
+                            .shadow_md()
+                            .child(switch),
+                    ),
+            )
+        })
         .into_any_element()
 }
 
@@ -267,8 +280,6 @@ fn render_session_sftp_panel(
                 .size_full()
                 .min_w(px(0.0))
                 .min_h(px(0.0))
-                .px_3()
-                .pb_3()
                 .child(content)
                 .into_any_element();
         }
@@ -280,7 +291,7 @@ fn render_session_sftp_panel(
         .items_center()
         .justify_center()
         .gap_3()
-        .p_3()
+        .py_3()
         .child(
             div()
                 .size(px(44.0))

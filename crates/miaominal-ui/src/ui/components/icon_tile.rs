@@ -1,11 +1,8 @@
-use crate::ui::assets::AppIcon;
-use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::{Div, IntoElement, ParentElement, Styled, div, px, rgb};
 
 #[derive(Clone, Copy)]
 pub(crate) enum IconTileTone {
     Primary,
-    Muted,
 }
 
 pub(crate) fn icon_tile(
@@ -20,10 +17,6 @@ pub(crate) fn icon_tile(
             gpui_kit::rgba(((roles.primary & 0x00ff_ffff) << 8) | 0x28),
             rgb(roles.primary),
         ),
-        IconTileTone::Muted => (
-            rgb(roles.surface_container_low),
-            rgb(roles.on_surface_variant),
-        ),
     };
 
     div()
@@ -35,13 +28,4 @@ pub(crate) fn icon_tile(
         .justify_center()
         .text_color(foreground)
         .child(content)
-}
-
-pub(crate) fn page_muted_icon_tile(icon: AppIcon, size: f32, corner_radius: f32) -> Div {
-    icon_tile(
-        Icon::new(icon).small(),
-        size,
-        corner_radius,
-        IconTileTone::Muted,
-    )
 }

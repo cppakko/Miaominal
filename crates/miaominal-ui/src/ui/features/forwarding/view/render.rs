@@ -1,20 +1,21 @@
 use crate::ui::assets::AppIcon;
+use crate::ui::components::catalog_card::{
+    catalog_card_content, catalog_card_icon, catalog_card_subtitle, catalog_card_surface,
+    catalog_card_title,
+};
 use crate::ui::components::empty_state::empty_page;
-use crate::ui::components::metrics::{
-    EDITOR_DRAWER_WIDTH, FORWARD_RULE_CARD_HEIGHT, FORWARD_RULE_CARD_WIDTH,
-};
-use crate::ui::components::tokens::color_with_alpha;
+use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
-    SearchInputStyle, TextInputSurface, badge, card_surface, editor_footer_actions, fab_button,
-    list_item_card, page_muted_icon_tile, page_section_title, page_view_mode_toolbar_item,
-    search_filter_input, surface_text_input_stack,
+    EditorFooterActionTone, SectionCard, SegmentedSwitch, TextInputSurface, badge,
+    dock_action_button, editor_footer_actions, editor_footer_button, list_item_card, md3_select,
+    md3_spinner, md3_switch, page_section_title, surface_text_input_stack, view_mode_switcher,
 };
-use crate::ui::components::{
-    SectionCard, SegmentedSwitch, editor_button, md3_select, md3_spinner, md3_switch,
-};
+use crate::ui::components::{animated_card_collection, card_grid_columns};
 use crate::ui::contracts::navigation::ProfileViewMode;
 use crate::ui::features::forwarding::ForwardingController;
 use crate::ui::i18n;
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Icon, IconName, Sizable as _, h_flex, v_flex};
@@ -27,12 +28,11 @@ use super::{
     components::{forwarding_empty_state, forwarding_section},
     render_helpers::{
         ForwardRuleActions, build_forward_rule_context_menu, forward_rule_display_label,
-        render_forward_endpoint_editor, route_direction_icon, truncate_with_ellipsis,
+        render_forward_endpoint_editor, route_direction_icon,
     },
 };
 
 const FORWARD_RULE_CARD_ACTION_WIDTH: f32 = 52.0;
-const FORWARD_RULE_CARD_TITLE_MAX_CHARS: usize = 15;
 
 #[derive(Clone, Copy)]
 struct ForwardRuleConnectionUiState {
@@ -99,9 +99,6 @@ fn render_forward_rule_card(
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
 ) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let extended = material.extended;
     let item_id = format!("forward-rule-card-{}-{}", profile.id, rule.id);
     let switch_id = format!("forward-rule-switch-{}-{}", profile.id, rule.id);
     let menu_profile_id = profile.id.clone();
@@ -111,10 +108,7 @@ fn render_forward_rule_card(
     let menu_kind = rule.kind;
     let click_profile_id = profile.id.clone();
     let click_rule_id = rule.id.clone();
-    let title = truncate_with_ellipsis(
-        &forward_rule_display_label(rule),
-        FORWARD_RULE_CARD_TITLE_MAX_CHARS,
-    );
+    let title = forward_rule_display_label(rule);
     let click_controller = controller.clone();
     let menu_controller = controller;
     let control = render_forward_rule_connection_control(
@@ -125,18 +119,10 @@ fn render_forward_rule_card(
         state,
     );
 
-    card_surface(roles.surface_container, 18.0)
+    catalog_card_surface()
         .id(item_id)
-        .w(px(FORWARD_RULE_CARD_WIDTH))
-        .min_h(px(FORWARD_RULE_CARD_HEIGHT))
-        .border_1()
-        .border_color(if state.connected {
-            rgb(extended.info.color)
-        } else {
-            color_with_alpha(extended.info.color, 0x00)
-        })
+        .test_support()
         .cursor_pointer()
-        .p_4()
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             let controller = click_controller.clone();
             let profile_id = click_profile_id.clone();
@@ -158,44 +144,22 @@ fn render_forward_rule_card(
                 menu_kind,
             )
         })
-        .child(
-            h_flex()
-                .size_full()
-                .gap_3()
-                .items_center()
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .justify_center()
-                        .gap_3()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_3()
-                                .child(page_muted_icon_tile(AppIcon::Forward, 34.0, 10.0))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.0))
-                                        .overflow_hidden()
-                                        .text_size(miaominal_settings::FontSize::Heading.scaled())
-                                        .text_color(rgb(roles.on_surface))
-                                        .child(title),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .w(px(FORWARD_RULE_CARD_ACTION_WIDTH))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(control),
-                ),
-        )
+        .child(catalog_card_content(
+            catalog_card_icon(AppIcon::Forward),
+            catalog_card_title(title),
+            Some(profile.name.clone().into()),
+            Some(
+                div()
+                    .flex_shrink_0()
+                    .w(px(FORWARD_RULE_CARD_ACTION_WIDTH))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(control)
+                    .into_any_element(),
+            ),
+            None,
+        ))
 }
 
 fn render_forward_rule_list_row(
@@ -205,9 +169,6 @@ fn render_forward_rule_list_row(
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
 ) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let extended = material.extended;
     let item_id = format!("forward-rule-row-{}-{}", profile.id, rule.id);
     let switch_id = format!("forward-rule-list-switch-{}-{}", profile.id, rule.id);
     let menu_profile_id = profile.id.clone();
@@ -217,7 +178,7 @@ fn render_forward_rule_list_row(
     let menu_kind = rule.kind;
     let click_profile_id = profile.id.clone();
     let click_rule_id = rule.id.clone();
-    let title = truncate_with_ellipsis(&forward_rule_display_label(rule), 42);
+    let title = forward_rule_display_label(rule);
     let click_controller = controller.clone();
     let menu_controller = controller;
     let control = render_forward_rule_connection_control(
@@ -229,14 +190,13 @@ fn render_forward_rule_list_row(
     );
 
     list_item_card(
-        page_muted_icon_tile(AppIcon::Forward, 30.0, 10.0).into_any_element(),
-        div()
+        catalog_card_icon(AppIcon::Forward).into_any_element(),
+        v_flex()
             .flex_1()
             .min_w(px(0.0))
-            .overflow_hidden()
-            .text_size(miaominal_settings::FontSize::Subheading.scaled())
-            .text_color(rgb(roles.on_surface))
-            .child(title)
+            .justify_center()
+            .child(catalog_card_title(title))
+            .child(catalog_card_subtitle(profile.name.clone()))
             .into_any_element(),
         None,
         Some(
@@ -257,6 +217,7 @@ fn render_forward_rule_list_row(
         },
     )
     .id(item_id)
+    .test_support()
     .cursor_pointer()
     .context_menu(move |menu, _window, _cx| {
         build_forward_rule_context_menu(
@@ -271,12 +232,7 @@ fn render_forward_rule_list_row(
             menu_kind,
         )
     })
-    .border_1()
-    .border_color(if state.connected {
-        rgb(extended.info.color)
-    } else {
-        color_with_alpha(extended.info.color, 0x00)
-    })
+    .border_0()
 }
 
 impl ForwardingController {
@@ -506,12 +462,23 @@ impl ForwardingController {
         .into_any_element()
     }
 
-    pub(in crate::ui) fn render_forward_fab(&self, controller: Entity<Self>) -> impl IntoElement {
-        fab_button(move |window, cx| {
-            controller.update(cx, |controller, cx| {
-                controller.open_port_forward_panel(window, cx);
-            });
-        })
+    /// The page's create command, docked into the bottom navigation bar.
+    pub(in crate::ui) fn render_forward_dock_action(
+        &self,
+        controller: Entity<Self>,
+        cx: &App,
+    ) -> gpui_kit::AnyElement {
+        dock_action_button(
+            "forwarding-create-fab",
+            i18n::string("forwarding.actions.create_rule"),
+            cx,
+            move |window, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.open_port_forward_panel(window, cx);
+                });
+            },
+        )
+        .into_any_element()
     }
 
     pub(in crate::ui) fn render_port_forward_editor_sidebar(
@@ -582,10 +549,12 @@ impl ForwardingController {
         let mut footer_actions = Vec::new();
         if let Some((profile_id, rule_id)) = selected_rule_target {
             footer_actions.push(
-                editor_button(
+                editor_footer_button(
+                    "forwarding-editor-delete",
                     i18n::string("forwarding.actions.delete_rule"),
-                    false,
-                    true,
+                    Some(AppIcon::Trash),
+                    EditorFooterActionTone::Destructive,
+                    cx,
                     {
                         let controller = controller.clone();
                         move |_, cx| {
@@ -605,25 +574,34 @@ impl ForwardingController {
             );
         }
         footer_actions.push(
-            editor_button(i18n::string("forwarding.actions.cancel"), false, true, {
-                let controller = controller.clone();
-                move |_, cx| {
-                    controller.update(cx, |controller, cx| {
-                        controller.close_port_forward_rule_editor(cx);
-                    });
-                }
-            })
+            editor_footer_button(
+                "forwarding-editor-cancel",
+                i18n::string("forwarding.actions.cancel"),
+                Some(AppIcon::Close),
+                EditorFooterActionTone::Text,
+                cx,
+                {
+                    let controller = controller.clone();
+                    move |_, cx| {
+                        controller.update(cx, |controller, cx| {
+                            controller.close_port_forward_rule_editor(cx);
+                        });
+                    }
+                },
+            )
             .into_any_element(),
         );
         footer_actions.push(
-            editor_button(
+            editor_footer_button(
+                "forwarding-editor-save",
                 if is_editing_rule {
                     i18n::string("forwarding.actions.save_rule")
                 } else {
                     i18n::string("forwarding.actions.create_rule")
                 },
-                true,
-                true,
+                Some(AppIcon::Check),
+                EditorFooterActionTone::Primary,
+                cx,
                 on_save,
             )
             .into_any_element(),
@@ -635,6 +613,7 @@ impl ForwardingController {
             .w(px(EDITOR_DRAWER_WIDTH))
             .min_w(px(360.0))
             .h_full()
+            .rounded(space(ShellMetrics::CARD_RADIUS))
             .bg(rgb(roles.surface_container))
             .child(
                 v_flex()
@@ -671,10 +650,8 @@ impl ForwardingController {
         &self,
         controller: Entity<Self>,
         actions: ForwardRuleActions,
-        cx: &App,
+        available_width: f32,
     ) -> gpui_kit::AnyElement {
-        let filter_input = self.forms.clone().filter_input;
-        let filter_text = filter_input.read(cx).value().trim().to_ascii_lowercase();
         let profiles = self.profiles();
         let rules_with_profiles: Vec<_> = profiles
             .iter()
@@ -683,73 +660,69 @@ impl ForwardingController {
                 profile
                     .port_forwarding_rules
                     .iter()
-                    .filter(|rule| {
-                        filter_text.is_empty()
-                            || rule
-                                .label
-                                .trim()
-                                .to_ascii_lowercase()
-                                .contains(&filter_text)
-                    })
                     .map(move |rule| (profile_index, profile, rule))
             })
             .collect();
 
         if rules_with_profiles.is_empty() {
             return forwarding_section(forwarding_empty_state(i18n::string(
-                "forwarding.empty.no_filter_matches",
+                "forwarding.empty.no_rules",
             )))
             .into_any_element();
         }
 
         let is_list = self.view_mode.get() == ProfileViewMode::List;
-        let mut rules = if is_list {
-            v_flex().w_full().gap_2()
-        } else {
-            div().flex().flex_wrap().gap_4()
-        };
+        let mut rules = Vec::with_capacity(rules_with_profiles.len());
 
         for (_profile_index, profile, rule) in rules_with_profiles {
             let runtime_state = self.port_forward_rule_runtime_state(&profile.id, &rule.id);
             let state = ForwardRuleConnectionUiState::from_runtime(runtime_state.as_ref());
 
-            if is_list {
-                rules = rules.child(render_forward_rule_list_row(
+            let item = if is_list {
+                render_forward_rule_list_row(
                     controller.clone(),
                     actions.clone(),
                     profile,
                     rule,
                     state,
-                ));
+                )
+                .into_any_element()
             } else {
-                rules = rules.child(render_forward_rule_card(
-                    controller.clone(),
-                    actions.clone(),
-                    profile,
-                    rule,
-                    state,
-                ));
-            }
+                render_forward_rule_card(controller.clone(), actions.clone(), profile, rule, state)
+                    .into_any_element()
+            };
+            rules.push((
+                format!("forward-rule-layout-{}-{}", profile.id, rule.id).into(),
+                item,
+            ));
         }
 
-        forwarding_section(
-            v_flex()
-                .gap_4()
-                .child(page_section_title(i18n::string(
-                    "forwarding.page.forwarding_rules",
-                )))
-                .child(rules),
-        )
-        .into_any_element()
+        let rules = animated_card_collection(
+            "forwarding-grid",
+            self.view_mode.get(),
+            card_grid_columns(available_width),
+            8.0,
+            rules,
+        );
+
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_4()
+            .child(page_section_title(i18n::string(
+                "forwarding.page.forwarding_rules",
+            )))
+            .child(rules)
+            .into_any_element()
     }
 
     pub(in crate::ui) fn render_forward_page(
         &self,
         controller: Entity<Self>,
-        cx: &App,
+        available_width: f32,
+        _cx: &App,
     ) -> gpui_kit::AnyElement {
         let actions = ForwardRuleActions::new(controller.clone());
-        let filter_input = self.forms.clone().filter_input;
         let profiles = self.profiles();
         let total_rules = profiles
             .iter()
@@ -769,47 +742,29 @@ impl ForwardingController {
                 .into_any_element();
         }
 
-        let is_list = self.view_mode.get() == ProfileViewMode::List;
-
-        let header =
-            v_flex()
-                .w_full()
-                .gap_4()
-                .px_5()
-                .child(
-                    h_flex().w_full().justify_center().child(
-                        h_flex()
-                            .w_full()
-                            .max_w(px(576.0))
-                            .child(search_filter_input(
-                                &filter_input,
-                                SearchInputStyle::Pill,
-                                None,
-                            )),
-                    ),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_2()
-                        .child(page_view_mode_toolbar_item(AppIcon::Grid, !is_list, {
+        let header = v_flex()
+            .w_full()
+            .gap_4()
+            .px(space(ShellMetrics::CATALOG_INSET))
+            .child(
+                h_flex()
+                    .w_full()
+                    .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                    .mx_auto()
+                    .justify_end()
+                    .child(view_mode_switcher(
+                        "forwarding-view-mode",
+                        self.view_mode.get(),
+                        {
                             let controller = controller.clone();
-                            move |_, cx| {
+                            move |mode, _, cx| {
                                 controller.update(cx, |controller, cx| {
-                                    controller.set_forward_view_mode(ProfileViewMode::Grid, cx);
+                                    controller.set_forward_view_mode(mode, cx);
                                 });
                             }
-                        }))
-                        .child(page_view_mode_toolbar_item(AppIcon::List, is_list, {
-                            let controller = controller.clone();
-                            move |_, cx| {
-                                controller.update(cx, |controller, cx| {
-                                    controller.set_forward_view_mode(ProfileViewMode::List, cx);
-                                });
-                            }
-                        })),
-                );
+                        },
+                    )),
+            );
 
         div()
             .size_full()
@@ -821,13 +776,26 @@ impl ForwardingController {
                     .min_h(px(0.0))
                     .gap_4()
                     .child(header)
-                    .child(div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
-                        div().size_full().overflow_y_scrollbar().child(
-                            v_flex().w_full().pb_8().child(
-                                self.render_port_forward_saved_rules(controller, actions, cx),
+                    .child(
+                        div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
+                            div().size_full().overflow_y_scrollbar().child(
+                                div().px(space(ShellMetrics::CATALOG_INSET)).child(
+                                    v_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                                        .mx_auto()
+                                        .pt_5()
+                                        .pb(space(112.0))
+                                        .child(self.render_port_forward_saved_rules(
+                                            controller,
+                                            actions,
+                                            available_width,
+                                        )),
+                                ),
                             ),
                         ),
-                    )),
+                    ),
             )
             .into_any_element()
     }

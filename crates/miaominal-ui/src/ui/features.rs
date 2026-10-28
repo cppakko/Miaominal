@@ -8,3 +8,5 @@ pub(in crate::ui) mod settings;
 pub(in crate::ui) mod sftp;
 pub(in crate::ui) mod snippets;
 pub(in crate::ui) mod trusted_hosts;
+
+pub(in crate::ui) mod search;

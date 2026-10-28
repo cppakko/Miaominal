@@ -1,6 +1,7 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::empty_state::empty_state;
 use crate::ui::components::group_accent::group_accent_palette;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{SearchInputStyle, card_surface, icon_button, search_filter_input};
 use crate::ui::contracts::TabId;
 use crate::ui::contracts::session::SessionTerminalPort;
@@ -108,6 +109,7 @@ impl SnippetsController {
         controller: Entity<Self>,
         terminal_port: SessionTerminalPort,
         terminal_tab_id: Option<TabId>,
+        has_floating_menu: bool,
         cx: &App,
     ) -> gpui_kit::AnyElement {
         let snippets_filter_input = self.workspace_filter_input.clone();
@@ -333,10 +335,16 @@ impl SnippetsController {
                 ))
             })
             .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .child(div().size_full().overflow_y_scrollbar().child(content)),
+                div().flex_1().min_h(px(0.0)).child(
+                    div().size_full().overflow_y_scrollbar().child(
+                        div()
+                            .w_full()
+                            .when(has_floating_menu, |this| {
+                                this.pb(space(ShellMetrics::SESSION_PANEL_MENU_CLEARANCE))
+                            })
+                            .child(content),
+                    ),
+                ),
             )
             .into_any_element()
     }

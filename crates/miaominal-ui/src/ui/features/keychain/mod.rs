@@ -13,10 +13,9 @@ use crate::ui::components::notifications::{
 };
 use crate::ui::components::selection::ProfileSelectItem;
 use crate::ui::components::{
-    BasicDialogActionTone, SearchInputStyle, TextInputSurface, badge, basic_dialog_action_button,
-    card_surface, editor_footer_actions, fab_button, fab_icon_button, field_label, icon_button,
-    md3_select, page_primary_icon_tile, page_section_title, search_filter_input,
-    surface_text_editor, surface_text_input, surface_text_input_stack,
+    BasicDialogActionTone, TextInputSurface, badge, basic_dialog_action_button, dock_action_button,
+    dock_icon_action_button, editor_footer_actions, field_label, icon_button, md3_select,
+    page_section_title, surface_text_editor, surface_text_input, surface_text_input_stack,
 };
 use crate::ui::contracts::catalog::CatalogQueryPort;
 use crate::ui::contracts::commands::{
@@ -30,7 +29,7 @@ use crate::ui::contracts::security::LocalVaultStatus;
 use anyhow::{Result, anyhow};
 use gpui_kit::component::{
     Icon, IconName, Sizable as _, h_flex,
-    input::{EditorState, InputEvent, InputState, TabSize},
+    input::{EditorState, InputState, TabSize},
     menu::PopupMenuItem,
     scroll::ScrollableElement,
     select::{SearchableVec, SelectItem, SelectState},
@@ -38,8 +37,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Div, Entity, Focusable, InteractiveElement, SharedString, Styled,
-    Subscription, Window, div, px, rgb,
+    AnyElement, App, Context, Entity, Focusable, InteractiveElement, SharedString, Styled, Window,
+    div, px, rgb,
 };
 use miaominal_core::keychain::ManagedKeyRecord;
 use miaominal_core::profile::{AuthMethod, SessionProfile};

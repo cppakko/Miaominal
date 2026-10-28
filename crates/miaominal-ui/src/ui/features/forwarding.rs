@@ -10,10 +10,7 @@ use crate::ui::{
     i18n,
 };
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::{
-    input::InputEvent,
-    select::{SearchableVec, SelectEvent, SelectState},
-};
+use gpui_kit::component::select::{SearchableVec, SelectEvent, SelectState};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Entity, Window};
 #[cfg(test)]
@@ -51,7 +48,6 @@ struct PortForwardRuleInputValues {
 
 #[derive(Clone)]
 struct PortForwardingForms {
-    filter_input: Entity<InputState>,
     profile_select: Entity<SelectState<SearchableVec<ProfileSelectItem>>>,
     label_input: Entity<InputState>,
     listen_host_input: Entity<InputState>,
@@ -209,13 +205,6 @@ impl ForwardingController {
     ) -> Self {
         let catalog = args.catalog;
         let forms = PortForwardingForms {
-            filter_input: new_input_state(
-                i18n::string("placeholders.forward.filter"),
-                "",
-                false,
-                window,
-                cx,
-            ),
             profile_select: cx.new(|cx| {
                 SelectState::new(
                     Self::forward_profile_options(&catalog.profiles()),
@@ -261,23 +250,16 @@ impl ForwardingController {
                 cx,
             ),
         };
-        let subscriptions = vec![
-            cx.subscribe(&forms.filter_input, |_, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
+        let subscriptions = vec![cx.subscribe(
+            &forms.profile_select,
+            |controller, _, event: &SelectEvent<SearchableVec<ProfileSelectItem>>, cx| {
+                let SelectEvent::Confirm(profile_id) = event;
+                if controller.editor_state().port_forward_editor_profile_id == *profile_id {
+                    return;
                 }
-            }),
-            cx.subscribe(
-                &forms.profile_select,
-                |controller, _, event: &SelectEvent<SearchableVec<ProfileSelectItem>>, cx| {
-                    let SelectEvent::Confirm(profile_id) = event;
-                    if controller.editor_state().port_forward_editor_profile_id == *profile_id {
-                        return;
-                    }
-                    controller.select_port_forward_editor_profile(profile_id.clone(), cx);
-                },
-            ),
-        ];
+                controller.select_port_forward_editor_profile(profile_id.clone(), cx);
+            },
+        )];
         Self {
             profile_commit: args.profile_commit,
             catalog,
@@ -308,7 +290,6 @@ impl ForwardingController {
         cx: &mut Context<Self>,
     ) {
         for (input, key) in [
-            (&self.forms.filter_input, "placeholders.forward.filter"),
             (&self.forms.label_input, "placeholders.forward.rule_label"),
             (
                 &self.forms.listen_host_input,
@@ -661,7 +642,7 @@ impl ForwardingController {
         cx.notify();
     }
 
-    fn edit_port_forward_rule(
+    pub(in crate::ui) fn edit_port_forward_rule(
         &self,
         profile_id: String,
         rule_id: String,
@@ -1513,10 +1494,7 @@ mod tests {
                 ("input", forms.target_port_input.entity_id()),
             )
         });
-        let save_id = SharedString::from(format!(
-            "editor-button-{}",
-            i18n::string("forwarding.actions.save_rule")
-        ));
+        let save_id = SharedString::from("forwarding-editor-save");
         cx.update_window(window_handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(target_port_id, cx);

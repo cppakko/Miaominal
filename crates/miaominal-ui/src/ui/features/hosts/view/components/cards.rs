@@ -1,347 +1,277 @@
-use crate::ui::assets::AppIcon;
-use crate::ui::components::group_accent::GroupAccentPalette;
-use crate::ui::components::metrics::{
-    GROUP_CARD_HEIGHT, GROUP_CARD_WIDTH, HOST_CARD_HEIGHT, HOST_CARD_WIDTH,
+use crate::ui::components::catalog_card::{
+    catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon_content,
+    catalog_card_title,
 };
-use crate::ui::components::{
-    IconTileTone, badge, card_surface, icon_button, icon_tile, list_item_card,
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
+use crate::ui::i18n;
+use gpui_kit::component::{
+    Icon, IconName, Sizable as _,
+    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    h_flex,
 };
-use gpui_kit::component::{Icon, h_flex, v_flex};
-use gpui_kit::prelude::*;
-use gpui_kit::{App, MouseButton, SharedString, Window, div, px, rgb};
+use gpui_kit::{AnyElement, App, IntoElement, SharedString, Window, div, prelude::*};
+use miaominal_core::profile::SessionProfile;
 
-#[derive(Clone, Debug)]
-pub(in crate::ui::features::hosts) struct HostCardBadgeChip {
-    pub label: SharedString,
-    pub tooltip: Option<SharedString>,
+fn visible_tags(tags: &[String]) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    for tag in tags
+        .iter()
+        .map(|tag| tag.trim())
+        .filter(|tag| !tag.is_empty())
+    {
+        if !result.iter().any(|item| item.eq_ignore_ascii_case(tag)) {
+            result.push(tag.to_owned());
+        }
+    }
+    result
 }
 
-#[derive(Clone, Debug)]
-pub(in crate::ui::features::hosts) struct HostCardGroupBadge {
-    pub badge: HostCardBadgeChip,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::features::hosts) struct HostCardTags {
-    pub visible: Vec<HostCardBadgeChip>,
-    pub overflow: Option<HostCardBadgeChip>,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::ui::features::hosts) struct HostCardMetadata {
-    pub group: Option<HostCardGroupBadge>,
-    pub local_terminal: bool,
-    pub tags: HostCardTags,
-}
-
-fn host_card_badge_tooltip(
-    text: SharedString,
-) -> impl Fn(&mut Window, &mut App) -> gpui_kit::AnyView {
-    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
-}
-
-fn host_card_badge(
+pub(in crate::ui::features::hosts) fn host_card(
     id: SharedString,
-    label: SharedString,
-    tooltip: Option<SharedString>,
-    background: u32,
-    foreground: u32,
-) -> gpui_kit::AnyElement {
-    div()
-        .id(id)
+    profile: &SessionProfile,
+    _list: bool,
+    more: AnyElement,
+    cx: &App,
+    on_connect: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let colors = ShellColors::current();
+    let tags = visible_tags(&profile.tags);
+    // Groups are optional: an ungrouped host simply has no subtitle.
+    let subtitle: Option<SharedString> = if profile.is_local() {
+        Some(i18n::string("hosts.home.local").into())
+    } else if profile.group.trim().is_empty() {
+        None
+    } else {
+        Some(profile.group.clone().into())
+    };
+    let has_tags = !tags.is_empty();
+    let title = h_flex()
+        .min_w_0()
+        .gap(space(4.0))
+        .child(catalog_card_title(profile.name.clone()))
+        .when(profile.is_favorite, |row| {
+            row.child(
+                Icon::new(IconName::Star)
+                    .small()
+                    .flex_shrink_0()
+                    .text_color(colors.primary),
+            )
+        });
+    // Reserve room for the overlaid "more" button.
+    let more_spacer = div()
         .flex_shrink_0()
-        .when_some(tooltip, |this, tooltip| {
-            this.tooltip(host_card_badge_tooltip(tooltip))
-        })
-        .child(badge(label, background, foreground))
-        .into_any_element()
-}
-
-pub(in crate::ui::features::hosts) fn group_card(
-    icon: impl Into<SharedString>,
-    count: impl Into<SharedString>,
-    title: impl Into<SharedString>,
-    palette: GroupAccentPalette,
-    is_selected: bool,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let roles = miaominal_settings::current_theme().material.roles;
-    let icon = icon.into();
-    let count = count.into();
-    let title = title.into();
-    let item_id = SharedString::from(format!("host-group-card-{}", title.as_ref()));
-
-    card_surface(
-        if is_selected {
-            palette.accent_container
-        } else {
-            roles.surface_container
-        },
-        18.0,
-    )
-    .id(item_id)
-    .w(px(GROUP_CARD_WIDTH))
-    .h(px(GROUP_CARD_HEIGHT))
-    .cursor_pointer()
-    .p_4()
-    .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
-        on_click(window, cx);
-    })
-    .child(
-        v_flex()
-            .size_full()
-            .justify_between()
-            .gap_3()
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_start()
-                    .gap_3()
-                    .child(
-                        div()
-                            .size(px(38.0))
-                            .rounded(px(12.0))
-                            .bg(rgb(if is_selected {
-                                palette.accent
-                            } else {
-                                roles.surface_container_low
-                            }))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .text_color(rgb(if is_selected {
-                                palette.on_accent
-                            } else {
-                                palette.accent
-                            }))
-                            .child(icon),
-                    )
-                    .child(badge(
-                        count,
-                        roles.surface_container_highest,
-                        if is_selected {
-                            palette.on_accent_container
-                        } else {
-                            roles.on_surface_variant
-                        },
-                    )),
+        .w(space(ShellMetrics::CARD_ICON_SIZE))
+        .into_any_element();
+    let tags_row = has_tags.then(|| {
+        catalog_card_chips()
+            .children(
+                tags.iter()
+                    .take(2)
+                    .map(|tag| catalog_card_chip(tag.clone(), None)),
             )
-            .child(
-                v_flex().gap_1().child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Heading.scaled())
-                        .text_color(rgb(if is_selected {
-                            palette.on_accent_container
-                        } else {
-                            roles.on_surface
-                        }))
-                        .child(title),
-                ),
-            ),
-    )
-}
-
-pub(in crate::ui::features::hosts) fn host_card_with_action(
-    title: impl Into<SharedString>,
-    metadata: HostCardMetadata,
-    badge_id_prefix: impl Into<SharedString>,
-    action_icon: AppIcon,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-    on_action_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let title = title.into();
-    let badge_id_prefix = badge_id_prefix.into();
-    let HostCardMetadata {
-        group,
-        local_terminal,
-        tags,
-    } = metadata;
-    let is_local = local_terminal;
-    let has_metadata = group.is_some() || !tags.visible.is_empty() || tags.overflow.is_some();
-    let group_badge = group.map(|group| {
-        host_card_badge(
-            SharedString::from(format!("{badge_id_prefix}-group")),
-            group.badge.label,
-            group.badge.tooltip,
-            roles.surface_container_highest,
-            roles.on_surface_variant,
-        )
-    });
-    let tag_badges: Vec<_> = tags
-        .visible
-        .into_iter()
-        .enumerate()
-        .map(|(index, tag)| {
-            host_card_badge(
-                SharedString::from(format!("{badge_id_prefix}-tag-{index}")),
-                tag.label,
-                tag.tooltip,
-                roles.surface_container_low,
-                roles.on_surface_variant,
-            )
-        })
-        .collect();
-    let overflow_badge = tags.overflow.map(|overflow| {
-        host_card_badge(
-            SharedString::from(format!("{badge_id_prefix}-overflow")),
-            overflow.label,
-            overflow.tooltip,
-            roles.surface_container_highest,
-            roles.on_surface_variant,
-        )
-    });
-
-    card_surface(roles.surface_container, 18.0)
-        .w(px(HOST_CARD_WIDTH))
-        .h(px(HOST_CARD_HEIGHT))
-        .p_4()
-        .child(
-            h_flex()
-                .size_full()
-                .gap_1()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .h_full()
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
-                            on_click(window, cx);
-                        })
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .h_full()
-                                .items_center()
-                                .gap_3()
-                                .child(
-                                    icon_tile(
-                                        div()
-                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .child(if is_local {
-                                                Icon::from(AppIcon::Computer).into_any_element()
-                                            } else {
-                                                ">_".into_any_element()
-                                            }),
-                                        34.0,
-                                        10.0,
-                                        IconTileTone::Muted,
-                                    )
-                                    .flex_shrink_0(),
-                                )
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w(px(0.0))
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .min_w(px(0.0))
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_size(miaominal_settings::scaled_font_size(
-                                                    14.0,
-                                                ))
-                                                .text_color(rgb(roles.on_surface))
-                                                .child(title),
-                                        )
-                                        .when(has_metadata, move |this| {
-                                            this.child(
-                                                h_flex()
-                                                    .gap_1()
-                                                    .min_w(px(0.0))
-                                                    .overflow_hidden()
-                                                    .children(group_badge)
-                                                    .children(tag_badges)
-                                                    .children(overflow_badge),
-                                            )
-                                        }),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .w(px(30.0))
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .child(icon_button(
-                            action_icon,
-                            30.0,
-                            10.0,
-                            None,
-                            None,
-                            Some(roles.outline_variant),
-                            move |window, cx| on_action_click(window, cx),
-                        )),
-                ),
-        )
-}
-
-pub(in crate::ui::features::hosts) fn host_list_row(
-    title: SharedString,
-    subtitle: Option<SharedString>,
-    local_terminal: bool,
-    action_icon: Option<AppIcon>,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-    on_action_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
-
-    list_item_card(
-        icon_tile(
-            div()
-                .text_size(miaominal_settings::FontSize::Body.scaled())
-                .child(if local_terminal {
-                    Icon::from(AppIcon::Computer).into_any_element()
-                } else {
-                    ">_".into_any_element()
-                }),
-            30.0,
-            10.0,
-            IconTileTone::Muted,
-        )
-        .flex_shrink_0()
-        .into_any_element(),
-        v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .gap_1()
-            .child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Subheading.scaled())
-                    .text_color(rgb(roles.on_surface))
-                    .child(title),
-            )
-            .children(subtitle.into_iter().map(|subtitle| {
-                div()
-                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                    .text_color(rgb(text_muted))
-                    .child(subtitle)
-            }))
-            .into_any_element(),
-        None,
-        action_icon.map(|icon| {
-            icon_button(icon, 30.0, 10.0, None, None, Some(roles.outline_variant), {
-                move |window, cx| on_action_click(window, cx)
+            .when(tags.len() > 2, |row| {
+                row.child(catalog_card_chip(format!("+{}", tags.len() - 2), None).flex_shrink_0())
             })
             .into_any_element()
-        }),
-        move |window, cx| on_click(window, cx),
-    )
+    });
+    let content = catalog_card_content(
+        catalog_card_icon_content(crate::ui::assets::terminal_icon().small()),
+        title,
+        subtitle,
+        Some(more_spacer),
+        tags_row,
+    );
+    let name = profile.name.clone();
+    let tooltip_tags = tags.join(", ");
+    div()
+        .w_full()
+        .min_w_0()
+        .relative()
+        .rounded(space(ShellMetrics::CARD_RADIUS))
+        .bg(colors.card)
+        .child(
+            Button::new(SharedString::from(format!("{id}:connect")))
+                .ghost()
+                .w_full()
+                .h(space(ShellMetrics::CARD_HEIGHT))
+                .px(space(ShellMetrics::CARD_PADDING))
+                .py_0()
+                .items_center()
+                .rounded(miaominal_settings::scaled_font_size(
+                    ShellMetrics::CARD_RADIUS,
+                ))
+                .bg(colors.card)
+                .text_color(colors.foreground)
+                .custom(
+                    ButtonCustomVariant::new(cx)
+                        .color(colors.card)
+                        .foreground(colors.foreground)
+                        .hover(colors.hover)
+                        .active(colors.selected),
+                )
+                .accessibility_label(i18n::string_args(
+                    "hosts.home.connect_name",
+                    &[("name", &name)],
+                ))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{id}:tags")))
+                        .w_full()
+                        .min_w_0()
+                        .when(has_tags, |body| {
+                            body.tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(tooltip_tags.clone())
+                                    .build(window, cx)
+                            })
+                        })
+                        .child(content),
+                )
+                .on_click(move |_, window, cx| on_connect(window, cx)),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}:menu-region")))
+                .occlude()
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation()
+                })
+                .absolute()
+                .right(space(ShellMetrics::CARD_PADDING))
+                // Centered on the card, like the icon.
+                .top_0()
+                .bottom_0()
+                .flex()
+                .items_center()
+                .child(more),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn tags_keep_full_text_and_deduplicate() {
+        assert_eq!(
+            visible_tags(&[
+                " dev ".into(),
+                "DEV".into(),
+                "".into(),
+                "long tag without character clipping".into()
+            ]),
+            vec!["dev", "long tag without character clipping"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use gpui_kit::{
+        Context, Entity, Render, TestAppContext, component::Root, test::TestWindowExt as _,
+    };
+    use std::{cell::Cell, rc::Rc};
+    struct CardHarness {
+        profile: SessionProfile,
+        connects: Rc<Cell<usize>>,
+        more: Rc<Cell<usize>>,
+    }
+    impl Render for CardHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let more = self.more.clone();
+            let connects = self.connects.clone();
+            host_card(
+                "fixture".into(),
+                &self.profile,
+                false,
+                Button::new("fixture-more")
+                    .label("More")
+                    .on_click(move |_, _, _| more.set(more.get() + 1))
+                    .into_any_element(),
+                cx,
+                move |_, _| connects.set(connects.get() + 1),
+            )
+        }
+    }
+    #[gpui_kit::test]
+    fn card_height_is_identical_with_optional_group_and_tags(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut expected_height = None;
+        for (group, tags) in [
+            ("", vec![]),
+            ("Production", vec![]),
+            ("", vec!["dev".to_string()]),
+            ("Production", vec!["dev".to_string(), "ssh".to_string()]),
+        ] {
+            let (_, window_cx) = cx.add_window_view(move |window, cx| {
+                let mut profile = SessionProfile::blank("fixture", 0);
+                profile.name = "Fixture host".into();
+                profile.group = group.into();
+                profile.tags = tags;
+                let view = cx.new(|_| CardHarness {
+                    profile,
+                    connects: Rc::new(Cell::new(0)),
+                    more: Rc::new(Cell::new(0)),
+                });
+                Root::new(view, window, cx)
+            });
+            window_cx.update(|window, cx| {
+                window.render_frame(cx);
+                let height = window.find("fixture:connect").bounds().size.height;
+                if let Some(expected) = expected_height {
+                    assert_eq!(height, expected, "group and tags must not change card height");
+                } else {
+                    expected_height = Some(height);
+                }
+            });
+        }
+    }
+
+    #[gpui_kit::test]
+    fn card_main_and_more_have_independent_hit_regions(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let connects = Rc::new(Cell::new(0));
+        let more = Rc::new(Cell::new(0));
+        let output = connects.clone();
+        let more_output = more.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let mut profile = SessionProfile::blank("fixture", 0);
+            profile.name = "Fixture host".into();
+            let view: Entity<CardHarness> = cx.new(|_| CardHarness {
+                profile,
+                connects: output,
+                more: more_output,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.click("fixture-more", cx);
+            assert_eq!(more.get(), 1);
+            assert_eq!(connects.get(), 0);
+            window.click("fixture:connect", cx);
+            assert_eq!(connects.get(), 1);
+            assert_eq!(more.get(), 1);
+            let bounds = window.find("fixture:connect").bounds();
+            let initial_scale = window.scale_factor();
+            for scale in [1.5, 2.0] {
+                window.set_scale_factor(scale);
+                window.render_frame(cx);
+                let scaled = window.find("fixture:connect").bounds();
+                assert_eq!(scaled.origin, bounds.origin);
+                assert_eq!(scaled.size.width, bounds.size.width);
+                // The two text lines snap separately to device pixels. Their
+                // combined natural height can vary by two physical pixels.
+                let height_tolerance = 2.0 / scale.min(initial_scale);
+                assert!(
+                    (f32::from(scaled.size.height - bounds.size.height)).abs()
+                        <= height_tolerance + 0.001,
+                    "scale {scale}: baseline {bounds:?}, observed {scaled:?}",
+                );
+                window.click("fixture-more", cx);
+                assert_eq!(connects.get(), 1);
+            }
+            assert_eq!(more.get(), 3);
+        });
+    }
 }

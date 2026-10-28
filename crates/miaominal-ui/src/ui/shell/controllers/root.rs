@@ -782,6 +782,10 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match command {
+            AppCommand::VaultUnlockRequested(command) => match command {
+                Some(command) => self.defer_app_command_in_window(command.clone(), window, cx),
+                None => self.prompt_local_vault_unlock_in_window(window, cx),
+            },
             AppCommand::TerminalFocusReportingRequested => {
                 self.sync_terminal_focus_reporting(window, cx);
                 cx.notify();

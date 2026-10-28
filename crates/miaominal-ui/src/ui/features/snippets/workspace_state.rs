@@ -235,12 +235,6 @@ mod tests {
         cx.update_window(window_handle, |_, window, cx| {
             owner.update(cx, |owner, cx| {
                 set_input_value(&owner.workspace_filter_input, "echo 中文", window, cx);
-                set_input_value(
-                    &owner.forms.borrow().filter_input,
-                    "catalog-only",
-                    window,
-                    cx,
-                );
                 owner.catalog_view.borrow_mut().snippets_package_filter = Some("Catalog".into());
                 owner.toggle_workspace_package("Operations".into(), cx);
                 let captured = owner.take_workspace_ui_for_transfer(window, cx);
@@ -251,10 +245,6 @@ mod tests {
                 assert_eq!(
                     owner.workspace_package_filter.borrow().as_deref(),
                     Some("Operations")
-                );
-                assert_eq!(
-                    owner.forms.borrow().filter_input.read(cx).value(),
-                    "catalog-only"
                 );
                 assert_eq!(
                     owner

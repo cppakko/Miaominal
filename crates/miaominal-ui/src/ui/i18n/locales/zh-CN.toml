@@ -557,7 +557,6 @@ import_private_key_path = "要导入的私钥路径"
 import_private_key_body = "在此粘贴 OpenSSH 私钥"
 import_public_key_body = "在此粘贴 OpenSSH 公钥"
 import_passphrase_optional = "导入口令（可选）"
-filter = "搜索托管密钥、ID 或 SSH Agent 身份……"
 deploy_location = "远端目录路径"
 deploy_filename = "远端文件名"
 deploy_command = "可选部署命令模板"
@@ -568,13 +567,11 @@ listen_host = "监听主机"
 listen_port = "监听端口"
 target_host = "目标主机"
 target_port = "目标端口"
-filter = "按标签搜索转发规则……"
 
 [placeholders.snippets]
 description_example = "示例：检查网络负载"
 new_package_name = "新分组名称"
 script_body = "在这里编写脚本……"
-filter = "搜索描述、分组或脚本……"
 
 [placeholders.hosts]
 filter = "搜索连接、分组……"
@@ -583,9 +580,6 @@ filter = "搜索连接、分组……"
 local_path = "本地路径"
 remote_path = "远程路径"
 new_name = "新名称"
-
-[placeholders.trusted]
-filter = "搜索主机、指纹、算法、配置……"
 
 [placeholders.workspace]
 tab_name = "标签名"
@@ -671,18 +665,11 @@ closed = "已关闭"
 
 [session.footer]
 connected = "已连接"
-offline = "离线"
-traffic = "上传：{upload}  下载：{download}"
 
 [session.footer.tooltips]
-connection_status = "连接状态：{status}"
 monitor_panel = "切换左侧面板"
-status_message = "最新状态：{message}"
-status_message_empty = "最新状态"
-terminal_size = "终端尺寸：{size}"
-traffic = "会话流量：{traffic}"
 agent_panel = "切换聊天面板"
-connection_target = "连接目标：{target}"
+sftp_panel = "打开 SFTP 面板"
 
 [session.workspace]
 connecting_forwarding_rule = "正在连接转发规则"
@@ -1157,8 +1144,6 @@ download_selected = "下载选中的远程项"
 edit_path = "编辑路径"
 expand_transfer_children = "展开文件子任务"
 go_up = "返回上级"
-hide_progress_center = "隐藏传输进度"
-hide_remote_favorites = "隐藏远程收藏"
 pause_transfer = "暂停传输"
 refresh_local = "刷新本地文件夹"
 refresh_remote = "刷新远程文件夹"
@@ -1247,20 +1232,11 @@ delete_profile = "删除配置"
 hint = "本地终端配置只保存在本机，不参与云同步。"
 
 [hosts.page]
-groups = "分组"
-recent_connections = "最近连接"
 favorites = "收藏"
-active_connections = "活动连接"
-local_terminals = "本地终端"
 
 [hosts.empty]
-no_profiles = "还没有主机配置。点击添加按钮创建第一个配置。"
-no_filter_matches = "当前筛选条件下没有匹配的主机。"
 
 [hosts.groups]
-fallback_icon = "分组"
-host_count_one = "{count} 个主机"
-host_count_other = "{count} 个主机"
 
 [hosts.messages]
 cleared_group_filter = "已清除分组筛选"
@@ -1287,6 +1263,7 @@ fingerprint_sha256 = "指纹（SHA256）"
 previously_trusted = "此前已信任"
 
 [trusted.actions]
+refresh = "刷新可信主机"
 reject = "拒绝"
 accept_once = "仅接受一次"
 trust_and_remember = "信任并记住"
@@ -1386,6 +1363,7 @@ search_saved_hosts = "搜索已保存主机"
 default = "默认"
 
 [hosts.editor.buttons]
+save = "保存"
 test_connection = "测试连接"
 
 [hosts.editor.connection_test]
@@ -1404,21 +1382,23 @@ os_keyring_badge = "系统凭据存储"
 no_comment = "无备注"
 available_through_ssh_agent = "可通过本地 SSH Agent 使用。"
 
+[keychain.menu]
+rename = "重命名"
+delete = "删除"
+
 [keychain.page]
+refresh = "刷新密钥"
 managed_keys = "托管密钥"
 agent_identities = "SSH Agent 身份"
 
 [keychain.empty]
 no_managed_keys_title = "还没有托管密钥"
-no_managed_keys_copy = "使用悬浮新增按钮打开侧边栏，然后生成或导入第一个托管密钥。"
-no_matching_managed_keys_title = "没有匹配的托管密钥"
-no_matching_managed_keys_copy = "调整搜索文本以扩大托管密钥结果。"
+no_managed_keys_copy = "点击底部栏中的「创建托管密钥」，然后生成或导入第一个托管密钥。"
 no_agent_identities_title = "没有 SSH Agent 身份"
 no_agent_identities_copy = "启动 ssh-agent 或 Pageant，然后刷新此页以选择 SSH Agent 提供的身份。"
-no_matching_agent_identities_title = "没有匹配的 SSH Agent 身份"
-no_matching_agent_identities_copy = "调整搜索文本以扩大 SSH Agent 身份的搜索范围。"
 
 [keychain.editor]
+import_key = "导入密钥"
 title = "创建托管密钥"
 details = "密钥详情"
 os_keyring_ready = "系统凭据存储已就绪"
@@ -1513,7 +1493,6 @@ snippets = "脚本片段"
 
 [snippets.empty]
 no_snippets = "还没有脚本片段。点击新增按钮来创建第一个可复用脚本。"
-no_search_matches = "当前搜索下没有匹配的脚本片段。"
 no_package_matches = "所选分组中没有匹配的脚本片段。"
 
 [snippets.editor]
@@ -1710,7 +1689,6 @@ forwarding_rules = "转发规则"
 
 [forwarding.empty]
 no_hosts_available = "还没有可用主机。先在 Hosts 中保存一个主机后才能创建隧道。"
-no_filter_matches = "当前筛选下没有匹配的转发规则。"
 no_host_profiles = "还没有主机配置。在添加隧道规则前先到 Hosts 保存一个。"
 no_rules = "还没有转发规则。可从侧边栏添加一条。"
 
@@ -2361,3 +2339,42 @@ ask = "询问"
 execute = "执行"
 non_blocking = "非阻塞"
 full_auto = "全自动"
+
+[view_mode]
+label = "视图模式"
+grid = "网格视图"
+list = "列表视图"
+
+[hosts.home]
+connect = "连接"
+edit = "编辑"
+more = "{name} 的更多操作"
+all = "全部"
+quick = "快捷连接"
+collection = "全部主机"
+count = "{count} 台"
+empty = "尚无 SSH 主机"
+empty_group = "此分组暂无主机"
+create = "新建主机"
+local = "本地终端"
+connect_name = "连接 {name}"
+ready = "就绪"
+summary = "{remote} 台 SSH 主机 · {local} 个本地终端"
+session_info = "会话信息"
+
+[search]
+result_count = "找到 {count} 个结果"
+shortcuts = "↑ ↓ 选择 · Enter 打开 · Esc 收起"
+placeholder = "搜索主机、转发、密钥、脚本、设置…"
+clear = "清空搜索"
+recent = "最近连接"
+empty = "暂无匹配结果"
+hosts = "主机"
+keys = "密钥"
+forwards = "端口转发"
+snippets = "脚本"
+trust = "信任记录"
+settings = "设置项目"
+
+[chrome]
+new_tab = "新建标签"

@@ -48,6 +48,19 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
                 return;
             }
         }
+        if !modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.shift {
+            let consumed = weak.upgrade().is_some_and(|view| {
+                view.update(cx, |this, cx| {
+                    this.shell
+                        .search
+                        .update(cx, |search, cx| search.handle_key(key, window, cx))
+                })
+            });
+            if consumed {
+                cx.stop_propagation();
+                return;
+            }
+        }
         if key == "escape"
             && !modifiers.control
             && !modifiers.alt
@@ -454,16 +467,29 @@ impl AppView {
             },
         ));
 
+        let search = cx.new(|cx| crate::ui::features::search::SearchView::new(window, cx));
+        controller_subscriptions.push(cx.observe(&search, |_, _, cx| cx.notify()));
+        controller_subscriptions.push(cx.subscribe_in(
+            &search,
+            window,
+            |this, _, event, window, cx| this.handle_management_search_event(event, window, cx),
+        ));
         let mut view = Self {
             controllers,
             workspace,
             shell: ShellUiState {
+                topbar_tab_focus: HashMap::new(),
+                search,
+                search_tab: None,
+                search_generation: None,
+                unattached_search_query: String::new(),
                 pane_animation_frame_pending: false,
                 workspace_forms,
                 shell_state: ShellState::default(),
                 overlay_state: super::overlays::WindowOverlayState::default(),
                 status_message,
                 deferred_app_command: None,
+                dock_action_motion: Default::default(),
             },
             application_generations: generations,
             applying_application_snapshot: false,
@@ -499,13 +525,13 @@ impl AppView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.shell
+            .search
+            .update(cx, |search, cx| search.refresh_locale(window, cx));
         self.controllers.forwarding.update(cx, |controller, cx| {
             controller.refresh_localized_placeholders(window, cx);
         });
         self.controllers.snippets.update(cx, |controller, cx| {
-            controller.refresh_localized_placeholders(window, cx);
-        });
-        self.controllers.trusted_hosts.update(cx, |controller, cx| {
             controller.refresh_localized_placeholders(window, cx);
         });
         self.controllers.hosts.update(cx, |controller, cx| {

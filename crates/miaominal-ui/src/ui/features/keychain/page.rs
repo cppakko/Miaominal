@@ -1,23 +1,20 @@
 use super::*;
+use crate::ui::components::card_grid;
+use crate::ui::components::catalog_card::{
+    catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon,
+    catalog_card_surface, catalog_card_title,
+};
 use crate::ui::components::empty_state::empty_state as shell_empty_state;
-use crate::ui::components::{EDITOR_FOOTER_ACTION_HEIGHT, SegmentedSwitch, editor_button_with_id};
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
+use crate::ui::components::{EditorFooterActionTone, SegmentedSwitch, editor_footer_button};
 use crate::ui::{
     components::{SectionCard, md3_spinner},
     i18n,
 };
-use gpui_kit::component::menu::DropdownMenu as _;
+use gpui_kit::TestSupportExt as _;
+use gpui_kit::component::Disableable as _;
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu};
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
-
-const KEYCHAIN_CARD_WIDTH: f32 = 332.0;
-const KEYCHAIN_CARD_ACTION_WIDTH: f32 = 52.0;
-
-fn keychain_card_shell() -> Div {
-    let roles = miaominal_settings::current_theme().material.roles;
-
-    card_surface(roles.surface_container, 20.0)
-        .w(px(KEYCHAIN_CARD_WIDTH))
-        .p_3()
-}
 
 fn keychain_empty_state(
     title: impl Into<SharedString>,
@@ -29,42 +26,36 @@ fn keychain_empty_state(
     shell_empty_state(AppIcon::Key, format!("{}\n{}", title, copy))
 }
 
-fn managed_key_matches_filter(key: &ManagedKeyRecord, filter_text: &str) -> bool {
-    if filter_text.is_empty() {
-        return true;
-    }
-
-    let source_label = managed_key_source_label(key.source).to_ascii_lowercase();
-
-    format!(
-        "{} {} {} {} {}",
-        key.name, key.id, key.algorithm, key.public_key, source_label,
-    )
-    .to_ascii_lowercase()
-    .contains(filter_text)
-}
-
-fn agent_identity_matches_filter(
-    identity: &miaominal_ssh::AgentIdentitySummary,
-    filter_text: &str,
-) -> bool {
-    if filter_text.is_empty() {
-        return true;
-    }
-
-    format!(
-        "{} {} {} {}",
-        identity.label, identity.comment, identity.kind, identity.serialized,
-    )
-    .to_ascii_lowercase()
-    .contains(filter_text)
-}
-
 fn managed_key_source_label(source: ManagedKeySource) -> String {
     match source {
         ManagedKeySource::Generated => i18n::string("keychain.source.generated"),
         ManagedKeySource::Imported => i18n::string("keychain.source.imported"),
     }
+}
+
+fn build_managed_key_context_menu(
+    menu: PopupMenu,
+    entity: Entity<KeychainController>,
+    rename_id: String,
+    delete_id: String,
+) -> PopupMenu {
+    let rename_entity = entity.clone();
+    let delete_entity = entity;
+
+    menu.item(
+        PopupMenuItem::new(i18n::string("keychain.menu.rename")).on_click(move |_, window, cx| {
+            rename_entity.update(cx, |this, cx| {
+                this.request_managed_key_rename(&rename_id, window, cx);
+            });
+        }),
+    )
+    .item(
+        PopupMenuItem::new(i18n::string("keychain.menu.delete")).on_click(move |_, _, cx| {
+            delete_entity.update(cx, |this, cx| {
+                this.request_managed_key_delete(&delete_id, cx);
+            });
+        }),
+    )
 }
 
 fn managed_key_card(
@@ -73,145 +64,60 @@ fn managed_key_card(
 ) -> impl IntoElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
     let source_label = managed_key_source_label(key.source);
     let deploy_id = key.id.clone();
     let rename_id = key.id.clone();
     let delete_id = key.id.clone();
     let item_id = SharedString::from(format!("managed-key-card-{}", key.id.as_str()));
+    let context_entity = entity.clone();
 
-    keychain_card_shell().id(item_id).child(
-        h_flex()
-            .w_full()
-            .gap_3()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap_3()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .items_start()
-                            .gap_3()
-                            .child(page_primary_icon_tile(AppIcon::Key, 40.0, 12.0))
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_size(
-                                                miaominal_settings::FontSize::Subtitle.scaled(),
-                                            )
-                                            .line_height(miaominal_settings::scaled_line_height(
-                                                20.0,
-                                            ))
-                                            .text_color(rgb(roles.on_surface))
-                                            .child(key.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .text_color(rgb(text_muted))
-                                            .child(key.algorithm.clone()),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .flex_wrap()
-                            .child(badge(
-                                source_label,
-                                roles.surface_container_high,
-                                roles.on_surface_variant,
-                            ))
-                            .child(badge(
-                                i18n::string("keychain.card.os_keyring_badge"),
-                                roles.surface_container_high,
-                                roles.on_surface_variant,
-                            )),
-                    ),
+    catalog_card_surface()
+        .id(item_id)
+        .test_support()
+        .context_menu(move |menu, _window, _cx| {
+            build_managed_key_context_menu(
+                menu,
+                context_entity.clone(),
+                rename_id.clone(),
+                delete_id.clone(),
             )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .w(px(KEYCHAIN_CARD_ACTION_WIDTH))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        v_flex()
-                            .items_center()
-                            .justify_center()
-                            .gap_2()
-                            .child(icon_button(
-                                AppIcon::Upload,
-                                30.0,
-                                10.0,
-                                Some(roles.primary_container),
-                                Some(roles.on_primary_container),
-                                Some(roles.primary),
-                                {
-                                    let entity = entity.clone();
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.open_keychain_deploy_editor(
-                                                &deploy_id, window, cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            ))
-                            .child(icon_button(
-                                AppIcon::Edit,
-                                30.0,
-                                10.0,
-                                None,
-                                None,
-                                Some(roles.outline_variant),
-                                {
-                                    let entity = entity.clone();
-                                    move |window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.request_managed_key_rename(&rename_id, window, cx);
-                                        });
-                                    }
-                                },
-                            ))
-                            .child(icon_button(
-                                AppIcon::Close,
-                                30.0,
-                                10.0,
-                                None,
-                                None,
-                                Some(roles.outline_variant),
-                                {
-                                    let entity = entity.clone();
-                                    move |_, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.request_managed_key_delete(&delete_id, cx);
-                                        });
-                                    }
-                                },
-                            )),
-                    ),
+        })
+        .child(catalog_card_content(
+            catalog_card_icon(AppIcon::Key),
+            catalog_card_title(key.name.clone()),
+            Some(key.algorithm.clone().into()),
+            Some(
+                icon_button(
+                    AppIcon::Upload,
+                    30.0,
+                    10.0,
+                    Some(roles.primary_container),
+                    Some(roles.on_primary_container),
+                    Some(roles.primary),
+                    {
+                        let entity = entity.clone();
+                        move |window, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.open_keychain_deploy_editor(&deploy_id, window, cx);
+                            });
+                        }
+                    },
+                )
+                .into_any_element(),
             ),
-    )
+            Some(
+                catalog_card_chips()
+                    .child(catalog_card_chip(source_label, None))
+                    .child(catalog_card_chip(
+                        i18n::string("keychain.card.os_keyring_badge"),
+                        None,
+                    ))
+                    .into_any_element(),
+            ),
+        ))
 }
 
 fn agent_identity_card(identity: &miaominal_ssh::AgentIdentitySummary) -> impl IntoElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
     let comment = if identity.comment.trim().is_empty() {
         i18n::string("keychain.card.no_comment")
     } else {
@@ -222,65 +128,33 @@ fn agent_identity_card(identity: &miaominal_ssh::AgentIdentitySummary) -> impl I
         identity.serialized.as_str()
     ));
 
-    keychain_card_shell().id(item_id).child(
-        h_flex().w_full().items_start().gap_3().child(
-            v_flex()
-                .flex_1()
-                .min_w(px(0.0))
-                .gap_3()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .items_start()
-                        .gap_3()
-                        .child(page_primary_icon_tile(AppIcon::FingerPrint, 40.0, 12.0))
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Subtitle.scaled())
-                                        .line_height(miaominal_settings::scaled_line_height(20.0))
-                                        .text_color(rgb(roles.on_surface))
-                                        .child(identity.label.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                                        .text_color(rgb(text_muted))
-                                        .child(comment),
-                                ),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .flex_wrap()
-                        .child(badge(
-                            identity.kind.clone(),
-                            roles.surface_container_high,
-                            roles.on_surface_variant,
-                        ))
-                        .child(badge(
-                            i18n::string("keychain.card.available_through_ssh_agent"),
-                            roles.surface_container_high,
-                            roles.on_surface_variant,
-                        )),
-                ),
-        ),
-    )
+    catalog_card_surface()
+        .id(item_id)
+        .test_support()
+        .child(catalog_card_content(
+            catalog_card_icon(AppIcon::FingerPrint),
+            catalog_card_title(identity.label.clone()),
+            Some(comment.into()),
+            None,
+            Some(
+                catalog_card_chips()
+                    .child(catalog_card_chip(identity.kind.clone(), None))
+                    .child(catalog_card_chip(
+                        i18n::string("keychain.card.available_through_ssh_agent"),
+                        None,
+                    ))
+                    .into_any_element(),
+            ),
+        ))
 }
 
 impl KeychainController {
     pub(in crate::ui) fn render_keychain_page(
         &self,
         entity: Entity<Self>,
-        cx: &App,
+        available_width: f32,
+        _cx: &App,
     ) -> gpui_kit::AnyElement {
-        let raw_filter_text = self.forms.filter_input.read(cx).value().trim().to_string();
-        let filter_text = raw_filter_text.to_ascii_lowercase();
         let keychain_page_view = self.page_view;
         let selected_keychain_page_view_index = match keychain_page_view {
             KeychainPageView::ManagedKeys => 0,
@@ -289,11 +163,7 @@ impl KeychainController {
         let show_managed_keys = keychain_page_view == KeychainPageView::ManagedKeys;
         let show_agent_identities = keychain_page_view == KeychainPageView::AgentIdentities;
 
-        let mut visible_managed_keys: Vec<_> = self
-            .managed_keys
-            .iter()
-            .filter(|key| managed_key_matches_filter(key, &filter_text))
-            .collect();
+        let mut visible_managed_keys: Vec<_> = self.managed_keys.iter().collect();
         visible_managed_keys.sort_by(|left, right| {
             left.name
                 .to_ascii_lowercase()
@@ -301,11 +171,7 @@ impl KeychainController {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
-        let mut visible_agent_identities: Vec<_> = self
-            .agent_identities
-            .iter()
-            .filter(|identity| agent_identity_matches_filter(identity, &filter_text))
-            .collect();
+        let mut visible_agent_identities: Vec<_> = self.agent_identities.iter().collect();
         visible_agent_identities.sort_by(|left, right| {
             left.label
                 .to_ascii_lowercase()
@@ -313,52 +179,43 @@ impl KeychainController {
                 .then_with(|| left.serialized.cmp(&right.serialized))
         });
 
-        let header =
-            v_flex()
-                .w_full()
-                .gap_6()
-                .px_5()
-                .child(
-                    h_flex().w_full().justify_center().child(
-                        h_flex()
-                            .w_full()
-                            .max_w(px(576.0))
-                            .child(search_filter_input(
-                                &self.forms.filter_input,
-                                SearchInputStyle::Pill,
-                                None,
-                            )),
-                    ),
-                )
-                .child(
-                    h_flex().w_full().justify_center().child(
-                        SegmentedSwitch::new("keychain-view-tabs")
-                            .selected_index(selected_keychain_page_view_index)
-                            .width(332.0)
-                            .height(34.0)
-                            .padding(2.0)
-                            .item(i18n::string("keychain.page.managed_keys"))
-                            .item(i18n::string("keychain.page.agent_identities"))
-                            .on_click({
-                                let entity = entity.clone();
-                                move |index, _, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.page_view = match index {
-                                            0 => KeychainPageView::ManagedKeys,
-                                            _ => KeychainPageView::AgentIdentities,
-                                        };
-                                        cx.notify();
-                                    });
-                                }
-                            }),
-                    ),
-                );
+        let header = v_flex()
+            .w_full()
+            .gap_6()
+            .px(space(ShellMetrics::CATALOG_INSET))
+            .child(
+                h_flex().w_full().justify_center().child(
+                    SegmentedSwitch::new("keychain-view-tabs")
+                        .selected_index(selected_keychain_page_view_index)
+                        .width(332.0_f32.min(
+                            miaominal_settings::scaled_font_size(available_width.max(1.0)).as_f32(),
+                        ))
+                        .height(34.0)
+                        .padding(2.0)
+                        .item(i18n::string("keychain.page.managed_keys"))
+                        .item(i18n::string("keychain.page.agent_identities"))
+                        .on_click({
+                            let entity = entity.clone();
+                            move |index, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.page_view = match index {
+                                        0 => KeychainPageView::ManagedKeys,
+                                        _ => KeychainPageView::AgentIdentities,
+                                    };
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                ),
+            );
 
         let content = v_flex()
             .w_full()
+            .min_w_0()
+            .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+            .mx_auto()
             .gap_6()
-            .px_5()
-            .pb_8()
+            .pb(space(112.0))
             .when(show_managed_keys, |this| {
                 this.child(
                     v_flex()
@@ -375,24 +232,15 @@ impl KeychainController {
                                 ))),
                         )
                         .child(if visible_managed_keys.is_empty() {
-                            if self.managed_keys.is_empty() {
-                                keychain_empty_state(
-                                    i18n::string("keychain.empty.no_managed_keys_title"),
-                                    i18n::string("keychain.empty.no_managed_keys_copy"),
-                                )
-                                .into_any_element()
-                            } else {
-                                keychain_empty_state(
-                                    i18n::string("keychain.empty.no_matching_managed_keys_title"),
-                                    i18n::string("keychain.empty.no_matching_managed_keys_copy"),
-                                )
-                                .into_any_element()
-                            }
+                            keychain_empty_state(
+                                i18n::string("keychain.empty.no_managed_keys_title"),
+                                i18n::string("keychain.empty.no_managed_keys_copy"),
+                            )
+                            .into_any_element()
                         } else {
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_4()
+                            card_grid(available_width)
+                                .id("keychain-managed-grid")
+                                .test_support()
                                 .children(visible_managed_keys.into_iter().map(|key| {
                                     managed_key_card(key, entity.clone()).into_any_element()
                                 }))
@@ -416,28 +264,15 @@ impl KeychainController {
                                 ))),
                         )
                         .child(if visible_agent_identities.is_empty() {
-                            if self.agent_identities.is_empty() {
-                                keychain_empty_state(
-                                    i18n::string("keychain.empty.no_agent_identities_title"),
-                                    i18n::string("keychain.empty.no_agent_identities_copy"),
-                                )
-                                .into_any_element()
-                            } else {
-                                keychain_empty_state(
-                                    i18n::string(
-                                        "keychain.empty.no_matching_agent_identities_title",
-                                    ),
-                                    i18n::string(
-                                        "keychain.empty.no_matching_agent_identities_copy",
-                                    ),
-                                )
-                                .into_any_element()
-                            }
+                            keychain_empty_state(
+                                i18n::string("keychain.empty.no_agent_identities_title"),
+                                i18n::string("keychain.empty.no_agent_identities_copy"),
+                            )
+                            .into_any_element()
                         } else {
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_4()
+                            card_grid(available_width)
+                                .id("keychain-agent-grid")
+                                .test_support()
                                 .children(visible_agent_identities.into_iter().map(|identity| {
                                     agent_identity_card(identity).into_any_element()
                                 }))
@@ -450,35 +285,55 @@ impl KeychainController {
             .size_full()
             .child(
                 v_flex().size_full().gap_6().child(header).child(
-                    div()
-                        .flex_1()
-                        .w_full()
-                        .min_h_0()
-                        .child(div().size_full().overflow_y_scrollbar().child(content)),
+                    div().flex_1().w_full().min_h_0().child(
+                        div()
+                            .size_full()
+                            .overflow_y_scrollbar()
+                            .child(div().px(space(ShellMetrics::CATALOG_INSET)).child(content)),
+                    ),
                 ),
             )
             .into_any_element()
     }
 
-    pub(in crate::ui) fn render_keychain_fab(&self, entity: Entity<Self>) -> impl IntoElement {
+    /// Refresh and create commands, docked into the bottom navigation bar.
+    pub(in crate::ui) fn render_keychain_dock_action(
+        &self,
+        entity: Entity<Self>,
+        cx: &App,
+    ) -> AnyElement {
         h_flex()
-            .gap_3()
-            .child(fab_icon_button(AppIcon::Rotate, {
-                let entity = entity.clone();
-                move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.refresh_keychain_data(cx);
-                    });
-                }
-            }))
-            .child(fab_button(move |window, cx| {
-                entity.update(cx, |this, cx| this.open_keychain_editor(window, cx));
-            }))
+            .gap(space(8.0))
+            .child(dock_icon_action_button(
+                "keychain-refresh-fab",
+                AppIcon::Rotate,
+                i18n::string("keychain.page.refresh"),
+                false,
+                cx,
+                {
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.refresh_keychain_data(cx);
+                        });
+                    }
+                },
+            ))
+            .child(dock_action_button(
+                "keychain-create-fab",
+                i18n::string("keychain.editor.title"),
+                cx,
+                move |window, cx| {
+                    entity.update(cx, |this, cx| this.open_keychain_editor(window, cx));
+                },
+            ))
+            .into_any_element()
     }
 
     pub(in crate::ui) fn render_keychain_editor_sidebar(
         &self,
         entity: Entity<Self>,
+        cx: &App,
     ) -> impl IntoElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -768,18 +623,21 @@ impl KeychainController {
                 ),
         );
 
-        let generate_button = editor_button_with_id(
+        let generate_disabled = !store_available || generation_in_progress;
+        let generate_button = editor_footer_button(
             "keychain-editor-footer-generate",
             i18n::string(if generation_in_progress {
                 "keychain.editor.generating"
             } else {
                 "keychain.editor.generate_key"
             }),
-            true,
-            true,
-            !store_available || generation_in_progress,
+            None,
+            EditorFooterActionTone::Text,
+            cx,
             |_, _| {},
         )
+        .disabled(generate_disabled)
+        .opacity(if generate_disabled { 0.38 } else { 1.0 })
         .child(Icon::new(IconName::ChevronDown).xsmall())
         .dropdown_menu({
             let menu_entity = entity.clone();
@@ -816,80 +674,82 @@ impl KeychainController {
 
         let import_footer = editor_footer_actions(vec![
             generate_button.into_any_element(),
-            div()
-                .id("keychain-editor-footer-cancel")
-                .child(icon_button(
-                    AppIcon::Close,
-                    EDITOR_FOOTER_ACTION_HEIGHT,
-                    12.0,
-                    None,
-                    None,
-                    Some(roles.outline_variant),
-                    {
-                        let entity = entity.clone();
-                        move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.close_keychain_editor(cx);
-                            });
+            editor_footer_button(
+                "keychain-editor-footer-cancel",
+                i18n::string("dialogs.common.cancel"),
+                Some(AppIcon::Close),
+                EditorFooterActionTone::Text,
+                cx,
+                {
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.close_keychain_editor(cx);
+                        });
+                    }
+                },
+            )
+            .into_any_element(),
+            editor_footer_button(
+                "keychain-editor-footer-import",
+                i18n::string("keychain.editor.import_key"),
+                Some(AppIcon::Upload),
+                EditorFooterActionTone::Primary,
+                cx,
+                {
+                    let entity = entity.clone();
+                    move |window, cx| {
+                        if !import_available {
+                            return;
                         }
-                    },
-                ))
-                .into_any_element(),
-            div()
-                .id("keychain-editor-footer-import")
-                .child(icon_button(
-                    AppIcon::Upload,
-                    EDITOR_FOOTER_ACTION_HEIGHT,
-                    12.0,
-                    Some(if import_available {
-                        roles.primary
-                    } else {
-                        roles.surface_container_highest
-                    }),
-                    Some(if import_available {
-                        roles.on_primary
-                    } else {
-                        roles.on_surface_variant
-                    }),
-                    Some(if import_available {
-                        roles.primary
-                    } else {
-                        roles.outline_variant
-                    }),
-                    {
-                        let entity = entity.clone();
-                        move |window, cx| {
-                            if !import_available {
-                                return;
-                            }
 
-                            entity.update(cx, |this, cx| {
-                                this.import_managed_key(window, cx);
-                            });
-                        }
-                    },
-                ))
-                .into_any_element(),
+                        entity.update(cx, |this, cx| {
+                            this.import_managed_key(window, cx);
+                        });
+                    }
+                },
+            )
+            .disabled(!import_available)
+            .opacity(if import_available { 1.0 } else { 0.38 })
+            .into_any_element(),
         ]);
 
         let deploy_footer = editor_footer_actions(vec![
+            editor_footer_button(
+                "keychain-deploy-footer-cancel",
+                i18n::string("dialogs.common.cancel"),
+                Some(AppIcon::Close),
+                EditorFooterActionTone::Text,
+                cx,
+                {
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.close_keychain_editor(cx);
+                        });
+                    }
+                },
+            )
+            .into_any_element(),
             if deploy_in_progress {
                 div()
                     .id("keychain-editor-footer-deploy-spinner")
-                    .min_w(px(116.0))
-                    .min_h(px(32.0))
+                    .min_w(space(116.0))
+                    .min_h(space(ShellMetrics::EDITOR_ACTION_HEIGHT))
                     .flex()
                     .items_center()
                     .justify_center()
                     .child(md3_spinner(18.0))
                     .into_any_element()
             } else {
-                editor_button_with_id(
+                let deploy_disabled =
+                    selected_deploy_key.is_none() || deployable_profile_count == 0;
+                editor_footer_button(
                     "keychain-editor-footer-deploy",
                     i18n::string("keychain.deploy.deploy_button"),
-                    true,
-                    true,
-                    selected_deploy_key.is_none() || deployable_profile_count == 0,
+                    Some(AppIcon::Upload),
+                    EditorFooterActionTone::Primary,
+                    cx,
                     {
                         let entity = entity.clone();
                         move |window, cx| {
@@ -899,27 +759,10 @@ impl KeychainController {
                         }
                     },
                 )
+                .disabled(deploy_disabled)
+                .opacity(if deploy_disabled { 0.38 } else { 1.0 })
                 .into_any_element()
             },
-            div()
-                .id("keychain-deploy-footer-cancel")
-                .child(icon_button(
-                    AppIcon::Close,
-                    EDITOR_FOOTER_ACTION_HEIGHT,
-                    12.0,
-                    None,
-                    None,
-                    Some(roles.outline_variant),
-                    {
-                        let entity = entity.clone();
-                        move |_, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.close_keychain_editor(cx);
-                            });
-                        }
-                    },
-                ))
-                .into_any_element(),
         ]);
 
         div()
@@ -927,6 +770,7 @@ impl KeychainController {
             .w(px(EDITOR_DRAWER_WIDTH))
             .min_w(px(360.0))
             .h_full()
+            .rounded(space(ShellMetrics::CARD_RADIUS))
             .bg(rgb(roles.surface_container))
             .child(
                 v_flex()

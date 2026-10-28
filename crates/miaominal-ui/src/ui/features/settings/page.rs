@@ -1,5 +1,6 @@
 use super::*;
 use crate::ui::assets::AppIcon;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
     FontFamilyPickerState, SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select,
     md3_spinner,
@@ -22,7 +23,7 @@ use miaominal_ssh::SshBridgeStatus;
 use miaominal_sync::SyncProvider;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsPageId {
+pub(super) enum SettingsPageId {
     Appearance,
     Connections,
     OpenSshIntegration,
@@ -34,7 +35,10 @@ enum SettingsPageId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsGroupId {
+pub(super) enum SettingsGroupId {
+    Language,
+    Typography,
+    Theme,
     RecentConnections,
     Monitoring,
     Tabs,
@@ -43,6 +47,22 @@ enum SettingsGroupId {
     SshBridgeIntegration,
     SshBridgeSecurityPolicy,
     SshBridgeSecurityPending,
+    WorkspaceKeys,
+    TerminalKeys,
+    Mouse,
+    AiProviders,
+    WebSearch,
+    SyncStatus,
+    AutoSync,
+    SyncEncryption,
+    SyncProvider,
+    LocalOnly,
+    Vault,
+    Overview,
+    Licenses,
+    Onboarding,
+    DataDirectory,
+    Reset,
 }
 
 struct NamedSettingPage {
@@ -55,7 +75,7 @@ impl NamedSettingPage {
     fn new(id: SettingsPageId, page: SettingPage) -> Self {
         Self {
             id,
-            group_ids: Vec::new(),
+            group_ids: super::search::groups_for_page(id),
             page,
         }
     }
@@ -82,6 +102,7 @@ fn settings_destination_index(
             SettingsPageId::OpenSshIntegration,
             SettingsGroupId::SshBridgeSecurityPending,
         ),
+        SettingsDestination::SearchItem(id) => super::search::search_destination(id)?,
         SettingsDestination::Sync => {
             let page_ix = pages
                 .iter()
@@ -112,17 +133,48 @@ pub(in crate::ui) fn render_settings_page(
     let initial_selection =
         destination.and_then(|destination| settings_destination_index(&pages, destination));
     let settings_id = format!("app-settings-{settings_instance_generation}");
+    // Blend the built-in settings sidebar into the shell canvas: drop its own
+    // panel background and right border so it reads as a continuation of the
+    // navigation rail instead of a separate block.
+    let sidebar_style = gpui_kit::StyleRefinement::default()
+        .bg(gpui_kit::transparent_black())
+        .border_0();
+    let header_style = gpui_kit::StyleRefinement::default().pt_2().pb_1();
     let settings = Settings::new(settings_id)
         .with_size(Size::Large)
         .with_group_variant(GroupBoxVariant::Outline)
-        .sidebar_width(px(220.0));
+        .sidebar_width(px(220.0))
+        .sidebar_style(&sidebar_style)
+        .header_style(&header_style);
     let settings = match initial_selection {
         Some(index) => settings.default_selected_index(index),
         None => settings,
     };
-    settings
+    let settings = settings
         .pages(pages.into_iter().map(|page| page.page))
+        .into_any_element();
+
+    // Let the settings content extend underneath the floating bottom
+    // navigation like every other page; the end of each page's list gets its
+    // clearance from `with_nav_clearance`.
+    div()
+        .size_full()
+        .min_h_0()
+        .child(settings)
         .into_any_element()
+}
+
+/// Appends a spacer footer to the last group of a settings page so the final
+/// items can scroll clear of the floating bottom navigation.
+fn with_nav_clearance(mut groups: Vec<SettingGroup>) -> Vec<SettingGroup> {
+    if let Some(last) = groups.pop() {
+        groups.push(last.footer(|_, _| {
+            // The group's own vertical padding already provides part of the
+            // clearance.
+            div().h(space(ShellMetrics::NAV_CONTENT_SAFE_AREA - 32.0))
+        }));
+    }
+    groups
 }
 
 fn setting_pages(settings: Entity<SettingsController>) -> Vec<NamedSettingPage> {
@@ -158,7 +210,7 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
         .description(i18n::string("settings.pages.appearance.description"))
         .default_open(true)
         .resettable(false)
-        .groups(vec![
+        .groups(with_nav_clearance(vec![
             SettingGroup::new()
                 .title(i18n::string("settings.appearance.language_group.title"))
                 .description(i18n::string(
@@ -308,7 +360,7 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                     .layout(Axis::Vertical)
                     .description(i18n::string("settings.appearance.seed_color.description")),
                 ]),
-        ])
+        ]))
 }
 
 fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
@@ -425,7 +477,7 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
     let page = SettingPage::new(i18n::string("settings.pages.connections.title"))
         .description(i18n::string("settings.pages.connections.description"))
         .resettable(false)
-        .groups(groups);
+        .groups(with_nav_clearance(groups));
     NamedSettingPage {
         id: SettingsPageId::Connections,
         group_ids,
@@ -627,7 +679,7 @@ fn openssh_page(settings: Entity<SettingsController>) -> NamedSettingPage {
             "settings.pages.openssh_integration.description",
         ))
         .resettable(false)
-        .groups(groups);
+        .groups(with_nav_clearance(groups));
     NamedSettingPage {
         id: SettingsPageId::OpenSshIntegration,
         group_ids,
@@ -1361,6 +1413,33 @@ mod ssh_bridge_tests {
         assert_eq!(index.page_ix, 1);
         assert_eq!(index.group_ix, None);
     }
+
+    #[test]
+    fn search_destinations_follow_named_pages_and_groups_after_reordering() {
+        let pages = vec![
+            NamedSettingPage::new(SettingsPageId::Sync, SettingPage::new("Sync")),
+            NamedSettingPage {
+                id: SettingsPageId::Appearance,
+                group_ids: vec![
+                    SettingsGroupId::Theme,
+                    SettingsGroupId::Language,
+                    SettingsGroupId::Typography,
+                ],
+                page: SettingPage::new("Appearance"),
+            },
+        ];
+        let index = settings_destination_index(
+            &pages,
+            SettingsDestination::SearchItem("settings.appearance.interface_font_size.label"),
+        )
+        .unwrap();
+        assert_eq!(index.page_ix, 1);
+        assert_eq!(index.group_ix, Some(2));
+        assert!(
+            settings_destination_index(&pages, SettingsDestination::SearchItem("deleted-setting"))
+                .is_none()
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -1541,7 +1620,7 @@ fn about_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.about.title"))
         .description(i18n::string("settings.pages.about.description"))
         .resettable(false)
-        .groups(vec![
+        .groups(with_nav_clearance(vec![
             SettingGroup::new()
                 .title(i18n::string("settings.about.overview.title"))
                 .item(SettingItem::render(|_, _, _| {
@@ -1639,7 +1718,7 @@ fn about_page(settings: Entity<SettingsController>) -> SettingPage {
                     )
                     .description(i18n::string("settings.about.reset_local.description")),
                 ),
-        ])
+        ]))
 }
 
 #[derive(Clone)]
@@ -2620,7 +2699,7 @@ fn ai_providers_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.ai_providers.title"))
         .description(i18n::string("settings.pages.ai_providers.description"))
         .resettable(false)
-        .groups(vec![
+        .groups(with_nav_clearance(vec![
             SettingGroup::new()
                 .title(i18n::string("settings.ai_providers.providers_group.title"))
                 .description(i18n::string(
@@ -2640,7 +2719,7 @@ fn ai_providers_page(settings: Entity<SettingsController>) -> SettingPage {
                     .description(i18n::string("settings.ai_providers.saved.description")),
                 ),
             web_search_settings_group(settings),
-        ])
+        ]))
 }
 
 fn web_search_settings_group(settings: Entity<SettingsController>) -> SettingGroup {
@@ -2824,7 +2903,7 @@ fn key_bindings_page(entity: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.key_bindings.title"))
         .description(i18n::string("settings.pages.key_bindings.description"))
         .resettable(false)
-        .groups(vec![
+        .groups(with_nav_clearance(vec![
             SettingGroup::new()
                 .title(i18n::string("settings.key_bindings.workspace_group.title"))
                 .description(i18n::string(
@@ -2898,7 +2977,7 @@ fn key_bindings_page(entity: Entity<SettingsController>) -> SettingPage {
                         "settings.key_bindings.shift_right_click.description",
                     )),
                 ]),
-        ])
+        ]))
 }
 
 fn key_binding_items(
@@ -3256,13 +3335,20 @@ fn sync_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.sync.title"))
         .description(i18n::string("settings.pages.sync.description"))
         .resettable(false)
-        .groups(vec![
-            sync_status_group(settings.clone()),
-            sync_auto_sync_group(settings.clone()),
-            sync_encryption_group(settings.clone()),
-            sync_provider_group(settings),
-            sync_local_only_group(),
-        ])
+        .groups(sync_groups(settings))
+}
+
+/// The local-only group has no items and is never shown, so the nav clearance
+/// goes on the last visible group before it.
+fn sync_groups(settings: Entity<SettingsController>) -> Vec<SettingGroup> {
+    let mut groups = with_nav_clearance(vec![
+        sync_status_group(settings.clone()),
+        sync_auto_sync_group(settings.clone()),
+        sync_encryption_group(settings.clone()),
+        sync_provider_group(settings),
+    ]);
+    groups.push(sync_local_only_group());
+    groups
 }
 
 fn sync_local_only_group() -> SettingGroup {
@@ -3275,7 +3361,7 @@ fn vault_page(settings: Entity<SettingsController>) -> SettingPage {
     SettingPage::new(i18n::string("settings.pages.vault.title"))
         .description(i18n::string("settings.pages.vault.description"))
         .resettable(false)
-        .groups(vec![sync_vault_group(settings)])
+        .groups(with_nav_clearance(vec![sync_vault_group(settings)]))
 }
 
 fn sync_vault_group(settings: Entity<SettingsController>) -> SettingGroup {

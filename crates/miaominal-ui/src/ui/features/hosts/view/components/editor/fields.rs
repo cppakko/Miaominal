@@ -1,5 +1,7 @@
 use crate::ui::assets::AppIcon;
-use crate::ui::components::{TextInputSurface, icon_button, surface_text_input_stack};
+use crate::ui::components::{
+    TextInputSurface, icon_button, surface_text_input_action_stack, surface_text_input_stack,
+};
 use crate::ui::i18n;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{h_flex, v_flex};
@@ -63,7 +65,7 @@ pub(super) fn editor_environment_variable_row(
         h_flex()
             .w_full()
             .gap_2()
-            .items_end()
+            .items_start()
             .child(
                 div()
                     .flex_1()
@@ -75,29 +77,34 @@ pub(super) fn editor_environment_variable_row(
                         false,
                     )),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(surface_text_input_stack(
-                        i18n::string("hosts.editor.environment_variables.value_label"),
-                        value_input,
-                        TextInputSurface::Low,
-                        false,
-                    )),
-            )
-            .when(show_remove, |this| {
-                this.child(div().flex_shrink_0().child(icon_button(
-                    AppIcon::Close,
-                    30.0,
-                    10.0,
-                    None,
-                    None,
-                    Some(roles.outline_variant),
-                    move |window, cx| {
-                        on_remove(window, cx);
-                    },
-                )))
-            }),
+            .child(div().flex_1().min_w(px(0.0)).child(if show_remove {
+                surface_text_input_action_stack(
+                    i18n::string("hosts.editor.environment_variables.value_label"),
+                    value_input,
+                    TextInputSurface::Low,
+                    false,
+                    icon_button(
+                        AppIcon::Close,
+                        30.0,
+                        10.0,
+                        None,
+                        None,
+                        Some(roles.outline_variant),
+                        move |window, cx| {
+                            on_remove(window, cx);
+                        },
+                    )
+                    .into_any_element(),
+                )
+                .into_any_element()
+            } else {
+                surface_text_input_stack(
+                    i18n::string("hosts.editor.environment_variables.value_label"),
+                    value_input,
+                    TextInputSurface::Low,
+                    false,
+                )
+                .into_any_element()
+            })),
     )
 }

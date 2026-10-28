@@ -24,3 +24,5 @@ pub(in crate::ui) mod overlay;
 pub(in crate::ui) mod preferences;
 pub(in crate::ui) mod proxies;
 pub(in crate::ui) mod settings;
+
+pub(in crate::ui) mod search;

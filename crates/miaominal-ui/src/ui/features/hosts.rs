@@ -2738,9 +2738,6 @@ impl HostsController {
         self.window_handle
     }
 
-    pub(in crate::ui) fn panel_forms(&self) -> HostsPanelForms {
-        self.panel_forms.clone()
-    }
     pub(in crate::ui) fn editor_state(&self) -> HostEditorState {
         self.editor_state.borrow().clone()
     }

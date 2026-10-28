@@ -1,16 +1,23 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::animation::render_basic_dialog;
+use crate::ui::components::card_grid;
+use crate::ui::components::catalog_card::{
+    catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon,
+    catalog_card_surface, catalog_card_title,
+};
 use crate::ui::components::empty_state::empty_page;
-use crate::ui::components::metrics::{EDITOR_DRAWER_WIDTH, TRUSTED_CARD_WIDTH};
+use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
-    BasicDialogActionTone, EDITOR_FOOTER_ACTION_HEIGHT, SearchInputStyle, badge,
-    basic_dialog_action_button, card_surface, editor_button_with_id, editor_footer_actions,
-    fab_icon_button, icon_button, page_primary_icon_tile, page_section_title, search_filter_input,
+    BasicDialogActionTone, EDITOR_FOOTER_ACTION_HEIGHT, badge, basic_dialog_action_button,
+    dock_icon_action_button, editor_button_with_id, editor_footer_actions, icon_button,
+    page_primary_icon_tile, page_section_title,
 };
 use crate::ui::features::trusted_hosts::{
     PendingKnownHostDeleteState, TrustedHostFilter, TrustedHostsController,
 };
 use crate::ui::i18n;
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -81,31 +88,6 @@ fn derive_trusted_known_hosts(
             }
         })
         .collect()
-}
-
-fn trusted_host_matches_query(view: &TrustedKnownHostView, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return true;
-    }
-
-    let mut haystack = format!(
-        "{} {} {} {} {}",
-        view.entry.host,
-        view.entry.port,
-        view.entry.algorithm,
-        view.entry.fingerprint,
-        view.address()
-    )
-    .to_lowercase();
-    for profile in &view.linked_profiles {
-        haystack.push(' ');
-        haystack.push_str(&profile.name.to_lowercase());
-        haystack.push(' ');
-        haystack.push_str(&profile.summary.to_lowercase());
-    }
-
-    haystack.contains(&query)
 }
 
 fn trusted_host_matches_filter(view: &TrustedKnownHostView, filter: TrustedHostFilter) -> bool {
@@ -238,28 +220,26 @@ fn trusted_host_card(
         view.entry.fingerprint.as_str()
     ));
 
-    let mut badges_row = h_flex()
-        .gap_2()
-        .flex_wrap()
-        .child(badge(
-            view.entry.algorithm.clone(),
-            roles.surface_container_high,
-            roles.on_surface_variant,
-        ))
-        .child(badge(
+    // One non-wrapping row: chips shrink instead of spilling out of the card.
+    let badges_row = catalog_card_chips()
+        .child(catalog_card_chip(view.entry.algorithm.clone(), None))
+        .child(catalog_card_chip(
             i18n::string_args("trusted.page.port_badge", &[("port", &port.to_string())]),
-            roles.surface_container_high,
-            roles.on_surface_variant,
-        ));
-    if let Some(risk) = risk_badge(&view) {
-        badges_row = badges_row.child(risk);
-    }
+            None,
+        ))
+        .when(view.duplicate_count > 1, |row| {
+            row.child(catalog_card_chip(
+                i18n::string_args(
+                    "trusted.badges.duplicates",
+                    &[("count", &view.duplicate_count.to_string())],
+                ),
+                Some(rgb(roles.error).into()),
+            ))
+        });
 
-    card_surface(roles.surface_container, 20.0)
+    catalog_card_surface()
         .id(item_id)
-        .w(px(TRUSTED_CARD_WIDTH))
-        .min_h(px(96.0))
-        .p_4()
+        .test_support()
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, {
             let controller = controller.clone();
@@ -271,29 +251,15 @@ fn trusted_host_card(
                 });
             }
         })
-        .child(
-            h_flex()
-                .size_full()
-                .gap_3()
-                .items_start()
-                .child(page_primary_icon_tile(AppIcon::FingerPrint, 44.0, 14.0))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .gap_3()
-                        .child(
-                            div()
-                                .min_w(px(0.0))
-                                .text_size(miaominal_settings::FontSize::Subtitle.scaled())
-                                .line_height(miaominal_settings::scaled_line_height(20.0))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(roles.on_surface))
-                                .child(address),
-                        )
-                        .child(badges_row),
-                ),
-        )
+        .child(catalog_card_content(
+            catalog_card_icon(AppIcon::FingerPrint),
+            catalog_card_title(address),
+            view.linked_profiles
+                .first()
+                .map(|profile| SharedString::from(profile.name.clone())),
+            None,
+            Some(badges_row.into_any_element()),
+        ))
         .on_mouse_up(MouseButton::Right, move |_, _, cx| {
             let host = copy_host.clone();
             controller.update(cx, |controller, cx| {
@@ -306,6 +272,7 @@ fn trusted_detail_panel(
     controller: Entity<TrustedHostsController>,
     view: &TrustedKnownHostView,
     path: String,
+    focus: gpui_kit::FocusHandle,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let address = view.address();
@@ -478,9 +445,11 @@ fn trusted_detail_panel(
 
     div()
         .id("known-hosts-detail-sidebar")
+        .track_focus(&focus)
         .w(px(EDITOR_DRAWER_WIDTH))
         .min_w(px(360.0))
         .h_full()
+        .rounded(space(ShellMetrics::CARD_RADIUS))
         .bg(rgb(roles.surface_container))
         .child(
             v_flex()
@@ -625,9 +594,9 @@ impl TrustedHostsController {
     pub(in crate::ui) fn render_trusted_page(
         &self,
         controller: Entity<Self>,
-        cx: &App,
+        available_width: f32,
+        _cx: &App,
     ) -> gpui_kit::AnyElement {
-        let trusted_filter_input = self.filter_input.clone();
         let entries = self.known_hosts_entries().clone();
         let profiles = self.catalog.profiles();
         let views = derive_trusted_known_hosts(&entries, &profiles);
@@ -652,11 +621,9 @@ impl TrustedHostsController {
                 .into_any_element();
         }
 
-        let query = trusted_filter_input.read(cx).value().to_string();
         let filter = self.filter;
         let filtered: Vec<_> = views
             .iter()
-            .filter(|view| trusted_host_matches_query(view, &query))
             .filter(|view| trusted_host_matches_filter(view, filter))
             .cloned()
             .collect();
@@ -670,7 +637,7 @@ impl TrustedHostsController {
         div()
             .size_full()
             .overflow_hidden()
-            .p_5()
+            .py_5()
             .child(
                 div()
                     .min_w(px(0.0))
@@ -681,19 +648,13 @@ impl TrustedHostsController {
                     .gap_5()
                     .child(
                         v_flex()
+                            .w_full()
+                            .max_w(space(
+                                ShellMetrics::CONTENT_MAX_WIDTH + ShellMetrics::CATALOG_INSET * 2.0,
+                            ))
+                            .mx_auto()
+                            .px(space(ShellMetrics::CATALOG_INSET))
                             .gap_4()
-                            .child(
-                                h_flex().w_full().justify_center().child(
-                                    h_flex()
-                                        .w_full()
-                                        .max_w(px(576.0))
-                                        .child(search_filter_input(
-                                            &trusted_filter_input,
-                                            SearchInputStyle::Pill,
-                                            None,
-                                        )),
-                                ),
-                            )
                             .child(page_section_title(i18n::string(
                                 "trusted.page.trust_center",
                             )))
@@ -753,9 +714,9 @@ impl TrustedHostsController {
                                     )),
                             ),
                     )
-                    .child(
-                        div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
-                            div().size_full().overflow_y_scrollbar().child(
+                    .child(div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
+                        div().size_full().overflow_y_scrollbar().child(
+                            div().px(space(ShellMetrics::CATALOG_INSET)).child(
                                 if filtered.is_empty() {
                                     empty_page(
                                         AppIcon::FingerPrint,
@@ -763,11 +724,12 @@ impl TrustedHostsController {
                                     )
                                     .into_any_element()
                                 } else {
-                                    div()
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap_4()
-                                        .pb_8()
+                                    card_grid(available_width)
+                                        .id("trusted-hosts-grid")
+                                        .test_support()
+                                        .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                                        .mx_auto()
+                                        .pb(space(112.0))
                                         .children(filtered.into_iter().map(|view| {
                                             trusted_host_card(controller.clone(), view)
                                                 .into_any_element()
@@ -776,20 +738,30 @@ impl TrustedHostsController {
                                 },
                             ),
                         ),
-                    ),
+                    )),
             )
             .into_any_element()
     }
 
-    pub(in crate::ui) fn render_known_hosts_refresh_fab(
+    /// The page's refresh command, docked into the bottom navigation bar.
+    pub(in crate::ui) fn render_known_hosts_dock_action(
         &self,
         controller: Entity<Self>,
-    ) -> impl IntoElement {
-        fab_icon_button(AppIcon::Rotate, move |_, cx| {
-            controller.update(cx, |controller, cx| {
-                controller.refresh_known_hosts_with_feedback(cx);
-            });
-        })
+        cx: &App,
+    ) -> gpui_kit::AnyElement {
+        dock_icon_action_button(
+            "known-hosts-refresh-fab",
+            AppIcon::Rotate,
+            i18n::string("trusted.actions.refresh"),
+            true,
+            cx,
+            move |_, cx| {
+                controller.update(cx, |controller, cx| {
+                    controller.refresh_known_hosts_with_feedback(cx);
+                });
+            },
+        )
+        .into_any_element()
     }
 
     pub(in crate::ui) fn render_trusted_known_host_sidebar(
@@ -803,7 +775,10 @@ impl TrustedHostsController {
 
         let selected_known_host = self.selected_known_host();
         selected_trusted_host(&views, selected_known_host.as_ref())
-            .map(|view| trusted_detail_panel(controller, view, path).into_any_element())
+            .map(|view| {
+                trusted_detail_panel(controller, view, path, self.details_focus.clone())
+                    .into_any_element()
+            })
             .unwrap_or_else(|| {
                 empty_page(
                     AppIcon::FingerPrint,
@@ -893,18 +868,6 @@ mod tests {
         assert!(views[0].is_orphaned());
         assert_eq!(views[0].duplicate_count, 2);
         assert_eq!(views[1].duplicate_count, 2);
-    }
-
-    #[test]
-    fn query_matches_host_fingerprint_algorithm_and_profile() {
-        let entries = vec![known_host("example.com", 22, "ssh-ed25519", "SHA256:abc")];
-        let sessions = vec![profile("one", "Production", "example.com", 22)];
-        let views = derive_trusted_known_hosts(&entries, &sessions);
-
-        assert!(trusted_host_matches_query(&views[0], "prod"));
-        assert!(trusted_host_matches_query(&views[0], "ed25519"));
-        assert!(trusted_host_matches_query(&views[0], "sha256:abc"));
-        assert!(!trusted_host_matches_query(&views[0], "staging"));
     }
 
     #[test]

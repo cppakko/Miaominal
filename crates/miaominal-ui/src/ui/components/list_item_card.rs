@@ -1,4 +1,4 @@
-use super::card_surface;
+use super::catalog_card::catalog_card_surface;
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -12,29 +12,23 @@ pub(crate) fn list_item_card(
     actions: Option<AnyElement>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Div {
-    let roles = miaominal_settings::current_theme().material.roles;
-
-    card_surface(roles.surface_container, 16.0)
-        .w_full()
-        .px_4()
-        .py_3()
-        .child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap_3()
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .items_center()
-                        .gap_3()
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| on_click(window, cx))
-                        .child(leading)
-                        .child(body)
-                        .when_some(trailing, |this, trailing| this.child(trailing)),
-                )
-                .when_some(actions, |this, actions| this.child(actions)),
-        )
+    catalog_card_surface().child(
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_3()
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .items_center()
+                    .gap_3()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| on_click(window, cx))
+                    .child(leading)
+                    .child(body)
+                    .when_some(trailing, |this, trailing| this.child(trailing)),
+            )
+            .when_some(actions, |this, actions| this.child(actions)),
+    )
 }

@@ -1,12 +1,33 @@
 use crate::ui::assets::AppIcon;
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use gpui_kit::component::{
-    Icon, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    Icon, IconName, Selectable as _, Sizable as _,
+    button::{Button, ButtonCustomVariant, ButtonVariants as _},
 };
 use gpui_kit::{
-    App, Div, InteractiveElement, MouseButton, ParentElement, SharedString, Styled, Window, div,
-    px, rgb,
+    App, Div, ElementId, InteractiveElement, MouseButton, ParentElement, SharedString, Styled,
+    Window, div, px, rgb,
 };
+
+pub(crate) fn footer_tool_button(id: impl Into<ElementId>, selected: bool, cx: &App) -> Button {
+    let colors = ShellColors::current();
+    let highlight = colors.selected.opacity(0.24);
+    Button::new(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(colors.footer.opacity(0.0))
+                .foreground(if selected {
+                    colors.primary
+                } else {
+                    colors.muted
+                })
+                .hover(highlight)
+                .active(highlight),
+        )
+        .rounded(px(999.0))
+        .size(space(ShellMetrics::TOOL_SIZE))
+        .selected(selected)
+}
 
 #[derive(Clone)]
 pub(crate) enum IconButtonIcon {

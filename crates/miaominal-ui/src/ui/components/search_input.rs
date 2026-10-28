@@ -4,7 +4,6 @@ use gpui_kit::{AnyElement, Div, Entity, ParentElement, Styled, div, px, rgb};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchInputStyle {
-    Pill,
     Compact,
 }
 
@@ -13,33 +12,26 @@ impl SearchInputStyle {
         let roles = miaominal_settings::current_theme().material.roles;
 
         match self {
-            Self::Pill => roles.surface_container_highest,
             Self::Compact => roles.surface,
         }
     }
 
     fn height(self) -> f32 {
         match self {
-            Self::Pill => 50.0,
             Self::Compact => 38.0,
         }
     }
 
     fn radius(self) -> f32 {
         match self {
-            Self::Pill => 999.0,
             Self::Compact => 16.0,
         }
     }
 
     fn build_input(self, input: &Entity<InputState>, icon_color: u32) -> HintedInput {
-        let mut prefix = div().flex().items_center().text_color(rgb(icon_color));
-        if matches!(self, Self::Pill) {
-            prefix = prefix.pl_3();
-        }
+        let prefix = div().flex().items_center().text_color(rgb(icon_color));
 
         let field = match self {
-            Self::Pill => HintedInput::new(input).large().hint_left(px(44.0)),
             Self::Compact => HintedInput::new(input).small().hint_left(px(34.0)),
         };
 
@@ -68,7 +60,7 @@ pub(crate) fn search_filter_input(
         None => style.build_input(input, text_muted),
     };
 
-    let mut container = div()
+    div()
         .flex()
         .justify_center()
         .items_center()
@@ -76,17 +68,6 @@ pub(crate) fn search_filter_input(
         .h(px(style.height()))
         .rounded(px(style.radius()))
         .bg(rgb(style.background()))
-        .overflow_hidden();
-
-    if matches!(style, SearchInputStyle::Compact) {
-        container = container.flex().items_center().justify_center();
-    }
-
-    let container = container.child(field);
-
-    if matches!(style, SearchInputStyle::Pill) {
-        return div().w_full().pt_2().child(container);
-    }
-
-    container
+        .overflow_hidden()
+        .child(field)
 }

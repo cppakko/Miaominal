@@ -11,6 +11,10 @@ struct CustomAssets;
 
 pub struct AppAssets;
 
+pub(in crate::ui) fn terminal_icon() -> Icon {
+    Icon::default().data(include_bytes!("assets/terminal.svg"))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, IntoElement)]
 pub enum AppIcon {
     ArrowUpDown,
@@ -51,6 +55,7 @@ pub enum AppIcon {
     Vault,
     Search,
     Filter,
+    PanelLeft,
     PanelRight,
     MoreHorizontal,
     Sliders,
@@ -101,6 +106,7 @@ impl IconNamed for AppIcon {
             Self::Next => "icons/chevron-right.svg",
             Self::Search => "icons/search.svg",
             Self::Filter => "icons/funnel.svg",
+            Self::PanelLeft => "icons/panel-left.svg",
             Self::PanelRight => "icons/panel-right.svg",
             Self::MoreHorizontal => "icons/ellipsis.svg",
             Self::Sliders => "icons/sliders-horizontal.svg",

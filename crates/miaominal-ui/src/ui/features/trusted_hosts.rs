@@ -1,16 +1,15 @@
-use crate::ui::components::forms::new_input_state;
 use crate::ui::contracts::CatalogQueryPort;
 use crate::ui::contracts::commands::{AppCommand, TabOpenRequest};
 use crate::ui::contracts::navigation::PageEditorSidebarKind;
 use crate::ui::contracts::overlay::{OverlayRevisionState, OverlaySnapshot};
 use crate::ui::i18n;
-use gpui_kit::component::input::InputEvent;
-use gpui_kit::component::input::InputState;
+#[cfg(test)]
+use gpui_kit::Subscription;
 #[cfg(test)]
 use gpui_kit::div;
 #[cfg(test)]
 use gpui_kit::prelude::*;
-use gpui_kit::{ClipboardItem, EventEmitter, Subscription};
+use gpui_kit::{ClipboardItem, EventEmitter, FocusHandle};
 use gpui_kit::{Context, Entity, Window};
 use miaominal_core::known_host::KnownHostEntry;
 #[cfg(test)]
@@ -41,12 +40,11 @@ pub(in crate::ui) struct TrustedHostsController {
     store: KnownHostsStore,
     catalog: CatalogQueryPort,
     known_hosts_entries: RefCell<Vec<KnownHostEntry>>,
-    filter_input: Entity<InputState>,
     filter: TrustedHostFilter,
     selected: RefCell<Option<(String, u16, String)>>,
+    details_focus: FocusHandle,
     pending_delete: RefCell<Option<PendingKnownHostDeleteState>>,
     overlay_revisions: RefCell<OverlayRevisionState>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<AppCommand> for TrustedHostsController {}
@@ -56,42 +54,27 @@ impl TrustedHostsController {
         store: KnownHostsStore,
         entries: Vec<KnownHostEntry>,
         catalog: CatalogQueryPort,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let filter_input = new_input_state(
-            i18n::string("placeholders.trusted.filter"),
-            "",
-            false,
-            window,
-            cx,
-        );
-        let subscription = cx.subscribe(&filter_input, |_, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        });
         Self {
             store,
             catalog,
             known_hosts_entries: RefCell::new(entries),
-            filter_input,
             filter: TrustedHostFilter::All,
             selected: RefCell::new(None),
+            details_focus: cx.focus_handle(),
             pending_delete: RefCell::new(None),
             overlay_revisions: RefCell::default(),
-            _subscriptions: vec![subscription],
         }
     }
 
-    pub(in crate::ui) fn refresh_localized_placeholders(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.filter_input.update(cx, |input, cx| {
-            input.set_placeholder(i18n::string("placeholders.trusted.filter"), window, cx)
-        });
+    pub(in crate::ui) fn search_snapshot(&self) -> Vec<KnownHostEntry> {
+        self.known_hosts_entries.borrow().clone()
+    }
+
+    pub(in crate::ui) fn focus_details(&self, window: &mut Window, cx: &mut gpui_kit::App) {
+        window.focus(&self.details_focus, cx);
     }
 
     fn known_hosts_entries(&self) -> Ref<'_, Vec<KnownHostEntry>> {

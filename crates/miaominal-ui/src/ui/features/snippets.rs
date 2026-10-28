@@ -33,7 +33,6 @@ pub(in crate::ui) struct PendingSnippetDeleteState {
 
 #[derive(Clone)]
 struct SnippetsForms {
-    filter_input: Entity<InputState>,
     description_input: Entity<InputState>,
     package_input: Entity<InputState>,
     package_select: Entity<SelectState<SearchableVec<String>>>,
@@ -95,13 +94,6 @@ impl SnippetsController {
         );
 
         let forms = SnippetsForms {
-            filter_input: new_input_state(
-                i18n::string("placeholders.snippets.filter"),
-                "",
-                false,
-                window,
-                cx,
-            ),
             description_input: new_input_state(
                 i18n::string("placeholders.snippets.description_example"),
                 "",
@@ -136,11 +128,6 @@ impl SnippetsController {
         );
         let subscriptions = vec![
             cx.subscribe(&workspace_filter_input, |_, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
-            }),
-            cx.subscribe(&forms.filter_input, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
@@ -192,7 +179,6 @@ impl SnippetsController {
         );
         let snippets = self.snippets_forms();
         for (input, key) in [
-            (&snippets.filter_input, "placeholders.snippets.filter"),
             (
                 &snippets.description_input,
                 "placeholders.snippets.description_example",
