@@ -113,6 +113,7 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.ai_providers != b.ai_providers
         || a.selected_ai_provider_id != b.selected_ai_provider_id
         || a.agent_mode != b.agent_mode
+        || a.agent_auto_approve_dangerous != b.agent_auto_approve_dangerous
         || a.web_search != b.web_search
         || a.open_ssh_integration_mode != b.open_ssh_integration_mode
         || a.ssh_bridge != b.ssh_bridge

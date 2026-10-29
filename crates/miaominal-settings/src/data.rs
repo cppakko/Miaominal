@@ -93,12 +93,19 @@ impl AiReasoningEffort {
     }
 }
 
+/// Agent approval mode. Serialized names are kept from earlier versions;
+/// the meaning follows the v2 approval matrix:
+/// `Ask` = read-only, `Execute` = standard, `NonBlocking` = cautious,
+/// `FullAuto` = full auto.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiAgentMode {
+    #[serde(alias = "read_only")]
     Ask,
     #[default]
+    #[serde(alias = "standard")]
     Execute,
+    #[serde(alias = "cautious")]
     NonBlocking,
     FullAuto,
 }
@@ -795,6 +802,10 @@ pub struct AppSettings {
     pub selected_ai_provider_id: Option<String>,
     #[serde(default)]
     pub agent_mode: AiAgentMode,
+    /// In full-auto mode, also run destructive (L3) actions without asking.
+    /// Off by default; the UI shows an explicit warning.
+    #[serde(default)]
+    pub agent_auto_approve_dangerous: bool,
     #[serde(default)]
     pub web_search: WebSearchConfig,
     #[serde(default)]
@@ -966,6 +977,7 @@ impl Default for AppSettings {
             ai_providers: Vec::new(),
             selected_ai_provider_id: None,
             agent_mode: AiAgentMode::default(),
+            agent_auto_approve_dangerous: false,
             web_search: WebSearchConfig::default(),
             open_ssh_integration_mode: OpenSshIntegrationMode::Disabled,
             ssh_bridge: SshBridgeConfig::default(),
