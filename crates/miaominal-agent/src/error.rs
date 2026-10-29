@@ -4,19 +4,40 @@ pub type AgentResult<T> = Result<T, AgentError>;
 
 #[derive(Debug)]
 pub enum AgentError {
-    ApprovalRequired { tool_name: String },
+    ApprovalRequired {
+        tool_name: String,
+    },
     Cancelled,
-    Denied { tool_name: String, reason: String },
+    Denied {
+        tool_name: String,
+        reason: String,
+    },
     InvalidArguments(String),
     InvalidPath(String),
     JobNotFound(String),
     PosixOnly(String),
     ProfileNotFound(String),
     UnsupportedProvider(String),
-    UnsupportedReasoningEffort { provider: String, model: String },
+    UnsupportedReasoningEffort {
+        provider: String,
+        model: String,
+    },
     UnsupportedRoute(String),
     UnknownTool(String),
+    /// Model endpoint failure.
+    Model(ModelError),
     Backend(anyhow::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelError {
+    /// HTTP status when the failure came from a response.
+    pub status: Option<u16>,
+    pub message: String,
+    /// Transient failure worth retrying (429, 5xx, connection reset, stream cut).
+    pub retryable: bool,
+    /// The request exceeded the model context window.
+    pub context_overflow: bool,
 }
 
 impl fmt::Display for AgentError {
@@ -43,6 +64,10 @@ impl fmt::Display for AgentError {
             ),
             Self::UnsupportedRoute(route) => write!(f, "backend route `{route}` is not supported"),
             Self::UnknownTool(tool_name) => write!(f, "unknown agent tool `{tool_name}`"),
+            Self::Model(error) => match error.status {
+                Some(status) => write!(f, "model request failed ({status}): {}", error.message),
+                None => write!(f, "model request failed: {}", error.message),
+            },
             Self::Backend(error) => write!(f, "{error}"),
         }
     }

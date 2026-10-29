@@ -4,6 +4,7 @@ mod channel;
 mod chat;
 mod error;
 mod jobs;
+pub mod model;
 mod path_guard;
 mod policy;
 mod reasoning;
@@ -24,7 +25,7 @@ pub use chat::{
     AgentChatRole, AgentChatToolEvent, AgentMode, AgentToolResultContinuationRequest,
     generate_title, send_chat, stream_chat, stream_chat_after_tool_result,
 };
-pub use error::{AgentError, AgentResult};
+pub use error::{AgentError, AgentResult, ModelError};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
 pub use reasoning::{AgentReasoningSupport, agent_reasoning_support};
