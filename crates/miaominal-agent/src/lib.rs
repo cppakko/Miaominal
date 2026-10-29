@@ -3,6 +3,7 @@ mod capabilities;
 mod channel;
 mod chat;
 pub mod context;
+pub mod engine;
 mod error;
 mod jobs;
 pub mod model;
