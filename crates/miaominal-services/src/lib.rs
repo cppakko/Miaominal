@@ -45,7 +45,7 @@ pub use app_services::{AppServices, LoadedAppData};
 #[cfg(feature = "desktop")]
 pub use auto_sync::{AutoSyncIntervention, AutoSyncPhase, AutoSyncService, AutoSyncSnapshot};
 #[cfg(feature = "desktop")]
-pub use chat_service::ChatService;
+pub use chat_service::{ChatService, ChatTranscriptSink};
 pub use keychain_service::KeychainService;
 #[cfg(feature = "desktop")]
 pub use openssh_integration_service::OpenSshIntegrationService;
