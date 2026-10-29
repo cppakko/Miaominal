@@ -253,6 +253,13 @@ pub(in crate::ui) trait SessionTerminalRuntime {
     fn active_target(&self) -> Option<SessionTerminalTarget>;
     fn acquire(&self, tab_id: TabId) -> Result<TerminalLeaseGrant, TerminalLeaseError>;
     fn forward_output(&self, tab_id: TabId, bytes: Vec<u8>) -> bool;
+    /// Recent plain text (`lines` lines) and selection of a terminal tab.
+    fn text_snapshot(
+        &self,
+        tab_id: TabId,
+        lines: usize,
+        cx: &App,
+    ) -> Option<(String, Option<String>)>;
     fn close_session(&self, tab_id: TabId);
     #[cfg(test)]
     fn acquire_output_lease_for_test(
@@ -286,6 +293,14 @@ impl SessionTerminalPort {
     }
     pub(in crate::ui) fn forward_output(&self, tab_id: TabId, bytes: Vec<u8>) -> bool {
         self.0.forward_output(tab_id, bytes)
+    }
+    pub(in crate::ui) fn text_snapshot(
+        &self,
+        tab_id: TabId,
+        lines: usize,
+        cx: &App,
+    ) -> Option<(String, Option<String>)> {
+        self.0.text_snapshot(tab_id, lines, cx)
     }
     pub(in crate::ui) fn close_session(&self, tab_id: TabId) {
         self.0.close_session(tab_id)

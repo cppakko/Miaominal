@@ -739,6 +739,32 @@ impl TerminalCore {
         self.term.selection_to_string()
     }
 
+    /// Plain text of the last `max_lines` non-empty lines (scrollback
+    /// included), trailing blank lines removed. Read-only.
+    pub fn tail_text(&self, max_lines: usize) -> String {
+        let columns = self.term.columns();
+        if columns == 0 || max_lines == 0 {
+            return String::new();
+        }
+        let bottom =
+            self.term.screen_lines() as i32 - 1 - self.trailing_clear_screen_lines() as i32;
+        let topmost = -(self.term.grid().history_size() as i32);
+        if bottom < topmost {
+            return String::new();
+        }
+        let start = (bottom + 1 - max_lines as i32).max(topmost);
+        let text = self.term.bounds_to_string(
+            Point::new(Line(start), Column(0)),
+            Point::new(Line(bottom), Column(columns - 1)),
+        );
+        text.lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string()
+    }
+
     /// Selection range in viewport coordinates plus the selection style.
     pub fn selection_viewport_range(&self) -> Option<TerminalSelectionViewport> {
         let range = self.term.selection.as_ref()?.to_range(&self.term)?;
@@ -1511,11 +1537,7 @@ impl TerminalState {
         Self::with_theme_source(columns, screen_lines, ThemeSource::Fixed(theme))
     }
 
-    fn with_theme_source(
-        columns: usize,
-        screen_lines: usize,
-        theme: ThemeSource,
-    ) -> Self {
+    fn with_theme_source(columns: usize, screen_lines: usize, theme: ThemeSource) -> Self {
         let shared = Arc::new(TerminalShared {
             core: Mutex::new(TerminalCore::new(columns, screen_lines)),
             input_sequence: Mutex::new(()),
@@ -1733,6 +1755,11 @@ impl TerminalState {
 
     pub fn selection_text(&self) -> Option<String> {
         self.with_core(TerminalCore::selection_text)
+    }
+
+    /// Plain text of the most recent `max_lines` lines (for AI context).
+    pub fn tail_text(&self, max_lines: usize) -> String {
+        self.with_core(|core| core.tail_text(max_lines))
     }
 
     pub fn selection_viewport_range(&self) -> Option<TerminalSelectionViewport> {
@@ -2062,7 +2089,11 @@ impl TerminalCell {
         self
     }
 
-    fn with_legible_foreground(mut self, default_fg: TerminalColor, default_bg: TerminalColor) -> Self {
+    fn with_legible_foreground(
+        mut self,
+        default_fg: TerminalColor,
+        default_bg: TerminalColor,
+    ) -> Self {
         self.fg = legible_foreground(self.fg, self.bg, default_fg, default_bg);
         self
     }
@@ -2222,7 +2253,12 @@ fn legible_foreground(
         }
     }
 
-    for candidate in [default_fg, default_bg, TerminalColor::BLACK, TerminalColor::WHITE] {
+    for candidate in [
+        default_fg,
+        default_bg,
+        TerminalColor::BLACK,
+        TerminalColor::WHITE,
+    ] {
         let ratio = contrast_ratio(candidate, bg);
         if ratio > best_ratio {
             best = candidate;
@@ -2558,6 +2594,17 @@ mod tests {
     use std::fmt::Write as _;
 
     const RESIZE_REFLOW_TEXT: &str = "Linux localhost 7.0.10-x64v3-xanmod1 #0~20260523.ga55d99c SMP PREEMPT_DYNAMIC Sat May 23 18:51:58 UTC x86_64";
+
+    #[test]
+    fn tail_text_returns_recent_lines_including_scrollback() {
+        let terminal = TerminalState::new(20, 3);
+        terminal.push_text("one\r\ntwo\r\nthree\r\nfour\r\n\x1b[31mfive\x1b[0m");
+        wait_for_parser(&terminal);
+
+        assert_eq!(terminal.tail_text(2), "four\nfive");
+        assert_eq!(terminal.tail_text(10), "one\ntwo\nthree\nfour\nfive");
+        assert_eq!(TerminalState::new(20, 3).tail_text(5), "");
+    }
 
     #[test]
     fn conpty_cursor_query_is_surfaced_as_a_pty_write() {
@@ -3181,7 +3228,10 @@ mod tests {
         let terminal = TerminalState::new_with_theme(4, 2, initial);
 
         let before = terminal.generation();
-        assert!(!terminal.set_theme(initial), "an unchanged theme is a no-op");
+        assert!(
+            !terminal.set_theme(initial),
+            "an unchanged theme is a no-op"
+        );
         assert_eq!(terminal.generation(), before);
 
         let next = TerminalTheme {
@@ -3189,12 +3239,21 @@ mod tests {
             default_bg: initial.default_bg ^ 0x00ff_ff,
             ..initial
         };
-        assert!(terminal.set_theme(next), "a different theme reports a change");
+        assert!(
+            terminal.set_theme(next),
+            "a different theme reports a change"
+        );
         assert!(terminal.generation() > before);
 
         let snapshot = terminal.snapshot(false);
-        assert_eq!(snapshot.default_fg, TerminalColor::from_hex(next.default_fg));
-        assert_eq!(snapshot.default_bg, TerminalColor::from_hex(next.default_bg));
+        assert_eq!(
+            snapshot.default_fg,
+            TerminalColor::from_hex(next.default_fg)
+        );
+        assert_eq!(
+            snapshot.default_bg,
+            TerminalColor::from_hex(next.default_bg)
+        );
     }
 
     #[test]

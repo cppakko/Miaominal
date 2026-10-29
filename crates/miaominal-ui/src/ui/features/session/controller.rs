@@ -2023,6 +2023,21 @@ impl SessionTerminalRuntime for SessionPortsAdapter {
         })
     }
 
+    fn text_snapshot(
+        &self,
+        tab_id: TabId,
+        lines: usize,
+        cx: &App,
+    ) -> Option<(String, Option<String>)> {
+        let owner = self
+            .state
+            .borrow()
+            .owner
+            .clone()
+            .and_then(|owner| owner.upgrade())?;
+        owner.read(cx).terminal_text_snapshot(tab_id, lines)
+    }
+
     fn forward_output(&self, tab_id: TabId, bytes: Vec<u8>) -> bool {
         let tap = self
             .state

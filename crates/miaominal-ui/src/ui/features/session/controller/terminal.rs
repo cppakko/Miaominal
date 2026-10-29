@@ -316,6 +316,21 @@ impl SessionController {
         self.tab(tab_id)?.terminal.selection_text()
     }
 
+    /// Recent plain text and current selection of a terminal (AI context).
+    pub(in crate::ui) fn terminal_text_snapshot(
+        &self,
+        tab_id: TabId,
+        lines: usize,
+    ) -> Option<(String, Option<String>)> {
+        let tab = self.tab(tab_id)?;
+        Some((
+            tab.terminal.tail_text(lines),
+            tab.terminal
+                .selection_text()
+                .filter(|text| !text.trim().is_empty()),
+        ))
+    }
+
     pub(in crate::ui) fn copy_terminal_selection(
         &mut self,
         tab_id: TabId,
