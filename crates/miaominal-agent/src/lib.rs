@@ -1,7 +1,10 @@
+//! Miaominal AI assistant backend: engine loop, in-house model clients,
+//! tool set v2, policy v2, context construction and the persisted
+//! transcript. Pure Rust; no desktop or GPUI dependencies.
+
 mod backend;
 mod capabilities;
 mod channel;
-mod chat;
 pub mod context;
 pub mod engine;
 mod error;
@@ -9,7 +12,6 @@ mod jobs;
 pub mod model;
 mod path_guard;
 pub mod policy;
-mod reasoning;
 mod runtime;
 pub mod toolkit;
 mod tools;
@@ -24,17 +26,12 @@ pub use channel::{
     TerminalExecLeaseState, TerminalOutputReceiver, TerminalOutputTap, TerminalOutputTapError,
     ToolOutput,
 };
-pub use chat::{
-    AgentChatEvent, AgentChatMessage, AgentChatProvider, AgentChatProviderKind, AgentChatRequest,
-    AgentChatRole, AgentChatToolEvent, AgentMode, AgentToolResultContinuationRequest,
-    generate_title, send_chat, stream_chat, stream_chat_after_tool_result,
-};
 pub use error::{AgentError, AgentResult, ModelError};
 pub use jobs::{AgentJobId, AgentJobRegistry, AgentJobSummary, JobPollResult, JobStatus};
+pub use model::{AgentReasoningSupport, agent_reasoning_support};
 pub use policy::{AgentPolicy, AgentPolicyDecision};
-pub use reasoning::{AgentReasoningSupport, agent_reasoning_support};
 pub use runtime::agent_runtime;
-pub use tools::{AgentToolCancellation, AgentToolSet, ListEntry, ListEntryType, TOOL_NAMES};
+pub use tools::{AgentToolCancellation, ListEntry, ListEntryType};
 pub use web::{
     ConfiguredWebSearchProvider, DisabledWebSearchProvider, WebFetchConfig, WebSearchProvider,
 };

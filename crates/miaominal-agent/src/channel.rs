@@ -1192,8 +1192,6 @@ impl AgentExecChannel {
             "web_fetch" => {
                 tools::web_fetch(channel, parse_args(request.arguments)?, request.approved).await?
             }
-            "ask_user" => tools::ask_user(parse_args(request.arguments)?)?,
-            "approval" => tools::approval(parse_args(request.arguments)?)?,
             other => return Err(AgentError::UnknownTool(other.to_string())),
         };
 

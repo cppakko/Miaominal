@@ -69,7 +69,6 @@ reqwest = { version = "0.13.4", default-features = false, features = [
     "query",
     "rustls",
 ] }
-rig-core = "0.39.0"
 schemars = "1"
 resvg = "0.47.0"
 rfd = "0.17.2"

@@ -18,7 +18,6 @@ miaominal-sftp = { path = "../miaominal-sftp" }
 miaominal-storage = { path = "../miaominal-storage" }
 log.workspace = true
 reqwest.workspace = true
-rig-core.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
