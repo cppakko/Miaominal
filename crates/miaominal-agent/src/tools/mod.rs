@@ -1,5 +1,6 @@
 mod apply_patch;
 mod approval;
+mod cancel;
 mod glob;
 mod grep;
 mod list;
@@ -14,11 +15,12 @@ mod workspace_info;
 
 pub use apply_patch::apply_patch;
 pub use approval::{approval, ask_user};
+pub use cancel::AgentToolCancellation;
 pub use glob::glob;
 pub use grep::grep;
 pub use list::list;
 pub use read::read;
-pub use rig_adapter::{AgentToolCancellation, AgentToolSet};
+pub use rig_adapter::AgentToolSet;
 pub use run_shell::run_shell;
 pub use web_fetch::web_fetch;
 pub use web_search::web_search;
