@@ -84,12 +84,24 @@ pub async fn workspace_info(channel: &AgentExecChannel) -> AgentResult<ToolOutpu
         ],
         capabilities: probe.capabilities,
         route: probe.route,
-        supported_tools: super::TOOL_NAMES
-            .iter()
-            .copied()
-            .filter(|tool| *tool != "web_search" || channel.web_search_enabled())
-            .map(str::to_string)
-            .collect(),
+        supported_tools: [
+            "shell",
+            "read_file",
+            "list_dir",
+            "glob",
+            "grep",
+            "edit_file",
+            "write_file",
+            "apply_patch",
+            "job_start",
+            "web_search",
+            "web_fetch",
+        ]
+        .iter()
+        .copied()
+        .filter(|tool| *tool != "web_search" || channel.web_search_enabled())
+        .map(str::to_string)
+        .collect(),
     })
 }
 

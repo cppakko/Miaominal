@@ -1071,6 +1071,34 @@ impl AgentExecChannel {
         self.terminal_exec.as_ref()
     }
 
+    /// Host and user of the profile this channel executes on.
+    pub fn host_and_user(&self) -> (String, String) {
+        (self.profile.host.clone(), self.profile.username.clone())
+    }
+
+    /// Names (`@name`) of the auxiliary targets reachable from this channel.
+    pub fn aux_target_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.aux_channels.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// The channel that serves `target` (`name` or `@name`); `None` selects
+    /// this channel.
+    pub fn target_channel(&self, target: Option<&str>) -> AgentResult<&AgentExecChannel> {
+        let Some(target) = target else {
+            return Ok(self);
+        };
+        let target = target.trim();
+        let normalized = normalize_execution_target(target)?;
+        self.aux_channels
+            .get(target)
+            .or_else(|| self.aux_channels.get(&normalized))
+            .ok_or_else(|| {
+                AgentError::InvalidArguments(format!("unknown execution target `{target}`"))
+            })
+    }
+
     pub(crate) async fn authorize_existing_path(
         &self,
         requested_path: &str,

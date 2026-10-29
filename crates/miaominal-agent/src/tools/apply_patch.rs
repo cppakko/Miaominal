@@ -495,6 +495,90 @@ fn default_dot() -> String {
     ".".into()
 }
 
+/// Read a whole UTF-8 file exactly (line endings preserved) for
+/// `edit_file`/`write_file`. Returns `None` when the path does not exist.
+pub(crate) async fn read_whole_file(
+    channel: &AgentExecChannel,
+    path: &str,
+) -> AgentResult<Option<String>> {
+    let shell = channel.shell_type();
+    let is_windows = matches!(shell, ShellType::PowerShell | ShellType::Cmd);
+    if is_windows {
+        super::workspace_info::ensure_exec_shell_detected(channel).await;
+    }
+    let exists_command = if is_windows {
+        super::windows::powershell_encoded_command(&format!(
+            "if (Test-Path -LiteralPath '{}' -PathType Leaf) {{ 'yes' }} else {{ 'no' }}",
+            ps_escape_single_quoted(path)
+        ))
+    } else {
+        let script = format!(
+            "cd \"$HOME\" && if [ -f {p} ]; then echo yes; elif [ -e {p} ]; then echo notfile; else echo no; fi",
+            p = shell_quote(path, ShellType::Posix)
+        );
+        posix_script(shell, &script)
+    };
+    match channel.exec(exists_command).await?.trim() {
+        "no" => return Ok(None),
+        "notfile" => {
+            return Err(AgentError::InvalidPath(format!(
+                "`{path}` exists but is not a regular file"
+            )));
+        }
+        _ => {}
+    }
+    let authorized = channel
+        .authorize_existing_path(path, AgentPathAccess::Edit, RemotePathKind::File)
+        .await?;
+    let output = if is_windows {
+        channel
+            .exec(build_windows_read_file_command(".", authorized.as_str()))
+            .await?
+    } else {
+        let script = format!(
+            "cd \"$HOME\" && base64 < {p} | tr -d '\\n'",
+            p = shell_quote(authorized.as_str(), ShellType::Posix)
+        );
+        channel.exec(posix_script(shell, &script)).await?
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(output.trim())
+        .map_err(|error| {
+            AgentError::Backend(anyhow::anyhow!("could not decode `{path}`: {error}"))
+        })?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| AgentError::InvalidPath(format!("`{path}` is not a UTF-8 text file")))
+}
+
+/// Create a directory (and parents) for a new file.
+pub(crate) async fn ensure_directory(channel: &AgentExecChannel, path: &str) -> AgentResult<()> {
+    let shell = channel.shell_type();
+    let command = if matches!(shell, ShellType::PowerShell | ShellType::Cmd) {
+        super::windows::powershell_encoded_command(&format!(
+            "New-Item -ItemType Directory -Force -Path '{}' | Out-Null",
+            ps_escape_single_quoted(path)
+        ))
+    } else {
+        posix_script(
+            shell,
+            &format!(
+                "cd \"$HOME\" && mkdir -p {}",
+                shell_quote(path, ShellType::Posix)
+            ),
+        )
+    };
+    channel.exec(command).await.map(|_| ())
+}
+
+fn posix_script(shell: ShellType, script: &str) -> String {
+    if matches!(shell, ShellType::Fish) {
+        format!("sh -c {}", shell_quote(script, ShellType::Fish))
+    } else {
+        script.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,8 +14,10 @@ mod windows;
 mod workspace_info;
 
 pub use apply_patch::apply_patch;
+pub(crate) use apply_patch::{ensure_directory, read_whole_file};
 pub use approval::{approval, ask_user};
 pub use cancel::AgentToolCancellation;
+pub(crate) use cancel::run_cancellable_tool_worker;
 pub use glob::glob;
 pub use grep::grep;
 pub use list::list;

@@ -10,6 +10,7 @@ mod path_guard;
 pub mod policy;
 mod reasoning;
 mod runtime;
+pub mod toolkit;
 mod tools;
 pub mod transcript;
 mod web;
