@@ -224,7 +224,8 @@ async fn start_local_forward(
                         }
                     }
                     Err(error) => {
-                        let message = format!("Forward {} could not open SSH channel: {}", label, error);
+                        let message =
+                            format!("Forward {} could not open SSH channel: {}", label, error);
                         emit_port_forward_failure(
                             &event_sender,
                             PortForwardFailure {

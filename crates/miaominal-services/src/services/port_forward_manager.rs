@@ -578,8 +578,7 @@ impl PortForwardManager {
                 session.snapshot.status_message = "Host key verification required".to_string();
             }
             SessionEvent::KeyboardInteractivePrompt(request) => {
-                session.snapshot.prompt =
-                    Some(PortForwardPrompt::KeyboardInteractive(request));
+                session.snapshot.prompt = Some(PortForwardPrompt::KeyboardInteractive(request));
                 session.snapshot.status_message = "Authentication response required".to_string();
             }
             SessionEvent::Closed => {
@@ -1091,15 +1090,17 @@ mod tests {
                 .get_mut(&key)
                 .expect("session")
                 .snapshot
-                .prompt = Some(PortForwardPrompt::KeyboardInteractive(AuthenticationRequest {
-                request_id: 2,
-                hop: miaominal_ssh::SessionHop::new("example.test", 1, 1),
-                challenge: miaominal_ssh::KbiChallenge {
-                    name: "Authentication".into(),
-                    instructions: String::new(),
-                    prompts: Vec::new(),
+                .prompt = Some(PortForwardPrompt::KeyboardInteractive(
+                AuthenticationRequest {
+                    request_id: 2,
+                    hop: miaominal_ssh::SessionHop::new("example.test", 1, 1),
+                    challenge: miaominal_ssh::KbiChallenge {
+                        name: "Authentication".into(),
+                        instructions: String::new(),
+                        prompts: Vec::new(),
+                    },
                 },
-            }));
+            ));
             manager.publish_locked(&mut state);
         }
 

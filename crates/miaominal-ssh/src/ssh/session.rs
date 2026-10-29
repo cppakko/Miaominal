@@ -194,7 +194,11 @@ pub(super) async fn emit_phase(
     phase: SessionPhase,
     hop: Option<SessionHop>,
 ) -> Result<()> {
-    emit_session_event(event_sender, SessionEvent::Phase(SessionPhaseChange { phase, hop })).await
+    emit_session_event(
+        event_sender,
+        SessionEvent::Phase(SessionPhaseChange { phase, hop }),
+    )
+    .await
 }
 
 pub(super) fn clear_pending_host_key(
@@ -1254,7 +1258,12 @@ async fn run_session(
     // Only a confirmed PTY and shell request may report the session as usable:
     // russh's request methods only send the request, the server's reply arrives
     // later as `Success`/`Failure` on the channel.
-    emit_phase(&event_sender, SessionPhase::OpeningShell, Some(target_hop.clone())).await?;
+    emit_phase(
+        &event_sender,
+        SessionPhase::OpeningShell,
+        Some(target_hop.clone()),
+    )
+    .await?;
 
     let mut channel = session
         .channel_open_session()
@@ -1515,7 +1524,11 @@ fn build_client_handler(
     known_hosts: KnownHostsStore,
     event_sender: &SessionEventSender,
     hop: SessionHop,
-) -> (ClientHandler, Arc<Mutex<Option<PendingHostKeyDecision>>>, RemoteForwardTargets) {
+) -> (
+    ClientHandler,
+    Arc<Mutex<Option<PendingHostKeyDecision>>>,
+    RemoteForwardTargets,
+) {
     let pending_host_key = Arc::new(Mutex::new(None));
     let remote_forward_targets = Arc::new(Mutex::new(HashMap::new()));
 

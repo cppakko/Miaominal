@@ -14,10 +14,10 @@ use miaominal_secrets::{
     VaultCredentialBackend, set_vault_test_parameters,
 };
 use miaominal_services::{SyncService, SyncTaskResult};
+use miaominal_storage::ProxyStore;
 use miaominal_storage::SettingsStore;
 use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
-use miaominal_storage::ProxyStore;
 use miaominal_sync::capability::{CapabilityReason, CapabilityState, ProbeCancellation};
 use miaominal_sync::{RemoteSyncState, SyncConfig, SyncConfigStore, SyncEngine, SyncStatus};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -91,7 +91,11 @@ impl FakeWebDav {
     }
 }
 
-async fn serve(mut stream: TcpStream, resources: Arc<Resources>, mode: Mode) -> std::io::Result<()> {
+async fn serve(
+    mut stream: TcpStream,
+    resources: Arc<Resources>,
+    mode: Mode,
+) -> std::io::Result<()> {
     let (method, path, headers, body) = read_request(&mut stream).await?;
     if mode == Mode::Unauthorized {
         return respond(&mut stream, 401, &[], "").await;
@@ -124,7 +128,9 @@ async fn serve(mut stream: TcpStream, resources: Arc<Resources>, mode: Mode) -> 
                         return respond(&mut stream, 412, &[], "").await;
                     }
                 }
-                if headers.get("if-none-match").is_some_and(|value| value == "*")
+                if headers
+                    .get("if-none-match")
+                    .is_some_and(|value| value == "*")
                     && current.is_some()
                 {
                     return respond(&mut stream, 412, &[], "").await;
@@ -299,8 +305,7 @@ fn harness(webdav_url: &str) -> Harness {
         secrets.clone(),
     )
     .expect("sync service should build");
-    let settings_store =
-        SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
+    let settings_store = SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
     Harness {
         service,
         engine,
@@ -406,7 +411,11 @@ async fn first_binding_push_and_pull_roundtrip_against_a_local_server() {
     save_host(&harness, "Desktop Host");
 
     let result = push(&mut harness).await;
-    assert!(matches!(result.status, SyncStatus::Pushed { .. }), "{:?}", result.status);
+    assert!(
+        matches!(result.status, SyncStatus::Pushed { .. }),
+        "{:?}",
+        result.status
+    );
     let body = server.body().expect("the remote must hold the payload");
     assert!(body.contains("encrypted_payload"));
 
@@ -471,7 +480,10 @@ async fn an_external_remote_change_is_detected_and_pullable() {
         "other-device",
         None,
         &miaominal_sync::SyncPlaintextPayload {
-            sessions: vec![miaominal_core::profile::SessionProfile::blank("session-9", 1)],
+            sessions: vec![miaominal_core::profile::SessionProfile::blank(
+                "session-9",
+                1,
+            )],
             proxies: Vec::new(),
             snippets: Vec::new(),
             managed_keys: Vec::new(),
@@ -496,7 +508,11 @@ async fn an_external_remote_change_is_detected_and_pullable() {
     );
 
     let result = pull(&mut harness).await;
-    assert!(matches!(result.status, SyncStatus::Pulled { .. }), "{:?}", result.status);
+    assert!(
+        matches!(result.status, SyncStatus::Pulled { .. }),
+        "{:?}",
+        result.status
+    );
     let sessions = harness.session_store.load(&harness.secrets).unwrap();
     assert!(sessions.iter().any(|profile| profile.id == "session-9"));
 }
@@ -530,7 +546,10 @@ async fn a_locked_vault_refuses_manual_sync() {
         miaominal_secrets::SecretStore::is_locked_error(&error),
         "expected a locked error, got {error:?}"
     );
-    assert!(server.body().is_none(), "nothing may be uploaded while locked");
+    assert!(
+        server.body().is_none(),
+        "nothing may be uploaded while locked"
+    );
 }
 
 #[tokio::test]
@@ -549,7 +568,10 @@ async fn a_stale_precondition_reports_a_conflict_instead_of_overwriting() {
         "other-device",
         None,
         &miaominal_sync::SyncPlaintextPayload {
-            sessions: vec![miaominal_core::profile::SessionProfile::blank("session-9", 1)],
+            sessions: vec![miaominal_core::profile::SessionProfile::blank(
+                "session-9",
+                1,
+            )],
             proxies: Vec::new(),
             snippets: Vec::new(),
             managed_keys: Vec::new(),

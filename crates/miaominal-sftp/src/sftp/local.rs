@@ -116,7 +116,10 @@ pub struct LocalWriteSession {
 }
 
 impl LocalWriteSession {
-    pub fn new(writer: Box<dyn AsyncWrite + Send + Unpin>, finalize: Box<dyn LocalWriteFinalize>) -> Self {
+    pub fn new(
+        writer: Box<dyn AsyncWrite + Send + Unpin>,
+        finalize: Box<dyn LocalWriteFinalize>,
+    ) -> Self {
         Self { writer, finalize }
     }
 
@@ -177,10 +180,8 @@ pub trait LocalFileSystem: Send + Sync {
 
     fn create_dir_all<'a>(&'a self, path: &'a str) -> LocalFuture<'a, ()>;
 
-    fn open_read<'a>(
-        &'a self,
-        path: &'a str,
-    ) -> LocalFuture<'a, Box<dyn AsyncRead + Send + Unpin>>;
+    fn open_read<'a>(&'a self, path: &'a str)
+    -> LocalFuture<'a, Box<dyn AsyncRead + Send + Unpin>>;
 
     /// Open a write session for `path`, replacing any existing file only at
     /// commit time when the backend supports it.
@@ -226,11 +227,12 @@ impl LocalWriteFinalize for PathWriteFinalize {
                 // Already finalized (or discarded): keep the operation idempotent.
                 return Ok(());
             };
-            let handle = tokio::fs::File::from_std(
-                self.file
-                    .try_clone()
-                    .with_context(|| format!("failed to duplicate the temporary file for {}", self.target.display()))?,
-            );
+            let handle = tokio::fs::File::from_std(self.file.try_clone().with_context(|| {
+                format!(
+                    "failed to duplicate the temporary file for {}",
+                    self.target.display()
+                )
+            })?);
             if let Err(error) = handle
                 .sync_all()
                 .await
@@ -249,8 +251,10 @@ impl LocalWriteFinalize for PathWriteFinalize {
                         error.path.display()
                     );
                 }
-                return Err(anyhow::Error::from(error.error)
-                    .context(format!("failed to atomically replace {}", self.target.display())));
+                return Err(anyhow::Error::from(error.error).context(format!(
+                    "failed to atomically replace {}",
+                    self.target.display()
+                )));
             }
             Ok(())
         })
@@ -376,12 +380,18 @@ impl LocalFileSystem for PathLocalFileSystem {
                 .suffix(LOCAL_TEMP_SUFFIX)
                 .tempfile_in(&parent)
                 .with_context(|| {
-                    format!("failed to create temporary download file in {}", parent.display())
+                    format!(
+                        "failed to create temporary download file in {}",
+                        parent.display()
+                    )
                 })?;
             let (file, temporary) = temporary.into_parts();
-            let writer = file
-                .try_clone()
-                .with_context(|| format!("failed to duplicate temporary file for {}", resolved.display()))?;
+            let writer = file.try_clone().with_context(|| {
+                format!(
+                    "failed to duplicate temporary file for {}",
+                    resolved.display()
+                )
+            })?;
             Ok(LocalWriteSession::new(
                 Box::new(tokio::fs::File::from_std(writer)),
                 Box::new(PathWriteFinalize {
@@ -404,7 +414,8 @@ mod tests {
         validate_relative_path("").expect("root path is valid");
         validate_relative_path("folder/child.txt").expect("nested path is valid");
         validate_relative_path("../escape").expect_err("parent traversal must be rejected");
-        validate_relative_path("folder/../escape").expect_err("embedded traversal must be rejected");
+        validate_relative_path("folder/../escape")
+            .expect_err("embedded traversal must be rejected");
         validate_relative_path("/absolute").expect_err("absolute path must be rejected");
         validate_relative_path("folder//child").expect_err("empty component must be rejected");
         validate_relative_path("folder/./child").expect_err("dot component must be rejected");

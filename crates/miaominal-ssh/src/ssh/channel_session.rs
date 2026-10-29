@@ -55,11 +55,22 @@ pub enum ChannelEvent {
     /// Authentication finished and the connection is usable.
     Ready,
     /// The server accepted an `exec` request.
-    ExecOpened { channel_id: u64 },
+    ExecOpened {
+        channel_id: u64,
+    },
     /// The server refused an `exec` request.
-    ExecFailed { channel_id: u64, message: String },
-    Stdout { channel_id: u64, data: Vec<u8> },
-    Stderr { channel_id: u64, data: Vec<u8> },
+    ExecFailed {
+        channel_id: u64,
+        message: String,
+    },
+    Stdout {
+        channel_id: u64,
+        data: Vec<u8>,
+    },
+    Stderr {
+        channel_id: u64,
+        data: Vec<u8>,
+    },
     /// The executed program finished; `exit_code` and `signal` are exclusive.
     ExecExited {
         channel_id: u64,
@@ -67,17 +78,29 @@ pub enum ChannelEvent {
         signal: Option<String>,
     },
     /// The channel ended without an exit status.
-    ChannelClosed { channel_id: u64 },
+    ChannelClosed {
+        channel_id: u64,
+    },
     /// A local loopback listener is bound.
-    TunnelReady { tunnel_id: u64, local_port: u16 },
+    TunnelReady {
+        tunnel_id: u64,
+        local_port: u16,
+    },
     /// A tunnel could not be opened or a forwarded connection failed.
-    TunnelFailed { tunnel_id: u64, message: String },
+    TunnelFailed {
+        tunnel_id: u64,
+        message: String,
+    },
     /// A tunnel was closed explicitly.
-    TunnelClosed { tunnel_id: u64 },
+    TunnelClosed {
+        tunnel_id: u64,
+    },
     HostKeyPrompt(HostKeyRequest),
     AuthenticationPrompt(AuthenticationRequest),
     /// A queued answer arrived after its request was superseded.
-    RequestExpired { request_id: u64 },
+    RequestExpired {
+        request_id: u64,
+    },
     Error(String),
     /// The whole channel session is gone; no further events follow.
     Closed,
@@ -200,7 +223,10 @@ impl ChannelCommandSender {
         request_id: u64,
         answers: Vec<String>,
     ) -> Result<()> {
-        self.send(ChannelCommand::KeyboardInteractiveResponse { request_id, answers })
+        self.send(ChannelCommand::KeyboardInteractiveResponse {
+            request_id,
+            answers,
+        })
     }
 
     /// Explicit close, including connections still inside a non-cancellable
@@ -981,7 +1007,10 @@ mod tests {
     #[test]
     fn paths_are_escaped_with_single_quotes() {
         assert_eq!(shell_escape_path("/home/me/project"), "/home/me/project");
-        assert_eq!(shell_escape_path("/home/me/my project"), "'/home/me/my project'");
+        assert_eq!(
+            shell_escape_path("/home/me/my project"),
+            "'/home/me/my project'"
+        );
         assert_eq!(shell_escape_path("/home/me/it's"), "'/home/me/it'\\''s'");
         assert_eq!(shell_escape_path(""), "''");
         assert_eq!(shell_escape_path("/tmp/$USER"), "'/tmp/$USER'");

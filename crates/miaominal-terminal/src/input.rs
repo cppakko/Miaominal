@@ -143,11 +143,7 @@ pub fn encode_terminal_named_key(
     key: TerminalNamedKey,
     input_modes: TerminalInputModes,
 ) -> Option<Vec<u8>> {
-    let keystroke = TerminalKeyStroke::new(
-        TerminalModifiers::default(),
-        key.as_str(),
-        None,
-    );
+    let keystroke = TerminalKeyStroke::new(TerminalModifiers::default(), key.as_str(), None);
     let mut bytes = encode_terminal_input(
         TerminalKeyEvent::new(&keystroke, TerminalKeyPhase::Press),
         input_modes,

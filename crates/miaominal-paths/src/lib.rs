@@ -436,7 +436,10 @@ fn embedded_runtime_context(data_dir: &Path, cache_dir: &Path) -> Result<Runtime
 fn ensure_embedded_root(directory: &Path, label: &str) -> Result<()> {
     match fs::symlink_metadata(directory) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return Err(anyhow!("{label} {} is not a real directory", directory.display()));
+            return Err(anyhow!(
+                "{label} {} is not a real directory",
+                directory.display()
+            ));
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -2401,7 +2404,10 @@ mod tests {
             .expect("embedded runtime should initialize");
 
         assert_eq!(context.mode(), RuntimeMode::Embedded);
-        assert_eq!(context.credential_policy(), CredentialPolicy::PlatformInjected);
+        assert_eq!(
+            context.credential_policy(),
+            CredentialPolicy::PlatformInjected
+        );
         assert_eq!(context.active_data_dir(), data_dir.as_path());
         assert_eq!(context.default_data_dir(), data_dir.as_path());
         assert_eq!(context.bootstrap_dir(), data_dir.as_path());
@@ -2458,7 +2464,8 @@ mod tests {
         let root = tempfile::tempdir().expect("temporary directory should be created");
         let shared = root.path().join("shared");
 
-        let error = embedded_runtime_context(&shared, &shared).expect_err("shared root should fail");
+        let error =
+            embedded_runtime_context(&shared, &shared).expect_err("shared root should fail");
 
         assert!(error.to_string().contains("must be different"));
     }
@@ -2474,8 +2481,9 @@ mod tests {
             .expect("first root should be accepted");
         let again = initialize_embedded_runtime_in(&slot, &data_dir, &cache_dir)
             .expect("the same root should stay valid");
-        let error = initialize_embedded_runtime_in(&slot, &root.path().join("other-data"), &cache_dir)
-            .expect_err("a different root should be rejected");
+        let error =
+            initialize_embedded_runtime_in(&slot, &root.path().join("other-data"), &cache_dir)
+                .expect_err("a different root should be rejected");
 
         assert_eq!(first.mode(), RuntimeMode::Embedded);
         assert_eq!(again.active_data_dir(), first.active_data_dir());

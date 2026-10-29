@@ -593,7 +593,12 @@ pub fn source_for_path(local_path: &std::path::Path) -> Result<LocalTransferSour
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| anyhow!("local upload path {} has no file name", local_path.display()))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "local upload path {} has no file name",
+                local_path.display()
+            )
+        })?;
     Ok(LocalTransferSource {
         fs: Arc::new(super::local::PathLocalFileSystem::new(parent)),
         path: name,
@@ -633,10 +638,9 @@ async fn inspect_local_upload_source(source: &LocalTransferSource) -> Result<Loc
         .with_context(|| format!("failed to inspect local path {}", source.label))?;
 
     match entry.kind {
-        LocalEntryKind::Symlink => Err(anyhow!(
-            "refusing to upload symbolic link {}",
-            source.label
-        )),
+        LocalEntryKind::Symlink => {
+            Err(anyhow!("refusing to upload symbolic link {}", source.label))
+        }
         LocalEntryKind::Directory => Ok(LocalUploadSource::Directory),
         LocalEntryKind::File => Ok(LocalUploadSource::File {
             len: entry.size.unwrap_or(0),
@@ -743,9 +747,7 @@ where
                     }
                 }
                 LocalEntryKind::File => {
-                    progress
-                        .begin_child(relative_child, entry.size)
-                        .await?;
+                    progress.begin_child(relative_child, entry.size).await?;
                     match upload_regular_file(
                         sftp,
                         &local_child,
@@ -829,9 +831,10 @@ async fn upload_regular_file(
                 return Ok(TransferOutcome::Cancelled);
             }
 
-            let read = local_file.read(&mut buffer).await.with_context(|| {
-                format!("failed to read {} while uploading", source.label)
-            })?;
+            let read = local_file
+                .read(&mut buffer)
+                .await
+                .with_context(|| format!("failed to read {} while uploading", source.label))?;
             if read == 0 {
                 break;
             }
@@ -2418,7 +2421,11 @@ mod tests {
                 .expect("list directory")
                 .map(|entry| entry.expect("entry").file_name())
                 .collect();
-            assert_eq!(entries.len(), 1, "temporary file must be removed: {entries:?}");
+            assert_eq!(
+                entries.len(),
+                1,
+                "temporary file must be removed: {entries:?}"
+            );
         });
     }
 }

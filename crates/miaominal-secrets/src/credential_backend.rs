@@ -9,9 +9,9 @@ use keyring::Entry;
 use miaominal_paths::{self as paths, atomic_write};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fs;
 #[cfg(not(target_os = "android"))]
 use std::fs::{File, OpenOptions};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};

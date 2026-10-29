@@ -156,7 +156,8 @@ impl ProfileConnector {
         let config = connection::default_client_config();
         let mut jump_sessions = Vec::new();
         let total_hops = proxy_jump_profiles.len() + 1;
-        let target_hop = SessionHop::new(remote_label.clone(), total_hops as u32, total_hops as u32);
+        let target_hop =
+            SessionHop::new(remote_label.clone(), total_hops as u32, total_hops as u32);
 
         let (session, remote_forward_targets) = if let Some(first_hop) = proxy_jump_profiles.first()
         {
@@ -168,7 +169,8 @@ impl ProfileConnector {
                 ))
                 .await?;
 
-            let first_hop_info = SessionHop::new(first_hop.connection_label(), 1, total_hops as u32);
+            let first_hop_info =
+                SessionHop::new(first_hop.connection_label(), 1, total_hops as u32);
             interaction
                 .phase(SessionPhase::Connecting, Some(first_hop_info.clone()))
                 .await?;
@@ -193,10 +195,18 @@ impl ProfileConnector {
                 ))
                 .await?;
             interaction
-                .phase(SessionPhase::WaitingForAuthentication, Some(first_hop_info.clone()))
+                .phase(
+                    SessionPhase::WaitingForAuthentication,
+                    Some(first_hop_info.clone()),
+                )
                 .await?;
             interaction
-                .authenticate(&mut current_session, first_hop.clone(), &self.secrets, first_hop_info)
+                .authenticate(
+                    &mut current_session,
+                    first_hop.clone(),
+                    &self.secrets,
+                    first_hop_info,
+                )
                 .await?;
             let mut current_session = Arc::new(current_session);
 
@@ -222,9 +232,15 @@ impl ProfileConnector {
                 let hop = if is_target {
                     target_hop.clone()
                 } else {
-                    SessionHop::new(next_profile.connection_label(), index as u32 + 2, total_hops as u32)
+                    SessionHop::new(
+                        next_profile.connection_label(),
+                        index as u32 + 2,
+                        total_hops as u32,
+                    )
                 };
-                interaction.phase(SessionPhase::Connecting, Some(hop.clone())).await?;
+                interaction
+                    .phase(SessionPhase::Connecting, Some(hop.clone()))
+                    .await?;
 
                 let transport = current_session
                     .channel_open_direct_tcpip(
@@ -298,7 +314,10 @@ impl ProfileConnector {
                 .status(format!("Authenticating {remote_label}"))
                 .await?;
             interaction
-                .phase(SessionPhase::WaitingForAuthentication, Some(target_hop.clone()))
+                .phase(
+                    SessionPhase::WaitingForAuthentication,
+                    Some(target_hop.clone()),
+                )
                 .await?;
             interaction
                 .authenticate(&mut session, profile, &self.secrets, target_hop.clone())
@@ -364,8 +383,15 @@ impl ConnectorInteraction<'_> {
                 event_sender,
                 ..
             } => {
-                authenticate_full(session, profile, secrets, command_receiver, event_sender, hop)
-                    .await
+                authenticate_full(
+                    session,
+                    profile,
+                    secrets,
+                    command_receiver,
+                    event_sender,
+                    hop,
+                )
+                .await
             }
             Self::Bridge => authenticate_bridge(session, profile, secrets).await,
         }

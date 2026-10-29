@@ -219,7 +219,10 @@ mod interaction_tests {
                 window.render_frame(cx);
                 let height = window.find("fixture:connect").bounds().size.height;
                 if let Some(expected) = expected_height {
-                    assert_eq!(height, expected, "group and tags must not change card height");
+                    assert_eq!(
+                        height, expected,
+                        "group and tags must not change card height"
+                    );
                 } else {
                     expected_height = Some(height);
                 }

@@ -198,7 +198,12 @@ impl server::Handler for ForwardServerHandler {
                 let listen_address = listen_address.clone();
                 tokio::spawn(async move {
                     if let Ok(channel) = handle
-                        .channel_open_forwarded_tcpip(listen_address, u32::from(bound), "127.0.0.1", 0)
+                        .channel_open_forwarded_tcpip(
+                            listen_address,
+                            u32::from(bound),
+                            "127.0.0.1",
+                            0,
+                        )
                         .await
                     {
                         let mut forwarded = channel.into_stream();
@@ -451,11 +456,7 @@ fn stopped(state: &PortForwardRuntimeState) -> bool {
     matches!(state, PortForwardRuntimeState::Stopped)
 }
 
-fn answer_host_key_prompts(
-    manager: &PortForwardManager,
-    profile_id: &str,
-    rule_id: &str,
-) -> bool {
+fn answer_host_key_prompts(manager: &PortForwardManager, profile_id: &str, rule_id: &str) -> bool {
     let snapshot = manager.snapshot();
     let Some(session) = snapshot.session(profile_id, rule_id) else {
         return false;
@@ -518,19 +519,14 @@ fn local_forward_runs_relays_and_restarts() {
     known_hosts
         .learn("127.0.0.1", server.port, &server.public_key)
         .expect("learn host key");
-    let manager = PortForwardManager::new(
-        runtime.handle().clone(),
-        memory_secrets(),
-        known_hosts,
-    );
+    let manager = PortForwardManager::new(runtime.handle().clone(), memory_secrets(), known_hosts);
     let mut profile = password_profile("host-1", "Target", server.port);
-    profile.port_forwarding_rules.push(local_rule("rule-1", 0, echo.port));
+    profile
+        .port_forwarding_rules
+        .push(local_rule("rule-1", 0, echo.port));
     manager.replace_catalogs(vec![profile], Vec::new());
 
-    assert!(matches!(
-        manager.start("host-1", "rule-1"),
-        Ok(_)
-    ));
+    assert!(matches!(manager.start("host-1", "rule-1"), Ok(_)));
     let snapshot = wait_for_state(
         &runtime,
         &manager,
@@ -540,16 +536,40 @@ fn local_forward_runs_relays_and_restarts() {
         Duration::from_secs(20),
     );
     let port = snapshot.bound_port.expect("bound local port");
-    assert_eq!(round_trip(&runtime, port, b"desktop local"), b"desktop local");
+    assert_eq!(
+        round_trip(&runtime, port, b"desktop local"),
+        b"desktop local"
+    );
 
     assert!(manager.stop("host-1", "rule-1"));
-    wait_for_state(&runtime, &manager, "host-1", "rule-1", stopped, Duration::from_secs(10));
+    wait_for_state(
+        &runtime,
+        &manager,
+        "host-1",
+        "rule-1",
+        stopped,
+        Duration::from_secs(10),
+    );
     wait_for_port_release(&runtime, port);
 
     manager.start("host-1", "rule-1").expect("restart");
-    wait_for_state(&runtime, &manager, "host-1", "rule-1", running, Duration::from_secs(20));
+    wait_for_state(
+        &runtime,
+        &manager,
+        "host-1",
+        "rule-1",
+        running,
+        Duration::from_secs(20),
+    );
     manager.stop_all();
-    wait_for_state(&runtime, &manager, "host-1", "rule-1", stopped, Duration::from_secs(10));
+    wait_for_state(
+        &runtime,
+        &manager,
+        "host-1",
+        "rule-1",
+        stopped,
+        Duration::from_secs(10),
+    );
 }
 
 #[test]
@@ -580,7 +600,10 @@ fn remote_forward_relays_to_the_local_target() {
     );
     let port = snapshot.bound_port.expect("bound remote port");
     assert_ne!(port, 0);
-    assert_eq!(round_trip(&runtime, port, b"desktop remote"), b"desktop remote");
+    assert_eq!(
+        round_trip(&runtime, port, b"desktop remote"),
+        b"desktop remote"
+    );
     manager.stop_all();
 }
 
@@ -659,7 +682,9 @@ fn unreachable_target_keeps_the_forward_running() {
             .cloned()
             .expect("session");
         if matches!(current.state, PortForwardRuntimeState::Running)
-            && (current.status_message.contains("could not open SSH channel")
+            && (current
+                .status_message
+                .contains("could not open SSH channel")
                 || current.status_message.contains("relay failed"))
         {
             break;
@@ -706,7 +731,10 @@ fn multi_hop_forward_through_a_jump_host_relays_bytes() {
         Duration::from_secs(30),
     );
     let port = snapshot.bound_port.expect("bound local port");
-    assert_eq!(round_trip(&runtime, port, b"through the jump"), b"through the jump");
+    assert_eq!(
+        round_trip(&runtime, port, b"through the jump"),
+        b"through the jump"
+    );
     manager.stop_all();
 }
 
@@ -714,11 +742,7 @@ fn multi_hop_forward_through_a_jump_host_relays_bytes() {
 fn a_failing_jump_node_is_reported() {
     let runtime = Runtime::new().expect("runtime");
     let directory = tempfile::tempdir().expect("temp dir");
-    let manager = manager_for(
-        &runtime,
-        memory_secrets(),
-        directory.path(),
-    );
+    let manager = manager_for(&runtime, memory_secrets(), directory.path());
     let mut jump_profile = password_profile("jump", "Jump", 1);
     jump_profile.host = "127.0.0.1".to_string();
     let mut target_profile = password_profile("target", "Target", 1);
@@ -792,7 +816,11 @@ fn entry_proxy_authentication_is_used_and_failures_are_reported() {
     secrets
         .set("proxy-1", SecretKind::ProxyPassword, "secret")
         .expect("store proxy password");
-    let manager = PortForwardManager::new(runtime.handle().clone(), secrets.clone(), known_hosts.clone());
+    let manager = PortForwardManager::new(
+        runtime.handle().clone(),
+        secrets.clone(),
+        known_hosts.clone(),
+    );
 
     let mut proxy_profile = ProxyProfile::blank("proxy-1", 1);
     proxy_profile.name = "Proxy".to_string();
@@ -810,7 +838,9 @@ fn entry_proxy_authentication_is_used_and_failures_are_reported() {
         .push(local_rule("rule-1", 0, echo.port));
     manager.replace_catalogs(vec![profile.clone()], vec![proxy_profile.clone()]);
 
-    manager.start("host-1", "rule-1").expect("start through proxy");
+    manager
+        .start("host-1", "rule-1")
+        .expect("start through proxy");
     let snapshot = wait_for_state(
         &runtime,
         &manager,
@@ -820,14 +850,19 @@ fn entry_proxy_authentication_is_used_and_failures_are_reported() {
         Duration::from_secs(20),
     );
     let port = snapshot.bound_port.expect("bound local port");
-    assert_eq!(round_trip(&runtime, port, b"through the proxy"), b"through the proxy");
+    assert_eq!(
+        round_trip(&runtime, port, b"through the proxy"),
+        b"through the proxy"
+    );
     manager.stop_all();
 
     // Wrong credentials must fail the session with the proxy named.
     secrets
         .set("proxy-1", SecretKind::ProxyPassword, "wrong")
         .expect("store wrong proxy password");
-    manager.start("host-1", "rule-1").expect("restart through proxy");
+    manager
+        .start("host-1", "rule-1")
+        .expect("restart through proxy");
     let snapshot = wait_for_state(
         &runtime,
         &manager,
@@ -910,7 +945,14 @@ fn answering_a_prompt_after_the_session_is_gone_is_harmless() {
     manager.replace_catalogs(vec![profile], Vec::new());
 
     manager.start("host-1", "rule-1").expect("start");
-    wait_for_state(&runtime, &manager, "host-1", "rule-1", failed, Duration::from_secs(20));
+    wait_for_state(
+        &runtime,
+        &manager,
+        "host-1",
+        "rule-1",
+        failed,
+        Duration::from_secs(20),
+    );
     assert!(
         manager
             .respond_host_key(
