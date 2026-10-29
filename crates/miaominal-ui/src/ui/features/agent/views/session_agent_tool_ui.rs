@@ -1,5 +1,15 @@
 use super::super::*;
+use super::session_agent_highlight::{
+    Token, diff_tokens, highlight_styles, output_tokens, shell_tokens,
+};
 use crate::ui::i18n;
+
+#[cfg(test)]
+use gpui_kit::test::TestSupportExt as _;
+
+#[cfg(test)]
+#[path = "session_agent_tool_ui_tests.rs"]
+mod tests;
 
 #[derive(Clone, Copy)]
 pub(in crate::ui::features::agent) struct ToolTerminalColors {
@@ -8,8 +18,10 @@ pub(in crate::ui::features::agent) struct ToolTerminalColors {
     pub(in crate::ui::features::agent) on_surface: u32,
     pub(in crate::ui::features::agent) error: u32,
     pub(in crate::ui::features::agent) text_muted: u32,
-    pub(in crate::ui::features::agent) selectable: bool,
 }
+
+/// Tallest a command/output block grows before it scrolls.
+const TOOL_BLOCK_MAX_HEIGHT_REM: f32 = 15.0;
 
 pub(in crate::ui::features::agent) fn render_tool_terminal_block(
     tool_call_id: &str,
@@ -20,100 +32,103 @@ pub(in crate::ui::features::agent) fn render_tool_terminal_block(
     error: bool,
 ) -> gpui_kit::AnyElement {
     if content.trim().is_empty() {
-        let empty_content = div()
-            .font_family(miaominal_settings::font_family())
-            .text_size(miaominal_settings::FontSize::Body.scaled())
-            .line_height(miaominal_settings::scaled_line_height(18.0))
-            .text_color(rgb(if error {
-                colors.error
-            } else {
-                colors.on_surface
-            }))
-            .child(i18n::string(
-                "workspace.panel.agent.tool_result.empty_output",
-            ))
-            .into_any_element();
-        return render_tool_terminal_block_content(label, empty_content, colors);
+        let empty = i18n::string("workspace.panel.agent.tool_result.empty_output");
+        return render_tool_terminal_block_content(
+            tool_call_id,
+            label,
+            highlighted_text(empty, Vec::new(), colors, false),
+            colors,
+        );
     }
-
-    let markdown_code = if let Some(language) = language {
-        format!("```{}\n{}\n```", language, content)
-    } else {
-        // For plain text or unknown content, use plain div
-        let highlighted_content = div()
-            .font_family(miaominal_settings::font_family())
-            .text_size(miaominal_settings::FontSize::Body.scaled())
-            .line_height(miaominal_settings::scaled_line_height(18.0))
-            .text_color(rgb(if error {
-                colors.error
-            } else {
-                colors.on_surface
-            }))
-            .child(content.clone())
-            .into_any_element();
-        return render_tool_terminal_block_content(label, highlighted_content, colors);
+    let content = content.trim_end().to_string();
+    let tokens = match language {
+        Some("bash" | "sh" | "shell" | "powershell") => shell_tokens(&content),
+        Some("diff" | "patch") => diff_tokens(&content),
+        _ => output_tokens(&content),
     };
+    render_tool_terminal_block_content(
+        tool_call_id,
+        label,
+        highlighted_text(content, tokens, colors, error),
+        colors,
+    )
+}
 
-    let highlighted_content = div()
+/// Monospace, wrapping text with token highlights.
+fn highlighted_text(
+    text: String,
+    tokens: Vec<(std::ops::Range<usize>, Token)>,
+    colors: ToolTerminalColors,
+    error: bool,
+) -> gpui_kit::AnyElement {
+    let styles = highlight_styles(tokens);
+    div()
         .w_full()
-        .child(
-            gpui_kit::component::text::TextView::markdown(
-                tool_terminal_markdown_id(tool_call_id, &label, language.unwrap_or_default()),
-                markdown_code,
-            )
-            .selectable(colors.selectable),
-        )
-        .when(error, |this| this.text_color(rgb(colors.error)))
-        .into_any_element();
-
-    render_tool_terminal_block_content(label, highlighted_content, colors)
+        .min_w_0()
+        .font_family(miaominal_settings::terminal_font_family())
+        .text_size(miaominal_settings::FontSize::Body.scaled())
+        .line_height(miaominal_settings::scaled_line_height(18.0))
+        .text_color(rgb(if error {
+            colors.error
+        } else {
+            colors.on_surface
+        }))
+        .child(gpui_kit::StyledText::new(text).with_highlights(styles))
+        .into_any_element()
 }
 
-pub(in crate::ui::features::agent) fn tool_terminal_markdown_id(
-    tool_call_id: &str,
-    label: &str,
-    language: &str,
-) -> String {
-    format!("session-agent-tool-markdown-{tool_call_id}-{label}-{language}")
-}
-
+/// MD3 "surface container" block: a small label above content that grows
+/// with its text up to [`TOOL_BLOCK_MAX_HEIGHT_REM`], then scrolls.
 pub(in crate::ui::features::agent) fn render_tool_terminal_block_content(
+    tool_call_id: &str,
     label: String,
     content: gpui_kit::AnyElement,
     colors: ToolTerminalColors,
 ) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
-    let terminal_bg = if material.dark {
+    let block_bg = if material.dark {
         colors.surface_container_lowest
     } else {
         colors.surface
     };
+    let scroll_id = SharedString::from(format!("session-agent-tool-block-{tool_call_id}-{label}"));
 
     v_flex()
+        .id(SharedString::from(format!("{scroll_id}-block")))
         .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .overflow_hidden()
-        .rounded(px(6.0))
-        .bg(rgb(terminal_bg))
+        .rounded_md()
+        .bg(rgb(block_bg))
         .child(
             div()
                 .w_full()
-                .px_2()
-                .py_1()
+                .px_3()
+                .pt_2()
                 .text_size(miaominal_settings::FontSize::Body.scaled())
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(colors.text_muted))
                 .child(label),
         )
         .child(
             div()
+                .id(scroll_id.clone())
                 .w_full()
-                .min_h(px(34.0))
-                .max_h(px(220.0))
+                .min_w_0()
+                .max_h(gpui_kit::rems(TOOL_BLOCK_MAX_HEIGHT_REM))
                 .overflow_y_scrollbar()
-                .px_2()
+                .id(scroll_id)
+                .px_3()
+                .pt_1()
                 .pb_2()
                 .child(content),
         )
+        .map(|block| {
+            #[cfg(test)]
+            let block = block.test_support();
+            block
+        })
         .into_any_element()
 }
 
@@ -155,7 +170,7 @@ pub(in crate::ui::features::agent) fn render_tool_field_grid(
         .into_any_element()
 }
 
-/// Renders a terminal-style block with syntax-highlighted bash command text.
+/// Command block: `$ command` with shell highlighting.
 pub(in crate::ui::features::agent) fn render_bash_highlighted_command_block(
     tool_call_id: &str,
     label: String,
@@ -163,30 +178,66 @@ pub(in crate::ui::features::agent) fn render_bash_highlighted_command_block(
     colors: ToolTerminalColors,
 ) -> gpui_kit::AnyElement {
     if command.trim().is_empty() {
-        let base_color = gpui_kit::Hsla::from(rgb(colors.on_surface));
-        let content = div()
-            .font_family(miaominal_settings::font_family())
-            .text_size(miaominal_settings::FontSize::Body.scaled())
-            .line_height(miaominal_settings::scaled_line_height(18.0))
-            .text_color(base_color)
-            .child(i18n::string(
-                "workspace.panel.agent.tool_result.empty_command",
-            ))
-            .into_any_element();
-        return render_tool_terminal_block_content(label, content, colors);
+        let text = i18n::string("workspace.panel.agent.tool_result.empty_command");
+        return render_tool_terminal_block_content(
+            tool_call_id,
+            label,
+            highlighted_text(text, Vec::new(), colors, false),
+            colors,
+        );
     }
+    let text = format!("$ {}", command.trim_end());
+    let tokens = shell_tokens(&text);
+    render_tool_terminal_block_content(
+        tool_call_id,
+        label,
+        highlighted_text(text, tokens, colors, false),
+        colors,
+    )
+}
 
-    // Use a markdown code block for syntax highlighting via syntect.
-    let markdown_code = format!("```bash\n{}\n```", command);
-    let content = div()
+/// One-line preview shown under a collapsed tool card title.
+pub(in crate::ui::features::agent) fn tool_call_summary_line(
+    tool_call: &crate::ui::features::agent::SessionAgentToolCall,
+) -> Option<(String, bool)> {
+    let value: serde_json::Value = serde_json::from_str(&tool_call.arguments).ok()?;
+    for key in [
+        "command", "path", "pattern", "url", "query", "base_dir", "job_id",
+    ] {
+        if let Some(text) = value.get(key).and_then(|value| value.as_str()) {
+            let Some(line) = text.lines().map(str::trim).find(|line| !line.is_empty()) else {
+                continue;
+            };
+            return Some(if key == "command" {
+                (format!("$ {line}"), true)
+            } else {
+                (line.to_string(), false)
+            });
+        }
+    }
+    None
+}
+
+pub(in crate::ui::features::agent) fn render_tool_summary_line(
+    (text, is_command): (String, bool),
+    colors: ToolTerminalColors,
+) -> gpui_kit::AnyElement {
+    let tokens = if is_command {
+        shell_tokens(&text)
+    } else {
+        Vec::new()
+    };
+    let styles = highlight_styles(tokens);
+    div()
         .w_full()
-        .child(
-            gpui_kit::component::text::TextView::markdown(
-                tool_terminal_markdown_id(tool_call_id, &label, "bash"),
-                markdown_code,
-            )
-            .selectable(colors.selectable),
-        )
-        .into_any_element();
-    render_tool_terminal_block_content(label, content, colors)
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .font_family(miaominal_settings::terminal_font_family())
+        .text_size(miaominal_settings::FontSize::Body.scaled())
+        .line_height(miaominal_settings::scaled_line_height(18.0))
+        .text_color(rgb(colors.text_muted))
+        .child(gpui_kit::StyledText::new(text).with_highlights(styles))
+        .into_any_element()
 }

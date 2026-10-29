@@ -9,10 +9,11 @@ use crate::ui::features::agent::conversation_view::SessionAgentMessageView;
 use crate::ui::i18n;
 use gpui_kit::AnimationExt as _;
 use gpui_kit::component::ElementExt as _;
+use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::text::{TextView, TextViewState};
 
 const SESSION_AGENT_MESSAGE_ENTER_OFFSET: f32 = 8.0;
-const SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT: f32 = 720.0;
+const SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT_REM: f32 = 45.0;
 
 fn session_agent_text_selectable(terminal_originated_selection_drag_active: bool) -> bool {
     !terminal_originated_selection_drag_active
@@ -70,8 +71,9 @@ pub(in crate::ui::features::agent) fn render_session_agent_messages(
             .into_any_element();
     }
 
-    let Some(conversation) = agent.panel_conversation_view() else {
-        return div().size_full().into_any_element();
+    let conversation = match agent.panel_conversation_view() {
+        Some(conversation) => conversation,
+        None => agent.ensure_conversation_view(cx),
     };
     let (generating_view, list_state) = {
         let conversation = conversation.read(cx);
@@ -848,6 +850,13 @@ fn session_agent_tool_title(tool_name: &str) -> String {
         "list_jobs" => i18n::string("workspace.panel.agent.tool_titles.list_jobs"),
         "poll_job" => i18n::string("workspace.panel.agent.tool_titles.poll_job"),
         "stop_job" => i18n::string("workspace.panel.agent.tool_titles.stop_job"),
+        "edit_file" => i18n::string("workspace.panel.agent.tool_titles.edit_file"),
+        "write_file" => i18n::string("workspace.panel.agent.tool_titles.write_file"),
+        "job_start" => i18n::string("workspace.panel.agent.tool_titles.job_start"),
+        "job_poll" => i18n::string("workspace.panel.agent.tool_titles.job_poll"),
+        "job_stop" => i18n::string("workspace.panel.agent.tool_titles.job_stop"),
+        "terminal_read" => i18n::string("workspace.panel.agent.tool_titles.terminal_read"),
+        "update_plan" => i18n::string("workspace.panel.agent.tool_titles.update_plan"),
         "web_search" => i18n::string("workspace.panel.agent.tool_titles.web_search"),
         "web_fetch" => i18n::string("workspace.panel.agent.tool_titles.web_fetch"),
         "ask_user" | "approval" => i18n::string("workspace.panel.agent.tool_titles.ask_user"),
@@ -855,107 +864,249 @@ fn session_agent_tool_title(tool_name: &str) -> String {
     }
 }
 
+/// MD3 state layer: `overlay` at `opacity` over `base` (both 0xRRGGBB).
+fn state_layer(overlay: u32, base: u32, opacity: f32) -> u32 {
+    let mix = |shift: u32| {
+        let o = ((overlay >> shift) & 0xff) as f32;
+        let b = ((base >> shift) & 0xff) as f32;
+        ((b + (o - b) * opacity).round().clamp(0.0, 255.0) as u32) << shift
+    };
+    mix(16) | mix(8) | mix(0)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AgentActionButtonKind {
+    Primary,
+    Tonal,
+    Choice,
+}
+
 fn render_session_agent_text_action_button(
+    id: SharedString,
     label: String,
     description: Option<String>,
-    primary: bool,
-    full_width: bool,
+    kind: AgentActionButtonKind,
     roles: miaominal_settings::theme::Md3Roles,
+    cx: &App,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> gpui_kit::AnyElement {
-    div()
-        .cursor_pointer()
-        .rounded(px(6.0))
-        .px_3()
-        .py_1()
+    use gpui_kit::component::button::ButtonCustomVariant;
+
+    let primary = kind == AgentActionButtonKind::Primary;
+    let full_width = kind == AgentActionButtonKind::Choice;
+    let (background, foreground) = if primary {
+        (roles.primary, roles.on_primary)
+    } else {
+        (roles.secondary_container, roles.on_secondary_container)
+    };
+    Button::new(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(rgb(background).into())
+                .foreground(rgb(foreground).into())
+                .hover(rgb(state_layer(foreground, background, 0.08)).into())
+                .active(rgb(state_layer(foreground, background, 0.12)).into()),
+        )
+        .small()
+        .rounded_full()
+        .flex_shrink_0()
+        .accessibility_label(label.clone())
         .when(full_width, |this| this.w_full())
-        .bg(rgb(if primary {
-            roles.primary
-        } else {
-            roles.surface_container_highest
-        }))
-        .text_color(rgb(if primary {
-            roles.on_primary
-        } else {
-            roles.on_surface
-        }))
-        .text_size(miaominal_settings::FontSize::Body.scaled())
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            cx.stop_propagation();
-            on_click(window, cx);
-        })
-        .child(
-            v_flex()
-                .w_full()
-                .min_w(px(0.0))
-                .gap(px(1.0))
-                .child(
-                    div()
-                        .w_full()
-                        .min_w(px(0.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(label),
-                )
-                .when_some(description, |this, description| {
-                    this.child(
+        .map(|button| match description {
+            None => button.label(label),
+            Some(description) => button.h_auto().min_h_8().py_2().rounded_lg().child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .gap_1()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(label))
+                    .child(
                         div()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
                             .text_color(rgb(if primary {
                                 roles.on_primary
                             } else {
-                                roles.on_surface_variant
+                                roles.on_secondary_container
                             }))
                             .child(description),
-                    )
-                }),
-        )
+                    ),
+            ),
+        })
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx);
+        })
         .into_any_element()
 }
 
 fn render_session_agent_approval_actions(
+    agent: &AgentController,
     tool_id: &str,
     entity: Entity<AgentController>,
-    agent: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
+    cx: &App,
 ) -> gpui_kit::AnyElement {
+    let (grant_prefix, editable, _target) =
+        agent
+            .pending_approval_details(tool_id)
+            .unwrap_or((None, None, String::new()));
+    let input_mode = agent.approval_input_mode(tool_id);
+    let input = agent.ask_user_input();
     let allow_tool_id = tool_id.to_string();
-    let deny_tool_id = tool_id.to_string();
     let allow_entity = entity.clone();
-    let deny_agent = agent;
+    let deny_tool_id = tool_id.to_string();
+    let deny_entity = entity.clone();
+    let menu_tool_id = tool_id.to_string();
+    let menu_entity = entity.clone();
+    let submit_entity = entity;
 
-    h_flex()
+    v_flex()
         .w_full()
         .gap_2()
         .px_3()
         .pb_3()
-        .child(render_session_agent_text_action_button(
-            i18n::string("workspace.panel.agent.tool_actions.approve"),
-            None,
-            true,
-            false,
-            roles,
-            move |_window, cx| {
-                let tool_id = allow_tool_id.clone();
-                allow_entity.update(cx, |controller, cx| {
-                    controller.approve_session_agent_tool_call(tool_id, cx);
-                });
-            },
-        ))
-        .child(render_session_agent_text_action_button(
-            i18n::string("workspace.panel.agent.tool_actions.deny"),
-            None,
-            false,
-            false,
-            roles,
-            move |_window, cx| {
-                let tool_id = deny_tool_id.clone();
-                deny_agent.update(cx, |controller, cx| {
-                    controller.deny_tool_call_with_reason(tool_id, String::new(), cx);
-                });
-            },
-        ))
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(render_session_agent_text_action_button(
+                    SharedString::from(format!("agent-approve-{tool_id}")),
+                    i18n::string("workspace.panel.agent.tool_actions.approve"),
+                    None,
+                    AgentActionButtonKind::Primary,
+                    roles,
+                    cx,
+                    move |_window, cx| {
+                        let tool_id = allow_tool_id.clone();
+                        allow_entity.update(cx, |controller, cx| {
+                            controller.approve_session_agent_tool_call(tool_id, cx);
+                        });
+                    },
+                ))
+                .child(render_session_agent_text_action_button(
+                    SharedString::from(format!("agent-deny-{tool_id}")),
+                    i18n::string("workspace.panel.agent.tool_actions.deny"),
+                    None,
+                    AgentActionButtonKind::Tonal,
+                    roles,
+                    cx,
+                    move |_window, cx| {
+                        let tool_id = deny_tool_id.clone();
+                        deny_entity.update(cx, |controller, cx| {
+                            controller.deny_tool_call_with_reason(tool_id, String::new(), cx);
+                        });
+                    },
+                ))
+                .child(
+                    Button::new(SharedString::from(format!(
+                        "session-agent-approval-more-{tool_id}"
+                    )))
+                    .ghost()
+                    .small()
+                    .dropdown_caret(true)
+                    .label(i18n::string("workspace.panel.agent.tool_actions.more"))
+                    .dropdown_menu(move |menu, _, _| {
+                        let mut menu = menu.min_w(220.0);
+                        if let Some(prefix) = grant_prefix.clone() {
+                            let tool_id = menu_tool_id.clone();
+                            let entity = menu_entity.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(i18n::string_args(
+                                    "workspace.panel.agent.tool_actions.approve_session",
+                                    &[("prefix", &prefix)],
+                                ))
+                                .on_click(move |_, _, cx| {
+                                    let tool_id = tool_id.clone();
+                                    entity.update(cx, |controller, cx| {
+                                        controller
+                                            .approve_session_agent_tool_call_for_session_scope(
+                                                tool_id, cx,
+                                            );
+                                    });
+                                }),
+                            );
+                        }
+                        if editable.is_some() {
+                            let tool_id = menu_tool_id.clone();
+                            let entity = menu_entity.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(i18n::string(
+                                    "workspace.panel.agent.tool_actions.edit",
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let tool_id = tool_id.clone();
+                                    entity.update(cx, |controller, cx| {
+                                        controller.begin_approval_input(
+                                            tool_id,
+                                            ApprovalInputMode::Edit,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                            );
+                        }
+                        let tool_id = menu_tool_id.clone();
+                        let entity = menu_entity.clone();
+                        menu.item(
+                            PopupMenuItem::new(i18n::string(
+                                "workspace.panel.agent.tool_actions.deny_with_reason",
+                            ))
+                            .on_click(move |_, window, cx| {
+                                let tool_id = tool_id.clone();
+                                entity.update(cx, |controller, cx| {
+                                    controller.begin_approval_input(
+                                        tool_id,
+                                        ApprovalInputMode::DenyReason,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                        )
+                    }),
+                ),
+        )
+        .when_some(input_mode, |this, mode| {
+            this.child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w(px(0.0)).child(
+                            HintedInput::new(&input)
+                                .w_full()
+                                .border_0()
+                                .rounded(px(6.0))
+                                .bg(rgb(roles.surface_container_highest))
+                                .text_color(rgb(roles.on_surface)),
+                        ),
+                    )
+                    .child(icon_button_with_tooltip(
+                        AppIcon::Send,
+                        i18n::string(match mode {
+                            ApprovalInputMode::Edit => {
+                                "workspace.panel.agent.tool_actions.approve_edited"
+                            }
+                            ApprovalInputMode::DenyReason => {
+                                "workspace.panel.agent.tool_actions.deny"
+                            }
+                        }),
+                        26.0,
+                        8.0,
+                        Some(roles.primary),
+                        Some(roles.on_primary),
+                        None,
+                        move |window, cx| {
+                            submit_entity.update(cx, |controller, cx| {
+                                controller.submit_approval_input(window, cx);
+                            });
+                        },
+                    )),
+            )
+        })
         .into_any_element()
 }
 
@@ -964,6 +1115,7 @@ fn render_session_agent_ask_user_actions(
     tool_call: &SessionAgentToolCall,
     entity: Entity<AgentController>,
     roles: miaominal_settings::theme::Md3Roles,
+    cx: &App,
 ) -> gpui_kit::AnyElement {
     let prompt = parse_ask_user_prompt(tool_call);
     let input = agent.ask_user_input();
@@ -991,11 +1143,15 @@ fn render_session_agent_ask_user_actions(
                             .id(choice_id)
                             .w_full()
                             .child(render_session_agent_text_action_button(
+                                SharedString::from(format!(
+                                    "agent-answer-{}-{index}",
+                                    tool_call.id
+                                )),
                                 choice.label.clone(),
                                 choice.description.clone(),
-                                false,
-                                true,
+                                AgentActionButtonKind::Choice,
                                 roles,
+                                cx,
                                 move |window, cx| {
                                     let tool_id = tool_id.clone();
                                     let answer = answer.clone();
@@ -1058,12 +1214,12 @@ fn render_session_agent_ask_user_actions(
 pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
     agent: &AgentController,
     message_column_width: f32,
-    terminal_originated_selection_drag_active: bool,
+    _terminal_originated_selection_drag_active: bool,
     index: usize,
     message: &SessionAgentMessage,
     message_view: Entity<SessionAgentMessageView>,
     entity: Entity<AgentController>,
-    _cx: &mut Context<AgentController>,
+    cx: &mut Context<AgentController>,
 ) -> gpui_kit::AnyElement {
     let material = miaominal_settings::current_theme().material;
     let roles = material.roles;
@@ -1099,7 +1255,6 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
         on_surface: roles.on_surface,
         error: roles.error,
         text_muted,
-        selectable: session_agent_text_selectable(terminal_originated_selection_drag_active),
     };
     let status_color = match tool_call.status {
         SessionAgentToolStatus::Pending | SessionAgentToolStatus::InProgress => roles.primary,
@@ -1117,7 +1272,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
             .min_w_0()
             .flex_shrink_0()
             .overflow_hidden()
-            .rounded(px(8.0))
+            .rounded_lg()
             .bg(rgb(roles.surface_container_high))
             .child(
                 h_flex()
@@ -1149,13 +1304,24 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
                         text_muted,
                     ))
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
                             .min_w_0()
-                            .text_size(miaominal_settings::FontSize::Input.scaled())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(roles.on_surface))
-                            .child(session_agent_tool_title(&tool_call.name)),
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Input.scaled())
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(rgb(roles.on_surface))
+                                    .child(session_agent_tool_title(&tool_call.name)),
+                            )
+                            .when_some(
+                                (!expanded)
+                                    .then(|| tool_call_summary_line(tool_call))
+                                    .flatten(),
+                                |this, summary| {
+                                    this.child(render_tool_summary_line(summary, tool_colors))
+                                },
+                            ),
                     )
                     .child(
                         div()
@@ -1194,7 +1360,14 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
                     SharedString::from(format!("session-agent-tool-body-reveal-{}", tool_call.id)),
                     container_transition_animation(),
                     |element, delta| {
-                        element.max_h(px(delta * SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT))
+                        // Limit only during the reveal. A permanent outer cap
+                        // can clip the second block at larger interface sizes;
+                        // command and result viewports own their own limits.
+                        element.when(delta < 1.0, |element| {
+                            element.max_h(gpui_kit::rems(
+                                delta * SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT_REM,
+                            ))
+                        })
                     },
                 ))
             })
@@ -1205,13 +1378,15 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
                         tool_call,
                         entity.clone(),
                         roles,
+                        cx,
                     ))
                 } else {
                     this.child(render_session_agent_approval_actions(
+                        agent,
                         &tool_call.id,
                         entity.clone(),
-                        entity.clone(),
                         roles,
+                        cx,
                     ))
                 }
             }),
@@ -1263,6 +1438,94 @@ fn render_session_agent_message_attachments(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Role, TestAppContext};
+    use std::{cell::Cell, rc::Rc};
+
+    struct ApprovalButtonsFixture {
+        approved: Rc<Cell<usize>>,
+        denied: Rc<Cell<usize>>,
+    }
+
+    impl Render for ApprovalButtonsFixture {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let roles = miaominal_settings::current_theme().material.roles;
+            let approved = self.approved.clone();
+            let denied = self.denied.clone();
+            h_flex()
+                .tab_group()
+                .w(px(282.0))
+                .gap_2()
+                .child(render_session_agent_text_action_button(
+                    "approve-fixture".into(),
+                    "Approve".into(),
+                    None,
+                    AgentActionButtonKind::Primary,
+                    roles,
+                    cx,
+                    move |_, _| approved.set(approved.get() + 1),
+                ))
+                .child(render_session_agent_text_action_button(
+                    "deny-fixture".into(),
+                    "Deny".into(),
+                    None,
+                    AgentActionButtonKind::Tonal,
+                    roles,
+                    cx,
+                    move |_, _| denied.set(denied.get() + 1),
+                ))
+                .child(
+                    Button::new("more-fixture")
+                        .ghost()
+                        .small()
+                        .label("More")
+                        .dropdown_caret(true),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn approval_actions_fit_the_small_panel_and_support_keyboard(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let approved = Rc::new(Cell::new(0));
+        let denied = Rc::new(Cell::new(0));
+        let (a, d) = (approved.clone(), denied.clone());
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| ApprovalButtonsFixture {
+                approved: a,
+                denied: d,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            let approve = window.find("approve-fixture");
+            assert_eq!(approve.role(), Some(Role::Button));
+            let deny = window.find("deny-fixture");
+            let more = window.find("more-fixture");
+            assert_eq!(approve.bounds().top(), deny.bounds().top());
+            assert_eq!(approve.bounds().top(), more.bounds().top());
+            assert!(
+                more.bounds().right() <= px(282.0),
+                "actions must fit on one line"
+            );
+            window.click("approve-fixture", cx);
+            assert_eq!(approved.get(), 1, "pointer activation must fire once");
+            // Native buttons intentionally keep pointer clicks from stealing
+            // focus; keyboard traversal starts at the first action.
+            // App-level Tab routing calls focus_next; the isolated fixture
+            // exercises that same focus traversal without the app shell.
+            window.focus_next(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("approve-fixture").focused(), Some(true));
+            window.focus_next(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("deny-fixture").focused(), Some(true));
+            window.press("enter", cx);
+            assert_eq!(denied.get(), 1, "keyboard activation must fire once");
+        });
+    }
 
     #[test]
     fn session_agent_text_is_selectable_without_terminal_originated_drag() {

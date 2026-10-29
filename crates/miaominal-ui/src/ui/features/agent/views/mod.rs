@@ -1,5 +1,6 @@
 pub(super) mod session_agent_composer;
 pub(super) mod session_agent_conversation;
+pub(super) mod session_agent_highlight;
 pub(super) mod session_agent_history;
 pub(super) mod session_agent_mentions;
 pub(super) mod session_agent_panel;

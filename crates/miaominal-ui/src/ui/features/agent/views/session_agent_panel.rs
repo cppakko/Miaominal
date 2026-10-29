@@ -7,11 +7,15 @@ use crate::ui::i18n;
 use gpui_kit::AnimationExt as _;
 use std::time::Duration;
 
-const SESSION_AGENT_PANEL_HORIZONTAL_PADDING: f32 = 24.0;
+/// Left inset of the conversation column; the right side has no padding so
+/// the overlay scrollbar sits at the panel edge.
+const SESSION_AGENT_CONTENT_INSET_REMS: f32 = 0.5;
 const SESSION_AGENT_PANEL_MIN_WIDTH: f32 = 300.0;
 const SESSION_AGENT_PANEL_MAX_WIDTH: f32 = 720.0;
 const SESSION_AGENT_PANEL_RESIZE_HANDLE_WIDTH: f32 = 8.0;
-const SESSION_AGENT_SCROLLBAR_GUTTER: f32 = 16.0;
+// The trailing inset doubles as the overlay scrollbar gutter. Do not add
+// a second gutter: message edges should be balanced, and the scrollbar
+// itself stays at the panel's edge.
 pub(in crate::ui::features::agent) const SESSION_AGENT_USER_BUBBLE_MAX_WIDTH: f32 = 420.0;
 const SESSION_AGENT_AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 const SESSION_AGENT_AUTO_SCROLL_DEAD_ZONE: f32 = 12.0;
@@ -32,9 +36,9 @@ pub(in crate::ui) fn clamp_session_agent_panel_width(width: f32) -> f32 {
     width.clamp(SESSION_AGENT_PANEL_MIN_WIDTH, SESSION_AGENT_PANEL_MAX_WIDTH)
 }
 
-fn session_agent_message_column_width(panel_width: f32) -> f32 {
-    let reserved_width = SESSION_AGENT_PANEL_HORIZONTAL_PADDING + SESSION_AGENT_SCROLLBAR_GUTTER;
-    (panel_width - reserved_width).max(SESSION_AGENT_PANEL_MIN_WIDTH - reserved_width)
+fn session_agent_message_column_width(panel_width: f32, rem_size: f32) -> f32 {
+    let reserved_width = 2.0 * SESSION_AGENT_CONTENT_INSET_REMS * rem_size;
+    (panel_width - reserved_width).max(1.0)
 }
 
 fn render_session_agent_resize_handle(
@@ -511,11 +515,15 @@ impl AgentController {
             material.palettes.neutral_variant,
             if material.dark { 65 } else { 50 },
         );
-        let message_column_width = session_agent_message_column_width(self.panel_width());
+        let message_column_width =
+            session_agent_message_column_width(self.panel_width(), f32::from(window.rem_size()));
         let show_scrollable_messages =
             !self.session_agent().messages.is_empty() || self.session_agent().is_busy();
-        let Some(conversation) = self.panel_conversation_view() else {
-            return div().size_full().into_any_element();
+        let conversation = match self.panel_conversation_view() {
+            Some(conversation) => conversation,
+            // A conversation surface must always have a projection; recreate
+            // it from state instead of rendering an empty panel.
+            None => self.ensure_conversation_view(cx),
         };
         let conversation_list_state = conversation.read(cx).list_state();
 
@@ -544,7 +552,7 @@ impl AgentController {
                         v_flex()
                             .flex_1()
                             .min_h_0()
-                            .px_3()
+                            .pl(gpui_kit::rems(SESSION_AGENT_CONTENT_INSET_REMS))
                             .pt_2()
                             .gap_3()
                             // Search overlay bar
@@ -562,6 +570,7 @@ impl AgentController {
                                             .w_full()
                                             .gap_1()
                                             .py_1()
+                                            .pr(gpui_kit::rems(SESSION_AGENT_CONTENT_INSET_REMS))
                                             .opacity(visibility)
                                             .top(px((1.0 - visibility) * 8.0))
                                             .child(search_filter_input(
@@ -780,5 +789,26 @@ impl AgentController {
             window,
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn conversation_uses_balanced_insets_without_a_second_scrollbar_gutter() {
+        for width in [240.0, 300.0, 356.0, 488.0, 720.0] {
+            for rem_size in [14.0, 16.0, 20.0, 24.0] {
+                let leading = SESSION_AGENT_CONTENT_INSET_REMS * rem_size;
+                let column = session_agent_message_column_width(width, rem_size);
+                let trailing = width - leading - column;
+                assert!((leading - trailing).abs() < 0.01);
+                assert!(column > 0.0 && column < width);
+            }
+        }
+        // At the screenshot's width, use 8px per side (16px base), not
+        // 12px of panel padding plus a second 16px scrollbar reservation.
+        assert_eq!(session_agent_message_column_width(488.0, 16.0), 472.0);
     }
 }
