@@ -2718,8 +2718,34 @@ fn ai_providers_page(settings: Entity<SettingsController>) -> SettingPage {
                     .layout(Axis::Vertical)
                     .description(i18n::string("settings.ai_providers.saved.description")),
                 ),
-            web_search_settings_group(settings),
+            web_search_settings_group(settings.clone()),
+            agent_safety_settings_group(settings),
         ]))
+}
+
+fn agent_safety_settings_group(settings: Entity<SettingsController>) -> SettingGroup {
+    SettingGroup::new()
+        .title(i18n::string("settings.agent_safety.group.title"))
+        .description(i18n::string("settings.agent_safety.group.description"))
+        .item(
+            SettingItem::new(
+                i18n::string("settings.agent_safety.auto_approve_dangerous.label"),
+                SettingField::switch(
+                    {
+                        let settings = settings.clone();
+                        move |cx: &App| settings.read(cx).settings().agent_auto_approve_dangerous
+                    },
+                    move |enabled: bool, cx: &mut App| {
+                        settings.update(cx, |controller, cx| {
+                            controller.set_agent_auto_approve_dangerous(enabled, cx);
+                        });
+                    },
+                ),
+            )
+            .description(i18n::string(
+                "settings.agent_safety.auto_approve_dangerous.description",
+            )),
+        )
 }
 
 fn web_search_settings_group(settings: Entity<SettingsController>) -> SettingGroup {

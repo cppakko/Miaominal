@@ -1,10 +1,6 @@
-use super::{
-    AgentController, ChatPanelView, SessionAgentExecutionContext, SessionAgentMessage,
-    trailing_at_mention_query,
-};
+use super::{AgentController, SessionAgentExecutionContext, trailing_at_mention_query};
 use crate::ui::components::forms::set_textarea_value;
 use gpui_kit::{App, Context, Window};
-use miaominal_core::chat_attachment::ChatAttachment;
 
 const SESSION_AGENT_PROMPT_HISTORY_LIMIT: usize = 100;
 
@@ -26,13 +22,6 @@ pub(in crate::ui) enum AgentPromptDraftOutcome {
     Busy,
     Empty,
     Ready(AgentPromptDraft),
-}
-
-pub(in crate::ui) struct AgentPromptRequestPreparation {
-    pub(in crate::ui) session_id: String,
-    pub(in crate::ui) request_id: u64,
-    pub(in crate::ui) attachments: Vec<ChatAttachment>,
-    pub(in crate::ui) history_messages: Vec<SessionAgentMessage>,
 }
 
 impl AgentController {
@@ -60,10 +49,6 @@ impl AgentController {
         self.runtime.get_mut().foreground.active_exec_context = context;
     }
 
-    pub(in crate::ui) fn clear_prompt_execution_context(&mut self) {
-        self.runtime.get_mut().foreground.active_exec_context = None;
-    }
-
     pub(in crate::ui) fn record_prompt_submission_error(
         &mut self,
         message: String,
@@ -79,51 +64,6 @@ impl AgentController {
             message,
         ));
         cx.notify();
-    }
-
-    pub(in crate::ui) fn prepare_prompt_request(
-        &mut self,
-        target_names: Vec<String>,
-        cx: &mut Context<Self>,
-    ) -> AgentPromptRequestPreparation {
-        let session_id = self.ensure_foreground_session(cx);
-        let state = &mut self.runtime.get_mut().foreground;
-        state.panel_view = ChatPanelView::Conversation;
-        state.active_at_targets = target_names;
-        let request_id = state.next_request_id();
-        let attachments = std::mem::take(&mut state.pending_attachments);
-        let history_messages = state.messages.clone();
-        AgentPromptRequestPreparation {
-            session_id,
-            request_id,
-            attachments,
-            history_messages,
-        }
-    }
-
-    pub(in crate::ui) fn commit_prompt_request(
-        &mut self,
-        prompt: &str,
-        model_prompt: String,
-        attachments: Vec<ChatAttachment>,
-        request_id: u64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.push_message(
-            SessionAgentMessage::user_with_attachments(model_prompt, attachments),
-            cx,
-        );
-        if !prompt.is_empty() {
-            self.record_prompt_history(prompt);
-        }
-        self.persist_foreground_chat(cx);
-        {
-            let state = &mut self.runtime.get_mut().foreground;
-            state.active_request_id = request_id;
-            state.last_error = None;
-        }
-        self.clear_prompt_after_submission(window, cx);
     }
 
     pub(in crate::ui) fn prompt_execution_context(&self) -> Option<SessionAgentExecutionContext> {

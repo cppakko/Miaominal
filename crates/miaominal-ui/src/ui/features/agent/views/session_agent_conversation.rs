@@ -952,7 +952,7 @@ fn render_session_agent_approval_actions(
             move |_window, cx| {
                 let tool_id = deny_tool_id.clone();
                 deny_agent.update(cx, |controller, cx| {
-                    controller.deny_tool_call(tool_id, cx);
+                    controller.deny_tool_call_with_reason(tool_id, String::new(), cx);
                 });
             },
         ))

@@ -48,8 +48,6 @@ mod controller;
 use controller::*;
 pub(in crate::ui) use controller::{AgentController, AgentControllerArgs, PromptHistoryDirection};
 mod conversation_view;
-mod execution;
-mod stream_batch;
 mod views;
 const AGENT_PANEL_DEFAULT_WIDTH: f32 = 356.0;
 pub(in crate::ui) use views::session_agent_panel::clamp_session_agent_panel_width;

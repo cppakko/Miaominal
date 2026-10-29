@@ -51,7 +51,7 @@ impl AgentController {
         let revision = self.attachment_picker_revision;
         let (session_id, request_id) = {
             let state = self.session_agent();
-            (state.session_id.clone(), state.active_request_id)
+            (state.session_id.clone(), state.turn_marker())
         };
         let dialog = rfd::AsyncFileDialog::new()
             .set_parent(window)
@@ -82,7 +82,7 @@ impl AgentController {
                         session_id.as_deref(),
                         state.session_id.as_deref(),
                         request_id,
-                        state.active_request_id,
+                        state.turn_marker(),
                     )
                 };
                 if !target_matches {

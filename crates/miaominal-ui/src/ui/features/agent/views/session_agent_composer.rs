@@ -2,11 +2,11 @@ use super::super::*;
 use super::session_agent_mentions;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::contracts::preferences::ai_provider_kind_chat_supported;
-use crate::ui::features::agent::execution::agent_provider_kind;
 use crate::ui::i18n;
 use gpui_kit::component::{Disableable as _, menu::DropdownMenu as _};
 use gpui_kit::{Animation, AnimationExt as _, ClipboardEntry};
-use miaominal_agent::{AgentMode, AgentReasoningSupport, agent_reasoning_support};
+use miaominal_agent::model::{AgentReasoningSupport, agent_reasoning_support};
+use miaominal_agent::policy::ApprovalMode;
 use miaominal_settings::{AiProviderConfig, AiReasoningEffort};
 use std::time::Duration;
 
@@ -55,18 +55,18 @@ fn reasoning_effort_selectable(support: AgentReasoningSupport, effort: AiReasoni
     effort == AiReasoningEffort::Default || support != AgentReasoningSupport::Unsupported
 }
 
-fn agent_mode_label_key(mode: AgentMode) -> &'static str {
+fn agent_mode_label_key(mode: ApprovalMode) -> &'static str {
     match mode {
-        AgentMode::Ask => "agent.mode.ask",
-        AgentMode::Execute => "agent.mode.execute",
-        AgentMode::NonBlocking => "agent.mode.non_blocking",
-        AgentMode::FullAuto => "agent.mode.full_auto",
+        ApprovalMode::ReadOnly => "agent.mode.ask",
+        ApprovalMode::Standard => "agent.mode.execute",
+        ApprovalMode::Cautious => "agent.mode.non_blocking",
+        ApprovalMode::FullAuto => "agent.mode.full_auto",
     }
 }
 
 fn render_session_agent_mode_menu(
     agent: Entity<AgentController>,
-    selected_mode: AgentMode,
+    selected_mode: ApprovalMode,
 ) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
     let mode_label = i18n::string(agent_mode_label_key(selected_mode));
@@ -88,10 +88,10 @@ fn render_session_agent_mode_menu(
         .dropdown_menu(move |menu, _, _| {
             let mut menu = menu.min_w(180.0);
             for mode in [
-                AgentMode::Ask,
-                AgentMode::Execute,
-                AgentMode::NonBlocking,
-                AgentMode::FullAuto,
+                ApprovalMode::ReadOnly,
+                ApprovalMode::Cautious,
+                ApprovalMode::Standard,
+                ApprovalMode::FullAuto,
             ] {
                 let mode_agent = menu_agent.clone();
                 menu = menu.item(
@@ -131,12 +131,11 @@ fn render_session_agent_provider_menu(
         .as_ref()
         .map(|provider| provider.reasoning_effort)
         .unwrap_or_default();
-    let reasoning_support =
-        selected_provider
-            .as_ref()
-            .map_or(AgentReasoningSupport::Unknown, |provider| {
-                agent_reasoning_support(agent_provider_kind(provider.kind), provider.model.as_str())
-            });
+    let reasoning_support = selected_provider
+        .as_ref()
+        .map_or(AgentReasoningSupport::Unknown, |provider| {
+            agent_reasoning_support(provider.kind, provider.model.as_str())
+        });
     let effort_label = i18n::string(reasoning_effort_label_key(selected_effort));
     let provider_label = selected_provider
         .as_ref()
@@ -264,6 +263,16 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
     let state = agent_controller.session_agent();
     let prompt_input = agent_controller.prompt_input();
     let selected_agent_mode = agent_controller.agent_mode();
+    let context_usage_label = agent_controller
+        .context_usage()
+        .filter(|(_, window)| *window > 0)
+        .map(|(used, window)| {
+            let percent = (used.saturating_mul(100) / window).min(100);
+            i18n::string_args(
+                "workspace.panel.agent.context_usage",
+                &[("percent", &percent.to_string())],
+            )
+        });
     let prompt_menu_input = prompt_input.clone();
     let pty_toggle_controller = agent.clone();
     let attach_controller = agent.clone();
@@ -421,6 +430,15 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                         ),
                                     ),
                                 )
+                                .when_some(context_usage_label, |this, label| {
+                                    this.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                                            .text_color(rgb(text_muted))
+                                            .child(label),
+                                    )
+                                })
                                 .child(icon_button_with_tooltip(
                                     AppIcon::Paperclip,
                                     i18n::string("workspace.panel.agent.tooltips.attach_file"),

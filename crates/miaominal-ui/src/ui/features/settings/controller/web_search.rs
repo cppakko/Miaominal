@@ -10,6 +10,20 @@ struct WebSearchSaveTaskResult {
 }
 
 impl SettingsController {
+    /// Full-auto mode: also run destructive (L3) actions without asking.
+    pub(in crate::ui) fn set_agent_auto_approve_dangerous(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .settings_store
+            .update(|settings| settings.agent_auto_approve_dangerous = enabled)
+        {
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui) fn set_web_search_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self
             .settings_store

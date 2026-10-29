@@ -19,47 +19,33 @@ use gpui_kit::{
     ClipboardItem, Context, Entity, EventEmitter, FocusHandle, IntoElement, Pixels, Point, Render,
     Subscription, WeakEntity, Window, div,
 };
-use miaominal_agent::AgentMode;
+use miaominal_agent::policy::ApprovalMode;
 use miaominal_secrets::SecretStore;
 use miaominal_services::{AgentService, ChatService};
 use miaominal_storage::chat_store::ChatSessionRecord;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 use tokio::runtime::Handle as TokioHandle;
 
+mod actions;
 mod attachments;
-mod conversation;
+mod engine;
 mod history;
 mod prompt;
-mod recovery;
 mod runtime;
 mod search;
 mod session_ports;
-mod stream;
-mod tasks;
-mod tool_interaction;
 
-#[cfg(test)]
-pub(in crate::ui) use history::{
-    chat_record_from_session_agent_message, restored_tool_status_and_note,
-    session_agent_message_from_record, tool_status_as_str,
-};
+pub(in crate::ui) use actions::{ApprovalInputMode, retire_session_agent_pty_leases};
 pub(in crate::ui) use prompt::PromptHistoryDirection;
-pub(in crate::ui) use prompt::{
-    AgentPromptDraft, AgentPromptDraftOutcome, AgentPromptRequestPreparation,
-};
+pub(in crate::ui) use prompt::{AgentPromptDraft, AgentPromptDraftOutcome};
 use runtime::AgentRuntimeStore;
 pub(in crate::ui) use runtime::{
     AgentExecMode, ChatPanelView, SessionAgentExecutionContext, SessionAgentMessage,
-    SessionAgentMessageMotion, SessionAgentMessageRole, SessionAgentState, SessionAgentToolCall,
-    SessionAgentToolStatus, split_message_into_blocks, trailing_at_mention_query,
-};
-pub(in crate::ui) use stream::{AgentStreamFollowUp, SessionAgentBackgroundNotificationKind};
-pub(in crate::ui) use tasks::{AgentApprovedToolTask, AgentStreamTask, AgentStreamTaskRequest};
-pub(in crate::ui) use tool_interaction::{
-    AgentContinuationPreparation, AgentToolApprovalCommit, AgentToolContinuation,
-    AgentToolExecutionCommit,
+    SessionAgentMessageMotion, SessionAgentMessageRole, SessionAgentState, SessionAgentThinking,
+    SessionAgentToolCall, SessionAgentToolStatus, split_message_into_blocks,
+    trailing_at_mention_query,
 };
 
 pub(in crate::ui) struct WorkspaceAgentForms {
@@ -119,10 +105,6 @@ pub(in crate::ui) struct SessionAgentTargetCandidate {
     pub(in crate::ui) resolved: bool,
 }
 
-pub(in crate::ui) struct AgentFinishStreamOutcome {
-    pub(in crate::ui) title_seed: Option<(String, String)>,
-}
-
 struct AgentPanelLayoutState {
     open: bool,
     visible: bool,
@@ -180,22 +162,12 @@ pub(in crate::ui) struct AgentControllerArgs {
     pub(in crate::ui) local_vault_status: LocalVaultStatus,
 }
 
-fn agent_mode_from_preference(mode: miaominal_settings::AiAgentMode) -> AgentMode {
-    match mode {
-        miaominal_settings::AiAgentMode::Ask => AgentMode::Ask,
-        miaominal_settings::AiAgentMode::Execute => AgentMode::Execute,
-        miaominal_settings::AiAgentMode::NonBlocking => AgentMode::NonBlocking,
-        miaominal_settings::AiAgentMode::FullAuto => AgentMode::FullAuto,
-    }
+fn agent_mode_from_preference(mode: miaominal_settings::AiAgentMode) -> ApprovalMode {
+    ApprovalMode::from(mode)
 }
 
-fn agent_mode_preference(mode: AgentMode) -> miaominal_settings::AiAgentMode {
-    match mode {
-        AgentMode::Ask => miaominal_settings::AiAgentMode::Ask,
-        AgentMode::Execute => miaominal_settings::AiAgentMode::Execute,
-        AgentMode::NonBlocking => miaominal_settings::AiAgentMode::NonBlocking,
-        AgentMode::FullAuto => miaominal_settings::AiAgentMode::FullAuto,
-    }
+fn agent_mode_preference(mode: ApprovalMode) -> miaominal_settings::AiAgentMode {
+    miaominal_settings::AiAgentMode::from(mode)
 }
 
 pub(in crate::ui) struct AgentController {
@@ -217,7 +189,9 @@ pub(in crate::ui) struct AgentController {
     panel_layout: RefCell<AgentPanelLayoutState>,
     pending_chat_session_delete: Option<PendingChatSessionDeleteState>,
     pending_chat_session_rename: Option<PendingChatSessionRenameState>,
-    preferred_agent_mode: AgentMode,
+    preferred_agent_mode: ApprovalMode,
+    /// Inline input shown under an approval card (edit or deny reason).
+    approval_input: Option<(String, ApprovalInputMode)>,
     attachment_picker_revision: u64,
     attachment_picker_task: Option<gpui_kit::Task<()>>,
     surface_active: bool,
@@ -450,6 +424,7 @@ impl AgentController {
             pending_chat_session_delete: None,
             pending_chat_session_rename: None,
             preferred_agent_mode,
+            approval_input: None,
             attachment_picker_revision: 0,
             attachment_picker_task: None,
             surface_active: true,
@@ -698,7 +673,7 @@ impl AgentController {
 
     pub(in crate::ui) fn select_agent_mode(
         &mut self,
-        mode: AgentMode,
+        mode: ApprovalMode,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.runtime.borrow().foreground.agent_mode == mode {
@@ -706,11 +681,34 @@ impl AgentController {
         }
         self.runtime.get_mut().foreground.agent_mode = mode;
         self.preferred_agent_mode = mode;
+        // A running turn picks the new mode up before its next step.
+        let approval = miaominal_agent::policy::ApprovalSettings {
+            mode,
+            auto_approve_dangerous: miaominal_settings::current_settings()
+                .agent_auto_approve_dangerous,
+        };
+        if let Some(engine) = self.runtime.borrow().foreground.engine.as_ref() {
+            engine.send(miaominal_agent::engine::AgentCommand::UpdateConfig(
+                miaominal_agent::engine::AgentConfigPatch {
+                    approval: Some(approval),
+                    ..Default::default()
+                },
+            ));
+        }
         cx.emit(AppCommand::AgentModePreferenceChanged(
             agent_mode_preference(mode),
         ));
         cx.notify();
         true
+    }
+
+    pub(in crate::ui) fn agent_mode(&self) -> ApprovalMode {
+        self.runtime.borrow().foreground.agent_mode
+    }
+
+    /// (tokens used, context window) reported by the latest completion.
+    pub(in crate::ui) fn context_usage(&self) -> Option<(u64, u64)> {
+        self.runtime.borrow().foreground.context_usage
     }
 
     pub(in crate::ui) fn editing_title(&self) -> bool {
@@ -789,20 +787,8 @@ impl AgentController {
         Ref::map(self.runtime.borrow(), |runtime| &runtime.foreground)
     }
 
-    pub(super) fn session_agent_mut(&self) -> RefMut<'_, SessionAgentState> {
-        RefMut::map(self.runtime.borrow_mut(), |runtime| &mut runtime.foreground)
-    }
-
-    pub(in crate::ui) fn foreground_session_id(&self) -> Option<String> {
-        self.runtime.borrow().foreground.session_id.clone()
-    }
-
     pub(in crate::ui) fn session_is_foreground(&self, session_id: &str) -> bool {
         self.runtime.borrow().session_is_foreground(session_id)
-    }
-
-    pub(in crate::ui) fn session_exists(&self, session_id: &str) -> bool {
-        self.runtime.borrow().session(session_id).is_some()
     }
 
     pub(in crate::ui) fn session_panel_view(&self, session_id: &str) -> Option<ChatPanelView> {
@@ -810,13 +796,6 @@ impl AgentController {
             .borrow()
             .session(session_id)
             .map(|state| state.panel_view)
-    }
-
-    pub(in crate::ui) fn session_has_active_tool_call(&self, session_id: &str) -> bool {
-        self.runtime
-            .borrow()
-            .session(session_id)
-            .is_some_and(SessionAgentState::has_active_tool_call)
     }
 
     pub(in crate::ui) fn session_chat_label(&self, session_id: &str) -> Option<String> {

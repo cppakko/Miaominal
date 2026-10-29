@@ -1,12 +1,10 @@
 use super::*;
 use super::{
     AgentController, ChatPanelView, PendingChatSessionDeleteState, PendingChatSessionRenameState,
-    SessionAgentMessage, SessionAgentMessageRole, SessionAgentState, SessionAgentToolCall,
-    SessionAgentToolStatus,
+    SessionAgentState,
 };
 use crate::ui::i18n;
 use gpui_kit::{Context, Window};
-use miaominal_storage::chat_store::{ChatMessageRecord, ChatMessageRole};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 impl AgentController {
@@ -72,8 +70,13 @@ impl AgentController {
             return;
         }
 
-        let messages = match self.load_chat_session_messages(&session_id) {
-            Ok(messages) => messages,
+        let items = match self
+            .chat_service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("chat history unavailable"))
+            .and_then(|service| service.load_transcript(&session_id))
+        {
+            Ok(items) => items,
             Err(error) => {
                 let message = i18n::string_args(
                     "workspace.panel.agent.messages.load_failed",
@@ -93,18 +96,18 @@ impl AgentController {
             })
             .filter(|title| !title.trim().is_empty());
 
-        self.runtime.get_mut().foreground = SessionAgentState {
-            messages: messages
-                .into_iter()
-                .map(session_agent_message_from_record)
-                .collect(),
+        let mut state = SessionAgentState {
             session_id: Some(session_id),
             title,
-            active_request_id: 1,
             panel_view: ChatPanelView::Conversation,
             agent_mode: self.preferred_agent_mode,
             ..Default::default()
         };
+        for item in &items {
+            state.apply_committed_item(item.clone(), false);
+        }
+        state.transcript_seed = Some(items);
+        self.runtime.get_mut().foreground = state;
         self.ensure_conversation_view(cx);
         cx.emit(AppCommand::Feedback(i18n::string(
             "workspace.panel.agent.messages.history_loaded",
@@ -232,71 +235,6 @@ impl AgentController {
         session_id
     }
 
-    pub(in crate::ui) fn persist_foreground_chat(&mut self, cx: &mut Context<Self>) {
-        if !self.chat_history_available() || self.runtime.get_mut().foreground.messages.is_empty() {
-            return;
-        }
-
-        let now = unix_timestamp();
-        let session_id = match self.runtime.get_mut().foreground.session_id.clone() {
-            Some(session_id) => session_id,
-            None => {
-                let session_id = uuid::Uuid::new_v4().to_string();
-                if let Err(error) = self.create_chat_session(&session_id, now) {
-                    log::warn!("failed to create chat session: {error:?}");
-                    return;
-                }
-                self.runtime.get_mut().foreground.session_id = Some(session_id.clone());
-                session_id
-            }
-        };
-
-        let (records, title) = {
-            let runtime = self.runtime.borrow();
-            let records = runtime
-                .foreground
-                .messages
-                .iter()
-                .enumerate()
-                .filter_map(|(index, message)| {
-                    chat_record_from_session_agent_message(&session_id, index, now, message)
-                })
-                .collect::<Vec<_>>();
-            (records, runtime.foreground.title.clone())
-        };
-        if let Err(error) = self.persist_chat_session(&session_id, &records, title.as_deref(), cx) {
-            log::warn!("failed to persist chat messages: {error:?}");
-        }
-    }
-
-    pub(in crate::ui) fn persist_session_chat(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        if !self.chat_history_available() {
-            return;
-        }
-        let now = unix_timestamp();
-        let Some((records, title)) = ({
-            let runtime = self.runtime.borrow();
-            runtime.session(session_id).and_then(|state| {
-                (!state.messages.is_empty()).then(|| {
-                    let records = state
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, message)| {
-                            chat_record_from_session_agent_message(session_id, index, now, message)
-                        })
-                        .collect::<Vec<_>>();
-                    (records, state.title.clone())
-                })
-            })
-        }) else {
-            return;
-        };
-        if let Err(error) = self.persist_chat_session(session_id, &records, title.as_deref(), cx) {
-            log::warn!("failed to persist chat messages: {error:?}");
-        }
-    }
-
     pub(in crate::ui) fn update_session_title_for_session(
         &mut self,
         session_id: &str,
@@ -331,16 +269,6 @@ impl AgentController {
         }
     }
 
-    pub(in crate::ui) fn load_chat_session_messages(
-        &self,
-        session_id: &str,
-    ) -> anyhow::Result<Vec<ChatMessageRecord>> {
-        self.chat_service
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("chat history unavailable"))?
-            .load_session_messages(session_id)
-    }
-
     pub(in crate::ui) fn chat_session_title(
         &self,
         session_id: &str,
@@ -359,7 +287,7 @@ impl AgentController {
         self.chat_service
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("chat history unavailable"))?
-            .create_session(session_id, now)
+            .create_session_v2(session_id, now)
     }
 
     fn delete_chat_session_and_runtime(&mut self, session_id: &str, cx: &mut Context<Self>) {
@@ -462,27 +390,6 @@ impl AgentController {
         Ok(())
     }
 
-    fn persist_chat_session(
-        &mut self,
-        session_id: &str,
-        records: &[ChatMessageRecord],
-        title: Option<&str>,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        let chat_service = self
-            .chat_service
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("chat history unavailable"))?;
-        chat_service.replace_session_messages(session_id, records)?;
-        if let Some(title) = title
-            && let Err(error) = chat_service.update_session_title(session_id, title)
-        {
-            log::warn!("failed to persist chat title: {error:?}");
-        }
-        self.refresh_chat_sessions(cx);
-        Ok(())
-    }
-
     fn reset_foreground_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_conversation_view(cx);
         reset_session_agent_state(
@@ -514,138 +421,28 @@ impl AgentController {
     }
 }
 
-fn reset_session_agent_state(
-    state: &mut SessionAgentState,
-    agent_mode: miaominal_agent::AgentMode,
-) {
+fn reset_session_agent_state(state: &mut SessionAgentState, agent_mode: ApprovalMode) {
     state.messages.clear();
     state.conversation_view = None;
     state.conversation_view_observation = None;
     state.conversation_viewport = None;
     state.session_id = None;
     state.last_error = None;
-    state.active_request_id = state.active_request_id.wrapping_add(1);
-    state.pending_stream_stop = None;
-    state.pending_agent_cancellation = None;
-    state.pending_task = None;
+    state.engine = None;
+    state.transcript_seed = None;
+    state.engine_busy = false;
+    state.item_messages.clear();
+    state.call_messages.clear();
+    state.pending_approvals.clear();
+    state.context_usage = None;
+    state.last_usage = None;
+    super::retire_session_agent_pty_leases(&std::mem::take(&mut state.turn_leases));
     state.selected_at_targets.clear();
     state.active_at_targets.clear();
     state.active_exec_context = None;
     state.title = None;
     state.panel_view = ChatPanelView::Conversation;
     state.agent_mode = agent_mode;
-}
-
-pub(in crate::ui) fn chat_record_from_session_agent_message(
-    session_id: &str,
-    index: usize,
-    now: i64,
-    message: &SessionAgentMessage,
-) -> Option<ChatMessageRecord> {
-    let role = match message.role {
-        SessionAgentMessageRole::User => ChatMessageRole::User,
-        SessionAgentMessageRole::Assistant => ChatMessageRole::Assistant,
-        SessionAgentMessageRole::Thinking => ChatMessageRole::Thinking,
-        SessionAgentMessageRole::ToolCall => ChatMessageRole::ToolCall,
-        SessionAgentMessageRole::Error => ChatMessageRole::Error,
-    };
-    let tool_call = message.tool_call.as_ref();
-    let content = tool_call
-        .map(|tool| tool.arguments.clone())
-        .unwrap_or_else(|| message.content.clone());
-    Some(ChatMessageRecord {
-        id: format!("{session_id}:{index}"),
-        session_id: session_id.to_string(),
-        role,
-        content,
-        tool_name: tool_call.map(|tool| tool.name.clone()),
-        tool_summary: tool_call
-            .and_then(|tool| tool.confirmation_note.clone())
-            .or_else(|| tool_call.map(|tool| tool.summary.clone())),
-        tool_status: tool_call.map(|tool| tool_status_as_str(tool.status).to_string()),
-        sort_order: index as i64,
-        created_at: now,
-        attachments: serialize_message_attachments(message),
-    })
-}
-
-pub(in crate::ui) fn session_agent_message_from_record(
-    record: ChatMessageRecord,
-) -> SessionAgentMessage {
-    let attachments: Vec<miaominal_core::chat_attachment::ChatAttachment> = record
-        .attachments
-        .as_deref()
-        .and_then(|json| serde_json::from_str(json).ok())
-        .unwrap_or_default();
-    match record.role {
-        ChatMessageRole::User => {
-            if attachments.is_empty() {
-                SessionAgentMessage::user(record.content)
-            } else {
-                SessionAgentMessage::user_with_attachments(record.content, attachments)
-            }
-        }
-        ChatMessageRole::Assistant => SessionAgentMessage::assistant_raw(record.content),
-        ChatMessageRole::Thinking => SessionAgentMessage::thinking_from_history(record.content),
-        ChatMessageRole::Error => SessionAgentMessage::error(record.content),
-        ChatMessageRole::ToolCall => {
-            let summary = record
-                .tool_summary
-                .clone()
-                .filter(|summary| !summary.trim().is_empty())
-                .unwrap_or_else(|| record.content.clone());
-            let (status, confirmation_note) =
-                restored_tool_status_and_note(record.tool_status.as_deref(), record.tool_summary);
-            SessionAgentMessage::tool_call(SessionAgentToolCall {
-                id: record.id,
-                name: record
-                    .tool_name
-                    .filter(|name| !name.trim().is_empty())
-                    .unwrap_or_else(|| i18n::string("workspace.panel.agent.tool")),
-                arguments: record.content,
-                summary,
-                status,
-                requires_confirmation: false,
-                confirmation_note,
-                expanded: false,
-            })
-        }
-    }
-}
-
-pub(in crate::ui) fn tool_status_as_str(status: SessionAgentToolStatus) -> &'static str {
-    match status {
-        SessionAgentToolStatus::Pending => "pending",
-        SessionAgentToolStatus::WaitingForConfirmation => "waiting_for_confirmation",
-        SessionAgentToolStatus::InProgress => "in_progress",
-        SessionAgentToolStatus::Completed => "completed",
-        SessionAgentToolStatus::Failed => "failed",
-        SessionAgentToolStatus::Rejected => "rejected",
-    }
-}
-
-pub(in crate::ui) fn restored_tool_status_and_note(
-    status: Option<&str>,
-    note: Option<String>,
-) -> (SessionAgentToolStatus, Option<String>) {
-    match status.unwrap_or("completed") {
-        "pending" | "waiting_for_confirmation" | "in_progress" => (
-            SessionAgentToolStatus::Rejected,
-            Some(i18n::string(
-                "workspace.panel.agent.messages.tool_interrupted_before_completion",
-            )),
-        ),
-        "failed" => (SessionAgentToolStatus::Failed, note),
-        "rejected" => (SessionAgentToolStatus::Rejected, note),
-        _ => (SessionAgentToolStatus::Completed, note),
-    }
-}
-
-fn serialize_message_attachments(message: &SessionAgentMessage) -> Option<String> {
-    if message.role != SessionAgentMessageRole::User || message.attachments.is_empty() {
-        return None;
-    }
-    serde_json::to_string(&message.attachments).ok()
 }
 
 fn unix_timestamp() -> i64 {
@@ -658,24 +455,23 @@ fn unix_timestamp() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miaominal_agent::AgentMode;
 
     #[test]
     fn new_conversation_keeps_the_last_agent_mode() {
         let mut state = SessionAgentState {
             session_id: Some("previous-session".into()),
             messages: vec![SessionAgentMessage::user("previous question")],
-            agent_mode: AgentMode::Execute,
-            active_request_id: 9,
+            agent_mode: ApprovalMode::Standard,
+            engine_busy: true,
             ..Default::default()
         };
 
-        reset_session_agent_state(&mut state, AgentMode::FullAuto);
+        reset_session_agent_state(&mut state, ApprovalMode::FullAuto);
 
-        assert_eq!(state.agent_mode, AgentMode::FullAuto);
+        assert_eq!(state.agent_mode, ApprovalMode::FullAuto);
         assert!(state.session_id.is_none());
         assert!(state.messages.is_empty());
+        assert!(!state.engine_busy);
         assert_eq!(state.panel_view, ChatPanelView::Conversation);
-        assert_eq!(state.active_request_id, 10);
     }
 }
