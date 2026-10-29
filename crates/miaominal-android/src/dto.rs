@@ -6,9 +6,7 @@
 //! updates use field-update semantics so Rust merges an edit into the stored
 //! profile and keeps every field the Android editor does not display.
 
-use miaominal_core::keychain::{
-    ManagedKeyGenerationAlgorithm, ManagedKeyRecord, ManagedKeySource,
-};
+use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeyRecord, ManagedKeySource};
 use miaominal_core::profile::{
     AuthMethod, PortForwardKind, PortForwardRule, ProfileKind, SessionEnvironmentVariable,
     SessionProfile, ShellType,
@@ -362,7 +360,9 @@ pub(crate) fn key_source_to_dto(source: ManagedKeySource) -> ManagedKeySourceDto
     }
 }
 
-pub(crate) fn key_algorithm_from_dto(algorithm: ManagedKeyAlgorithmDto) -> ManagedKeyGenerationAlgorithm {
+pub(crate) fn key_algorithm_from_dto(
+    algorithm: ManagedKeyAlgorithmDto,
+) -> ManagedKeyGenerationAlgorithm {
     match algorithm {
         ManagedKeyAlgorithmDto::Ed25519 => ManagedKeyGenerationAlgorithm::Ed25519,
         ManagedKeyAlgorithmDto::Rsa4096 => ManagedKeyGenerationAlgorithm::Rsa4096,
@@ -421,7 +421,9 @@ pub(crate) fn host_to_dto(profile: &SessionProfile) -> HostDto {
             .collect(),
         shell_type: shell_type_to_dto(profile.shell_type),
         is_favorite: profile.is_favorite,
-        last_connected_at_ms: profile.last_connected_at.map(|seconds| seconds * MS_PER_SECOND),
+        last_connected_at_ms: profile
+            .last_connected_at
+            .map(|seconds| seconds * MS_PER_SECOND),
         has_stored_password: profile.has_stored_password,
         has_stored_passphrase: profile.has_stored_passphrase,
         entry_proxy_id: profile.entry_proxy_id.clone().unwrap_or_default(),
@@ -626,7 +628,9 @@ pub(crate) fn settings_to_dto(settings: &AppSettings) -> SettingsDto {
         close_last_session_behavior: close_behavior_name(settings.last_tab_close_behavior)
             .to_string(),
         vault_enabled: settings.local_vault_enabled,
-        vault_auto_lock_minutes: vault_auto_lock_to_minutes(settings.local_vault_auto_lock_duration),
+        vault_auto_lock_minutes: vault_auto_lock_to_minutes(
+            settings.local_vault_auto_lock_duration,
+        ),
         onboarding_completed: !settings.should_show_onboarding(),
         terminal_font: settings.terminal_font_family.clone(),
         cjk_fallback_font: settings.font_fallbacks.first().cloned().unwrap_or_default(),
@@ -660,12 +664,12 @@ mod tests {
     fn host_update_keeps_undisplayed_fields() {
         let mut profile = SessionProfile::blank("host-1", 1);
         profile.proxy_jump_profile_ids = vec!["host-2".into()];
-        profile.environment_variables.push(
-            miaominal_core::profile::SessionEnvironmentVariable {
+        profile
+            .environment_variables
+            .push(miaominal_core::profile::SessionEnvironmentVariable {
                 name: "LANG".into(),
                 value: "C".into(),
-            },
-        );
+            });
         profile.remote_path_favorites = vec!["/srv".into()];
 
         apply_host_update(

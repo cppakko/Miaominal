@@ -5,6 +5,8 @@
 //! generated from the built `.so` by `miaominal-uniffi-bindgen`.
 
 mod agent;
+#[cfg(test)]
+mod agent_integration_tests;
 mod backend;
 mod build_info;
 mod credentials;
@@ -13,21 +15,19 @@ mod dto;
 mod error;
 mod events;
 mod forward;
+#[cfg(test)]
+mod forward_integration_tests;
 mod local_file;
 mod platform;
 mod runtime;
 mod session;
-mod sftp;
-mod sync;
-mod sync_dto;
-#[cfg(test)]
-mod agent_integration_tests;
-#[cfg(test)]
-mod forward_integration_tests;
 #[cfg(test)]
 mod session_integration_tests;
+mod sftp;
 #[cfg(test)]
 mod sftp_integration_tests;
+mod sync;
+mod sync_dto;
 #[cfg(test)]
 mod sync_integration_tests;
 #[cfg(test)]
@@ -56,8 +56,9 @@ pub use platform::{LogLevel, PlatformHost, SafEntry, SafEntryKind, SafWriteStart
 pub use session::{
     MonitorFailureKind, MonitorMetricsDto, MonitorStatus, SshHostKeyDecision, SshMonitorSnapshot,
     SshPromptDto, SshRequestKind, SshSession, SshSessionPhase, SshSessionRequest,
-    SshSessionSnapshot, TerminalFrameCell, TerminalFrameModes, TerminalFrameRow, TerminalRenderFrame,
-    TerminalSelectionDto, TerminalSelectionKindDto, TerminalUpdate, cell_flags,
+    SshSessionSnapshot, TerminalFrameCell, TerminalFrameModes, TerminalFrameRow,
+    TerminalRenderFrame, TerminalSelectionDto, TerminalSelectionKindDto, TerminalUpdate,
+    cell_flags,
 };
 pub use sftp::{
     SftpDirectorySnapshot, SftpEntryDto, SftpEntryKindDto, SftpOperation, SftpOperationError,

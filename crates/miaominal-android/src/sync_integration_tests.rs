@@ -22,7 +22,8 @@ use crate::sync_dto::{
     SyncResolution, SyncStatusDto,
 };
 use crate::test_support::{
-    business_root, cache_root, clear_test_root, initialize_test_runtime, shared_test_lock, test_host,
+    business_root, cache_root, clear_test_root, initialize_test_runtime, shared_test_lock,
+    test_host,
 };
 
 const SYNC_PASSPHRASE: &str = "p6-sync-passphrase";
@@ -155,7 +156,8 @@ impl FakeWebDav {
 
     /// Make every subsequent request fail with 401 until disabled.
     fn set_force_unauthorized(&self, unauthorized: bool) {
-        self.force_unauthorized.store(unauthorized, Ordering::SeqCst);
+        self.force_unauthorized
+            .store(unauthorized, Ordering::SeqCst);
     }
 
     /// Forget earlier observations so a test can wait for its own request.
@@ -225,14 +227,7 @@ async fn serve_webdav(
                 if not_modified {
                     write_response(&mut stream, 304, &[("ETag", tag.as_str())], "", true).await
                 } else {
-                    write_response(
-                        &mut stream,
-                        200,
-                        &[("ETag", tag.as_str())],
-                        &body,
-                        true,
-                    )
-                    .await
+                    write_response(&mut stream, 200, &[("ETag", tag.as_str())], &body, true).await
                 }
             }
         },
@@ -246,7 +241,9 @@ async fn serve_webdav(
                         return write_response(&mut stream, 412, &[], "", true).await;
                     }
                 }
-                if request.header("if-none-match").is_some_and(|value| value == "*")
+                if request
+                    .header("if-none-match")
+                    .is_some_and(|value| value == "*")
                     && current.is_some()
                 {
                     return write_response(&mut stream, 412, &[], "", true).await;
@@ -371,10 +368,7 @@ async fn serve_gist(mut stream: TcpStream, state: Arc<GistState>) -> std::io::Re
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let id = format!(
-            "gist-{}",
-            state.next_id.fetch_add(1, Ordering::SeqCst) + 1
-        );
+        let id = format!("gist-{}", state.next_id.fetch_add(1, Ordering::SeqCst) + 1);
         *state.inner.lock().expect("gist state") = Some(GistDocument {
             id: id.clone(),
             content,
@@ -411,8 +405,8 @@ async fn serve_gist(mut stream: TcpStream, state: Arc<GistState>) -> std::io::Re
                         {
                             Some((412, Vec::new(), String::new()))
                         } else {
-                            let body: serde_json::Value =
-                                serde_json::from_str(&request.body).unwrap_or(serde_json::Value::Null);
+                            let body: serde_json::Value = serde_json::from_str(&request.body)
+                                .unwrap_or(serde_json::Value::Null);
                             if let Some(content) =
                                 body["files"]["miaominal_sync.json"]["content"].as_str()
                             {
@@ -619,8 +613,8 @@ async fn configure_gist(backend: &Backend, api_base: &str) {
 
 /// Test-only: the production UI never writes this hidden field.
 fn append_gist_api_base(base: &str) {
-    let path = miaominal_paths::config_file("sync_config.toml")
-        .expect("sync config path should resolve");
+    let path =
+        miaominal_paths::config_file("sync_config.toml").expect("sync config path should resolve");
     let mut content = std::fs::read_to_string(&path).unwrap_or_default();
     if !content.ends_with('\n') {
         content.push('\n');
@@ -669,7 +663,10 @@ async fn capability_check_accepts_a_conforming_webdav_server() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
 
     let result = backend
@@ -696,7 +693,10 @@ async fn capability_check_reports_a_server_that_ignores_conditions() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::IgnoreConditions).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
 
     let result = backend
@@ -719,7 +719,10 @@ async fn wrong_webdav_password_is_reported_as_authentication() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Unauthorized).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
 
     let error = backend
@@ -736,7 +739,10 @@ async fn manual_push_binds_the_remote_and_pull_roundtrips_locally() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
 
@@ -749,10 +755,7 @@ async fn manual_push_binds_the_remote_and_pull_roundtrips_locally() {
     assert!(body.contains("encrypted_payload"));
 
     // Local edits after the push are preserved by a fresh pull (up to date).
-    let result = backend
-        .sync_pull(true)
-        .await
-        .expect("pull should succeed");
+    let result = backend.sync_pull(true).await.expect("pull should succeed");
     assert!(matches!(
         result.status,
         SyncStatusDto::UpToDate { .. } | SyncStatusDto::Pulled { .. }
@@ -769,7 +772,10 @@ async fn a_remote_change_after_the_push_is_pulled_on_the_next_pass() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
     backend.sync_push(true).await.expect("push should bind");
@@ -777,8 +783,11 @@ async fn a_remote_change_after_the_push_is_pulled_on_the_next_pass() {
     // Another device replaces the remote payload with content encrypted under
     // a different passphrase: the pull must report an authentication failure
     // instead of overwriting anything.
-    let wrong_passphrase_payload =
-        build_remote_payload_with_passphrase("Other Device", "other.example.com", "other-passphrase");
+    let wrong_passphrase_payload = build_remote_payload_with_passphrase(
+        "Other Device",
+        "other.example.com",
+        "other-passphrase",
+    );
     server.set_body(&wrong_passphrase_payload);
 
     let error = backend
@@ -795,10 +804,16 @@ async fn diverged_content_requires_explicit_resolution() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
-    backend.sync_push(true).await.expect("first push should bind");
+    backend
+        .sync_push(true)
+        .await
+        .expect("first push should bind");
     backend
         .sync_set_auto_sync(true)
         .await
@@ -841,7 +856,10 @@ async fn repeated_auto_checks_inside_the_cooldown_do_not_deadlock() {
     let _guard = shared_test_lock();
     clear_test_root();
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_gist(&backend, "http://127.0.0.1:1").await;
     backend
         .update_sync_config(SyncConfigUpdate {
@@ -941,7 +959,10 @@ async fn conflict_resolution_uses_the_current_vault_for_push_and_pull() {
         .unwrap();
     assert!(matches!(pulled.status, SyncStatusDto::Pulled { .. }));
     backend.disable_vault().await.unwrap();
-    assert_eq!(host.stored("host-1:password").as_deref(), Some("must-survive"));
+    assert_eq!(
+        host.stored("host-1:password").as_deref(),
+        Some("must-survive")
+    );
     backend.shutdown();
 }
 
@@ -951,10 +972,16 @@ async fn a_local_change_that_a_failed_push_missed_is_sent_on_the_next_check() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Before Offline", "demo.example.com").await;
-    backend.sync_push(true).await.expect("first push should bind");
+    backend
+        .sync_push(true)
+        .await
+        .expect("first push should bind");
     let bound_body = server.body().expect("remote body");
 
     // The user edits while offline and the debounced push fails.
@@ -987,10 +1014,10 @@ async fn a_local_change_that_a_failed_push_missed_is_sent_on_the_next_check() {
 
     let body = server.body().expect("remote body after recovery");
     assert_ne!(body, bound_body, "the remote must have been updated");
-    let payload = miaominal_sync::payload::parse_remote_payload(&body).expect("payload should parse");
-    let plaintext =
-        miaominal_sync::payload::decrypt_remote_payload(&payload, SYNC_PASSPHRASE)
-            .expect("payload should decrypt");
+    let payload =
+        miaominal_sync::payload::parse_remote_payload(&body).expect("payload should parse");
+    let plaintext = miaominal_sync::payload::decrypt_remote_payload(&payload, SYNC_PASSPHRASE)
+        .expect("payload should decrypt");
     assert!(
         plaintext
             .sessions
@@ -1009,7 +1036,10 @@ async fn failed_and_cancelled_checks_leave_no_running_phase() {
     // A failing automatic check must return to Idle and record the failure.
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     backend
         .sync_set_auto_sync(true)
@@ -1035,7 +1065,10 @@ async fn failed_and_cancelled_checks_leave_no_running_phase() {
     // Cancelling an in-flight capability probe must also return to Idle.
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     server.set_stall_sync_get(true);
     server.clear_observed_get();
@@ -1110,7 +1143,10 @@ async fn assert_in_flight_pull_stops(shutdown: bool) {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
     backend.sync_push(true).await.expect("push should bind");
@@ -1152,7 +1188,10 @@ async fn cancel_stops_an_in_flight_push() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
     backend.sync_push(true).await.expect("push should bind");
@@ -1190,7 +1229,10 @@ async fn a_local_edit_during_a_pull_is_not_overwritten() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     save_demo_host(&backend, "Before", "demo.example.com").await;
     backend.sync_push(true).await.expect("push should bind");
@@ -1240,7 +1282,10 @@ async fn a_locked_vault_rejects_manual_sync() {
     clear_test_root();
     let server = FakeWebDav::start(WebDavMode::Conforming).await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     miaominal_secrets::set_vault_test_parameters();
     backend
@@ -1265,7 +1310,10 @@ async fn gist_binding_creates_a_gist_and_roundtrips() {
     clear_test_root();
     let server = FakeGist::start().await;
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_gist(&backend, &server.base_url()).await;
     save_demo_host(&backend, "Demo", "demo.example.com").await;
 
@@ -1289,7 +1337,10 @@ async fn gist_binding_creates_a_gist_and_roundtrips() {
     ));
 
     // Another device replaces the gist content; the poll must notice it.
-    server.set_content(&build_remote_payload_with_host("Gist Remote", "gist.example.com"));
+    server.set_content(&build_remote_payload_with_host(
+        "Gist Remote",
+        "gist.example.com",
+    ));
     let remote = backend
         .sync_remote_state()
         .await
@@ -1297,7 +1348,10 @@ async fn gist_binding_creates_a_gist_and_roundtrips() {
     assert!(
         matches!(
             remote,
-            crate::sync_dto::SyncRemoteStateDto::Updated { content_revision: Some(_), .. }
+            crate::sync_dto::SyncRemoteStateDto::Updated {
+                content_revision: Some(_),
+                ..
+            }
         ),
         "a changed gist must be reported as updated: {remote:?}"
     );
@@ -1322,7 +1376,10 @@ async fn legacy_device_credentials_migrate_into_the_backend_once() {
             cache_dir: cache_root().to_string_lossy().into_owned(),
         },
     );
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
 
     let result = backend
         .sync_migrate_legacy_credentials()
@@ -1373,7 +1430,10 @@ async fn a_differing_legacy_credential_is_reported_and_kept() {
             cache_dir: cache_root().to_string_lossy().into_owned(),
         },
     );
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     backend
         .set_sync_credential(
             SyncCredentialKind::GithubToken,
@@ -1414,14 +1474,20 @@ async fn a_failed_migration_verification_keeps_the_legacy_entry() {
             cache_dir: cache_root().to_string_lossy().into_owned(),
         },
     );
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
 
     let error = backend
         .sync_migrate_legacy_credentials()
         .await
         .expect_err("a failed verification must fail the migration");
     assert!(
-        matches!(error, BackendError::Storage { .. } | BackendError::Platform { .. }),
+        matches!(
+            error,
+            BackendError::Storage { .. } | BackendError::Platform { .. }
+        ),
         "unexpected error: {error:?}"
     );
     assert_eq!(
@@ -1446,7 +1512,10 @@ async fn cross_end_roundtrip_preserves_proxies_keys_ai_and_unshown_fields() {
 
     // Android pulls the desktop payload (first pull is explicitly confirmed).
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
     configure_webdav(&backend, &server.url()).await;
     backend
         .sync_pull(true)
@@ -1465,7 +1534,10 @@ async fn cross_end_roundtrip_preserves_proxies_keys_ai_and_unshown_fields() {
     .read_sessions_content()
     .expect("stored sessions should read")
     .unwrap_or_default();
-    assert!(android_content.contains("GBK"), "charset lost: {android_content}");
+    assert!(
+        android_content.contains("GBK"),
+        "charset lost: {android_content}"
+    );
     assert!(android_content.contains("P6_ENV"), "environment lost");
     assert!(android_content.contains("/var/log"), "favorites lost");
 
@@ -1554,8 +1626,10 @@ struct DesktopFixture {
 
 impl DesktopFixture {
     fn create(webdav_url: &str) -> Self {
-        use miaominal_secrets::{APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase,
-            SecretKind, VaultCredentialBackend};
+        use miaominal_secrets::{
+            APP_CREDENTIAL_SERVICE, CredentialStore, ProtectedPassphrase, SecretKind,
+            VaultCredentialBackend,
+        };
         miaominal_secrets::set_vault_test_parameters();
         let temp = tempfile::tempdir().expect("desktop temp dir");
         let credentials = CredentialStore::with_backend(
@@ -1566,7 +1640,9 @@ impl DesktopFixture {
                     .expect("desktop vault passphrase"),
             ),
         );
-        credentials.initialize().expect("desktop vault should initialize");
+        credentials
+            .initialize()
+            .expect("desktop vault should initialize");
         let secrets = miaominal_secrets::SecretStore::with_credentials(credentials.clone());
         let session_store = miaominal_storage::config_store::store::SessionStore::with_path(
             temp.path().join("sessions.toml"),
@@ -1698,8 +1774,7 @@ impl DesktopFixture {
     }
 
     async fn push(&mut self) {
-        self.service
-            .replace_secrets(self.secrets.clone());
+        self.service.replace_secrets(self.secrets.clone());
         self.service
             .push_manual(self.engine.clone(), self.settings_store.clone())
             .await
@@ -1707,8 +1782,7 @@ impl DesktopFixture {
     }
 
     async fn pull(&self) {
-        self.service
-            .replace_secrets(self.secrets.clone());
+        self.service.replace_secrets(self.secrets.clone());
         self.service
             .pull_force(self.engine.clone(), self.settings_store.clone())
             .await
@@ -1740,9 +1814,13 @@ async fn import_preview_reports_warnings_and_commits_hosts() {
     let _guard = shared_test_lock();
     clear_test_root();
     let backend = test_backend();
-    backend.initialize().await.expect("backend should initialize");
+    backend
+        .initialize()
+        .await
+        .expect("backend should initialize");
 
-    let content = b"Host imported-demo\n  HostName demo.example.com\n  User akko\n  ProxyJump bastion\n";
+    let content =
+        b"Host imported-demo\n  HostName demo.example.com\n  User akko\n  ProxyJump bastion\n";
     let preview = backend
         .preview_import(
             ImportSourceDto::OpenSsh,

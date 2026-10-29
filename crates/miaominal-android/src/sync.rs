@@ -24,7 +24,9 @@ use miaominal_sync::capability::{
     CapabilityError, CapabilityReport, CapabilityState, ProbeCancellation,
 };
 use miaominal_sync::engine::SyncEngine;
-use miaominal_sync::{RemoteSyncState, SyncContentRelation, SyncStatus, classify_content_revisions};
+use miaominal_sync::{
+    RemoteSyncState, SyncContentRelation, SyncStatus, classify_content_revisions,
+};
 use tokio::sync::{Notify, watch};
 
 use crate::backend::LifecycleState;
@@ -33,7 +35,7 @@ use crate::error::BackendError;
 use crate::events::{BackendEvent, ConfigArea, EventBus};
 use crate::runtime;
 use crate::sync_dto::{
-    ImportPreviewDto, SyncCapabilityDto, SyncConflictDto, SyncConfigDto, SyncFailureDto,
+    ImportPreviewDto, SyncCapabilityDto, SyncConfigDto, SyncConflictDto, SyncFailureDto,
     SyncFailureKindDto, SyncInterventionReasonDto, SyncPhaseDto, SyncRemoteStateDto,
     SyncResolution, SyncRunResult, SyncSnapshotDto, SyncStatusDto, entry_preview, status_dto,
     warning_dto,
@@ -233,7 +235,9 @@ impl SyncCoordinator {
         if enabled {
             if matches!(
                 phase,
-                SyncPhaseDto::Disabled | SyncPhaseDto::PausedVaultLocked | SyncPhaseDto::PausedCredentials
+                SyncPhaseDto::Disabled
+                    | SyncPhaseDto::PausedVaultLocked
+                    | SyncPhaseDto::PausedCredentials
             ) {
                 self.set_phase(SyncPhaseDto::Idle);
             }
@@ -624,8 +628,7 @@ impl SyncCoordinator {
                 ..
             } => {
                 let local_revision = self.local_revision(handles, generation).await?;
-                let (Some(remote_revision), Some(baseline)) =
-                    (content_revision, baseline.clone())
+                let (Some(remote_revision), Some(baseline)) = (content_revision, baseline.clone())
                 else {
                     self.record_conflict_ms(
                         Some(synced_at.saturating_mul(1_000)),
@@ -641,11 +644,8 @@ impl SyncCoordinator {
                     });
                     return Ok(self.into_run_result(handles));
                 };
-                match classify_content_revisions(
-                    &local_revision,
-                    &remote_revision,
-                    Some(&baseline),
-                ) {
+                match classify_content_revisions(&local_revision, &remote_revision, Some(&baseline))
+                {
                     SyncContentRelation::Identical => {
                         self.set_status(SyncStatusDto::UpToDate {
                             at_ms: synced_at.saturating_mul(1_000),
@@ -713,8 +713,7 @@ impl SyncCoordinator {
         manual: bool,
     ) -> Result<Option<SyncRunResult>, BackendError> {
         let config = handles.engine.config_store.config.clone();
-        if config.provider != miaominal_sync::SyncProvider::WebDav
-            || config.legacy_auto_sync_compat
+        if config.provider != miaominal_sync::SyncProvider::WebDav || config.legacy_auto_sync_compat
         {
             return Ok(None);
         }
@@ -830,7 +829,10 @@ impl SyncCoordinator {
             ];
         }
         match &status {
-            SyncStatusDto::PullRequired { remote_at_ms, reason } => {
+            SyncStatusDto::PullRequired {
+                remote_at_ms,
+                reason,
+            } => {
                 self.record_conflict_ms(*remote_at_ms, *reason);
             }
             _ => {
@@ -984,11 +986,7 @@ impl SyncCoordinator {
         }
         let preview_id = registry.next_id;
         registry.next_id = registry.next_id.wrapping_add(1);
-        let entries = batch
-            .sessions
-            .iter()
-            .map(entry_preview)
-            .collect::<Vec<_>>();
+        let entries = batch.sessions.iter().map(entry_preview).collect::<Vec<_>>();
         let warnings = batch
             .issues
             .iter()
@@ -1246,8 +1244,15 @@ mod tests {
         crate::test_support::clear_test_root();
         let data = MobileData::new(crate::test_support::test_host()).unwrap();
         let coordinator = test_coordinator();
-        let [capability, pull, push, remote, keep_local, keep_remote, auto] =
-            std::array::from_fn(|_| data.sync_handles().unwrap());
+        let [
+            capability,
+            pull,
+            push,
+            remote,
+            keep_local,
+            keep_remote,
+            auto,
+        ] = std::array::from_fn(|_| data.sync_handles().unwrap());
         coordinator.lifecycle.lock().unwrap().closed = true;
         coordinator.cancel();
 
@@ -1268,15 +1273,21 @@ mod tests {
             Err(BackendError::Closed)
         ));
         assert!(matches!(
-            coordinator.run_conflict_resolution(keep_local, SyncResolution::KeepLocal).await,
+            coordinator
+                .run_conflict_resolution(keep_local, SyncResolution::KeepLocal)
+                .await,
             Err(BackendError::Closed)
         ));
         assert!(matches!(
-            coordinator.run_conflict_resolution(keep_remote, SyncResolution::KeepRemote).await,
+            coordinator
+                .run_conflict_resolution(keep_remote, SyncResolution::KeepRemote)
+                .await,
             Err(BackendError::Closed)
         ));
         assert!(matches!(
-            coordinator.run_auto_check(auto, AutoTrigger::Foreground).await,
+            coordinator
+                .run_auto_check(auto, AutoTrigger::Foreground)
+                .await,
             Err(BackendError::Closed)
         ));
     }
@@ -1377,7 +1388,10 @@ mod tests {
             coordinator.take_import(1).is_none(),
             "the oldest previews were evicted"
         );
-        assert!(coordinator.take_import(last_id).is_none(), "already discarded");
+        assert!(
+            coordinator.take_import(last_id).is_none(),
+            "already discarded"
+        );
         assert!(coordinator.take_import(2).is_none(), "evicted");
         assert!(coordinator.take_import(5).is_some());
     }

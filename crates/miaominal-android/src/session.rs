@@ -584,7 +584,12 @@ impl SshSessionInner {
         state.revision
     }
 
-    fn set_phase(&self, phase: SshSessionPhase, hop_label: Option<String>, failure: Option<String>) {
+    fn set_phase(
+        &self,
+        phase: SshSessionPhase,
+        hop_label: Option<String>,
+        failure: Option<String>,
+    ) {
         {
             let mut state = lock(&self.state);
             if state.phase.is_terminal() {
@@ -784,9 +789,10 @@ impl SshSessionInner {
                 request_id,
                 decision,
             } => commands.respond_host_key(request_id, decision),
-            SessionCommand::KeyboardInteractiveResponse { request_id, answers } => {
-                commands.respond_keyboard_interactive(request_id, answers)
-            }
+            SessionCommand::KeyboardInteractiveResponse {
+                request_id,
+                answers,
+            } => commands.respond_keyboard_interactive(request_id, answers),
             SessionCommand::SyncPortForwardRules(rules) => commands.sync_port_forward_rules(rules),
             SessionCommand::Close => commands.close(),
         };
@@ -964,13 +970,7 @@ impl SshSessionInner {
         self.wake.notify_waiters();
     }
 
-    fn start_selection(
-        &self,
-        line: i32,
-        column: u32,
-        side: u32,
-        kind: TerminalSelectionKindDto,
-    ) {
+    fn start_selection(&self, line: i32, column: u32, side: u32, kind: TerminalSelectionKindDto) {
         let mut terminal = self.terminal.clone();
         terminal.start_selection_with_kind(
             line,
@@ -1327,7 +1327,10 @@ fn host_key_request_dto(connection_id: u64, request: &HostKeyRequest) -> SshSess
     }
 }
 
-fn authentication_request_dto(connection_id: u64, request: &AuthenticationRequest) -> SshSessionRequest {
+fn authentication_request_dto(
+    connection_id: u64,
+    request: &AuthenticationRequest,
+) -> SshSessionRequest {
     SshSessionRequest {
         request_id: request.request_id,
         connection_id,
@@ -1355,10 +1358,7 @@ fn authentication_request_dto(connection_id: u64, request: &AuthenticationReques
     }
 }
 
-fn diff_rows(
-    previous: &[TerminalFrameRow],
-    current: &[TerminalFrameRow],
-) -> Vec<TerminalFrameRow> {
+fn diff_rows(previous: &[TerminalFrameRow], current: &[TerminalFrameRow]) -> Vec<TerminalFrameRow> {
     let mut changed = Vec::new();
     for (index, row) in current.iter().enumerate() {
         if previous.get(index) != Some(row) {
@@ -1428,10 +1428,7 @@ impl SessionRegistry {
     }
 
     pub(crate) fn snapshots(&self) -> Vec<SshSessionSnapshot> {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         sessions.iter().map(|session| session.snapshot()).collect()
     }
 
@@ -1440,10 +1437,7 @@ impl SessionRegistry {
     /// and seed edits without a reconnect.
     pub(crate) fn refresh_terminal_themes(&self) {
         let theme = TerminalTheme::from_settings();
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.refresh_terminal_theme(theme);
         }
@@ -1452,10 +1446,7 @@ impl SessionRegistry {
     /// Ask every active session to stop; used by `Backend::shutdown` and by
     /// `restart` through the close watch signal.
     pub(crate) fn request_close_all(&self) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.request_close();
         }
@@ -1770,7 +1761,11 @@ mod tests {
             &registry,
             "host-1".to_string(),
             "Host One".to_string(),
-            TerminalState::new_with_theme(columns, lines, miaominal_terminal::TerminalTheme::from_settings()),
+            TerminalState::new_with_theme(
+                columns,
+                lines,
+                miaominal_terminal::TerminalTheme::from_settings(),
+            ),
         );
         let task = crate::runtime::runtime().spawn(async {});
         inner.attach(connection.commands.clone(), task, None);
@@ -1804,7 +1799,10 @@ mod tests {
             crate::runtime::runtime().spawn(async {}),
             None,
         );
-        assert!(matches!(channels.commands.try_recv(), Ok(SessionCommand::Close)));
+        assert!(matches!(
+            channels.commands.try_recv(),
+            Ok(SessionCommand::Close)
+        ));
     }
 
     fn phase_event(phase: SessionPhase) -> SessionEvent {
@@ -1854,7 +1852,10 @@ mod tests {
         while inner.terminal.has_pending_input() && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(!inner.terminal.has_pending_input(), "terminal parser timed out");
+        assert!(
+            !inner.terminal.has_pending_input(),
+            "terminal parser timed out"
+        );
     }
 
     #[test]
@@ -1872,7 +1873,9 @@ mod tests {
 
         inner.apply_event(phase_event(SessionPhase::Ready));
         assert_eq!(inner.phase(), SshSessionPhase::Ready);
-        inner.write_bytes(b"x".to_vec()).expect("ready sessions accept input");
+        inner
+            .write_bytes(b"x".to_vec())
+            .expect("ready sessions accept input");
 
         inner.apply_event(phase_event(SessionPhase::Closing));
         assert_eq!(inner.phase(), SshSessionPhase::Closing);
@@ -1930,7 +1933,10 @@ mod tests {
         assert!(request.key_changed);
 
         let stale = inner.respond_host_key(6, SshHostKeyDecision::AcceptOnce);
-        assert!(matches!(stale, Err(BackendError::RequestExpired { request_id: 6 })));
+        assert!(matches!(
+            stale,
+            Err(BackendError::RequestExpired { request_id: 6 })
+        ));
 
         inner
             .respond_host_key(7, SshHostKeyDecision::AcceptAndSave)
@@ -1965,13 +1971,19 @@ mod tests {
         assert!(!request.prompts[0].echo);
 
         let stale = inner.respond_keyboard_interactive(10, vec!["x".into()]);
-        assert!(matches!(stale, Err(BackendError::RequestExpired { request_id: 10 })));
+        assert!(matches!(
+            stale,
+            Err(BackendError::RequestExpired { request_id: 10 })
+        ));
 
         inner
             .respond_keyboard_interactive(11, vec!["secret".into(), "123456".into()])
             .expect("current request should be accepted");
         match harness.commands.recv().await {
-            Some(SessionCommand::KeyboardInteractiveResponse { request_id, answers }) => {
+            Some(SessionCommand::KeyboardInteractiveResponse {
+                request_id,
+                answers,
+            }) => {
                 assert_eq!(request_id, 11);
                 assert_eq!(answers, vec!["secret".to_string(), "123456".to_string()]);
             }
@@ -2041,10 +2053,7 @@ mod tests {
         assert_eq!(idle.frame_version, fresh.frame_version);
     }
 
-    fn merge_rows(
-        base: &[TerminalFrameRow],
-        delta: &[TerminalFrameRow],
-    ) -> Vec<TerminalFrameRow> {
+    fn merge_rows(base: &[TerminalFrameRow], delta: &[TerminalFrameRow]) -> Vec<TerminalFrameRow> {
         let mut merged = base.to_vec();
         for row in delta {
             merged[row.row as usize] = row.clone();
@@ -2073,7 +2082,9 @@ mod tests {
         let harness = harness(20, 2);
         let inner = &harness.inner;
 
-        inner.apply_event(SessionEvent::Output(b"one\r\ntwo\r\nthree\r\nfour".to_vec()));
+        inner.apply_event(SessionEvent::Output(
+            b"one\r\ntwo\r\nthree\r\nfour".to_vec(),
+        ));
         settle(inner);
 
         let total = inner.search(Some("t".to_string())).expect("search");
@@ -2102,12 +2113,7 @@ mod tests {
         inner.apply_event(SessionEvent::Output(b"hello world".to_vec()));
         settle(inner);
 
-        inner.start_selection(
-            0,
-            0,
-            0,
-            TerminalSelectionKindDto::Simple,
-        );
+        inner.start_selection(0, 0, 0, TerminalSelectionKindDto::Simple);
         inner.update_selection(0, 5, 1);
         // Side::Right includes the pointed column, so the trailing space is part
         // of the selection; this matches the desktop behavior.
@@ -2170,7 +2176,11 @@ mod tests {
             &registry,
             "host-42".to_string(),
             "Host 42".to_string(),
-            TerminalState::new_with_theme(40, 10, miaominal_terminal::TerminalTheme::from_settings()),
+            TerminalState::new_with_theme(
+                40,
+                10,
+                miaominal_terminal::TerminalTheme::from_settings(),
+            ),
         );
         registry.insert(Arc::clone(&inner));
 
@@ -2191,7 +2201,11 @@ mod tests {
             &registry,
             "host-43".to_string(),
             "Host 43".to_string(),
-            TerminalState::new_with_theme(40, 10, miaominal_terminal::TerminalTheme::from_settings()),
+            TerminalState::new_with_theme(
+                40,
+                10,
+                miaominal_terminal::TerminalTheme::from_settings(),
+            ),
         );
         let weak = Arc::downgrade(&inner);
         registry.insert(Arc::clone(&inner));
@@ -2216,7 +2230,11 @@ mod tests {
             &registry,
             "host-44".to_string(),
             "Host 44".to_string(),
-            TerminalState::new_with_theme(40, 10, miaominal_terminal::TerminalTheme::from_settings()),
+            TerminalState::new_with_theme(
+                40,
+                10,
+                miaominal_terminal::TerminalTheme::from_settings(),
+            ),
         );
         let second = SshSessionInner::new(
             45,
@@ -2224,7 +2242,11 @@ mod tests {
             &registry,
             "host-45".to_string(),
             "Host 45".to_string(),
-            TerminalState::new_with_theme(40, 10, miaominal_terminal::TerminalTheme::from_settings()),
+            TerminalState::new_with_theme(
+                40,
+                10,
+                miaominal_terminal::TerminalTheme::from_settings(),
+            ),
         );
         let first_weak = Arc::downgrade(&first);
         let second_weak = Arc::downgrade(&second);
@@ -2297,10 +2319,19 @@ mod tests {
         let snapshot = inner.monitor_snapshot();
         assert!(snapshot.enabled);
         assert_eq!(snapshot.status, MonitorStatus::Ready);
-        assert_eq!(snapshot.sample_sequence, 2, "samples merge instead of queueing");
-        assert_eq!(snapshot.metrics.as_ref().map(|metrics| metrics.cpu_percent), Some(22.0));
         assert_eq!(
-            snapshot.metrics.as_ref().map(|metrics| metrics.platform.as_str()),
+            snapshot.sample_sequence, 2,
+            "samples merge instead of queueing"
+        );
+        assert_eq!(
+            snapshot.metrics.as_ref().map(|metrics| metrics.cpu_percent),
+            Some(22.0)
+        );
+        assert_eq!(
+            snapshot
+                .metrics
+                .as_ref()
+                .map(|metrics| metrics.platform.as_str()),
             Some("Linux")
         );
 
@@ -2323,7 +2354,10 @@ mod tests {
         ));
         let snapshot = inner.monitor_snapshot();
         assert_eq!(snapshot.status, MonitorStatus::Failed);
-        assert_eq!(snapshot.failure_kind, MonitorFailureKind::UnsupportedPlatform);
+        assert_eq!(
+            snapshot.failure_kind,
+            MonitorFailureKind::UnsupportedPlatform
+        );
         assert!(snapshot.failure.is_some());
 
         inner.apply_event(SessionEvent::MonitorFailed(

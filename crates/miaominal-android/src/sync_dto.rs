@@ -9,12 +9,8 @@ use miaominal_core::profile::{
     AuthMethod, ImportField, ImportIssueKind, ImportIssueReason, ImportSourceKind,
     ImportedSessionDraft,
 };
-use miaominal_sync::capability::{
-    CapabilityReason, CapabilityReport, CapabilityState, EtagKind,
-};
-use miaominal_sync::{
-    SyncConfig, SyncInterventionReason, SyncProvider, SyncStatus,
-};
+use miaominal_sync::capability::{CapabilityReason, CapabilityReport, CapabilityState, EtagKind};
+use miaominal_sync::{SyncConfig, SyncInterventionReason, SyncProvider, SyncStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SyncProviderDto {
@@ -433,7 +429,10 @@ pub(crate) fn entry_preview(draft: &ImportedSessionDraft) -> ImportEntryPreviewD
         auth_method: auth_method.to_string(),
         private_key_path: draft.private_key_path.clone(),
         certificate_path: draft.certificate_path.clone(),
-        has_password: draft.password.as_deref().is_some_and(|value| !value.is_empty()),
+        has_password: draft
+            .password
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
         has_passphrase: draft
             .passphrase
             .as_deref()

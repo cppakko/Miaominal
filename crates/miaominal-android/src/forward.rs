@@ -499,10 +499,8 @@ impl ForwardSessionInner {
                 self.publish_phase();
             }
             SessionEvent::PortForwardFailed(failure) => {
-                let mapped = self.failure_with_hop(
-                    failure_kind_from_native(failure.kind),
-                    failure.message,
-                );
+                let mapped =
+                    self.failure_with_hop(failure_kind_from_native(failure.kind), failure.message);
                 let terminal = {
                     let state = lock(&self.state);
                     !matches!(
@@ -696,9 +694,7 @@ impl ForwardSessionInner {
         if !is_current {
             return Err(BackendError::RequestExpired { request_id });
         }
-        let commands = lock(&self.commands)
-            .clone()
-            .ok_or(BackendError::Closed)?;
+        let commands = lock(&self.commands).clone().ok_or(BackendError::Closed)?;
         commands
             .respond_host_key(
                 request_id,
@@ -738,9 +734,7 @@ impl ForwardSessionInner {
         if !is_current {
             return Err(BackendError::RequestExpired { request_id });
         }
-        let commands = lock(&self.commands)
-            .clone()
-            .ok_or(BackendError::Closed)?;
+        let commands = lock(&self.commands).clone().ok_or(BackendError::Closed)?;
         commands
             .respond_keyboard_interactive(request_id, answers)
             .map_err(|error| BackendError::Storage {
@@ -867,10 +861,7 @@ impl ForwardSessionRegistry {
     }
 
     pub(crate) fn snapshots(&self) -> Vec<ForwardSnapshot> {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         let mut snapshots: Vec<_> = sessions.iter().map(|session| session.snapshot()).collect();
         snapshots.sort_by(|left, right| {
             left.profile_id
@@ -882,10 +873,7 @@ impl ForwardSessionRegistry {
 
     /// Ask every session to stop; used by `Backend::shutdown`.
     pub(crate) fn request_close_all(&self) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.request_close();
         }
@@ -894,10 +882,7 @@ impl ForwardSessionRegistry {
     /// Ask the sessions of one rule (or every rule of one profile) to stop.
     /// Used when a rule or its host is deleted while it is running.
     pub(crate) fn request_close_matching(&self, profile_id: &str, rule_id: Option<&str>) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             if session.key.profile_id != profile_id {
                 continue;
@@ -911,10 +896,7 @@ impl ForwardSessionRegistry {
 
     /// Bounded wait for every worker thread to finish cancelling.
     pub(crate) fn wait_all(&self, timeout: Duration) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.wait_for_worker(timeout);
         }
@@ -1043,11 +1025,8 @@ pub(crate) async fn start_forward_session(
             listen_host,
             requested_port,
         );
-        let task = crate::runtime::runtime().spawn(run_session_task(
-            Arc::clone(&inner),
-            events,
-            close_rx,
-        ));
+        let task =
+            crate::runtime::runtime().spawn(run_session_task(Arc::clone(&inner), events, close_rx));
         inner.attach(commands, task, thread);
         inner
     })
@@ -1226,12 +1205,22 @@ mod tests {
         assert!(registry.get(&ForwardKey::new("host-1", "rule-a")).is_some());
         assert!(registry.get(&ForwardKey::new("host-1", "rule-b")).is_some());
         assert_eq!(
-            registry.active(&ForwardKey::new("host-1", "rule-a")).map(|session| session.connection_id),
+            registry
+                .active(&ForwardKey::new("host-1", "rule-a"))
+                .map(|session| session.connection_id),
             Some(1)
         );
 
-        assert!(registry.remove(&ForwardKey::new("host-1", "rule-a")).is_some());
-        assert!(registry.remove(&ForwardKey::new("host-1", "rule-a")).is_none());
+        assert!(
+            registry
+                .remove(&ForwardKey::new("host-1", "rule-a"))
+                .is_some()
+        );
+        assert!(
+            registry
+                .remove(&ForwardKey::new("host-1", "rule-a"))
+                .is_none()
+        );
         assert_eq!(registry.snapshots().len(), 1);
 
         registry.clear();
@@ -1251,8 +1240,14 @@ mod tests {
         );
         let first = harness(("host-1", "rule-a"));
         let second = harness(("host-1", "rule-b"));
-        first.inner.apply_event(binding("rule-a", miaominal_core::profile::PortForwardKind::Local));
-        second.inner.apply_event(binding("rule-b", miaominal_core::profile::PortForwardKind::Remote));
+        first.inner.apply_event(binding(
+            "rule-a",
+            miaominal_core::profile::PortForwardKind::Local,
+        ));
+        second.inner.apply_event(binding(
+            "rule-b",
+            miaominal_core::profile::PortForwardKind::Remote,
+        ));
         registry.insert(Arc::clone(&first.inner));
         registry.insert(Arc::clone(&second.inner));
 
@@ -1316,7 +1311,10 @@ mod tests {
             crate::runtime::runtime().spawn(async {}),
             None,
         );
-        assert!(matches!(channels.commands.try_recv(), Ok(SessionCommand::Close)));
+        assert!(matches!(
+            channels.commands.try_recv(),
+            Ok(SessionCommand::Close)
+        ));
     }
 
     #[test]
@@ -1330,7 +1328,10 @@ mod tests {
         let error = inner
             .respond_keyboard_interactive(6, vec!["123456".to_string()])
             .expect_err("an old request id must be rejected");
-        assert!(matches!(error, BackendError::RequestExpired { request_id: 6 }));
+        assert!(matches!(
+            error,
+            BackendError::RequestExpired { request_id: 6 }
+        ));
         assert!(inner.snapshot().request.is_some());
 
         inner
@@ -1398,10 +1399,17 @@ mod tests {
             8080,
         );
         registry.insert(Arc::clone(&inner));
-        inner.attach(connection.commands.clone(), crate::runtime::runtime().spawn(async {}), None);
+        inner.attach(
+            connection.commands.clone(),
+            crate::runtime::runtime().spawn(async {}),
+            None,
+        );
 
         // Relay failures only happen while the session is running.
-        inner.apply_event(binding("rule-a", miaominal_core::profile::PortForwardKind::Local));
+        inner.apply_event(binding(
+            "rule-a",
+            miaominal_core::profile::PortForwardKind::Local,
+        ));
         inner.apply_event(SessionEvent::PortForwardFailed(
             miaominal_ssh::PortForwardFailure {
                 rule_id: "rule-a".to_string(),
@@ -1425,9 +1433,13 @@ mod tests {
     }
 
     #[test]
-    fn relay_failure_keeps_a_running_session_alive() {        let harness = harness(("host-1", "rule-a"));
+    fn relay_failure_keeps_a_running_session_alive() {
+        let harness = harness(("host-1", "rule-a"));
         let inner = &harness.inner;
-        inner.apply_event(binding("rule-a", miaominal_core::profile::PortForwardKind::Local));
+        inner.apply_event(binding(
+            "rule-a",
+            miaominal_core::profile::PortForwardKind::Local,
+        ));
         inner.apply_event(SessionEvent::PortForwardFailed(
             miaominal_ssh::PortForwardFailure {
                 rule_id: "rule-a".to_string(),
@@ -1448,7 +1460,10 @@ mod tests {
     fn reconnecting_state_is_reported_and_cleared_by_the_next_binding() {
         let harness = harness(("host-1", "rule-a"));
         let inner = &harness.inner;
-        inner.apply_event(binding("rule-a", miaominal_core::profile::PortForwardKind::Local));
+        inner.apply_event(binding(
+            "rule-a",
+            miaominal_core::profile::PortForwardKind::Local,
+        ));
         inner.apply_event(SessionEvent::PortForwardReconnecting {
             error: "transport closed".to_string(),
             attempt: 2,
@@ -1462,7 +1477,10 @@ mod tests {
         assert_eq!(snapshot.reconnect_retry_after_secs, 4);
         assert!(snapshot.bound_port.is_none());
 
-        inner.apply_event(binding("rule-a", miaominal_core::profile::PortForwardKind::Local));
+        inner.apply_event(binding(
+            "rule-a",
+            miaominal_core::profile::PortForwardKind::Local,
+        ));
         let snapshot = inner.snapshot();
         assert_eq!(snapshot.phase, ForwardPhase::Listening);
         assert_eq!(snapshot.reconnect_attempt, 0);
@@ -1498,7 +1516,8 @@ mod tests {
     }
 
     #[test]
-    fn default_local_listen_host_is_applied_for_blank_rules() {        // The shared rule model stores the host; the bridge only normalizes a
+    fn default_local_listen_host_is_applied_for_blank_rules() {
+        // The shared rule model stores the host; the bridge only normalizes a
         // blank value to loopback, matching the mobile default.
         let mut rule = miaominal_core::profile::PortForwardRule {
             id: "rule-a".to_string(),

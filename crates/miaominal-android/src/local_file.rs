@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, anyhow};
 use futures::future::BoxFuture;
 use miaominal_sftp::local::{
-    LocalEntry, LocalEntryKind, LocalFileSystem, LocalFuture, LocalWriteFinalize, LocalWriteSession,
-    join_local_path, validate_relative_path,
+    LocalEntry, LocalEntryKind, LocalFileSystem, LocalFuture, LocalWriteFinalize,
+    LocalWriteSession, join_local_path, validate_relative_path,
 };
 
 use crate::error::BackendError;
@@ -213,11 +213,9 @@ impl std::fmt::Debug for LocalFileHandle {
 
 impl LocalFileHandle {
     pub(crate) fn from_file(file: std::fs::File, name: String) -> Result<Arc<Self>, BackendError> {
-        let metadata = file
-            .metadata()
-            .map_err(|error| BackendError::Storage {
-                storage_failure: format!("failed to read registered file metadata: {error}"),
-            })?;
+        let metadata = file.metadata().map_err(|error| BackendError::Storage {
+            storage_failure: format!("failed to read registered file metadata: {error}"),
+        })?;
         // A document that cannot seek is not usable by the transfer engine;
         // report it instead of silently buffering the whole file.
         file.try_clone()
@@ -256,7 +254,6 @@ impl LocalFileHandle {
                 handle_detail: "the registered file handle is no longer usable".to_string(),
             })
     }
-
 }
 
 #[uniffi::export]
@@ -400,7 +397,12 @@ impl SafWriteFinalize {
         }
         let result = self
             .host
-            .saf_finish_write(self.tree_uri.clone(), self.target.clone(), self.staging.clone(), commit)
+            .saf_finish_write(
+                self.tree_uri.clone(),
+                self.target.clone(),
+                self.staging.clone(),
+                commit,
+            )
             .map_err(|error| anyhow!("{error}"));
         if result.is_ok() {
             self.finished = true;
@@ -440,7 +442,12 @@ impl Drop for SafWriteFinalize {
         }
         let _ = self
             .host
-            .saf_finish_write(self.tree_uri.clone(), self.target.clone(), self.staging.clone(), false)
+            .saf_finish_write(
+                self.tree_uri.clone(),
+                self.target.clone(),
+                self.staging.clone(),
+                false,
+            )
             .map_err(|error| {
                 log::warn!(
                     "failed to clean up an abandoned SAF write for {}: {error}",
@@ -504,8 +511,12 @@ impl LocalFileSystem for SafLocalFileSystem {
                 .host
                 .saf_open_file(self.tree_uri.clone(), relative)
                 .map_err(|error| anyhow!("{error}"))?;
-            let file = take_owned_fd(fd)
-                .with_context(|| format!("failed to own the SAF descriptor for {}", self.display_root()))?;
+            let file = take_owned_fd(fd).with_context(|| {
+                format!(
+                    "failed to own the SAF descriptor for {}",
+                    self.display_root()
+                )
+            })?;
             Ok(Box::new(tokio::fs::File::from_std(file))
                 as Box<dyn tokio::io::AsyncRead + Send + Unpin>)
         })
@@ -527,8 +538,9 @@ impl LocalFileSystem for SafLocalFileSystem {
                 staging: start.staging_relative,
                 finished: false,
             };
-            let file = take_owned_fd(start.fd)
-                .with_context(|| format!("failed to own the SAF write descriptor for {relative}"))?;
+            let file = take_owned_fd(start.fd).with_context(|| {
+                format!("failed to own the SAF write descriptor for {relative}")
+            })?;
             Ok(LocalWriteSession::new(
                 Box::new(tokio::fs::File::from_std(file)),
                 Box::new(finalize),
@@ -580,10 +592,9 @@ mod tests {
         #[cfg(windows)]
         let source_handle = unsafe { libc::get_osfhandle(fd) };
 
-        let error = take_owned_fd_with(fd, |_| {
-            Err(std::io::Error::from_raw_os_error(libc::EMFILE))
-        })
-        .unwrap_err();
+        let error =
+            take_owned_fd_with(fd, |_| Err(std::io::Error::from_raw_os_error(libc::EMFILE)))
+                .unwrap_err();
         assert_eq!(error.raw_os_error(), Some(libc::EMFILE));
 
         #[cfg(unix)]
@@ -595,9 +606,7 @@ mod tests {
             }
             let mut flags = 0;
             assert_eq!(
-                unsafe {
-                    GetHandleInformation(source_handle as *mut std::ffi::c_void, &mut flags)
-                },
+                unsafe { GetHandleInformation(source_handle as *mut std::ffi::c_void, &mut flags) },
                 0
             );
             assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(6));

@@ -12,6 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use miaominal_core::keychain::ManagedKeySource;
 use miaominal_core::profile::SessionProfile;
 use miaominal_core::proxy::ProxyProfile;
+use miaominal_core::snippet::SnippetRecord;
 use miaominal_paths as paths;
 use miaominal_secrets::{
     CredentialStore, ProtectedPassphrase, SecretKind, SecretStore, VaultCredentialBackend,
@@ -24,7 +25,6 @@ use miaominal_storage::config_store::store::{SessionStore, SnippetStore};
 use miaominal_storage::keychain_store::ManagedKeyStore;
 use miaominal_storage::known_hosts_store::KnownHostsStore;
 use miaominal_storage::proxy_store::ProxyStore;
-use miaominal_core::snippet::SnippetRecord;
 use miaominal_sync::engine::SyncEngine;
 use miaominal_sync::{SyncConfig, SyncConfigStore};
 
@@ -33,8 +33,8 @@ use crate::dto::{
     CredentialAction, CredentialHealth, CredentialKindDto, ForwardRuleDto, HostDto, HostUpdate,
     KnownHostDto, ManagedKeyAlgorithmDto, ManagedKeyDto, ProxyDto, ProxyUpdate, SettingsDto,
     SettingsUpdate, SnippetDto, SnippetUpdate, VaultModeDto, VaultSnapshot, apply_host_update,
-    forward_rule_from_dto, forward_rule_to_dto, host_to_dto, key_to_dto,
-    proxy_protocol_from_name, settings_to_dto,
+    forward_rule_from_dto, forward_rule_to_dto, host_to_dto, key_to_dto, proxy_protocol_from_name,
+    settings_to_dto,
 };
 use crate::error::BackendError;
 use crate::platform::PlatformHost;
@@ -298,10 +298,7 @@ impl MobileData {
                 });
             }
         }
-        let Some(profile) = sessions
-            .iter_mut()
-            .find(|profile| profile.id == profile_id)
-        else {
+        let Some(profile) = sessions.iter_mut().find(|profile| profile.id == profile_id) else {
             return Err(BackendError::InvalidArgument {
                 detail: format!("host {profile_id} does not exist"),
             });
@@ -320,7 +317,8 @@ impl MobileData {
         Ok(host_to_dto(&updated))
     }
 
-    pub(crate) fn delete_host(&self, id: &str) -> Result<bool, BackendError> {        let inner = self.lock();
+    pub(crate) fn delete_host(&self, id: &str) -> Result<bool, BackendError> {
+        let inner = self.lock();
         let mut sessions = inner
             .session_store
             .load(&inner.secrets)
@@ -332,7 +330,9 @@ impl MobileData {
         // Keep jump-chain references coherent: a deleted host must not be
         // referenced by remaining profiles.
         for profile in &mut sessions {
-            profile.proxy_jump_profile_ids.retain(|candidate| candidate != id);
+            profile
+                .proxy_jump_profile_ids
+                .retain(|candidate| candidate != id);
         }
         inner
             .session_store
@@ -446,10 +446,7 @@ impl MobileData {
             .session_store
             .load(&inner.secrets)
             .map_err(BackendError::from_storage)?;
-        let Some(profile) = sessions
-            .iter_mut()
-            .find(|profile| profile.id == profile_id)
-        else {
+        let Some(profile) = sessions.iter_mut().find(|profile| profile.id == profile_id) else {
             return Ok(false);
         };
         let previous = profile.port_forwarding_rules.len();
@@ -477,10 +474,7 @@ impl MobileData {
             .session_store
             .load(&inner.secrets)
             .map_err(BackendError::from_storage)?;
-        let Some(profile) = sessions
-            .iter_mut()
-            .find(|profile| profile.id == profile_id)
-        else {
+        let Some(profile) = sessions.iter_mut().find(|profile| profile.id == profile_id) else {
             return Ok(false);
         };
         let Some(rule) = profile
@@ -511,10 +505,7 @@ impl MobileData {
         Ok(snippets.iter().map(snippet_to_dto).collect())
     }
 
-    pub(crate) fn save_snippet(
-        &self,
-        update: SnippetUpdate,
-    ) -> Result<SnippetDto, BackendError> {
+    pub(crate) fn save_snippet(&self, update: SnippetUpdate) -> Result<SnippetDto, BackendError> {
         let inner = self.lock();
         if update.id.trim().is_empty() {
             return Err(BackendError::InvalidArgument {
@@ -725,11 +716,7 @@ impl MobileData {
 
     pub(crate) fn proxy_password_health(&self, proxy_id: &str) -> CredentialHealth {
         let inner = self.lock();
-        credential_health_for(
-            &inner.secrets,
-            proxy_id,
-            CredentialKindDto::ProxyPassword,
-        )
+        credential_health_for(&inner.secrets, proxy_id, CredentialKindDto::ProxyPassword)
     }
 
     // ------------------------------------------------------------------
@@ -899,11 +886,7 @@ impl MobileData {
             .collect())
     }
 
-    pub(crate) fn delete_known_host(
-        &self,
-        host: &str,
-        port: u16,
-    ) -> Result<bool, BackendError> {
+    pub(crate) fn delete_known_host(&self, host: &str, port: u16) -> Result<bool, BackendError> {
         let inner = self.lock();
         inner
             .known_hosts
@@ -932,7 +915,9 @@ impl MobileData {
         })
     }
 
-    pub(crate) fn sync_config_snapshot(&self) -> Result<crate::sync_dto::SyncConfigDto, BackendError> {
+    pub(crate) fn sync_config_snapshot(
+        &self,
+    ) -> Result<crate::sync_dto::SyncConfigDto, BackendError> {
         let inner = self.lock();
         let store = sync_config_store(inner.secrets.credentials().clone())?;
         Ok(crate::sync_dto::SyncConfigDto::from(&store.config))
@@ -963,13 +948,17 @@ impl MobileData {
             match kind {
                 SyncCredentialKind::GithubToken => match &action {
                     CredentialAction::Set { value } => {
-                        store.set_github_token(value).map_err(BackendError::from_storage)?;
+                        store
+                            .set_github_token(value)
+                            .map_err(BackendError::from_storage)?;
                         store
                             .update(|config| config.has_github_token = !value.trim().is_empty())
                             .map_err(BackendError::from_storage)?;
                     }
                     CredentialAction::Clear => {
-                        store.delete_github_token().map_err(BackendError::from_storage)?;
+                        store
+                            .delete_github_token()
+                            .map_err(BackendError::from_storage)?;
                         store
                             .update(|config| config.has_github_token = false)
                             .map_err(BackendError::from_storage)?;
@@ -997,8 +986,11 @@ impl MobileData {
                 },
                 SyncCredentialKind::Passphrase => match &action {
                     CredentialAction::Set { value } => {
-                        let previous = store.get_passphrase().map_err(BackendError::from_storage)?;
-                        store.set_passphrase(value).map_err(BackendError::from_storage)?;
+                        let previous =
+                            store.get_passphrase().map_err(BackendError::from_storage)?;
+                        store
+                            .set_passphrase(value)
+                            .map_err(BackendError::from_storage)?;
                         if let Err(error) = store.update(|config| {
                             config.has_passphrase = !value.trim().is_empty();
                             if previous.as_deref() != Some(value.as_str()) {
@@ -1023,7 +1015,9 @@ impl MobileData {
                         }
                     }
                     CredentialAction::Clear => {
-                        store.delete_passphrase().map_err(BackendError::from_storage)?;
+                        store
+                            .delete_passphrase()
+                            .map_err(BackendError::from_storage)?;
                         store
                             .update(|config| {
                                 config.has_passphrase = false;
@@ -1060,10 +1054,20 @@ impl MobileData {
         let migrated_github_token = migrate_legacy_credential(
             &host,
             "sync:gist-token",
-            store.get_github_token().map_err(BackendError::from_storage)?,
-            |value| store.set_github_token(value).map_err(BackendError::from_storage),
+            store
+                .get_github_token()
+                .map_err(BackendError::from_storage)?,
+            |value| {
+                store
+                    .set_github_token(value)
+                    .map_err(BackendError::from_storage)
+            },
             || store.get_github_token().map_err(BackendError::from_storage),
-            || store.delete_github_token().map_err(BackendError::from_storage),
+            || {
+                store
+                    .delete_github_token()
+                    .map_err(BackendError::from_storage)
+            },
         )?;
         let migrated_webdav_password = {
             // The legacy Kotlin account for the WebDAV password is the same
@@ -1085,9 +1089,17 @@ impl MobileData {
             &host,
             "sync:sync-passphrase",
             store.get_passphrase().map_err(BackendError::from_storage)?,
-            |value| store.set_passphrase(value).map_err(BackendError::from_storage),
+            |value| {
+                store
+                    .set_passphrase(value)
+                    .map_err(BackendError::from_storage)
+            },
             || store.get_passphrase().map_err(BackendError::from_storage),
-            || store.delete_passphrase().map_err(BackendError::from_storage),
+            || {
+                store
+                    .delete_passphrase()
+                    .map_err(BackendError::from_storage)
+            },
         )?;
 
         if migrated_github_token {
@@ -1173,9 +1185,9 @@ impl MobileData {
         // Copy -> verify.
         if let Err(error) = copy_and_verify(&inner.secrets, &vault_store, &accounts) {
             let _ = VaultCredentialBackend::erase_default_store_file();
-            return Err(BackendError::from_storage(
-                error.context("failed to enable the local vault; existing credentials were kept"),
-            ));
+            return Err(BackendError::from_storage(error.context(
+                "failed to enable the local vault; existing credentials were kept",
+            )));
         }
         if let Err(error) = copy_sync_secrets(&sync_source, &sync_target) {
             let _ = VaultCredentialBackend::erase_default_store_file();
@@ -1429,7 +1441,9 @@ where
             // Already migrated by an earlier run; the device copy is obsolete.
             host.credential_delete(legacy_account.to_string())
                 .map_err(|error| BackendError::Platform {
-                    platform_failure: format!("failed to remove the legacy sync credential: {error}"),
+                    platform_failure: format!(
+                        "failed to remove the legacy sync credential: {error}"
+                    ),
                 })?;
             return Ok(true);
         }
@@ -1450,7 +1464,9 @@ where
         Ok(Some(copied)) if copied == legacy => {
             host.credential_delete(legacy_account.to_string())
                 .map_err(|error| BackendError::Platform {
-                    platform_failure: format!("failed to remove the legacy sync credential: {error}"),
+                    platform_failure: format!(
+                        "failed to remove the legacy sync credential: {error}"
+                    ),
                 })?;
             Ok(true)
         }
@@ -1526,7 +1542,10 @@ fn copy_sync_secrets(
     source: &SyncConfigStore,
     target: &SyncConfigStore,
 ) -> Result<(), BackendError> {
-    if let Some(token) = source.get_github_token().map_err(BackendError::from_storage)? {
+    if let Some(token) = source
+        .get_github_token()
+        .map_err(BackendError::from_storage)?
+    {
         target
             .set_github_token(&token)
             .map_err(BackendError::from_storage)?;
@@ -1559,7 +1578,10 @@ fn copy_sync_secrets(
             });
         }
     }
-    if let Some(passphrase) = source.get_passphrase().map_err(BackendError::from_storage)? {
+    if let Some(passphrase) = source
+        .get_passphrase()
+        .map_err(BackendError::from_storage)?
+    {
         target
             .set_passphrase(&passphrase)
             .map_err(BackendError::from_storage)?;
@@ -1658,10 +1680,7 @@ fn set_host_stored_flag(
         .session_store
         .load(&inner.secrets)
         .map_err(BackendError::from_storage)?;
-    let Some(profile) = sessions
-        .iter_mut()
-        .find(|profile| profile.id == profile_id)
-    else {
+    let Some(profile) = sessions.iter_mut().find(|profile| profile.id == profile_id) else {
         return Ok(());
     };
     match kind {
@@ -1713,7 +1732,9 @@ fn set_vault_enabled_flag(inner: &mut DataInner, enabled: bool) -> Result<(), Ba
 
 /// Every credential the mobile data layer can own, including desktop-only
 /// credentials received through sync. Sync tokens are copied separately.
-fn collect_credential_accounts(inner: &DataInner) -> Result<Vec<(String, SecretKind)>, BackendError> {
+fn collect_credential_accounts(
+    inner: &DataInner,
+) -> Result<Vec<(String, SecretKind)>, BackendError> {
     let sessions = inner
         .session_store
         .load(&inner.secrets)
@@ -1786,7 +1807,10 @@ fn snippet_to_dto(snippet: &SnippetRecord) -> SnippetDto {
     }
 }
 
-fn apply_settings_update(settings: &mut AppSettings, update: &SettingsUpdate) -> Result<(), BackendError> {
+fn apply_settings_update(
+    settings: &mut AppSettings,
+    update: &SettingsUpdate,
+) -> Result<(), BackendError> {
     if let Some(language) = &update.language {
         let mapped = crate::dto::language_from_name(language).ok_or_else(|| {
             BackendError::InvalidArgument {
@@ -1802,11 +1826,9 @@ fn apply_settings_update(settings: &mut AppSettings, update: &SettingsUpdate) ->
         settings.auto_collect_session_monitoring = auto_monitoring;
     }
     if let Some(monitor_history) = &update.monitor_history {
-        settings.monitor_history_duration =
-            crate::dto::monitor_history_from_name(monitor_history).ok_or_else(|| {
-                BackendError::InvalidArgument {
-                    detail: format!("unsupported monitor history {monitor_history}"),
-                }
+        settings.monitor_history_duration = crate::dto::monitor_history_from_name(monitor_history)
+            .ok_or_else(|| BackendError::InvalidArgument {
+                detail: format!("unsupported monitor history {monitor_history}"),
             })?;
     }
     if let Some(close_behavior) = &update.close_last_session_behavior {
@@ -1858,7 +1880,6 @@ fn apply_settings_update(settings: &mut AppSettings, update: &SettingsUpdate) ->
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1929,8 +1950,12 @@ mod tests {
                 .any(|host| host.id == "host-1" && host.has_stored_password)
         );
 
-        data.set_host_credential("host-1", CredentialKindDto::Password, CredentialAction::Clear)
-            .unwrap();
+        data.set_host_credential(
+            "host-1",
+            CredentialKindDto::Password,
+            CredentialAction::Clear,
+        )
+        .unwrap();
         assert_eq!(host.stored("host-1:password"), None);
         assert!(
             !data
@@ -1982,15 +2007,20 @@ mod tests {
         let previous = data.sync_handles().unwrap().secrets;
         // Warm the backend cache before revocation, as a background sync would.
         assert_eq!(
-            previous.get("host-1", SecretKind::Password).unwrap().as_deref(),
+            previous
+                .get("host-1", SecretKind::Password)
+                .unwrap()
+                .as_deref(),
             Some("vault-secret")
         );
 
         let locked = data.lock_vault().unwrap();
         assert!(previous.get("host-1", SecretKind::Password).is_err());
-        assert!(previous
-            .set("host-1", SecretKind::Password, "stale-write")
-            .is_err());
+        assert!(
+            previous
+                .set("host-1", SecretKind::Password, "stale-write")
+                .is_err()
+        );
         assert_eq!(locked.mode, VaultModeDto::Locked);
         assert_eq!(
             data.host_credential_health("host-1", CredentialKindDto::Password),
@@ -2014,7 +2044,10 @@ mod tests {
         assert!(previous.get("host-1", SecretKind::Password).is_err());
         let current = data.sync_handles().unwrap().secrets;
         assert_eq!(
-            current.get("host-1", SecretKind::Password).unwrap().as_deref(),
+            current
+                .get("host-1", SecretKind::Password)
+                .unwrap()
+                .as_deref(),
             Some("vault-secret")
         );
         assert_eq!(unlocked.mode, VaultModeDto::Unlocked);
@@ -2064,9 +2097,11 @@ mod tests {
             .change_vault_passphrase("correct horse".to_string(), "new horse".to_string())
             .unwrap();
         assert_eq!(snapshot.mode, VaultModeDto::Unlocked);
-        assert!(previous
-            .set("host-1", SecretKind::Password, "stale-write")
-            .is_err());
+        assert!(
+            previous
+                .set("host-1", SecretKind::Password, "stale-write")
+                .is_err()
+        );
 
         data.lock_vault().unwrap();
         assert!(matches!(
@@ -2095,8 +2130,9 @@ mod tests {
                 let inner = data.lock();
                 (inner.settings_store.clone(), inner.secrets.clone())
             };
-            let mut provider =
-                miaominal_settings::AiProviderConfig::new(miaominal_settings::AiProviderKind::OpenAi);
+            let mut provider = miaominal_settings::AiProviderConfig::new(
+                miaominal_settings::AiProviderKind::OpenAi,
+            );
             provider.id = "synced-provider".to_string();
             provider.has_api_key = true;
             assert!(synced_settings.update(|settings| {

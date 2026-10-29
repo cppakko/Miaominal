@@ -24,7 +24,9 @@ use crate::error::BackendError;
 use crate::forward::{ForwardFailureKind, ForwardPhase, ForwardSession, ForwardSnapshot};
 use crate::platform::PlatformHost;
 use crate::session::SshHostKeyDecision;
-use crate::test_support::{business_root, cache_root, clear_test_root, shared_test_lock, test_host};
+use crate::test_support::{
+    business_root, cache_root, clear_test_root, shared_test_lock, test_host,
+};
 
 #[derive(Clone, Default)]
 struct ForwardTestOptions {
@@ -599,14 +601,21 @@ async fn host_key_prompt_binds_the_node_and_rejects_stale_answers() {
         .start_forward_session("host-1".to_string(), "rule-1".to_string())
         .await
         .expect("start forward");
-    let snapshot =
-        wait_for_phase(&session, ForwardPhase::WaitingForTrust, Duration::from_secs(20)).await;
+    let snapshot = wait_for_phase(
+        &session,
+        ForwardPhase::WaitingForTrust,
+        Duration::from_secs(20),
+    )
+    .await;
     let request = snapshot.request.expect("host key request");
     assert_eq!(request.hop_label, "Test host-1");
     assert!(!request.key_changed);
 
     let error = session
-        .respond_host_key(request.request_id.wrapping_add(999), SshHostKeyDecision::AcceptOnce)
+        .respond_host_key(
+            request.request_id.wrapping_add(999),
+            SshHostKeyDecision::AcceptOnce,
+        )
         .expect_err("a stale answer must be rejected");
     assert!(matches!(error, BackendError::RequestExpired { .. }));
 
@@ -692,9 +701,7 @@ async fn a_stopped_rule_can_be_started_again_with_a_fresh_connection() {
             .expect("repeated stop is idempotent")
     );
     wait_until(
-        || {
-            std::net::TcpListener::bind(("127.0.0.1", first_port)).is_ok()
-        },
+        || std::net::TcpListener::bind(("127.0.0.1", first_port)).is_ok(),
         Duration::from_secs(5),
         "the stopped local listener to release its port",
     )
@@ -788,7 +795,10 @@ async fn concurrent_starts_of_the_same_rule_share_one_session() {
             )
             .await;
             let port = snapshot.bound_port.expect("bound local port");
-            assert_eq!(round_trip(port, b"single connection").await, b"single connection");
+            assert_eq!(
+                round_trip(port, b"single connection").await,
+                b"single connection"
+            );
         }
 
         assert!(

@@ -175,8 +175,10 @@ impl From<SftpEntry> for SftpEntryDto {
 }
 
 fn validate_transfer_relative(what: &str, path: &str) -> Result<(), BackendError> {
-    miaominal_sftp::validate_relative_path(path).map_err(|error| BackendError::InvalidArgument {
-        detail: format!("{what} must stay inside the authorized tree: {error}"),
+    miaominal_sftp::validate_relative_path(path).map_err(|error| {
+        BackendError::InvalidArgument {
+            detail: format!("{what} must stay inside the authorized tree: {error}"),
+        }
     })?;
     if path.is_empty() {
         return Err(BackendError::InvalidArgument {
@@ -244,7 +246,8 @@ pub enum SftpTransferFailureKind {
 
 fn classify_transfer_failure(message: &str) -> SftpTransferFailureKind {
     let lowered = message.to_ascii_lowercase();
-    if lowered.contains("no space") || lowered.contains("enospc") || lowered.contains("os error 28") {
+    if lowered.contains("no space") || lowered.contains("enospc") || lowered.contains("os error 28")
+    {
         return SftpTransferFailureKind::NoSpace;
     }
     if lowered.contains("permission denied") || lowered.contains("os error 13") {
@@ -449,11 +452,7 @@ impl TransferRecord {
     }
 
     fn track_child(&mut self, child_id: u64, relative_path: String, bytes_total: Option<u64>) {
-        if !self
-            .children
-            .iter()
-            .any(|child| child.child_id == child_id)
-        {
+        if !self.children.iter().any(|child| child.child_id == child_id) {
             self.counters.child_count = self.counters.child_count.saturating_add(1);
         }
         let child = TransferChildRecord {
@@ -619,7 +618,12 @@ impl SftpSessionInner {
         state.revision = state.revision.wrapping_add(1);
     }
 
-    fn set_phase(&self, phase: SftpSessionPhase, hop_label: Option<String>, failure: Option<String>) {
+    fn set_phase(
+        &self,
+        phase: SftpSessionPhase,
+        hop_label: Option<String>,
+        failure: Option<String>,
+    ) {
         {
             let mut state = lock(&self.state);
             if state.phase.is_terminal() {
@@ -648,9 +652,7 @@ impl SftpSessionInner {
             state.revision = state.revision.wrapping_add(1);
         }
         self.wake.notify_waiters();
-        self.publish(BackendEvent::SftpRequest {
-            request,
-        });
+        self.publish(BackendEvent::SftpRequest { request });
     }
 
     fn expire_request(&self, request_id: u64) {
@@ -681,7 +683,11 @@ impl SftpSessionInner {
                 } else {
                     let phase = phase_from_native(phase);
                     if phase == SftpSessionPhase::Failed {
-                        self.set_phase(phase, hop_label, Some("the SFTP connection failed".to_string()));
+                        self.set_phase(
+                            phase,
+                            hop_label,
+                            Some("the SFTP connection failed".to_string()),
+                        );
                     } else {
                         self.set_phase(phase, hop_label, None);
                     }
@@ -705,8 +711,12 @@ impl SftpSessionInner {
                 hop,
                 challenge,
             } => {
-                let request =
-                    keyboard_interactive_request_dto(self.connection_id, request_id, hop, challenge);
+                let request = keyboard_interactive_request_dto(
+                    self.connection_id,
+                    request_id,
+                    hop,
+                    challenge,
+                );
                 self.set_phase(
                     SftpSessionPhase::WaitingForAuthentication,
                     Some(request.hop_label.clone()),
@@ -850,7 +860,12 @@ impl SftpSessionInner {
         }
     }
 
-    fn apply_listing(&self, request_id: Option<miaominal_sftp::SftpDirectoryRequestId>, path: String, entries: Vec<SftpEntry>) {
+    fn apply_listing(
+        &self,
+        request_id: Option<miaominal_sftp::SftpDirectoryRequestId>,
+        path: String,
+        entries: Vec<SftpEntry>,
+    ) {
         let request_id = request_id.map(|id| id.0).unwrap_or(0);
         let accepted = {
             let mut directory = lock(&self.directory);
@@ -995,7 +1010,10 @@ impl SftpSessionInner {
     pub(crate) async fn wait_for_task(&self) {
         let handle = lock(&self.consumer).take();
         if let Some(mut handle) = handle {
-            if tokio::time::timeout(CLOSE_GRACE, &mut handle).await.is_err() {
+            if tokio::time::timeout(CLOSE_GRACE, &mut handle)
+                .await
+                .is_err()
+            {
                 handle.abort();
             }
         }
@@ -1079,10 +1097,7 @@ impl SftpSessionInner {
 
     fn transfers_snapshot(&self) -> Vec<SftpTransferSnapshot> {
         let transfers = lock(&self.transfers);
-        let mut snapshots: Vec<_> = transfers
-            .values()
-            .map(|record| record.snapshot())
-            .collect();
+        let mut snapshots: Vec<_> = transfers.values().map(|record| record.snapshot()).collect();
         snapshots.sort_by(|left, right| right.transfer_id.cmp(&left.transfer_id));
         snapshots
     }
@@ -1127,11 +1142,15 @@ impl SftpSessionInner {
             .respond_host_key_request(
                 request_id,
                 match decision {
-                    SshHostKeyDecision::AcceptOnce => miaominal_core::forwarding::HostKeyDecision::AcceptOnce,
+                    SshHostKeyDecision::AcceptOnce => {
+                        miaominal_core::forwarding::HostKeyDecision::AcceptOnce
+                    }
                     SshHostKeyDecision::AcceptAndSave => {
                         miaominal_core::forwarding::HostKeyDecision::AcceptAndSave
                     }
-                    SshHostKeyDecision::Reject => miaominal_core::forwarding::HostKeyDecision::Reject,
+                    SshHostKeyDecision::Reject => {
+                        miaominal_core::forwarding::HostKeyDecision::Reject
+                    }
                 },
             )
             .map_err(|error| BackendError::Storage {
@@ -1175,11 +1194,12 @@ impl SftpSessionInner {
     fn list_directory(&self, path: String) -> Result<u64, BackendError> {
         self.ensure_ready()?;
         let commands = self.commands()?;
-        let request_id = commands
-            .list_directory(path.clone())
-            .map_err(|error| BackendError::Storage {
-                storage_failure: format!("failed to request a directory listing: {error}"),
-            })?;
+        let request_id =
+            commands
+                .list_directory(path.clone())
+                .map_err(|error| BackendError::Storage {
+                    storage_failure: format!("failed to request a directory listing: {error}"),
+                })?;
         {
             let mut directory = lock(&self.directory);
             directory.request_id = request_id.0;
@@ -1192,7 +1212,10 @@ impl SftpSessionInner {
     }
 }
 
-fn apply_progress_to(transfers: &Mutex<HashMap<u64, TransferRecord>>, progress: &SftpTransferProgress) {
+fn apply_progress_to(
+    transfers: &Mutex<HashMap<u64, TransferRecord>>,
+    progress: &SftpTransferProgress,
+) {
     let mut transfers = lock(transfers);
     let Some(record) = transfers.get_mut(&progress.transfer_id.0) else {
         return;
@@ -1331,18 +1354,12 @@ impl SftpSessionRegistry {
     }
 
     pub(crate) fn snapshots(&self) -> Vec<SftpSessionSnapshot> {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         sessions.iter().map(|session| session.snapshot()).collect()
     }
 
     pub(crate) fn request_close_all(&self) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.request_close();
         }
@@ -1350,10 +1367,7 @@ impl SftpSessionRegistry {
 
     /// Wait (bounded) for every session worker to finish cancelling transfers.
     pub(crate) fn wait_all(&self, timeout: Duration) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.wait_for_worker(timeout);
         }
@@ -1457,13 +1471,8 @@ pub(crate) async fn start_sftp_session(
             thread,
         } = connection;
 
-        let inner = SftpSessionInner::new(
-            connection_id,
-            host,
-            &registry,
-            host_id,
-            context.host_label,
-        );
+        let inner =
+            SftpSessionInner::new(connection_id, host, &registry, host_id, context.host_label);
         let task = crate::runtime::runtime().spawn(run_session_task(
             Arc::clone(&inner),
             events,
@@ -1585,11 +1594,11 @@ impl SftpSession {
         self.inner.ensure_ready()?;
         // A terminal event must not clean up before the file is registered.
         let mut files = lock(&self.inner.files);
-        let transfer_id = commands.queue_upload_source(source, remote_path).map_err(|error| {
-            BackendError::Storage {
+        let transfer_id = commands
+            .queue_upload_source(source, remote_path)
+            .map_err(|error| BackendError::Storage {
                 storage_failure: format!("failed to queue the upload: {error}"),
-            }
-        })?;
+            })?;
         // The session closes the registered duplicate when the transfer
         // reaches a terminal state (done, failed, or cancelled).
         files.insert(transfer_id.0, file);
@@ -1619,11 +1628,11 @@ impl SftpSession {
         };
         self.inner.ensure_ready()?;
         let commands = self.inner.commands()?;
-        let transfer_id = commands.queue_upload_source(source, remote_path).map_err(|error| {
-            BackendError::Storage {
+        let transfer_id = commands
+            .queue_upload_source(source, remote_path)
+            .map_err(|error| BackendError::Storage {
                 storage_failure: format!("failed to queue the directory upload: {error}"),
-            }
-        })?;
+            })?;
         Ok(Arc::new(SftpTransfer {
             session: Arc::downgrade(&self.inner),
             transfer_id: transfer_id.0,
@@ -1819,8 +1828,14 @@ mod tests {
         let error = inner
             .answer_keyboard_interactive(9, vec!["secret".to_string()])
             .expect_err("stale request ids must be rejected");
-        assert!(matches!(error, BackendError::RequestExpired { request_id: 9 }));
-        assert!(inner.snapshot().request.is_some(), "the pending request survives");
+        assert!(matches!(
+            error,
+            BackendError::RequestExpired { request_id: 9 }
+        ));
+        assert!(
+            inner.snapshot().request.is_some(),
+            "the pending request survives"
+        );
     }
 
     #[test]

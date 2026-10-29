@@ -54,7 +54,11 @@ impl CredentialBackend for PlatformCredentialBackend {
 pub(crate) fn classify_credential_error(error: &anyhow::Error) -> crate::dto::CredentialHealth {
     use crate::dto::CredentialHealth;
 
-    let message = error.chain().map(ToString::to_string).collect::<Vec<_>>().join(": ");
+    let message = error
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ");
     if message.contains("invalidated") || message.contains("KeyPermanentlyInvalidated") {
         return CredentialHealth::Invalidated;
     }

@@ -139,7 +139,11 @@ pub trait PlatformHost: Send + Sync {
     fn store_clipboard(&self, text: String);
 
     /// List one directory inside an authorized SAF tree.
-    fn saf_list(&self, tree_uri: String, relative_path: String) -> Result<Vec<SafEntry>, BackendError>;
+    fn saf_list(
+        &self,
+        tree_uri: String,
+        relative_path: String,
+    ) -> Result<Vec<SafEntry>, BackendError>;
 
     /// Metadata for one document or directory inside an authorized SAF tree.
     fn saf_stat(&self, tree_uri: String, relative_path: String) -> Result<SafEntry, BackendError>;

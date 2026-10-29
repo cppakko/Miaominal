@@ -21,7 +21,9 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::agent::{AgentChannelEvent, AgentHostKeyDecision, AgentSshSession};
 use crate::backend::{Backend, BackendConfig};
 use crate::dto::{AuthMethodDto, CredentialAction, CredentialKindDto, HostUpdate};
-use crate::test_support::{business_root, cache_root, clear_test_root, shared_test_lock, test_host};
+use crate::test_support::{
+    business_root, cache_root, clear_test_root, shared_test_lock, test_host,
+};
 
 struct AgentTestServer {
     port: u16,
@@ -349,10 +351,9 @@ fn exec_channel_keeps_stdout_stderr_and_exit_status_separate() {
         .await;
 
         assert!(
-            events.iter().any(|event| matches!(
-                event,
-                AgentChannelEvent::ExecOpened { channel_id: 1 }
-            )),
+            events
+                .iter()
+                .any(|event| matches!(event, AgentChannelEvent::ExecOpened { channel_id: 1 })),
             "expected the exec request to be accepted: {events:?}"
         );
         assert_eq!(stdout_text(&events), "stdout-payload\n");
@@ -369,7 +370,12 @@ fn exec_channel_keeps_stdout_stderr_and_exit_status_separate() {
             "expected exit status 0: {events:?}"
         );
 
-        assert!(backend.close_agent_session(session.connection_id()).await.expect("close"));
+        assert!(
+            backend
+                .close_agent_session(session.connection_id())
+                .await
+                .expect("close")
+        );
         assert!(session.is_closed());
     });
 }
@@ -687,10 +693,9 @@ fn assert_tunnel_connection_closes(close_session: bool) {
         } else {
             session.close_tunnel(9).expect("close tunnel");
             wait_events(&session, Duration::from_secs(5), |events| {
-                events.iter().any(|event| matches!(
-                    event,
-                    AgentChannelEvent::TunnelClosed { tunnel_id: 9 }
-                ))
+                events
+                    .iter()
+                    .any(|event| matches!(event, AgentChannelEvent::TunnelClosed { tunnel_id: 9 }))
             })
             .await;
         }
@@ -755,10 +760,12 @@ fn host_key_prompt_is_relayed_and_rejection_closes_the_session() {
             )),
             "rejecting the host key must not leave the session hanging: {events:?}"
         );
-        assert!(backend
-            .close_agent_session(session.connection_id())
-            .await
-            .expect("close session"));
+        assert!(
+            backend
+                .close_agent_session(session.connection_id())
+                .await
+                .expect("close session")
+        );
     });
 }
 
@@ -783,20 +790,27 @@ fn closing_a_session_is_idempotent_and_releases_the_worker() {
         .await;
 
         let connection_id = session.connection_id();
-        assert!(backend
-            .close_agent_session(connection_id)
-            .await
-            .expect("first close"));
-        assert!(!backend
-            .close_agent_session(connection_id)
-            .await
-            .expect("second close"));
+        assert!(
+            backend
+                .close_agent_session(connection_id)
+                .await
+                .expect("first close")
+        );
+        assert!(
+            !backend
+                .close_agent_session(connection_id)
+                .await
+                .expect("second close")
+        );
         assert!(session.is_closed());
 
         // Explicit cancel is idempotent and the event stream ends closed.
         session.cancel();
         session.cancel();
-        let batch = session.read_events(32, 200).await.expect("read after close");
+        let batch = session
+            .read_events(32, 200)
+            .await
+            .expect("read after close");
         assert!(batch.closed || session.is_closed());
     });
 }

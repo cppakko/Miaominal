@@ -82,11 +82,10 @@ impl TestHost {
     }
 
     fn saf_entry(resolved: &std::path::Path, relative: &str) -> Result<SafEntry, BackendError> {
-        let metadata = std::fs::symlink_metadata(resolved).map_err(|error| {
-            BackendError::Storage {
+        let metadata =
+            std::fs::symlink_metadata(resolved).map_err(|error| BackendError::Storage {
                 storage_failure: error.to_string(),
-            }
-        })?;
+            })?;
         let kind = if metadata.is_dir() {
             SafEntryKind::Directory
         } else if metadata.is_file() {

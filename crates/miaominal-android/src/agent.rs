@@ -228,20 +228,14 @@ impl AgentSessionRegistry {
     }
 
     pub(crate) fn request_close_all(&self) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         for session in sessions {
             session.request_close();
         }
     }
 
     pub(crate) async fn wait_all(&self, timeout: Duration) {
-        let sessions = lock(&self.sessions)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = lock(&self.sessions).values().cloned().collect::<Vec<_>>();
         let deadline = tokio::time::Instant::now() + timeout;
         for session in sessions {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -357,10 +351,7 @@ impl AgentSshSession {
                 }
             }
             Ok(AgentEventBatch {
-                events: events
-                    .into_iter()
-                    .map(channel_event_to_dto)
-                    .collect(),
+                events: events.into_iter().map(channel_event_to_dto).collect(),
                 closed,
             })
         })

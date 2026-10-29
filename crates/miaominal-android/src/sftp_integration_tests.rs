@@ -35,7 +35,9 @@ use crate::sftp::{
     SftpRequestKind, SftpSession, SftpSessionPhase, SftpSessionSnapshot, SftpTransfer,
     SftpTransferFailureKind, SftpTransferSnapshot, SftpTransferState,
 };
-use crate::test_support::{business_root, cache_root, clear_test_root, shared_test_lock, test_host};
+use crate::test_support::{
+    business_root, cache_root, clear_test_root, shared_test_lock, test_host,
+};
 
 #[derive(Clone, Default)]
 struct SftpTestOptions {
@@ -285,7 +287,9 @@ impl SftpFsHandler {
         if relative.is_empty() {
             self.state.root.clone()
         } else {
-            self.state.root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR))
+            self.state
+                .root
+                .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR))
         }
     }
 
@@ -334,11 +338,15 @@ impl SftpFsHandler {
                 ..FileAttributes::default()
             });
         }
-        let metadata = std::fs::symlink_metadata(self.real_path(path))
-            .map_err(|_| StatusCode::NoSuchFile)?;
+        let metadata =
+            std::fs::symlink_metadata(self.real_path(path)).map_err(|_| StatusCode::NoSuchFile)?;
         Ok(FileAttributes {
             size: Some(if metadata.is_dir() { 0 } else { metadata.len() }),
-            permissions: Some(if metadata.is_dir() { 0o040755 } else { 0o100644 }),
+            permissions: Some(if metadata.is_dir() {
+                0o040755
+            } else {
+                0o100644
+            }),
             mtime: metadata
                 .modified()
                 .ok()
@@ -358,10 +366,7 @@ impl SftpFsHandler {
         let id = format!("handle-{}", self.next_handle);
         self.next_handle += 1;
         self.handles.insert(id.clone(), handle);
-        Handle {
-            id: 0,
-            handle: id,
-        }
+        Handle { id: 0, handle: id }
     }
 }
 
@@ -433,13 +438,11 @@ impl SftpHandler for SftpFsHandler {
         options.create(pflags.contains(OpenFlags::CREATE));
         options.truncate(pflags.contains(OpenFlags::TRUNCATE));
         options.append(pflags.contains(OpenFlags::APPEND));
-        let file = options
-            .open(&path)
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => StatusCode::NoSuchFile.into(),
-                std::io::ErrorKind::PermissionDenied => StatusCode::PermissionDenied.into(),
-                _ => StatusCode::Failure.with_message(error.to_string()),
-            })?;
+        let file = options.open(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => StatusCode::NoSuchFile.into(),
+            std::io::ErrorKind::PermissionDenied => StatusCode::PermissionDenied.into(),
+            _ => StatusCode::Failure.with_message(error.to_string()),
+        })?;
         let mut handle = self.open_handle(FsHandle::File {
             file: Some(file),
             virtual_size: None,
@@ -467,9 +470,7 @@ impl SftpHandler for SftpFsHandler {
         let fs_handle = self.handle_mut(&handle)?;
         match fs_handle {
             FsHandle::File {
-                file,
-                virtual_size,
-                ..
+                file, virtual_size, ..
             } => {
                 if let Some(size) = *virtual_size {
                     if offset >= size {
@@ -477,7 +478,10 @@ impl SftpHandler for SftpFsHandler {
                     }
                     let remaining = size - offset;
                     let length = u64::from(len).min(remaining) as usize;
-                    let served = self.state.bytes_served.fetch_add(length as u64, Ordering::SeqCst)
+                    let served = self
+                        .state
+                        .bytes_served
+                        .fetch_add(length as u64, Ordering::SeqCst)
                         + length as u64;
                     if let Some(limit) = self.state.options.drop_after_bytes
                         && served > limit
@@ -490,7 +494,9 @@ impl SftpHandler for SftpFsHandler {
                         data: vec![0u8; length],
                     });
                 }
-                let file = file.as_mut().ok_or(StatusReply::from(StatusCode::Failure))?;
+                let file = file
+                    .as_mut()
+                    .ok_or(StatusReply::from(StatusCode::Failure))?;
                 file.seek(SeekFrom::Start(offset))
                     .map_err(|error| StatusCode::Failure.with_message(error.to_string()))?;
                 let mut buffer = vec![0u8; len as usize];
@@ -516,10 +522,17 @@ impl SftpHandler for SftpFsHandler {
     ) -> Result<Status, Self::Error> {
         let served = {
             let fs_handle = self.handle_mut(&handle)?;
-            let FsHandle::File { file, bytes_written, .. } = fs_handle else {
+            let FsHandle::File {
+                file,
+                bytes_written,
+                ..
+            } = fs_handle
+            else {
                 return Err(StatusCode::Failure.into());
             };
-            let file = file.as_mut().ok_or(StatusReply::from(StatusCode::Failure))?;
+            let file = file
+                .as_mut()
+                .ok_or(StatusReply::from(StatusCode::Failure))?;
             file.seek(SeekFrom::Start(offset))
                 .map_err(|error| StatusCode::Failure.with_message(error.to_string()))?;
             file.write_all(&data)
@@ -535,8 +548,9 @@ impl SftpHandler for SftpFsHandler {
         if let Some(limit) = self.state.options.drop_after_bytes
             && total > limit
         {
-            return Err(StatusCode::ConnectionLost
-                .with_message("the test server dropped the connection"));
+            return Err(
+                StatusCode::ConnectionLost.with_message("the test server dropped the connection")
+            );
         }
         let _ = served;
         Ok(Self::ok(id))
@@ -558,7 +572,8 @@ impl SftpHandler for SftpFsHandler {
             _ => StatusCode::Failure.with_message(error.to_string()),
         })?;
         for entry in reader {
-            let entry = entry.map_err(|error| StatusCode::Failure.with_message(error.to_string()))?;
+            let entry =
+                entry.map_err(|error| StatusCode::Failure.with_message(error.to_string()))?;
             let metadata = std::fs::symlink_metadata(entry.path())
                 .map_err(|error| StatusCode::Failure.with_message(error.to_string()))?;
             let is_dir = metadata.is_dir();
@@ -585,12 +600,7 @@ impl SftpHandler for SftpFsHandler {
         if *position >= entries.len() {
             return Err(StatusCode::Eof.into());
         }
-        let chunk: Vec<_> = entries
-            .iter()
-            .skip(*position)
-            .take(32)
-            .cloned()
-            .collect();
+        let chunk: Vec<_> = entries.iter().skip(*position).take(32).cloned().collect();
         *position += chunk.len();
         Ok(Name {
             id,
@@ -613,12 +623,11 @@ impl SftpHandler for SftpFsHandler {
         if self.is_denied(&filename) {
             return Err(StatusCode::PermissionDenied.with_message("permission denied"));
         }
-        std::fs::remove_file(self.real_path(&filename))
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => StatusReply::from(StatusCode::NoSuchFile),
-                std::io::ErrorKind::PermissionDenied => StatusReply::from(StatusCode::PermissionDenied),
-                _ => StatusCode::Failure.with_message(error.to_string()),
-            })?;
+        std::fs::remove_file(self.real_path(&filename)).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => StatusReply::from(StatusCode::NoSuchFile),
+            std::io::ErrorKind::PermissionDenied => StatusReply::from(StatusCode::PermissionDenied),
+            _ => StatusCode::Failure.with_message(error.to_string()),
+        })?;
         Ok(Self::ok(id))
     }
 
@@ -665,9 +674,7 @@ impl SftpHandler for SftpFsHandler {
         let fs_handle = self.handle_mut(&handle)?;
         match fs_handle {
             FsHandle::File {
-                file,
-                virtual_size,
-                ..
+                file, virtual_size, ..
             } => {
                 let len = virtual_size.unwrap_or_else(|| {
                     file.as_ref()
@@ -838,11 +845,7 @@ async fn wait_for_transfer(
     }
 }
 
-async fn wait_until(
-    predicate: impl Fn() -> bool,
-    timeout: Duration,
-    what: &str,
-) {
+async fn wait_until(predicate: impl Fn() -> bool, timeout: Duration, what: &str) {
     let deadline = Instant::now() + timeout;
     while !predicate() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -879,8 +882,8 @@ fn file_upload_and_download_round_trip() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -914,7 +917,10 @@ fn file_upload_and_download_round_trip() {
             Duration::from_secs(30),
         )
         .await;
-        assert_eq!(snapshot.bytes_total, Some(("héllo 世界".repeat(1000)).len() as u64));
+        assert_eq!(
+            snapshot.bytes_total,
+            Some(("héllo 世界".repeat(1000)).len() as u64)
+        );
         assert_eq!(snapshot.bytes_complete, snapshot.bytes_total.unwrap());
         assert!(handle.is_closed(), "the session owns and closes the handle");
 
@@ -939,7 +945,10 @@ fn file_upload_and_download_round_trip() {
             Duration::from_secs(30),
         )
         .await;
-        assert_eq!(snapshot.direction, crate::sftp::SftpTransferDirection::Download);
+        assert_eq!(
+            snapshot.direction,
+            crate::sftp::SftpTransferDirection::Download
+        );
         assert_eq!(
             read_real_file(download_root.path(), "sub/报告-copy.txt"),
             "héllo 世界".repeat(1000).as_bytes()
@@ -957,8 +966,8 @@ fn empty_file_round_trips() {
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "empty.bin", b"");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -984,7 +993,10 @@ fn empty_file_round_trips() {
         .await;
         assert_eq!(snapshot.bytes_complete, 0);
         assert_eq!(snapshot.bytes_total, Some(0));
-        assert_eq!(read_real_file(server_root.path(), "overwrite-empty.bin"), b"");
+        assert_eq!(
+            read_real_file(server_root.path(), "overwrite-empty.bin"),
+            b""
+        );
         tokio::time::timeout(Duration::from_secs(2), async {
             while !handle.is_closed() {
                 tokio::task::yield_now().await;
@@ -1021,8 +1033,8 @@ fn directory_transfers_are_recursive_and_skip_nothing() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1033,8 +1045,16 @@ fn directory_transfers_are_recursive_and_skip_nothing() {
         let upload_root = tempfile::tempdir().expect("upload root");
         host.set_saf_root(upload_root.path().to_path_buf());
         write_real_file(upload_root.path(), "tree/a.txt", b"alpha");
-        write_real_file(upload_root.path(), "tree/nested/中文.txt", "内容".as_bytes());
-        write_real_file(upload_root.path(), "tree/nested/deep/data.bin", &[7u8; 4096]);
+        write_real_file(
+            upload_root.path(),
+            "tree/nested/中文.txt",
+            "内容".as_bytes(),
+        );
+        write_real_file(
+            upload_root.path(),
+            "tree/nested/deep/data.bin",
+            &[7u8; 4096],
+        );
         let transfer = session
             .upload_directory(
                 "content://test-tree".to_string(),
@@ -1052,7 +1072,10 @@ fn directory_transfers_are_recursive_and_skip_nothing() {
         .await;
         assert_eq!(snapshot.child_count, 3, "all files must be children");
         assert_eq!(snapshot.children_done, 3);
-        assert_eq!(read_real_file(server_root.path(), "uploaded-tree/a.txt"), b"alpha");
+        assert_eq!(
+            read_real_file(server_root.path(), "uploaded-tree/a.txt"),
+            b"alpha"
+        );
         assert_eq!(
             read_real_file(server_root.path(), "uploaded-tree/nested/中文.txt"),
             "内容".as_bytes()
@@ -1076,7 +1099,10 @@ fn directory_transfers_are_recursive_and_skip_nothing() {
         )
         .await;
         assert_eq!(snapshot.children_done, 3);
-        assert_eq!(read_real_file(download_root.path(), "restored/a.txt"), b"alpha");
+        assert_eq!(
+            read_real_file(download_root.path(), "restored/a.txt"),
+            b"alpha"
+        );
         assert_eq!(
             read_real_file(download_root.path(), "restored/nested/deep/data.bin"),
             vec![7u8; 4096]
@@ -1093,8 +1119,8 @@ fn uploads_replace_existing_remote_files() {
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "existing.txt", b"old contents");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1118,12 +1144,19 @@ fn uploads_replace_existing_remote_files() {
             Duration::from_secs(20),
         )
         .await;
-        assert_eq!(read_real_file(server_root.path(), "existing.txt"), b"new contents");
+        assert_eq!(
+            read_real_file(server_root.path(), "existing.txt"),
+            b"new contents"
+        );
         let leftovers: Vec<_> = std::fs::read_dir(server_root.path())
             .expect("list server root")
             .map(|entry| entry.expect("entry").file_name())
             .collect();
-        assert_eq!(leftovers.len(), 1, "no temporary or backup files may remain: {leftovers:?}");
+        assert_eq!(
+            leftovers.len(),
+            1,
+            "no temporary or backup files may remain: {leftovers:?}"
+        );
 
         backend.shutdown();
     });
@@ -1136,8 +1169,8 @@ fn downloads_replace_existing_documents() {
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "replace.txt", b"remote data");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1161,7 +1194,10 @@ fn downloads_replace_existing_documents() {
             Duration::from_secs(20),
         )
         .await;
-        assert_eq!(read_real_file(download_root.path(), "replace.txt"), b"remote data");
+        assert_eq!(
+            read_real_file(download_root.path(), "replace.txt"),
+            b"remote data"
+        );
 
         backend.shutdown();
     });
@@ -1174,8 +1210,8 @@ fn a_refused_commit_keeps_the_original_and_removes_the_staging_document() {
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "report.txt", b"remote contents");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1213,7 +1249,13 @@ fn a_refused_commit_keeps_the_original_and_removes_the_staging_document() {
         );
         let leftovers: Vec<_> = std::fs::read_dir(download_root.path())
             .expect("list download root")
-            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(
             leftovers,
@@ -1274,7 +1316,13 @@ fn cancel_while_replacing_keeps_the_original_and_removes_the_staging_document() 
         );
         let leftovers: Vec<_> = std::fs::read_dir(download_root.path())
             .expect("list download root")
-            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(
             leftovers,
@@ -1294,8 +1342,8 @@ fn remove_file_and_directory_delete_remote_entries() {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "remove-me.txt", b"data");
         write_real_file(server_root.path(), "tree/child.txt", b"data");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1333,8 +1381,8 @@ fn directory_creation_and_rename_are_applied() {
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
         write_real_file(server_root.path(), "before.txt", b"data");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1408,14 +1456,19 @@ fn permission_denied_is_reported_for_uploads_and_listings() {
         assert_eq!(snapshot.failure_kind, SftpTransferFailureKind::Permission);
         assert!(!server_root.path().join("locked.txt").exists());
 
-        session.list_directory("/locked".to_string()).expect("queue listing");
+        session
+            .list_directory("/locked".to_string())
+            .expect("queue listing");
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let directory = session.directory_snapshot();
             if directory.error.is_some() {
                 break;
             }
-            assert!(Instant::now() < deadline, "listing failure was not reported");
+            assert!(
+                Instant::now() < deadline,
+                "listing failure was not reported"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
@@ -1432,7 +1485,10 @@ fn permission_denied_is_reported_for_uploads_and_listings() {
                 .as_ref()
                 .filter(|error| error.operation == crate::sftp::SftpOperation::RemoveFile)
             {
-                assert!(error.message.contains("permission denied"), "unexpected: {error:?}");
+                assert!(
+                    error.message.contains("permission denied"),
+                    "unexpected: {error:?}"
+                );
                 assert_eq!(error.path.as_deref(), Some("/locked.txt"));
                 assert!(error.sequence > 0);
                 break;
@@ -1513,7 +1569,10 @@ fn disk_full_upload_fails_with_a_typed_kind() {
         .await;
         assert_eq!(snapshot.failure_kind, SftpTransferFailureKind::NoSpace);
         assert!(
-            snapshot.error.as_deref().is_some_and(|error| error.contains("space")),
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("space")),
             "error must explain the failure: {snapshot:?}"
         );
         assert!(!server_root.path().join("full.txt").exists());
@@ -1581,8 +1640,8 @@ fn invalid_and_closed_descriptors_are_handled() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -1611,12 +1670,7 @@ fn invalid_and_closed_descriptors_are_handled() {
             .upload_file(handle, "/gone.bin".to_string())
             .await
             .expect("queue upload");
-        let snapshot = wait_for_transfer(
-            &transfer,
-            finished,
-            Duration::from_secs(20),
-        )
-        .await;
+        let snapshot = wait_for_transfer(&transfer, finished, Duration::from_secs(20)).await;
         assert_eq!(snapshot.state, SftpTransferState::Failed);
         assert!(!server_root.path().join("gone.bin").exists());
 
@@ -1857,7 +1911,12 @@ fn recursive_transfers_reject_parent_path_entries() {
         );
         assert!(
             !download_root.path().join("secret.txt").exists()
-                && !download_root.path().parent().expect("parent").join("secret.txt").exists(),
+                && !download_root
+                    .path()
+                    .parent()
+                    .expect("parent")
+                    .join("secret.txt")
+                    .exists(),
             "nothing may be written outside the destination"
         );
 
@@ -1992,8 +2051,8 @@ fn unknown_host_key_prompts_and_accept_and_save_connects() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
         save_password_host(&backend, "host-1", server.port).await;
@@ -2029,8 +2088,8 @@ fn keyboard_interactive_answers_multiple_rounds_and_rejects_stale_ids() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -2153,8 +2212,18 @@ fn an_unreachable_host_fails_the_session_and_close_is_idempotent() {
         }
 
         let connection_id = session.connection_id();
-        assert!(backend.close_sftp_session(connection_id).await.expect("close"));
-        assert!(!backend.close_sftp_session(connection_id).await.expect("close twice"));
+        assert!(
+            backend
+                .close_sftp_session(connection_id)
+                .await
+                .expect("close")
+        );
+        assert!(
+            !backend
+                .close_sftp_session(connection_id)
+                .await
+                .expect("close twice")
+        );
         backend.shutdown();
     });
 }
@@ -2198,7 +2267,12 @@ fn closing_while_authentication_hangs_stops_the_session() {
             "a hanging authentication must not keep the session alive ({elapsed:?})"
         );
         assert_eq!(session.snapshot().phase, SftpSessionPhase::Closed);
-        assert!(backend.close_sftp_session(session.connection_id()).await.expect("close"));
+        assert!(
+            backend
+                .close_sftp_session(session.connection_id())
+                .await
+                .expect("close")
+        );
 
         backend.shutdown();
     });
@@ -2242,7 +2316,12 @@ fn closing_while_the_subsystem_hangs_stops_the_session() {
             "a hanging subsystem request must not keep the session alive ({elapsed:?})"
         );
         assert_eq!(session.snapshot().phase, SftpSessionPhase::Closed);
-        assert!(backend.close_sftp_session(session.connection_id()).await.expect("close"));
+        assert!(
+            backend
+                .close_sftp_session(session.connection_id())
+                .await
+                .expect("close")
+        );
 
         backend.shutdown();
     });
@@ -2254,8 +2333,8 @@ fn registry_keeps_sessions_until_they_are_closed() {
     clear_test_root();
     crate::runtime::runtime().block_on(async {
         let server_root = tempfile::tempdir().expect("server root");
-        let server = TestSftpServer::start(SftpTestOptions::default(), server_root.path().into())
-            .await;
+        let server =
+            TestSftpServer::start(SftpTestOptions::default(), server_root.path().into()).await;
         trust_host(&server);
         let (_host, backend) = backend_for_test();
         backend.initialize().await.expect("initialize");
@@ -2265,11 +2344,17 @@ fn registry_keeps_sessions_until_they_are_closed() {
         assert_eq!(backend.sftp_session_snapshots().len(), 1);
         let connection_id = session.connection_id();
         session.disconnect().await.expect("disconnect");
-        assert_eq!(backend.sftp_session_snapshots().len(), 1, "closed sessions are retained");
-        assert!(backend
-            .close_sftp_session(connection_id)
-            .await
-            .expect("close session"));
+        assert_eq!(
+            backend.sftp_session_snapshots().len(),
+            1,
+            "closed sessions are retained"
+        );
+        assert!(
+            backend
+                .close_sftp_session(connection_id)
+                .await
+                .expect("close session")
+        );
         assert!(backend.sftp_session_snapshots().is_empty());
         assert!(
             !backend

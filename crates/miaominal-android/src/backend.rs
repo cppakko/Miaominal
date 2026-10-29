@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
+use crate::agent::{AgentSessionRegistry, AgentSshSession};
 use crate::build_info::BuildInfo;
 use crate::data::{MobileData, OperationGuard};
 use crate::dto::{
@@ -24,7 +25,6 @@ use crate::dto::{
     SettingsUpdate, SnippetDto, SnippetUpdate, VaultSnapshot,
 };
 use crate::error::BackendError;
-use crate::agent::{AgentSessionRegistry, AgentSshSession};
 use crate::events::{BackendEvent, ConfigArea, EventBus, EventSubscription};
 use crate::forward::{ForwardSession, ForwardSessionRegistry, ForwardSnapshot};
 use crate::local_file::LocalFileHandle;
@@ -93,7 +93,8 @@ impl Backend {
         let sessions = SessionRegistry::new(Arc::clone(&lifecycle), Arc::clone(&events));
         let agent_sessions = AgentSessionRegistry::new(Arc::clone(&lifecycle));
         let sftp_sessions = SftpSessionRegistry::new(Arc::clone(&lifecycle), Arc::clone(&events));
-        let forward_sessions = ForwardSessionRegistry::new(Arc::clone(&lifecycle), Arc::clone(&events));
+        let forward_sessions =
+            ForwardSessionRegistry::new(Arc::clone(&lifecycle), Arc::clone(&events));
         let sync = SyncCoordinator::new(
             Arc::clone(&lifecycle),
             Arc::clone(&events),
@@ -151,13 +152,11 @@ impl Backend {
         }
         let data_dir = self.config.data_dir.clone();
         let cache_dir = self.config.cache_dir.clone();
-        runtime::offload(move || {
-            miaominal_paths::initialize_embedded_runtime(data_dir, cache_dir)
-        })
-        .await
-        .map_err(|error| BackendError::RuntimeUnavailable {
-            runtime_failure: error.to_string(),
-        })?;
+        runtime::offload(move || miaominal_paths::initialize_embedded_runtime(data_dir, cache_dir))
+            .await
+            .map_err(|error| BackendError::RuntimeUnavailable {
+                runtime_failure: error.to_string(),
+            })?;
 
         let host = Arc::clone(&self.host);
         let (data, vault_locked) = runtime::offload(move || {
@@ -306,7 +305,9 @@ impl Backend {
         update: SettingsUpdate,
     ) -> Result<SettingsDto, BackendError> {
         let snapshot = self
-            .write_data(ConfigArea::Settings, move |data| data.update_settings(update))
+            .write_data(ConfigArea::Settings, move |data| {
+                data.update_settings(update)
+            })
             .await?;
         // The settings store installs the new palette globally, but live
         // sessions captured the old theme when they were created; refresh them
@@ -345,7 +346,8 @@ impl Backend {
         .await
     }
 
-    pub async fn delete_host(&self, id: String) -> Result<bool, BackendError> {        let profile_id = id.clone();
+    pub async fn delete_host(&self, id: String) -> Result<bool, BackendError> {
+        let profile_id = id.clone();
         let removed = self
             .write_data_all(&[ConfigArea::Hosts, ConfigArea::Forwards], move |data| {
                 data.delete_host(&id)
@@ -500,10 +502,9 @@ impl Backend {
 
     pub async fn disable_vault(&self) -> Result<VaultSnapshot, BackendError> {
         let snapshot = self
-            .write_data_all(
-                &[ConfigArea::Credentials, ConfigArea::Settings],
-                |data| data.disable_vault(),
-            )
+            .write_data_all(&[ConfigArea::Credentials, ConfigArea::Settings], |data| {
+                data.disable_vault()
+            })
             .await?;
         self.sync.set_vault_locked(false);
         Ok(snapshot)
@@ -554,10 +555,9 @@ impl Backend {
         algorithm: ManagedKeyAlgorithmDto,
         name: String,
     ) -> Result<ManagedKeyDto, BackendError> {
-        self.write_data_all(
-            &[ConfigArea::Credentials],
-            move |data| data.generate_key(algorithm, name),
-        )
+        self.write_data_all(&[ConfigArea::Credentials], move |data| {
+            data.generate_key(algorithm, name)
+        })
         .await
     }
 
@@ -574,10 +574,9 @@ impl Backend {
     }
 
     pub async fn delete_key(&self, key_id: String) -> Result<bool, BackendError> {
-        self.write_data_all(
-            &[ConfigArea::Credentials, ConfigArea::Hosts],
-            move |data| data.delete_key(&key_id),
-        )
+        self.write_data_all(&[ConfigArea::Credentials, ConfigArea::Hosts], move |data| {
+            data.delete_key(&key_id)
+        })
         .await
     }
 
@@ -604,11 +603,7 @@ impl Backend {
         self.read_data(|data| data.known_hosts()).await
     }
 
-    pub async fn delete_known_host(
-        &self,
-        host: String,
-        port: u16,
-    ) -> Result<bool, BackendError> {
+    pub async fn delete_known_host(&self, host: String, port: u16) -> Result<bool, BackendError> {
         self.write_data(ConfigArea::Trust, move |data| {
             data.delete_known_host(&host, port)
         })
@@ -638,8 +633,10 @@ impl Backend {
         &self,
         update: SyncConfigUpdate,
     ) -> Result<SyncConfigDto, BackendError> {
-        self.write_data(ConfigArea::Sync, move |data| data.update_sync_config(update))
-            .await
+        self.write_data(ConfigArea::Sync, move |data| {
+            data.update_sync_config(update)
+        })
+        .await
     }
 
     pub async fn set_sync_credential(
@@ -717,7 +714,10 @@ impl Backend {
         let data = self.data_handle()?;
         let probe = Arc::clone(&data);
         let handles = runtime::offload(move || probe.sync_handles()).await?;
-        let result = self.sync.run_conflict_resolution(handles, resolution).await?;
+        let result = self
+            .sync
+            .run_conflict_resolution(handles, resolution)
+            .await?;
         Ok(result)
     }
 
@@ -754,8 +754,8 @@ impl Backend {
         if enabled {
             if !has_provider_credentials(&engine_config) {
                 return Err(BackendError::SyncNotConfigured {
-                    sync_detail:
-                        "provider credentials or the encryption passphrase are missing".to_string(),
+                    sync_detail: "provider credentials or the encryption passphrase are missing"
+                        .to_string(),
                 });
             }
             if engine_config.provider == miaominal_sync::SyncProvider::WebDav
@@ -763,9 +763,8 @@ impl Backend {
             {
                 self.sync.run_capability_check(handles).await?;
                 let report = self.sync.capability_report();
-                if !report.permits_unpreconditioned_write(
-                    engine_config.webdav_unsafe_write_consent,
-                ) {
+                if !report.permits_unpreconditioned_write(engine_config.webdav_unsafe_write_consent)
+                {
                     return Err(BackendError::SyncCapability {
                         capability_detail: format!("{:?}:{}", report.state, report.step),
                     });
@@ -803,7 +802,9 @@ impl Backend {
         self.ensure_open()?;
         if bytes.len() > MAX_IMPORT_BYTES {
             return Err(BackendError::InvalidArgument {
-                detail: format!("the selected file exceeds the {MAX_IMPORT_BYTES} byte import limit"),
+                detail: format!(
+                    "the selected file exceeds the {MAX_IMPORT_BYTES} byte import limit"
+                ),
             });
         }
         let kind: miaominal_core::profile::ImportSourceKind = source.into();
@@ -819,10 +820,7 @@ impl Backend {
 
     /// Commit a confirmed preview into the session store and the credential
     /// backend. The preview is consumed even when the commit fails.
-    pub async fn commit_import(
-        &self,
-        preview_id: u64,
-    ) -> Result<ImportCommitResult, BackendError> {
+    pub async fn commit_import(&self, preview_id: u64) -> Result<ImportCommitResult, BackendError> {
         self.ensure_open()?;
         let Some(batch) = self.sync.take_import(preview_id) else {
             return Err(BackendError::InvalidArgument {
@@ -1086,7 +1084,11 @@ impl Backend {
 
     /// Live handle for one forwarding rule, or `None` when it was never
     /// started in this backend generation.
-    pub fn forward_session(&self, profile_id: String, rule_id: String) -> Option<Arc<ForwardSession>> {
+    pub fn forward_session(
+        &self,
+        profile_id: String,
+        rule_id: String,
+    ) -> Option<Arc<ForwardSession>> {
         self.forward_sessions
             .get(&crate::forward::ForwardKey::new(profile_id, rule_id))
             .map(ForwardSession::new)
@@ -1204,7 +1206,11 @@ impl Backend {
     /// `local_revision`. A local edit therefore either happens completely
     /// before a pull (the pull then reports `LocalChangedDuringPull`) or
     /// completely after it, and can never be overwritten by stale remote data.
-    async fn write_data_all<T, F>(&self, areas: &[ConfigArea], operation: F) -> Result<T, BackendError>
+    async fn write_data_all<T, F>(
+        &self,
+        areas: &[ConfigArea],
+        operation: F,
+    ) -> Result<T, BackendError>
     where
         T: Send + 'static,
         F: FnOnce(Arc<MobileData>) -> Result<T, BackendError> + Send + 'static,
@@ -1223,7 +1229,8 @@ impl Backend {
                 return Err(BackendError::Closed);
             }
             for area in areas {
-                self.events.publish(BackendEvent::ConfigChanged { area: *area });
+                self.events
+                    .publish(BackendEvent::ConfigChanged { area: *area });
             }
         }
         if areas.iter().copied().any(area_participates_in_sync) {
@@ -1596,7 +1603,8 @@ mod tests {
         let reloaded = miaominal_storage::SettingsStore::load_with_path(settings_path)
             .expect("settings should reload");
         assert_eq!(
-            reloaded.settings().terminal_font_size, 21.5,
+            reloaded.settings().terminal_font_size,
+            21.5,
             "a local update must not restore the stale pre-pull value"
         );
         assert_eq!(reloaded.settings().recent_connections_count, 7);
@@ -1650,10 +1658,8 @@ mod tests {
             let backend = test_backend();
             let subscription = backend.subscribe_from(0);
 
-            let (initialized, ()) = tokio::join!(
-                backend.initialize(),
-                async { backend.shutdown() },
-            );
+            let (initialized, ()) =
+                tokio::join!(backend.initialize(), async { backend.shutdown() },);
 
             let batch = subscription.next_batch(16, 50).await.unwrap();
             let sequences = batch

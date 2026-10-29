@@ -22,7 +22,9 @@ use crate::error::BackendError;
 use crate::session::{
     SshHostKeyDecision, SshRequestKind, SshSession, SshSessionPhase, SshSessionSnapshot,
 };
-use crate::test_support::{business_root, cache_root, clear_test_root, shared_test_lock, test_host};
+use crate::test_support::{
+    business_root, cache_root, clear_test_root, shared_test_lock, test_host,
+};
 
 #[derive(Clone)]
 struct ServerOptions {
@@ -98,7 +100,8 @@ impl TestSshServer {
                 let config = Arc::clone(&config);
                 let state = Arc::clone(&state);
                 crate::runtime::runtime().spawn(async move {
-                    let running = server::run_stream(config, stream, TestServerHandler { state }).await;
+                    let running =
+                        server::run_stream(config, stream, TestServerHandler { state }).await;
                     if let Ok(running) = running {
                         let _ = running.await;
                     }
@@ -125,11 +128,13 @@ impl server::Handler for TestServerHandler {
     type Error = anyhow::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        Ok(if user == "tester" && password == self.state.options.password {
-            Auth::Accept
-        } else {
-            Auth::reject()
-        })
+        Ok(
+            if user == "tester" && password == self.state.options.password {
+                Auth::Accept
+            } else {
+                Auth::reject()
+            },
+        )
     }
 
     async fn auth_publickey(
@@ -161,7 +166,11 @@ impl server::Handler for TestServerHandler {
             .accept_certificate_user
             .as_deref()
             .is_some_and(|expected| expected == user);
-        Ok(if accepted { Auth::Accept } else { Auth::reject() })
+        Ok(if accepted {
+            Auth::Accept
+        } else {
+            Auth::reject()
+        })
     }
 
     async fn auth_keyboard_interactive<'a>(
@@ -501,7 +510,11 @@ async fn respond_when_prompted(
     let deadline = Instant::now() + timeout;
     loop {
         let snapshot = session.snapshot();
-        if let Some(request) = snapshot.request.as_ref().filter(|request| request.kind == kind) {
+        if let Some(request) = snapshot
+            .request
+            .as_ref()
+            .filter(|request| request.kind == kind)
+        {
             return request.clone();
         }
         if snapshot.phase.is_terminal() {
@@ -524,7 +537,14 @@ fn password_session_becomes_ready_and_drives_the_terminal() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -546,9 +566,7 @@ fn password_session_becomes_ready_and_drives_the_terminal() {
 
         // Resize reaches the remote PTY.
         session.resize(100, 30).expect("resize");
-        session
-            .write_bytes(b"size\r".to_vec())
-            .expect("write size");
+        session.write_bytes(b"size\r".to_vec()).expect("write size");
         let text = wait_output(&session, "100x30", Duration::from_secs(10)).await;
         assert!(text.contains("100x30"));
 
@@ -558,7 +576,10 @@ fn password_session_becomes_ready_and_drives_the_terminal() {
         // Wide characters keep a spacer cell between them, so check each glyph.
         assert!(text.contains('中'), "missing CJK glyph in:\n{text}");
         assert!(text.contains('文'), "missing CJK glyph in:\n{text}");
-        assert!(text.contains("e\u{301}"), "missing combining glyph in:\n{text}");
+        assert!(
+            text.contains("e\u{301}"),
+            "missing combining glyph in:\n{text}"
+        );
         let frame = session.render_frame(0);
         assert!(frame.modes.alternate_screen);
         assert!(frame.rows.len() >= 24);
@@ -585,19 +606,22 @@ fn unknown_host_prompts_and_accept_once_still_connects() {
         let server = TestSshServer::start(ServerOptions::default()).await;
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
             .open_ssh_session("host-1".to_string(), 80, 24)
             .await
             .expect("open session");
-        let request = respond_when_prompted(
-            &session,
-            SshRequestKind::HostKey,
-            Duration::from_secs(10),
-        )
-        .await;
+        let request =
+            respond_when_prompted(&session, SshRequestKind::HostKey, Duration::from_secs(10)).await;
         assert!(!request.key_changed);
         assert_eq!(request.fingerprint, server.fingerprint());
         assert_eq!(request.host, "127.0.0.1");
@@ -637,19 +661,22 @@ fn changed_host_key_is_reported_as_a_mismatch() {
 
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
             .open_ssh_session("host-1".to_string(), 80, 24)
             .await
             .expect("open session");
-        let request = respond_when_prompted(
-            &session,
-            SshRequestKind::HostKey,
-            Duration::from_secs(10),
-        )
-        .await;
+        let request =
+            respond_when_prompted(&session, SshRequestKind::HostKey, Duration::from_secs(10)).await;
         assert!(request.key_changed, "mismatch must be flagged");
         assert!(request.previous_fingerprint.is_some());
 
@@ -671,7 +698,14 @@ fn saved_trust_connects_without_a_prompt() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -743,11 +777,7 @@ fn keyboard_interactive_answers_multiple_rounds_and_rejects_stale_ids() {
     });
 }
 
-fn write_openssh_key(
-    directory: &std::path::Path,
-    name: &str,
-    key: &PrivateKey,
-) -> PathBuf {
+fn write_openssh_key(directory: &std::path::Path, name: &str, key: &PrivateKey) -> PathBuf {
     let path = directory.join(name);
     let pem = key
         .to_openssh(russh::keys::ssh_key::LineEnding::LF)
@@ -880,7 +910,14 @@ fn rejected_password_reports_a_failed_session() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "wrong").await;
 
         let session = backend
@@ -905,19 +942,21 @@ fn cancelling_while_waiting_for_trust_closes_without_leaving_a_task() {
         let server = TestSshServer::start(ServerOptions::default()).await;
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
             .open_ssh_session("host-1".to_string(), 80, 24)
             .await
             .expect("open session");
-        respond_when_prompted(
-            &session,
-            SshRequestKind::HostKey,
-            Duration::from_secs(10),
-        )
-        .await;
+        respond_when_prompted(&session, SshRequestKind::HostKey, Duration::from_secs(10)).await;
 
         session.cancel();
         // Idempotent: a second cancel and close must not hang or panic.
@@ -936,10 +975,12 @@ fn cancelling_while_waiting_for_trust_closes_without_leaving_a_task() {
                 .await
                 .expect("close")
         );
-        assert!(!backend
-            .close_ssh_session(snapshots[0].connection_id)
-            .await
-            .expect("second close"));
+        assert!(
+            !backend
+                .close_ssh_session(snapshots[0].connection_id)
+                .await
+                .expect("second close")
+        );
         assert!(backend.ssh_session_snapshots().is_empty());
     });
 }
@@ -953,7 +994,14 @@ fn vault_locked_open_returns_vault_locked_without_connecting() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
         backend
             .enable_vault("vault-passphrase".to_string())
@@ -980,7 +1028,14 @@ fn multiple_sessions_for_one_host_stay_independent() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let first = backend
@@ -1023,7 +1078,14 @@ fn fast_output_does_not_stall_the_session() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -1049,7 +1111,14 @@ fn terminal_query_response_reaches_the_server_without_further_output() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -1133,7 +1202,14 @@ fn server_rejecting_pty_fails_the_session() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -1160,7 +1236,14 @@ fn server_rejecting_shell_fails_the_session() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
 
         let session = backend
@@ -1208,7 +1291,14 @@ fn agent_forwarding_reply_does_not_shift_the_shell_rejection() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
         enable_agent_forwarding("host-1");
 
@@ -1239,7 +1329,14 @@ fn refused_agent_forwarding_keeps_the_session_usable() {
         trust_host(&server);
         let backend = backend_for_test();
         backend.initialize().await.expect("initialize");
-        save_host(&backend, "host-1", server.port, AuthMethodDto::Password, None).await;
+        save_host(
+            &backend,
+            "host-1",
+            server.port,
+            AuthMethodDto::Password,
+            None,
+        )
+        .await;
         set_credential(&backend, "host-1", CredentialKindDto::Password, "secret").await;
         enable_agent_forwarding("host-1");
 

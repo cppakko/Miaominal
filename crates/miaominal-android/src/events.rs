@@ -36,7 +36,9 @@ pub enum ConfigArea {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum BackendEvent {
     Ready,
-    ConfigChanged { area: ConfigArea },
+    ConfigChanged {
+        area: ConfigArea,
+    },
     ResyncRequired,
     Shutdown,
     SessionPhaseChanged {
@@ -357,10 +359,7 @@ impl EventSubscription {
         let max_events = max_events.clamp(1, MAX_BATCH_EVENTS) as usize;
         let timeout = Duration::from_millis(timeout_ms.max(1));
         let inner = Arc::clone(&self.inner);
-        crate::runtime::run_task(async move {
-            inner.next_batch(max_events, timeout).await
-        })
-        .await?
+        crate::runtime::run_task(async move { inner.next_batch(max_events, timeout).await }).await?
     }
 
     /// Explicit cancellation: wakes any waiter and is idempotent.
@@ -391,8 +390,7 @@ mod tests {
         });
         let subscription = bus.subscribe(0);
 
-        let batch = subscription.next_batch(16, 50)
-            .await.unwrap();
+        let batch = subscription.next_batch(16, 50).await.unwrap();
 
         assert!(!batch.resync_required);
         assert_eq!(
@@ -418,8 +416,7 @@ mod tests {
             area: ConfigArea::Settings,
         });
 
-        let batch = subscription.next_batch(16, 50)
-            .await.unwrap();
+        let batch = subscription.next_batch(16, 50).await.unwrap();
 
         assert_eq!(
             batch.events,
@@ -440,12 +437,9 @@ mod tests {
         }
         let subscription = bus.subscribe(0);
 
-        let first = subscription.next_batch(2, 50)
-            .await.unwrap();
-        let second = subscription.next_batch(2, 50)
-            .await.unwrap();
-        let third = subscription.next_batch(2, 50)
-            .await.unwrap();
+        let first = subscription.next_batch(2, 50).await.unwrap();
+        let second = subscription.next_batch(2, 50).await.unwrap();
+        let third = subscription.next_batch(2, 50).await.unwrap();
 
         assert_eq!(first.events.len(), 2);
         assert_eq!(second.events.len(), 2);
@@ -461,8 +455,7 @@ mod tests {
         }
         let subscription = bus.subscribe(0);
 
-        let batch = subscription.next_batch(16, 50)
-            .await.unwrap();
+        let batch = subscription.next_batch(16, 50).await.unwrap();
 
         assert!(batch.resync_required);
         assert_eq!(batch.events.len(), 16);
@@ -476,9 +469,8 @@ mod tests {
         let subscription = bus.subscribe(0);
         // Spawn on the process runtime: `next_batch` borrows the subscription
         // across awaits, so it must own its handle inside the task.
-        let waiter = runtime::runtime().spawn(async move {
-            subscription.next_batch(16, 5_000).await
-        });
+        let waiter =
+            runtime::runtime().spawn(async move { subscription.next_batch(16, 5_000).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         bus.publish(BackendEvent::Ready);
 
@@ -495,9 +487,8 @@ mod tests {
     async fn bus_close_wakes_waiters_and_is_idempotent() {
         let bus = EventBus::new();
         let subscription = bus.subscribe(0);
-        let waiter = runtime::runtime().spawn(async move {
-            subscription.next_batch(16, 30_000).await
-        });
+        let waiter =
+            runtime::runtime().spawn(async move { subscription.next_batch(16, 30_000).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         bus.close();
         bus.close();
@@ -514,9 +505,8 @@ mod tests {
     async fn published_events_are_delivered_before_the_close_is_reported() {
         let bus = EventBus::new();
         let subscription = bus.subscribe(0);
-        let waiter = runtime::runtime().spawn(async move {
-            subscription.next_batch(16, 30_000).await
-        });
+        let waiter =
+            runtime::runtime().spawn(async move { subscription.next_batch(16, 30_000).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         bus.publish(BackendEvent::Shutdown);
         bus.close();
@@ -584,8 +574,7 @@ mod tests {
         bus.publish(BackendEvent::Ready);
         bus.publish(BackendEvent::Shutdown);
 
-        let batch = subscription.next_batch(16, 50)
-            .await.unwrap();
+        let batch = subscription.next_batch(16, 50).await.unwrap();
 
         assert_eq!(batch.events.len(), 2);
         assert_eq!(batch.events[1].event, BackendEvent::Shutdown);
