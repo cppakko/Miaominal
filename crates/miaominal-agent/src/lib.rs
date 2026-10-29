@@ -10,6 +10,7 @@ mod policy;
 mod reasoning;
 mod runtime;
 mod tools;
+pub mod transcript;
 mod web;
 
 pub use backend::{BackendRoute, BackendRouter, ExecMode, SshBackend, SshExecRequest};
