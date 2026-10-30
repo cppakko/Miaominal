@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 use miaominal_core::known_host::{HostKeyCheck, KnownHostEntry};
 use miaominal_paths as paths;
-use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
+use russh::keys::known_hosts::{
+    check_known_hosts_path, known_host_keys_path, learn_known_hosts_path,
+};
 use russh::keys::{HashAlg, PublicKey};
 use std::fs;
 use std::io::Write;
@@ -53,12 +55,41 @@ impl KnownHostsStore {
         }
     }
 
+    /// Trust `key` for `host:port`.
+    ///
+    /// Any recorded key of the same algorithm that differs from `key` is
+    /// replaced. `check` reports a mismatch as soon as such a stale line
+    /// exists, even when the new key is also present, so appending alone would
+    /// make every later connection prompt again after a host was reinstalled.
     pub fn learn(&self, host: &str, port: u16, key: &PublicKey) -> Result<()> {
         let _guard = self.inner.write_lock.lock().ok();
         if let Some(parent) = self.inner.path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
+
+        let recorded = known_host_keys_path(host, port, &self.inner.path)
+            .map_err(|error| anyhow!(error))
+            .with_context(|| {
+                format!(
+                    "failed to read known_hosts at {}",
+                    self.inner.path.display()
+                )
+            })?;
+        let stale_lines: Vec<usize> = recorded
+            .iter()
+            .filter(|(_, recorded)| recorded.algorithm() == key.algorithm() && recorded != key)
+            .map(|(line, _)| *line)
+            .collect();
+        let already_trusted = recorded.iter().any(|(_, recorded)| recorded == key);
+
+        if !stale_lines.is_empty() {
+            self.remove_known_hosts_lines(&stale_lines)?;
+        }
+        if already_trusted {
+            return Ok(());
+        }
+
         learn_known_hosts_path(host, port, key, &self.inner.path)
             .map_err(|error| anyhow!(error))
             .with_context(|| {
@@ -148,6 +179,35 @@ impl KnownHostsStore {
         }
         Ok(removed)
     }
+
+    /// Drop the given lines, numbered the way `russh::keys::known_hosts`
+    /// numbers them: lines starting with `#` are not counted.
+    fn remove_known_hosts_lines(&self, lines: &[usize]) -> Result<()> {
+        let content = fs::read_to_string(&self.inner.path)
+            .with_context(|| format!("failed to read {}", self.inner.path.display()))?;
+        let kept = without_known_hosts_lines(&content, lines);
+        let temporary = self.inner.path.with_extension("tmp");
+        fs::write(&temporary, kept)
+            .with_context(|| format!("failed to write {}", temporary.display()))?;
+        fs::rename(&temporary, &self.inner.path)
+            .with_context(|| format!("failed to replace {}", self.inner.path.display()))
+    }
+}
+
+fn without_known_hosts_lines(content: &str, lines: &[usize]) -> String {
+    let mut kept = String::with_capacity(content.len());
+    let mut line = 1;
+    for raw in content.split_inclusive('\n') {
+        if raw.starts_with('#') {
+            kept.push_str(raw);
+            continue;
+        }
+        if !lines.contains(&line) {
+            kept.push_str(raw);
+        }
+        line += 1;
+    }
+    kept
 }
 
 fn parse_host_field(field: &str) -> (String, u16) {
@@ -165,6 +225,57 @@ fn parse_host_field(field: &str) -> (String, u16) {
 mod tests {
     use super::*;
 
+    fn random_key() -> PublicKey {
+        russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+            .expect("generate key")
+            .public_key()
+            .clone()
+    }
+
+    #[test]
+    fn learning_a_changed_key_replaces_the_stale_one() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("known_hosts");
+        let old = random_key();
+        let new = random_key();
+        let other = random_key();
+        let store = KnownHostsStore::with_path(path.clone());
+        fs::write(&path, "# comment\n").expect("seed known_hosts");
+        store
+            .learn("other.example", 22, &other)
+            .expect("learn other");
+        store.learn("vps.example", 2222, &old).expect("learn old");
+
+        assert!(matches!(
+            store.check("vps.example", 2222, &new).expect("check"),
+            HostKeyCheck::Mismatch { .. }
+        ));
+        store.learn("vps.example", 2222, &new).expect("learn new");
+        store
+            .learn("vps.example", 2222, &new)
+            .expect("learn new again");
+
+        assert!(matches!(
+            store.check("vps.example", 2222, &new).expect("check"),
+            HostKeyCheck::Match
+        ));
+        assert!(matches!(
+            store.check("other.example", 22, &other).expect("check"),
+            HostKeyCheck::Match
+        ));
+        let content = fs::read_to_string(&path).expect("read");
+        assert!(content.starts_with("# comment\n"));
+        assert_eq!(store.list().expect("list").len(), 2);
+    }
+
+    #[test]
+    fn line_removal_skips_comment_lines_like_russh() {
+        let content = "# a\nhost1 k1\n#b\nhost2 k2\nhost3 k3";
+        assert_eq!(
+            without_known_hosts_lines(content, &[2, 3]),
+            "# a\nhost1 k1\n#b\n"
+        );
+    }
     #[test]
     fn bracketed_host_field_parses_port() {
         assert_eq!(
