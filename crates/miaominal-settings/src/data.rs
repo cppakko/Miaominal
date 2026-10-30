@@ -750,6 +750,8 @@ impl ThemeId {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub rdp_client: crate::RdpClientSettings,
     #[serde(default = "default_language")]
     pub language: AppLanguage,
     #[serde(default = "default_font_family")]
@@ -981,6 +983,7 @@ impl Default for AppSettings {
             web_search: WebSearchConfig::default(),
             open_ssh_integration_mode: OpenSshIntegrationMode::Disabled,
             ssh_bridge: SshBridgeConfig::default(),
+            rdp_client: crate::RdpClientSettings::default(),
             managed_open_ssh_integration_enabled: false,
         }
     }

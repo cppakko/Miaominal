@@ -87,7 +87,8 @@ impl AppSettings {
 }
 
 pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
-    a.language != b.language
+    a.rdp_client != b.rdp_client
+        || a.language != b.language
         || a.font_family != b.font_family
         || a.terminal_font_family != b.terminal_font_family
         || a.font_fallbacks != b.font_fallbacks

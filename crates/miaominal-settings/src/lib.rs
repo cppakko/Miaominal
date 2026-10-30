@@ -5,6 +5,8 @@ mod data;
 mod desktop;
 mod global;
 mod model;
+mod rdp;
+pub use rdp::{RdpClientKind, RdpClientSettings};
 
 #[cfg(feature = "desktop-ui")]
 pub use desktop::{
