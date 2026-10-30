@@ -5,7 +5,7 @@ use crate::ui::components::catalog_card::{
 };
 use crate::ui::components::empty_state::empty_page;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
-use crate::ui::components::shell_tokens::{ShellMetrics, space};
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use crate::ui::components::{
     EditorFooterActionTone, SectionCard, SegmentedSwitch, TextInputSurface, badge,
     dock_action_button, editor_footer_actions, editor_footer_button, list_item_card, md3_select,
@@ -98,6 +98,7 @@ fn render_forward_rule_card(
     profile: &SessionProfile,
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
+    editing: bool,
 ) -> impl IntoElement {
     let item_id = format!("forward-rule-card-{}-{}", profile.id, rule.id);
     let switch_id = format!("forward-rule-switch-{}-{}", profile.id, rule.id);
@@ -123,6 +124,7 @@ fn render_forward_rule_card(
         .id(item_id)
         .test_support()
         .cursor_pointer()
+        .when(editing, |card| card.bg(ShellColors::current().selected))
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             let controller = click_controller.clone();
             let profile_id = click_profile_id.clone();
@@ -168,6 +170,7 @@ fn render_forward_rule_list_row(
     profile: &SessionProfile,
     rule: &PortForwardRule,
     state: ForwardRuleConnectionUiState,
+    editing: bool,
 ) -> impl IntoElement {
     let item_id = format!("forward-rule-row-{}-{}", profile.id, rule.id);
     let switch_id = format!("forward-rule-list-switch-{}-{}", profile.id, rule.id);
@@ -233,6 +236,7 @@ fn render_forward_rule_list_row(
         )
     })
     .border_0()
+    .when(editing, |row| row.bg(ShellColors::current().selected))
 }
 
 impl ForwardingController {
@@ -672,11 +676,17 @@ impl ForwardingController {
         }
 
         let is_list = self.view_mode.get() == ProfileViewMode::List;
+        let editing_rule_key = self.editing_rule_key();
         let mut rules = Vec::with_capacity(rules_with_profiles.len());
 
         for (_profile_index, profile, rule) in rules_with_profiles {
             let runtime_state = self.port_forward_rule_runtime_state(&profile.id, &rule.id);
             let state = ForwardRuleConnectionUiState::from_runtime(runtime_state.as_ref());
+            let editing = editing_rule_key
+                .as_ref()
+                .is_some_and(|(profile_id, rule_id)| {
+                    *profile_id == profile.id && *rule_id == rule.id
+                });
 
             let item = if is_list {
                 render_forward_rule_list_row(
@@ -685,11 +695,19 @@ impl ForwardingController {
                     profile,
                     rule,
                     state,
+                    editing,
                 )
                 .into_any_element()
             } else {
-                render_forward_rule_card(controller.clone(), actions.clone(), profile, rule, state)
-                    .into_any_element()
+                render_forward_rule_card(
+                    controller.clone(),
+                    actions.clone(),
+                    profile,
+                    rule,
+                    state,
+                    editing,
+                )
+                .into_any_element()
             };
             rules.push((
                 format!("forward-rule-layout-{}-{}", profile.id, rule.id).into(),

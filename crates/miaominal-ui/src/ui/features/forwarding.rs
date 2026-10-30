@@ -334,6 +334,17 @@ impl ForwardingController {
     pub(in crate::ui) fn editor_open(&self) -> bool {
         self.editor_state.borrow().port_forward_editor_open
     }
+    /// `(profile_id, rule_id)` of the rule open in the editor for modification.
+    fn editing_rule_key(&self) -> Option<(String, String)> {
+        let state = self.editor_state.borrow();
+        if !state.port_forward_editor_open {
+            return None;
+        }
+        state
+            .port_forward_editor_profile_id
+            .clone()
+            .zip(state.port_forward_editor_rule_id.clone())
+    }
     fn profiles(&self) -> Vec<SessionProfile> {
         self.catalog.profiles()
     }

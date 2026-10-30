@@ -743,6 +743,15 @@ impl HostsController {
             .map(|profile| profile.id.clone())
     }
 
+    /// Profile currently open in the editor for modification (not creation).
+    pub(in crate::ui) fn editing_profile_id(&self) -> Option<String> {
+        let state = self.editor_state.borrow();
+        if !state.host_editor_open || state.host_editor_is_new {
+            return None;
+        }
+        self.editor_profile_id.borrow().clone()
+    }
+
     pub(in crate::ui) fn available_proxy_jump_candidates(
         &self,
         target_profile_id: &str,

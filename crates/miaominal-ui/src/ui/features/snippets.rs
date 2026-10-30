@@ -304,6 +304,14 @@ impl SnippetsController {
         })
     }
 
+    /// Snippet currently open in the editor for modification (not creation).
+    pub(in crate::ui) fn editing_snippet_id(&self) -> Option<String> {
+        if !self.editor_open.get() {
+            return None;
+        }
+        self.editor_id.borrow().clone()
+    }
+
     fn set_selected_snippet(&self, selected: Option<usize>) {
         self.editor_id.replace(selected.and_then(|index| {
             self.snippets

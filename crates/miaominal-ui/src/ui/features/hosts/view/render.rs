@@ -168,6 +168,7 @@ fn profile_item(
     actions: HostPageActions,
     profile: &SessionProfile,
     list: bool,
+    editing: bool,
     prefix: &'static str,
     cx: &App,
 ) -> gpui_kit::AnyElement {
@@ -191,6 +192,11 @@ fn profile_item(
         ))
         .size(space(40.0))
         .rounded_full()
+        // Right-click opens the card context menu; it must not focus this button,
+        // or the menu restores that focus on dismiss and draws a focus ring.
+        .on_mouse_down(gpui_kit::MouseButton::Right, |_, window, _| {
+            window.prevent_default()
+        })
         .dropdown_menu(move |menu, _, _| {
             build_host_context_menu(
                 menu,
@@ -220,6 +226,7 @@ fn profile_item(
             id,
             profile,
             list,
+            editing,
             more.into_any_element(),
             cx,
             move |window, cx| actions.connect(connect_id.clone(), window, cx),
@@ -272,6 +279,7 @@ impl HostsController {
             }
         }
         let is_list = catalog.hosts_view_mode == ProfileViewMode::List;
+        let editing_profile_id = self.editing_profile_id();
         let width =
             (available_width - inset * 2.0 - 8.0).clamp(1.0, ShellMetrics::CONTENT_MAX_WIDTH);
         let render_collection = |items: &[&SessionProfile], quick: bool, prefix| {
@@ -283,6 +291,7 @@ impl HostsController {
                         actions.clone(),
                         profile,
                         is_list && !quick,
+                        editing_profile_id.as_deref() == Some(profile.id.as_str()),
                         prefix,
                         cx,
                     ),

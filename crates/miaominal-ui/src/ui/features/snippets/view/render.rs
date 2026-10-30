@@ -6,7 +6,7 @@ use crate::ui::components::catalog_card::{
 use crate::ui::components::empty_state::{empty_page, empty_state};
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
-use crate::ui::components::shell_tokens::{ShellMetrics, space};
+use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use crate::ui::components::tokens::color_with_alpha;
 use crate::ui::components::{
     EditorFooterActionTone, SectionCard, editor_footer_button, md3_select,
@@ -110,6 +110,7 @@ fn snippet_package_card(
 
 fn snippet_command_card(
     snippet: &SnippetRecord,
+    editing: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let preview = snippet
@@ -125,6 +126,7 @@ fn snippet_command_card(
         .id(item_id)
         .test_support()
         .cursor_pointer()
+        .when(editing, |card| card.bg(ShellColors::current().selected))
         .on_mouse_down(MouseButton::Left, move |_, window: &mut Window, cx| {
             on_click(window, cx);
         })
@@ -139,6 +141,7 @@ fn snippet_command_card(
 
 fn snippet_list_row(
     snippet: &SnippetRecord,
+    editing: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let roles = miaominal_settings::current_theme().material.roles;
@@ -183,6 +186,7 @@ fn snippet_list_row(
     )
     .id(item_id)
     .test_support()
+    .when(editing, |row| row.bg(ShellColors::current().selected))
 }
 
 fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
@@ -199,6 +203,7 @@ impl SnippetsController {
     ) -> gpui_kit::AnyElement {
         let catalog_view = self.catalog_view();
         let snippets = self.snippets().clone();
+        let editing_snippet_id = self.editing_snippet_id();
         let selected_package_filter = catalog_view.snippets_package_filter.as_deref();
         let mut package_summaries: Vec<_> = snippets
             .iter()
@@ -337,14 +342,18 @@ impl SnippetsController {
                                 .map(|snippet| {
                                     let on_open_existing = on_open_existing.clone();
                                     let snippet_id = snippet.id.clone();
+                                    let editing =
+                                        editing_snippet_id.as_deref() == Some(snippet_id.as_str());
                                     let layout_id = format!("snippet-layout-{snippet_id}").into();
                                     let on_open = move |window: &mut Window, cx: &mut App| {
                                         on_open_existing(snippet_id.clone(), window, cx);
                                     };
                                     let item = if is_list {
-                                        snippet_list_row(snippet, on_open).into_any_element()
+                                        snippet_list_row(snippet, editing, on_open)
+                                            .into_any_element()
                                     } else {
-                                        snippet_command_card(snippet, on_open).into_any_element()
+                                        snippet_command_card(snippet, editing, on_open)
+                                            .into_any_element()
                                     };
                                     (layout_id, item)
                                 })

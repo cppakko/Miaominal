@@ -30,11 +30,23 @@ pub(in crate::ui::features::hosts) fn host_card(
     id: SharedString,
     profile: &SessionProfile,
     _list: bool,
+    editing: bool,
     more: AnyElement,
     cx: &App,
     on_connect: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let colors = ShellColors::current();
+    // The profile open in the editor keeps a persistent selected fill.
+    let surface = if editing {
+        colors.selected
+    } else {
+        colors.card
+    };
+    let hover = if editing {
+        colors.selected
+    } else {
+        colors.hover
+    };
     let tags = visible_tags(&profile.tags);
     // Groups are optional: an ungrouped host simply has no subtitle.
     let subtitle: Option<SharedString> = if profile.is_local() {
@@ -88,7 +100,7 @@ pub(in crate::ui::features::hosts) fn host_card(
         .min_w_0()
         .relative()
         .rounded(space(ShellMetrics::CARD_RADIUS))
-        .bg(colors.card)
+        .bg(surface)
         .child(
             Button::new(SharedString::from(format!("{id}:connect")))
                 .ghost()
@@ -100,19 +112,25 @@ pub(in crate::ui::features::hosts) fn host_card(
                 .rounded(miaominal_settings::scaled_font_size(
                     ShellMetrics::CARD_RADIUS,
                 ))
-                .bg(colors.card)
+                .bg(surface)
                 .text_color(colors.foreground)
                 .custom(
                     ButtonCustomVariant::new(cx)
-                        .color(colors.card)
+                        .color(surface)
                         .foreground(colors.foreground)
-                        .hover(colors.hover)
+                        .hover(hover)
                         .active(colors.selected),
                 )
                 .accessibility_label(i18n::string_args(
                     "hosts.home.connect_name",
                     &[("name", &name)],
                 ))
+                // Right-click only opens the card's context menu. Without this the
+                // press focuses the button, and the menu restores that focus on
+                // dismiss, leaving a focus ring on the card.
+                .on_mouse_down(gpui_kit::MouseButton::Right, |_, window, _| {
+                    window.prevent_default()
+                })
                 .child(
                     div()
                         .id(SharedString::from(format!("{id}:tags")))
@@ -183,6 +201,7 @@ mod interaction_tests {
             host_card(
                 "fixture".into(),
                 &self.profile,
+                false,
                 false,
                 Button::new("fixture-more")
                     .label("More")
@@ -275,6 +294,34 @@ mod interaction_tests {
                 assert_eq!(connects.get(), 1);
             }
             assert_eq!(more.get(), 3);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn right_click_does_not_focus_the_card(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let mut profile = SessionProfile::blank("fixture", 0);
+            profile.name = "Fixture host".into();
+            let view: Entity<CardHarness> = cx.new(|_| CardHarness {
+                profile,
+                connects: Rc::new(Cell::new(0)),
+                more: Rc::new(Cell::new(0)),
+            });
+            Root::new(view, window, cx)
+        });
+        let center = cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.find("fixture:connect").bounds().center()
+        });
+        cx.simulate_mouse_down(center, gpui_kit::MouseButton::Right, Default::default());
+        cx.simulate_mouse_up(center, gpui_kit::MouseButton::Right, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                window.focused(cx).is_none(),
+                "a right-click must not leave focus (and its ring) on the card"
+            );
         });
     }
 }
