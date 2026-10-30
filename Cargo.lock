@@ -5673,6 +5673,7 @@ dependencies = [
  "miaominal-agent",
  "miaominal-core",
  "miaominal-paths",
+ "miaominal-rdp",
  "miaominal-secrets",
  "miaominal-settings",
  "miaominal-sftp",
@@ -5688,6 +5689,7 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

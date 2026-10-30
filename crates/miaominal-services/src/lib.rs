@@ -5,6 +5,18 @@ mod agent_service;
 #[path = "services/app_services.rs"]
 mod app_services;
 #[cfg(feature = "desktop")]
+#[path = "services/rdp_service.rs"]
+mod rdp_service;
+#[cfg(feature = "desktop")]
+pub use miaominal_rdp::{
+    RdpClientInfo, detect_clients as detect_rdp_clients, resolve_client as resolve_rdp_client,
+};
+#[cfg(feature = "desktop")]
+pub use rdp_service::{
+    RdpConnectionMode, RdpLaunchOptions, RdpRuntimeState, RdpService, RdpSessionSnapshot,
+    RdpSnapshot,
+};
+#[cfg(feature = "desktop")]
 #[path = "services/auto_sync.rs"]
 mod auto_sync;
 #[cfg(feature = "desktop")]

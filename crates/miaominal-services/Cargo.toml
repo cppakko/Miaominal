@@ -10,6 +10,8 @@ default = ["desktop"]
 # Desktop builds include AI/chat, the OpenSSH bridge, automatic sync, and the
 # operating-system keyring through the shared storage/secrets crates.
 desktop = [
+    "dep:miaominal-rdp",
+    "dep:zeroize",
     "dep:directories",
     "dep:miaominal-agent",
     "dep:miaominal-sync",
@@ -42,6 +44,7 @@ log.workspace = true
 miaominal-agent = { path = "../miaominal-agent", optional = true }
 miaominal-core = { path = "../miaominal-core" }
 miaominal-paths = { path = "../miaominal-paths" }
+miaominal-rdp = { path = "../miaominal-rdp", optional = true }
 miaominal-secrets = { path = "../miaominal-secrets", default-features = false }
 miaominal-settings = { path = "../miaominal-settings", default-features = false }
 miaominal-sftp = { path = "../miaominal-sftp", default-features = false }
@@ -54,9 +57,10 @@ rand.workspace = true
 tokio.workspace = true
 toml.workspace = true
 uuid.workspace = true
+zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
 russh.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-tokio = { version = "1", features = ["io-util", "net"] }
+tokio = { version = "1", features = ["io-util", "net", "test-util"] }

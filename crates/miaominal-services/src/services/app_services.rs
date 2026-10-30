@@ -28,6 +28,7 @@ pub struct AppServices {
     pub keychain_store: Option<ManagedKeyStore>,
     pub agent_service: AgentService,
     pub port_forward_manager: PortForwardManager,
+    pub rdp_service: crate::RdpService,
     pub ssh_bridge_service: SshBridgeService,
     pub open_ssh_integration_service: OpenSshIntegrationService,
 }
@@ -61,6 +62,16 @@ impl AppServices {
             AgentService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
         let port_forward_manager =
             PortForwardManager::new(runtime.clone(), secrets.clone(), known_hosts.clone());
+        let rdp_service =
+            crate::RdpService::new(runtime.clone(), secrets.clone(), known_hosts.clone());
+        runtime.spawn_blocking(|| {
+            if let Err(error) = miaominal_rdp::cleanup_stale_files() {
+                log::warn!("could not clean up expired RDP files: {error}");
+            }
+            if let Err(error) = miaominal_rdp::cleanup_stale_credentials() {
+                log::warn!("could not clean up expired RDP credentials: {error}");
+            }
+        });
         let config_root = miaominal_paths::config_dir().unwrap_or_else(|_| {
             std::env::temp_dir().join(format!("miaominal-{}", std::process::id()))
         });
@@ -105,6 +116,7 @@ impl AppServices {
             keychain_store,
             agent_service,
             port_forward_manager,
+            rdp_service,
             ssh_bridge_service,
             open_ssh_integration_service,
         }
@@ -252,6 +264,9 @@ impl AppServices {
             .refresh_routes(sessions.clone(), proxies.clone());
         services
             .port_forward_manager
+            .replace_catalogs(sessions.clone(), proxies.clone());
+        services
+            .rdp_service
             .replace_catalogs(sessions.clone(), proxies.clone());
         if open_ssh_integration_mode == OpenSshIntegrationMode::Bridge {
             services
