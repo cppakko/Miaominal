@@ -44,7 +44,8 @@ pub use channel_session::{
     ChannelKind, build_cwd_command, parse_signal, shell_escape_path, start_channel_session,
 };
 pub use forwarding::{
-    PortForwardBinding, PortForwardFailure, PortForwardFailureKind, start_port_forward_session,
+    LocalForwardBindingPolicy, PortForwardBinding, PortForwardFailure, PortForwardFailureKind,
+    start_port_forward_session, start_port_forward_session_with_policy,
 };
 pub use miaominal_core::forwarding::{
     AgentIdentitySummary, HostKeyDecision, HostKeyPrompt, KbiChallenge, SessionMonitorSnapshot,

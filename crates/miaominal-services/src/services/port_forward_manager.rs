@@ -591,7 +591,8 @@ impl PortForwardManager {
                 session.snapshot.bound_port = None;
                 terminal = true;
             }
-            SessionEvent::Output(_)
+            SessionEvent::PortForwardConnections { .. }
+            | SessionEvent::Output(_)
             | SessionEvent::MonitorUpdated(_)
             | SessionEvent::MonitorFailed(_)
             | SessionEvent::Phase(_)

@@ -731,6 +731,7 @@ impl SshSessionInner {
             | SessionEvent::Status(_)
             | SessionEvent::PortForwardReconnecting { .. }
             | SessionEvent::PortForwardNotice(_)
+            | SessionEvent::PortForwardConnections { .. }
             | SessionEvent::PortForwardActive(_)
             | SessionEvent::PortForwardFailed(_) => {}
             SessionEvent::MonitorUpdated(snapshot) => {

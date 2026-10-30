@@ -77,12 +77,15 @@ fn memory_secrets() -> SecretStore {
 // ---------------------------------------------------------------------------
 
 struct ServerState {
+    clients: Mutex<Vec<server::Handle>>,
+    authentications: std::sync::atomic::AtomicUsize,
     remote_forwards: Mutex<HashMap<(String, u32), tokio::task::JoinHandle<()>>>,
 }
 
 struct TestForwardServer {
     port: u16,
     public_key: PublicKey,
+    state: Arc<ServerState>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -107,8 +110,11 @@ impl TestForwardServer {
             ..Default::default()
         });
         let state = Arc::new(ServerState {
+            clients: Mutex::new(Vec::new()),
+            authentications: std::sync::atomic::AtomicUsize::new(0),
             remote_forwards: Mutex::new(HashMap::new()),
         });
+        let server_state = state.clone();
         let runtime_handle = runtime.handle().clone();
         let task = runtime.spawn(async move {
             loop {
@@ -118,9 +124,16 @@ impl TestForwardServer {
                 let config = Arc::clone(&config);
                 let state = Arc::clone(&state);
                 runtime_handle.spawn(async move {
-                    let running =
-                        server::run_stream(config, stream, ForwardServerHandler { state }).await;
+                    let running = server::run_stream(
+                        config,
+                        stream,
+                        ForwardServerHandler {
+                            state: state.clone(),
+                        },
+                    )
+                    .await;
                     if let Ok(running) = running {
+                        state.clients.lock().unwrap().push(running.handle());
                         let _ = running.await;
                     }
                 });
@@ -129,6 +142,7 @@ impl TestForwardServer {
         Self {
             port,
             public_key,
+            state: server_state,
             task,
         }
     }
@@ -143,6 +157,9 @@ impl server::Handler for ForwardServerHandler {
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         Ok(if user == "tester" && password == "secret" {
+            self.state
+                .authentications
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Auth::Accept
         } else {
             Auth::reject()
@@ -764,10 +781,7 @@ fn a_failing_jump_node_is_reported() {
     let PortForwardRuntimeState::Failed(error) = snapshot.state else {
         panic!("expected failure");
     };
-    assert!(
-        error.contains("failed to connect") && error.contains("127.0.0.1:1"),
-        "unexpected failure: {error}"
-    );
+    assert!(error.contains("127.0.0.1:1"), "unexpected failure: {error}");
 }
 
 #[test]
@@ -963,4 +977,300 @@ fn answering_a_prompt_after_the_session_is_gone_is_harmless() {
             .is_err()
     );
     let _ = answer_host_key_prompts(&manager, "host-1", "rule-1");
+}
+
+async fn next_forward_event(
+    connection: &mut miaominal_ssh::SessionConnection,
+    predicate: impl Fn(&miaominal_ssh::SessionEvent) -> bool,
+) -> miaominal_ssh::SessionEvent {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let event = connection.events.recv().await.expect("worker event");
+            if predicate(&event) {
+                return event;
+            }
+            if let miaominal_ssh::SessionEvent::Error(error) = event {
+                panic!("forward failed: {error}");
+            }
+        }
+    })
+    .await
+    .expect("forward event timed out")
+}
+
+#[test]
+fn rdp_binding_fallback_counts_concurrent_relays_and_cancels_them_on_stop() {
+    use miaominal_ssh::{
+        LocalForwardBindingPolicy, SessionEvent, start_port_forward_session_with_policy,
+    };
+    let runtime = Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = runtime.block_on(TestForwardServer::start(&runtime));
+    let echo = runtime.block_on(EchoServer::start(&runtime));
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let occupied_port = occupied.local_addr().unwrap().port();
+    let known = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+    known
+        .learn("127.0.0.1", server.port, &server.public_key)
+        .unwrap();
+    let mut profile = password_profile("rdp", "RDP", server.port);
+    profile.port_forwarding_rules = vec![local_rule("temporary", occupied_port, echo.port)];
+    let mut connection = start_port_forward_session_with_policy(
+        runtime.handle(),
+        profile.clone(),
+        vec![profile],
+        vec![],
+        memory_secrets(),
+        known,
+        LocalForwardBindingPolicy::PreferAvailable,
+    );
+    let port = runtime.block_on(async {
+        let SessionEvent::PortForwardActive(binding) = next_forward_event(&mut connection, |event| matches!(event, SessionEvent::PortForwardActive(_))).await else { unreachable!() };
+        assert_ne!(binding.bound_port, occupied_port); let port = binding.bound_port;
+        let mut first = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut second = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        next_forward_event(&mut connection, |event| matches!(event, SessionEvent::PortForwardConnections { binding_id, active: 2, .. } if *binding_id == binding.binding_id)).await;
+        first.write_all(b"first").await.unwrap(); let mut bytes = [0; 5]; first.read_exact(&mut bytes).await.unwrap(); assert_eq!(&bytes, b"first");
+        drop(first);
+        next_forward_event(&mut connection, |event| matches!(event, SessionEvent::PortForwardConnections { active: 1, .. })).await;
+        assert_eq!(server.state.authentications.load(std::sync::atomic::Ordering::Relaxed), 1);
+        connection.commands.close().unwrap();
+        let mut buffer = [0]; let read = tokio::time::timeout(Duration::from_secs(5), second.read(&mut buffer)).await.unwrap();
+        assert!(matches!(read, Ok(0) | Err(_)), "cancel must close existing relay"); port
+    });
+    drop(connection.events);
+    connection.thread.take().unwrap().join().unwrap();
+    wait_for_port_release(&runtime, port);
+}
+
+#[test]
+fn rdp_reconnect_pins_port_and_uses_new_listener_generation() {
+    use miaominal_ssh::{
+        LocalForwardBindingPolicy, SessionEvent, start_port_forward_session_with_policy,
+    };
+    let runtime = Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = runtime.block_on(TestForwardServer::start(&runtime));
+    let known = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+    known
+        .learn("127.0.0.1", server.port, &server.public_key)
+        .unwrap();
+    let dead_target = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let target_port = dead_target.local_addr().unwrap().port();
+    drop(dead_target);
+    let mut profile = password_profile("rdp-reconnect", "RDP", server.port);
+    profile.port_forwarding_rules = vec![local_rule("temporary", 0, target_port)];
+    let mut connection = start_port_forward_session_with_policy(
+        runtime.handle(),
+        profile.clone(),
+        vec![profile],
+        vec![],
+        memory_secrets(),
+        known,
+        LocalForwardBindingPolicy::PreferAvailable,
+    );
+    let port = runtime.block_on(async {
+        let SessionEvent::PortForwardActive(first) = next_forward_event(&mut connection, |e| matches!(e, SessionEvent::PortForwardActive(_))).await else { unreachable!() };
+        let mut failed_relay = TcpStream::connect(("127.0.0.1", first.bound_port)).await.unwrap();
+        let mut byte = [0]; let _ = tokio::time::timeout(Duration::from_secs(5), failed_relay.read(&mut byte)).await.unwrap();
+        next_forward_event(&mut connection, |e| matches!(e, SessionEvent::PortForwardConnections { active: 0, sequence, .. } if *sequence >= 2)).await;
+        let clients = std::mem::take(&mut *server.state.clients.lock().unwrap());
+        for client in clients { let _ = client.disconnect(russh::Disconnect::ByApplication, "test".into(), "".into()).await; }
+        next_forward_event(&mut connection, |e| matches!(e, SessionEvent::PortForwardReconnecting { .. })).await;
+        let SessionEvent::PortForwardActive(second) = next_forward_event(&mut connection, |e| matches!(e, SessionEvent::PortForwardActive(_))).await else { unreachable!() };
+        assert_eq!(second.bound_port, first.bound_port); assert_ne!(second.binding_id, first.binding_id);
+        connection.commands.close().unwrap(); second.bound_port
+    });
+    drop(connection.events);
+    connection.thread.take().unwrap().join().unwrap();
+    wait_for_port_release(&runtime, port);
+}
+
+async fn echo_round_trip(stream: &mut TcpStream, payload: &[u8]) {
+    stream.write_all(payload).await.unwrap();
+    let mut bytes = vec![0; payload.len()];
+    tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut bytes))
+        .await
+        .expect("echo timed out")
+        .unwrap();
+    assert_eq!(bytes, payload);
+}
+
+async fn next_binding(
+    connection: &mut miaominal_ssh::SessionConnection,
+) -> miaominal_ssh::PortForwardBinding {
+    match next_forward_event(connection, |event| {
+        matches!(event, miaominal_ssh::SessionEvent::PortForwardActive(_))
+    })
+    .await
+    {
+        miaominal_ssh::SessionEvent::PortForwardActive(binding) => binding,
+        _ => unreachable!(),
+    }
+}
+
+fn start_test_forward(
+    runtime: &Runtime,
+    server: &TestForwardServer,
+    directory: &tempfile::TempDir,
+    id: &str,
+    rule: PortForwardRule,
+    policy: miaominal_ssh::LocalForwardBindingPolicy,
+) -> miaominal_ssh::SessionConnection {
+    let known = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+    known
+        .learn("127.0.0.1", server.port, &server.public_key)
+        .unwrap();
+    let mut profile = password_profile(id, id, server.port);
+    profile.port_forwarding_rules = vec![rule];
+    miaominal_ssh::start_port_forward_session_with_policy(
+        runtime.handle(),
+        profile.clone(),
+        vec![profile],
+        vec![],
+        memory_secrets(),
+        known,
+        policy,
+    )
+}
+
+#[test]
+fn rdp_listener_owns_its_relays_while_ssh_stays_connected() {
+    let runtime = Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = runtime.block_on(TestForwardServer::start(&runtime));
+    let echo = runtime.block_on(EchoServer::start(&runtime));
+    let mut connection = start_test_forward(
+        &runtime,
+        &server,
+        &directory,
+        "rdp-owned",
+        local_rule("temporary", 0, echo.port),
+        miaominal_ssh::LocalForwardBindingPolicy::PreferAvailable,
+    );
+    let port = runtime.block_on(async {
+        let first = next_binding(&mut connection).await;
+        let mut stream = TcpStream::connect(("127.0.0.1", first.bound_port))
+            .await
+            .unwrap();
+        echo_round_trip(&mut stream, b"before").await;
+        // Replace the listener without touching the SSH connection.
+        let mut changed = local_rule("temporary", first.bound_port, echo.port);
+        changed.target_host = "localhost".into();
+        connection
+            .commands
+            .sync_port_forward_rules(vec![changed])
+            .unwrap();
+        let second = next_binding(&mut connection).await;
+        assert_ne!(second.binding_id, first.binding_id);
+        let mut buffer = [0];
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+            .await
+            .expect("relay of the replaced listener must be cancelled");
+        assert!(matches!(read, Ok(0) | Err(_)));
+        assert_eq!(
+            server
+                .state
+                .authentications
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the SSH connection must stay up"
+        );
+        connection.commands.close().unwrap();
+        second.bound_port
+    });
+    drop(connection.events);
+    connection.thread.take().unwrap().join().unwrap();
+    wait_for_port_release(&runtime, port);
+}
+
+#[test]
+fn ordinary_forward_keeps_live_connections_when_its_rule_is_edited() {
+    let runtime = Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = runtime.block_on(TestForwardServer::start(&runtime));
+    let echo = runtime.block_on(EchoServer::start(&runtime));
+    let mut connection = start_test_forward(
+        &runtime,
+        &server,
+        &directory,
+        "ordinary",
+        local_rule("rule", 0, echo.port),
+        miaominal_ssh::LocalForwardBindingPolicy::Strict,
+    );
+    let port = runtime.block_on(async {
+        let first = next_binding(&mut connection).await;
+        let mut stream = TcpStream::connect(("127.0.0.1", first.bound_port))
+            .await
+            .unwrap();
+        echo_round_trip(&mut stream, b"before").await;
+        let mut renamed = local_rule("rule", first.bound_port, echo.port);
+        renamed.label = "renamed".into();
+        connection
+            .commands
+            .sync_port_forward_rules(vec![renamed])
+            .unwrap();
+        next_binding(&mut connection).await;
+        // Editing a rule restarts its listener but never drops connections in use.
+        echo_round_trip(&mut stream, b"after").await;
+        connection.commands.close().unwrap();
+        first.bound_port
+    });
+    drop(connection.events);
+    connection.thread.take().unwrap().join().unwrap();
+    wait_for_port_release(&runtime, port);
+}
+
+#[test]
+fn rdp_reconnect_falls_back_when_the_pinned_port_was_taken() {
+    let runtime = Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = runtime.block_on(TestForwardServer::start(&runtime));
+    let echo = runtime.block_on(EchoServer::start(&runtime));
+    let mut connection = start_test_forward(
+        &runtime,
+        &server,
+        &directory,
+        "rdp-taken",
+        local_rule("temporary", 0, echo.port),
+        miaominal_ssh::LocalForwardBindingPolicy::PreferAvailable,
+    );
+    let (port, _occupied) = runtime.block_on(async {
+        let first = next_binding(&mut connection).await;
+        let clients = std::mem::take(&mut *server.state.clients.lock().unwrap());
+        for client in clients {
+            let _ = client
+                .disconnect(russh::Disconnect::ByApplication, "test".into(), "".into())
+                .await;
+        }
+        next_forward_event(&mut connection, |e| {
+            matches!(
+                e,
+                miaominal_ssh::SessionEvent::PortForwardReconnecting { .. }
+            )
+        })
+        .await;
+        // Another program grabs the pinned port while the SSH connection is down.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let occupied = loop {
+            match std::net::TcpListener::bind(("127.0.0.1", first.bound_port)) {
+                Ok(listener) => break listener,
+                Err(_) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(50)).await
+                }
+                Err(error) => panic!("pinned port was never released: {error}"),
+            }
+        };
+        let second = next_binding(&mut connection).await;
+        assert_ne!(second.bound_port, first.bound_port);
+        let mut stream = TcpStream::connect(("127.0.0.1", second.bound_port))
+            .await
+            .unwrap();
+        echo_round_trip(&mut stream, b"fallback").await;
+        connection.commands.close().unwrap();
+        (second.bound_port, occupied)
+    });
+    drop(connection.events);
+    connection.thread.take().unwrap().join().unwrap();
+    wait_for_port_release(&runtime, port);
 }

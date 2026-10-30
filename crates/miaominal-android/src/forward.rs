@@ -476,6 +476,7 @@ impl ForwardSessionInner {
             SessionEvent::RequestExpired { request_id } => {
                 self.expire_request(request_id);
             }
+            SessionEvent::PortForwardConnections { .. } => {}
             SessionEvent::PortForwardActive(binding) => {
                 {
                     let mut state = lock(&self.state);
@@ -1182,6 +1183,7 @@ mod tests {
 
     fn binding(rule_id: &str, kind: miaominal_core::profile::PortForwardKind) -> SessionEvent {
         SessionEvent::PortForwardActive(miaominal_ssh::PortForwardBinding {
+            binding_id: 1,
             rule_id: rule_id.to_string(),
             label: "Forward".to_string(),
             kind,

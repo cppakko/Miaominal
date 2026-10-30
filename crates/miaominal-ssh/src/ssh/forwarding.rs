@@ -10,13 +10,15 @@ use miaominal_secrets::SecretStore;
 use miaominal_storage::KnownHostsStore;
 use russh::client;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::copy_bidirectional;
 use tokio::net::TcpListener;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
-use tokio::task::JoinHandle;
+use tokio::sync::watch;
+use tokio::task::{JoinHandle, JoinSet};
 
 const PORT_FORWARD_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const PORT_FORWARD_MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -26,6 +28,8 @@ const PORT_FORWARD_RECONNECT_DELAYS_SECS: &[u64] = &[1, 2, 4, 8, 16, 30];
 /// server accepted a remote listening port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortForwardBinding {
+    /// Identifies one local listener lifetime; zero for remote forwards.
+    pub binding_id: u64,
     pub rule_id: String,
     pub label: String,
     pub kind: PortForwardKind,
@@ -74,6 +78,7 @@ pub(super) struct ActiveRemoteForward {
 }
 
 pub(super) struct ActiveLocalForward {
+    pub bound_port: u16,
     pub rule: PortForwardRule,
     pub task: JoinHandle<Result<()>>,
 }
@@ -130,42 +135,99 @@ pub(super) async fn emit_port_forward_failure(
         .await;
 }
 
+/// Local listener binding policy. Existing forwarding keeps strict binding semantics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalForwardBindingPolicy {
+    #[default]
+    Strict,
+    /// For dedicated, runtime-only listeners (one rule per SSH connection). Retries an
+    /// unavailable preferred port with port zero and retains the actual port on reconnect.
+    /// The listener owns its relays and reports `SessionEvent::PortForwardConnections`.
+    PreferAvailable,
+}
+
+impl LocalForwardBindingPolicy {
+    fn is_dedicated(self) -> bool {
+        self == Self::PreferAvailable
+    }
+}
+
+/// Bind errors that mean "this particular port cannot be used here" rather than
+/// "local listening is impossible". Windows reports ports inside Hyper-V/WinNAT
+/// excluded ranges as `PermissionDenied` (WSAEACCES) instead of `AddrInUse`.
+fn is_port_unavailable(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+    )
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ConnectionCount {
+    sequence: u64,
+    active: usize,
+}
+struct ConnectionGuard(watch::Sender<ConnectionCount>);
+impl ConnectionGuard {
+    fn new(counts: watch::Sender<ConnectionCount>) -> Self {
+        counts.send_modify(|state| {
+            state.sequence += 1;
+            state.active += 1;
+        });
+        Self(counts)
+    }
+}
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.send_modify(|state| {
+            state.sequence += 1;
+            state.active = state.active.saturating_sub(1);
+        });
+    }
+}
+
 async fn start_local_forward(
     session: Arc<client::Handle<ClientHandler>>,
     rule: PortForwardRule,
     event_sender: SessionEventSender,
+    policy: LocalForwardBindingPolicy,
 ) -> Result<ActiveLocalForward> {
-    let (listener, bind_address) = match bind_local_forward_listener(&rule).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            let message = format!("{error:#}");
-            emit_port_forward_failure(
-                &event_sender,
-                PortForwardFailure {
-                    rule_id: rule.id.clone(),
-                    label: rule.label.clone(),
-                    kind: PortForwardFailureKind::LocalBind,
-                    message: message.clone(),
-                },
-            )
-            .await;
-            emit_port_forward_notice(&event_sender, message.clone()).await;
-            return Err(anyhow!(message));
-        }
+    let (listener, bind_address) =
+        match bind_local_forward_listener_with_policy(&rule, policy).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                let message = format!("{error:#}");
+                emit_port_forward_failure(
+                    &event_sender,
+                    PortForwardFailure {
+                        rule_id: rule.id.clone(),
+                        label: rule.label.clone(),
+                        kind: PortForwardFailureKind::LocalBind,
+                        message: message.clone(),
+                    },
+                )
+                .await;
+                return Err(anyhow!(message));
+            }
+        };
+    let local_address = listener.local_addr()?;
+    let bound_port = local_address.port();
+    static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
+    let binding_id = NEXT_BINDING.fetch_add(1, Ordering::Relaxed);
+    let listening_on = if bind_address.ends_with(":0") || policy.is_dedicated() {
+        local_address.to_string()
+    } else {
+        bind_address
     };
-    let bound_port = listener
-        .local_addr()
-        .map(|address| address.port())
-        .unwrap_or(rule.listen_port);
-
     emit_port_forward_notice(
         &event_sender,
-        format!("Forward {} is listening on {}", rule.label, bind_address),
+        format!("Forward {} is listening on {}", rule.label, listening_on),
     )
     .await;
     emit_port_forward_active(
         &event_sender,
         PortForwardBinding {
+            binding_id,
             rule_id: rule.id.clone(),
             label: rule.label.clone(),
             kind: PortForwardKind::Local,
@@ -174,79 +236,196 @@ async fn start_local_forward(
         },
     )
     .await;
-
     let active_rule = rule.clone();
-    let task = tokio::spawn(async move {
-        loop {
-            let (mut stream, originator) = match listener.accept().await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    let message = format!(
-                        "Forward {} stopped accepting connections: {}",
-                        rule.label, error
-                    );
-                    emit_port_forward_notice(&event_sender, message.clone()).await;
-                    bail!(message);
-                }
-            };
-
-            let session = session.clone();
-            let event_sender = event_sender.clone();
-            let target_host = rule.target_host.clone();
-            let target_port = rule.target_port;
-            let label = rule.label.clone();
-            let rule_id = rule.id.clone();
-            tokio::spawn(async move {
-                match session
-                    .channel_open_direct_tcpip(
-                        target_host.clone(),
-                        u32::from(target_port),
-                        originator.ip().to_string(),
-                        u32::from(originator.port()),
-                    )
-                    .await
-                {
-                    Ok(channel) => {
-                        let mut forwarded = channel.into_stream();
-                        if let Err(error) = copy_bidirectional(&mut forwarded, &mut stream).await {
-                            let message = format!("Forward {} relay failed: {}", label, error);
-                            emit_port_forward_failure(
-                                &event_sender,
-                                PortForwardFailure {
-                                    rule_id,
-                                    label: label.clone(),
-                                    kind: PortForwardFailureKind::TargetUnreachable,
-                                    message: message.clone(),
-                                },
-                            )
-                            .await;
-                            emit_port_forward_notice(&event_sender, message).await;
-                        }
-                    }
-                    Err(error) => {
-                        let message =
-                            format!("Forward {} could not open SSH channel: {}", label, error);
-                        emit_port_forward_failure(
-                            &event_sender,
-                            PortForwardFailure {
-                                rule_id,
-                                label,
-                                kind: PortForwardFailureKind::TargetUnreachable,
-                                message: message.clone(),
-                            },
-                        )
-                        .await;
-                        emit_port_forward_notice(&event_sender, message).await
-                    }
-                }
-            });
-        }
-    });
-
+    let task = if policy.is_dedicated() {
+        tokio::spawn(run_dedicated_local_listener(
+            listener,
+            session,
+            rule,
+            event_sender,
+            binding_id,
+        ))
+    } else {
+        tokio::spawn(run_shared_local_listener(
+            listener,
+            session,
+            rule,
+            event_sender,
+        ))
+    };
     Ok(ActiveLocalForward {
         rule: active_rule,
         task,
+        bound_port,
     })
+}
+
+/// Ordinary forwards keep their historical semantics: relays are detached from the
+/// listener, so restarting or editing a rule never drops connections already in use,
+/// and the listener never waits on the shared session event channel before accepting.
+async fn run_shared_local_listener(
+    listener: TcpListener,
+    session: Arc<client::Handle<ClientHandler>>,
+    rule: PortForwardRule,
+    event_sender: SessionEventSender,
+) -> Result<()> {
+    loop {
+        let (stream, originator) = match listener.accept().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                let message = format!(
+                    "Forward {} stopped accepting connections: {}",
+                    rule.label, error
+                );
+                emit_port_forward_notice(&event_sender, message.clone()).await;
+                bail!(message);
+            }
+        };
+        let session = session.clone();
+        let event_sender = event_sender.clone();
+        let rule = rule.clone();
+        tokio::spawn(async move {
+            relay_local_connection(session, rule, stream, originator, event_sender, true).await;
+        });
+    }
+}
+
+/// Dedicated listeners (one runtime-only rule per SSH connection, e.g. remote desktop)
+/// own their relays and report live connection counts so the owner can reclaim them.
+async fn run_dedicated_local_listener(
+    listener: TcpListener,
+    session: Arc<client::Handle<ClientHandler>>,
+    rule: PortForwardRule,
+    event_sender: SessionEventSender,
+    binding_id: u64,
+) -> Result<()> {
+    let (counts, mut count_updates) = watch::channel(ConnectionCount::default());
+    // Counts are reported from a separate task so accepting never waits on the event
+    // channel. The watch channel coalesces intermediate values; only the latest matters.
+    let reporter = {
+        let event_sender = event_sender.clone();
+        let rule_id = rule.id.clone();
+        AbortOnDrop(tokio::spawn(async move {
+            while count_updates.changed().await.is_ok() {
+                let state = *count_updates.borrow_and_update();
+                if event_sender
+                    .send(SessionEvent::PortForwardConnections {
+                        rule_id: rule_id.clone(),
+                        binding_id,
+                        sequence: state.sequence,
+                        active: state.active,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }))
+    };
+    // JoinSet owns every relay. Cancelling the listener also cancels open channels.
+    let mut relays = JoinSet::new();
+    let result = loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, originator) = match accepted {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        let message = format!(
+                            "Forward {} stopped accepting connections: {}",
+                            rule.label, error
+                        );
+                        emit_port_forward_notice(&event_sender, message.clone()).await;
+                        break Err(anyhow!(message));
+                    }
+                };
+                let guard = ConnectionGuard::new(counts.clone());
+                let session = session.clone();
+                let event_sender = event_sender.clone();
+                let rule = rule.clone();
+                relays.spawn(async move {
+                    let _guard = guard;
+                    relay_local_connection(session, rule, stream, originator, event_sender, false)
+                        .await;
+                });
+            }
+            _ = relays.join_next(), if !relays.is_empty() => {}
+        }
+    };
+    drop(reporter);
+    result
+}
+
+async fn relay_local_connection(
+    session: Arc<client::Handle<ClientHandler>>,
+    rule: PortForwardRule,
+    mut stream: tokio::net::TcpStream,
+    originator: std::net::SocketAddr,
+    event_sender: SessionEventSender,
+    notify: bool,
+) {
+    let message = match session
+        .channel_open_direct_tcpip(
+            rule.target_host.clone(),
+            u32::from(rule.target_port),
+            originator.ip().to_string(),
+            u32::from(originator.port()),
+        )
+        .await
+    {
+        Ok(channel) => {
+            let mut forwarded = channel.into_stream();
+            match copy_bidirectional(&mut forwarded, &mut stream).await {
+                Ok(_) => return,
+                Err(error) => format!("Forward {} relay failed: {}", rule.label, error),
+            }
+        }
+        Err(error) => format!(
+            "Forward {} could not open SSH channel: {}",
+            rule.label, error
+        ),
+    };
+    emit_port_forward_failure(
+        &event_sender,
+        PortForwardFailure {
+            rule_id: rule.id,
+            label: rule.label,
+            kind: PortForwardFailureKind::TargetUnreachable,
+            message: message.clone(),
+        },
+    )
+    .await;
+    if notify {
+        emit_port_forward_notice(&event_sender, message).await;
+    }
+}
+
+struct AbortOnDrop(JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn bind_local_forward_listener_with_policy(
+    rule: &PortForwardRule,
+    policy: LocalForwardBindingPolicy,
+) -> Result<(TcpListener, String)> {
+    match bind_local_forward_listener(rule).await {
+        Ok(result) => Ok(result),
+        Err(error)
+            if policy == LocalForwardBindingPolicy::PreferAvailable
+                && rule.listen_port != 0
+                && error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(is_port_unavailable) =>
+        {
+            let mut automatic = rule.clone();
+            automatic.listen_port = 0;
+            bind_local_forward_listener(&automatic).await
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn bind_local_forward_listener(rule: &PortForwardRule) -> Result<(TcpListener, String)> {
@@ -264,6 +443,27 @@ pub(super) async fn sync_port_forward_rules(
     active_remote_forwards: &mut HashMap<String, ActiveRemoteForward>,
     remote_forward_targets: &RemoteForwardTargets,
     event_sender: &SessionEventSender,
+) -> PortForwardSyncReport {
+    sync_port_forward_rules_with_policy(
+        session,
+        desired_rules,
+        active_local_forwards,
+        active_remote_forwards,
+        remote_forward_targets,
+        event_sender,
+        LocalForwardBindingPolicy::Strict,
+    )
+    .await
+}
+
+pub(super) async fn sync_port_forward_rules_with_policy(
+    session: &Arc<client::Handle<ClientHandler>>,
+    desired_rules: &[PortForwardRule],
+    active_local_forwards: &mut HashMap<String, ActiveLocalForward>,
+    active_remote_forwards: &mut HashMap<String, ActiveRemoteForward>,
+    remote_forward_targets: &RemoteForwardTargets,
+    event_sender: &SessionEventSender,
+    policy: LocalForwardBindingPolicy,
 ) -> PortForwardSyncReport {
     let mut report = PortForwardSyncReport::default();
     let desired_local: HashMap<_, _> = desired_rules
@@ -332,7 +532,8 @@ pub(super) async fn sync_port_forward_rules(
             continue;
         }
 
-        match start_local_forward(session.clone(), rule.clone(), event_sender.clone()).await {
+        match start_local_forward(session.clone(), rule.clone(), event_sender.clone(), policy).await
+        {
             Ok(active) => {
                 active_local_forwards.insert(rule_id, active);
             }
@@ -417,6 +618,7 @@ pub(super) async fn sync_port_forward_rules(
                 emit_port_forward_active(
                     event_sender,
                     PortForwardBinding {
+                        binding_id: 0,
                         rule_id: rule.id.clone(),
                         label: rule.label.clone(),
                         kind: PortForwardKind::Remote,
@@ -455,6 +657,26 @@ pub fn start_port_forward_session(
     secrets: SecretStore,
     known_hosts: KnownHostsStore,
 ) -> SessionConnection {
+    start_port_forward_session_with_policy(
+        runtime,
+        profile,
+        all_profiles,
+        all_proxies,
+        secrets,
+        known_hosts,
+        LocalForwardBindingPolicy::Strict,
+    )
+}
+
+pub fn start_port_forward_session_with_policy(
+    runtime: &TokioHandle,
+    profile: SessionProfile,
+    all_profiles: Vec<SessionProfile>,
+    all_proxies: Vec<ProxyProfile>,
+    secrets: SecretStore,
+    known_hosts: KnownHostsStore,
+    policy: LocalForwardBindingPolicy,
+) -> SessionConnection {
     let (event_sender, event_receiver) = session_event_channel();
     let (command_sender, command_receiver) = unbounded_channel();
     let runtime = runtime.clone();
@@ -474,6 +696,7 @@ pub fn start_port_forward_session(
                         known_hosts,
                         command_receiver,
                         event_sender.clone(),
+                        policy,
                     ) => result,
                     () = worker_cancel.cancelled() => Err(ConnectionCancelled.into()),
                 };
@@ -620,6 +843,7 @@ async fn supervise_connected_forward(
     remote_forward_targets: &RemoteForwardTargets,
     command_receiver: &mut UnboundedReceiver<SessionCommand>,
     event_sender: &SessionEventSender,
+    policy: LocalForwardBindingPolicy,
 ) -> ConnectedForwardOutcome {
     let mut health_check = tokio::time::interval(PORT_FORWARD_HEALTH_CHECK_INTERVAL);
     health_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -630,13 +854,14 @@ async fn supervise_connected_forward(
                 match command {
                     Some(SessionCommand::SyncPortForwardRules(rules)) => {
                         *configured_rules = rules;
-                        let report = sync_port_forward_rules(
+                        let report = sync_port_forward_rules_with_policy(
                             session,
                             configured_rules,
                             active_local_forwards,
                             active_remote_forwards,
                             remote_forward_targets,
                             event_sender,
+                            policy,
                         )
                         .await;
                         if let Err(error) = ensure_dedicated_forward_active(
@@ -712,6 +937,7 @@ async fn run_port_forward_session(
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
     event_sender: SessionEventSender,
+    policy: LocalForwardBindingPolicy,
 ) -> Result<()> {
     let remote_label = profile.connection_label();
     let mut configured_port_forward_rules = profile.port_forwarding_rules.clone();
@@ -775,15 +1001,24 @@ async fn run_port_forward_session(
         configured_port_forward_rules = route.configured_port_forward_rules.clone();
         let mut active_local_forwards = HashMap::new();
         let mut active_remote_forwards = HashMap::new();
-        let report = sync_port_forward_rules(
+        let report = sync_port_forward_rules_with_policy(
             &route.session,
             &configured_port_forward_rules,
             &mut active_local_forwards,
             &mut active_remote_forwards,
             &route.remote_forward_targets,
             &event_sender,
+            policy,
         )
         .await;
+        if policy == LocalForwardBindingPolicy::PreferAvailable {
+            for rule in &mut configured_port_forward_rules {
+                if let Some(active) = active_local_forwards.get_mut(&rule.id) {
+                    rule.listen_port = active.bound_port;
+                    active.rule.listen_port = active.bound_port;
+                }
+            }
+        }
         if let Err(error) = ensure_dedicated_forward_active(
             &configured_port_forward_rules,
             &active_local_forwards,
@@ -841,6 +1076,7 @@ async fn run_port_forward_session(
             &route.remote_forward_targets,
             &mut command_receiver,
             &event_sender,
+            policy,
         )
         .await;
         stop_active_forwards(
@@ -868,6 +1104,23 @@ async fn run_port_forward_session(
 mod tests {
     use super::*;
     use miaominal_core::profile::PortForwardRule;
+    #[tokio::test]
+    async fn coalesced_connection_count_keeps_final_zero_after_cancellation() {
+        let (counts, mut receiver) = watch::channel(ConnectionCount::default());
+        let first = ConnectionGuard::new(counts.clone());
+        let second = ConnectionGuard::new(counts.clone());
+        let task = tokio::spawn(async move {
+            let _guard = second;
+            std::future::pending::<()>().await;
+        });
+        drop(first);
+        task.abort();
+        let _ = task.await;
+        receiver.changed().await.unwrap();
+        let state = *receiver.borrow_and_update();
+        assert_eq!(state.active, 0);
+        assert_eq!(state.sequence, 4);
+    }
 
     fn local_rule(listen_port: u16) -> PortForwardRule {
         PortForwardRule {

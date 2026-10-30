@@ -303,6 +303,13 @@ pub mod connection {
 
 #[derive(Debug)]
 pub enum SessionEvent {
+    /// Latest accepted TCP connection count for one listener lifetime.
+    PortForwardConnections {
+        rule_id: String,
+        binding_id: u64,
+        sequence: u64,
+        active: usize,
+    },
     Connected(String),
     /// Typed connection phase transition; the interactive flow emits these so
     /// hosts never parse the English status strings.

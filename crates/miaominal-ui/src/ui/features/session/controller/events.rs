@@ -344,6 +344,9 @@ impl SessionController {
                         session.has_activity = true;
                     }
                 }
+                SessionEvent::PortForwardConnections { .. } => {
+                    outcome.should_notify = false;
+                }
                 SessionEvent::PortForwardNotice(message) => {
                     log::debug!("ignoring port-forward notice in terminal event loop: {message}");
                     outcome.should_notify = false;
