@@ -449,7 +449,7 @@ fn main() {
                                 "snippets" => window.click("sidebar-snippets", cx),
                                 "known-hosts" => window.click("sidebar-known-hosts", cx),
                                 "list" => window.click("hosts-view-mode-list", cx),
-                                "menu" => window.click("library-host-preview-0:more", cx),
+                                "menu" | "rdp" | "rdp-direct" => window.click("library-host-preview-0:more", cx),
                                 "many" => window.scroll(
                                     "hosts-collection-scroll",
                                     gpui_kit::ScrollDelta::Pixels(point(px(0.0), px(-10000.0))),
@@ -522,6 +522,40 @@ fn main() {
                         }).unwrap();
                     });
                     println!("PASS: locked forwarding start and save open the vault prompt without opening a connection");
+                }
+                if scenario == "rdp" || scenario == "rdp-direct" {
+                    // Host menu: Connect, Edit, Favorite, SFTP, Remote desktop…
+                    cx.update(|cx| {
+                        handle.update(cx, |_, window, cx| {
+                            window.render_frame(cx);
+                            window.within("items").click(4usize, cx);
+                        }).unwrap();
+                    });
+                    for _ in 0..20 {
+                        cx.background_executor().timer(Duration::from_millis(30)).await;
+                        cx.update(|cx| { handle.update(cx, |_, window, cx| window.render_frame(cx)).unwrap(); });
+                    }
+                    cx.update(|cx| {
+                        handle.update(cx, |_, window, cx| {
+                            assert!(window.try_find("rdp-launch-submit").is_some(), "the host menu must open the remote desktop panel");
+                            if scenario == "rdp-direct" {
+                                window.within("rdp-mode").click(1usize, cx);
+                            }
+                        }).unwrap();
+                    });
+                    for _ in 0..6 {
+                        cx.background_executor().timer(Duration::from_millis(30)).await;
+                        cx.update(|cx| { handle.update(cx, |_, window, cx| window.render_frame(cx)).unwrap(); });
+                    }
+                    cx.update(|cx| {
+                        handle.update(cx, |_, window, cx| {
+                            if let Ok(port) = std::env::var("MIAOMINAL_PREVIEW_RDP_PORT") {
+                                window.click("rdp-port-input", cx);
+                                window.press("ctrl-a", cx);
+                                window.input(&port, cx);
+                            }
+                        }).unwrap();
+                    });
                 }
                 if scenario == "view-modes" {
                     cx.update(|cx| cx.set_reduce_motion(false));
