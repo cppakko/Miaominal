@@ -5630,6 +5630,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "miaominal-rdp"
+version = "0.2.4"
+dependencies = [
+ "anyhow",
+ "miaominal-paths",
+ "miaominal-settings",
+ "tempfile",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
 name = "miaominal-secrets"
 version = "0.2.4"
 dependencies = [

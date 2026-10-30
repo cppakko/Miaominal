@@ -1,0 +1,19 @@
+[package]
+name = "miaominal-rdp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+miaominal-paths = { path = "../miaominal-paths" }
+miaominal-settings = { path = "../miaominal-settings", default-features = false }
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile.workspace = true

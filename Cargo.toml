@@ -17,6 +17,7 @@ members = [
     "crates/miaominal-agent",
     "crates/miaominal-android",
     "crates/miaominal-paths",
+    "crates/miaominal-rdp",
     "crates/miaominal-secrets",
     "crates/miaominal-services",
     "crates/miaominal-settings",
