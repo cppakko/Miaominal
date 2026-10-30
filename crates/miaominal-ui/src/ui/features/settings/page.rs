@@ -43,6 +43,7 @@ pub(super) enum SettingsGroupId {
     Monitoring,
     Tabs,
     Proxies,
+    Rdp,
     Import,
     SshBridgeIntegration,
     SshBridgeSecurityPolicy,
@@ -441,6 +442,10 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
             .title(i18n::string("settings.connections.tabs_group.title"))
             .description(i18n::string("settings.connections.tabs_group.description"))
             .items(closing_behavior_items(settings.clone())),
+        SettingsGroupId::Rdp => SettingGroup::new()
+            .title(i18n::string("rdp.settings_title"))
+            .description(super::rdp::settings_description())
+            .item(SettingItem::new(i18n::string("rdp.client"), SettingField::element(super::rdp::RdpClientField::new(settings.clone()))).layout(Axis::Vertical)),
         SettingsGroupId::Proxies => SettingGroup::new()
             .title(i18n::string("settings.proxies.group.title"))
             .description(i18n::string("settings.proxies.group.description"))

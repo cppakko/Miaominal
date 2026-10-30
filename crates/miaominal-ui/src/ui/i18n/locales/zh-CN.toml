@@ -2394,3 +2394,16 @@ description = "控制全自动模式下哪些操作无需确认。"
 [settings.agent_safety.auto_approve_dangerous]
 label = "全自动模式下也自动执行破坏性操作"
 description = "开启后，在全自动模式中删除文件、重启主机、修改账号等破坏性操作也不会再请求确认。禁止列表中的命令和敏感路径在任何模式下都会被拒绝。仅在可随时恢复的环境中开启。"
+
+[rdp]
+settings_title = "远程桌面客户端"
+local_only = "仅保存在本机。"
+linux_detection = "自动检测优先选择 Remmina，其次为 SDL3 FreeRDP。"
+client = "客户端与路径"
+auto = "自动检测"
+path_placeholder = "客户端绝对路径，留空则检测"
+detecting = "正在检测客户端…"
+detected = "可用：{path}"
+detect = "重新检测"
+browse = "浏览…"
+browse_title = "选择远程桌面客户端"

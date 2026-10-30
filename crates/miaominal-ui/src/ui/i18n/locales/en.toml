@@ -2393,3 +2393,16 @@ description = "Control what full-auto mode may do without asking."
 [settings.agent_safety.auto_approve_dangerous]
 label = "Run destructive actions automatically in full-auto mode"
 description = "When on, full-auto mode no longer asks before destructive actions such as deleting files, rebooting hosts or changing accounts. Commands on the denylist and sensitive paths are always refused. Turn this on only for environments you can restore."
+
+[rdp]
+settings_title = "Remote desktop client"
+local_only = "Saved on this device only."
+linux_detection = "Auto detection prefers Remmina, then SDL3 FreeRDP."
+client = "Client and path"
+auto = "Auto detect"
+path_placeholder = "Absolute client path; leave empty to detect"
+detecting = "Detecting client…"
+detected = "Available: {path}"
+detect = "Detect again"
+browse = "Browse…"
+browse_title = "Select the remote desktop client"

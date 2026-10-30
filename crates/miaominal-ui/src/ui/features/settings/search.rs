@@ -69,6 +69,12 @@ const GROUPS: &[SearchGroup] = &[
     },
     SearchGroup {
         page: SettingsPageId::Connections,
+        group: SettingsGroupId::Rdp,
+        title: "rdp.settings_title",
+        items: &["rdp.client"],
+    },
+    SearchGroup {
+        page: SettingsPageId::Connections,
         group: SettingsGroupId::Proxies,
         title: "settings.proxies.group.title",
         items: &["settings.proxies.saved.label"],

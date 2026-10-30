@@ -75,6 +75,7 @@ pub(in crate::ui) fn search_destination(id: &'static str) -> Option<SettingsDest
 }
 mod preferences;
 mod provider_labels;
+mod rdp;
 mod sync_status;
 use bridge_security_notification::*;
 use labels::*;

@@ -545,6 +545,7 @@ impl SecretVisibilityState {
 
 #[derive(Clone)]
 pub(in crate::ui) struct SettingsForms {
+    pub(in crate::ui) rdp_path_input: Entity<InputState>,
     pub(in crate::ui) language_select: Entity<SelectState<Vec<SelectOption<AppLanguage>>>>,
     pub(in crate::ui) last_tab_close_behavior_select:
         Entity<SelectState<Vec<SelectOption<LastTabCloseBehavior>>>>,
@@ -634,14 +635,16 @@ struct SettingsBootstrap {
 }
 
 pub(in crate::ui) struct SettingsController {
-    runtime: TokioHandle,
+    pub(super) runtime: TokioHandle,
     proxy_store: Option<ProxyStore>,
     proxies: Vec<ProxyProfile>,
     catalog: CatalogQueryPort,
     editing_proxy_id: Option<String>,
     proxy_resolve_dns_through_proxy: bool,
     proxy_password_clear_requested: bool,
-    settings_store: SettingsStore,
+    pub(super) settings_store: SettingsStore,
+    pub(super) rdp_detection: String,
+    pub(super) rdp_detection_revision: u64,
     secrets: SecretStore,
     ssh_bridge_service: SshBridgeService,
     open_ssh_integration_service: OpenSshIntegrationService,
@@ -914,6 +917,13 @@ impl SettingsController {
         let web_search_config = &settings.web_search;
 
         let forms = SettingsForms {
+            rdp_path_input: new_input_state(
+                i18n::string("rdp.path_placeholder"),
+                settings.rdp_client.path(),
+                false,
+                window,
+                cx,
+            ),
             language_select: cx
                 .new(|cx| SelectState::new(language_options, selected_language, window, cx)),
             last_tab_close_behavior_select: cx.new(|cx| {
@@ -1672,6 +1682,7 @@ impl SettingsController {
         let font_family_query_input = forms.font_family_query_input.clone();
         let terminal_font_family_query_input = forms.terminal_font_family_query_input.clone();
         let font_fallbacks_input = forms.font_fallbacks_input.clone();
+        let rdp_path_input = forms.rdp_path_input.clone();
         let seed_color_picker = forms.seed_color_picker.clone();
         let proxy_management_query_input = forms.proxy_management_query_input.clone();
 
@@ -1859,6 +1870,14 @@ impl SettingsController {
                 }
             },
         );
+        let rdp_path_subscription = cx.subscribe(
+            &rdp_path_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    this.save_rdp_path(input.read(cx).value().to_string(), cx);
+                }
+            },
+        );
         let seed_color_subscription = cx.subscribe(
             &seed_color_picker,
             |this: &mut Self, _, event: &ColorPickerEvent, cx| {
@@ -1949,7 +1968,10 @@ impl SettingsController {
             secret_visibility: SecretVisibilityState::default(),
             overlay_revisions: OverlayRevisionState::default(),
             popup_form_subscriptions: HashMap::new(),
+            rdp_detection: i18n::string("rdp.detecting"),
+            rdp_detection_revision: 0,
             _subscriptions: vec![
+                rdp_path_subscription,
                 last_tab_close_behavior_subscription,
                 window_close_behavior_subscription,
                 local_vault_auto_lock_duration_subscription,
@@ -1968,6 +1990,7 @@ impl SettingsController {
             ],
         };
         controller.sync_ssh_bridge_security_level_select(window, cx);
+        controller.detect_rdp(cx);
         controller
     }
 
