@@ -725,6 +725,30 @@ impl AppView {
                     }
                 });
             }
+            TabOpenRequest::Rdp { profile_id } => {
+                self.controllers.session.update(cx, |controller, cx| {
+                    controller.open_rdp_launch(profile_id, cx)
+                });
+            }
+            TabOpenRequest::RdpConnect {
+                profile_id,
+                options,
+            } => {
+                let profile_id = profile_id.clone();
+                let options = options.clone();
+                let entity = cx.entity();
+                // The tab belongs to this root's window, not whichever window has focus.
+                let window_handle = self.controllers.hosts.read(cx).owner_window();
+                cx.defer(move |cx| {
+                    if let Err(error) = window_handle.update(cx, move |_, window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.start_rdp_connection(profile_id, options, window, cx)
+                        })
+                    }) {
+                        log::debug!("failed to start remote desktop connection: {error:?}");
+                    }
+                });
+            }
             TabOpenRequest::PortForwarding {
                 profile_id,
                 rule_id,

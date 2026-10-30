@@ -53,6 +53,7 @@ mod forwarding;
 mod lifecycle;
 mod local_session;
 mod progress;
+pub(super) mod rdp;
 mod search;
 mod terminal;
 
@@ -166,6 +167,7 @@ impl SessionMonitoringState {
 pub(in crate::ui::features::session) struct SessionTabState {
     pub(in crate::ui::features::session) profile_id: String,
     pub(in crate::ui::features::session) port_forward_rule_id: Option<String>,
+    pub(in crate::ui::features::session) rdp: Option<miaominal_services::RdpSessionSnapshot>,
     pub(in crate::ui::features::session) terminal: TerminalState,
     pub(in crate::ui::features::session) connection_state: SessionConnectionState,
     pub(in crate::ui::features::session) preserved_history_popup_hidden: bool,
@@ -322,6 +324,14 @@ pub(in crate::ui) struct SessionController {
     ports: Rc<RefCell<SessionPortState>>,
     terminal_focus_subscriptions: RefCell<Option<(Subscription, Subscription)>>,
     _subscriptions: Vec<Subscription>,
+    rdp_launch: RefCell<Option<rdp::RdpLaunchDraft>>,
+    rdp_launch_revision: Cell<u64>,
+    /// Port field of the launch panel, created for one launch revision with a window.
+    rdp_port_input: RefCell<Option<(u64, Entity<InputState>)>>,
+    rdp_confirmation_revision: Cell<u64>,
+    rdp_direct: RefCell<HashSet<String>>,
+    rdp_confirmation: RefCell<Option<rdp::RdpConfirmation>>,
+    rdp_close_approved: RefCell<HashSet<TabId>>,
 }
 
 pub(in crate::ui) struct SessionControllerArgs {
@@ -336,6 +346,7 @@ pub(in crate::ui) struct SessionControllerArgs {
     pub(in crate::ui) auto_collect_session_monitoring: bool,
     pub(in crate::ui) ssh_bridge_service: SshBridgeService,
     pub(in crate::ui) port_forward_manager: PortForwardManager,
+    pub(in crate::ui) rdp_service: miaominal_services::RdpService,
 }
 
 struct SessionFormsBundle {
@@ -350,6 +361,7 @@ struct SessionControllerServices {
     auto_collect_session_monitoring: Cell<bool>,
     ssh_bridge_service: Option<SshBridgeService>,
     port_forward_manager: Option<PortForwardManager>,
+    rdp_service: Option<miaominal_services::RdpService>,
 }
 
 #[derive(Default)]
@@ -472,6 +484,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(args.auto_collect_session_monitoring),
                 ssh_bridge_service: Some(args.ssh_bridge_service),
                 port_forward_manager: Some(args.port_forward_manager),
+                rdp_service: Some(args.rdp_service),
             },
             args.profiles,
             args.proxies,
@@ -484,6 +497,7 @@ impl SessionController {
             terminal_focus_in_subscription,
             terminal_focus_out_subscription,
         ));
+        controller.subscribe_rdp(cx);
         controller
     }
 
@@ -521,6 +535,13 @@ impl SessionController {
             })),
             terminal_focus_subscriptions: RefCell::new(None),
             _subscriptions: subscriptions,
+            rdp_launch: RefCell::new(None),
+            rdp_launch_revision: Cell::new(0),
+            rdp_port_input: RefCell::new(None),
+            rdp_confirmation_revision: Cell::new(0),
+            rdp_direct: RefCell::new(HashSet::new()),
+            rdp_confirmation: RefCell::new(None),
+            rdp_close_approved: RefCell::new(HashSet::new()),
         }
     }
 
@@ -557,6 +578,7 @@ impl SessionController {
                 auto_collect_session_monitoring: Cell::new(false),
                 ssh_bridge_service: None,
                 port_forward_manager: None,
+                rdp_service: None,
             },
             profiles,
             Vec::new(),
@@ -736,6 +758,7 @@ impl SessionController {
         let session = SessionTabState {
             profile_id,
             port_forward_rule_id: None,
+            rdp: None,
             terminal,
             connection_state: SessionConnectionState::Connecting,
             preserved_history_popup_hidden: false,
@@ -787,6 +810,7 @@ impl SessionController {
         let session = SessionTabState {
             profile_id,
             port_forward_rule_id: None,
+            rdp: None,
             terminal,
             connection_state: SessionConnectionState::Connecting,
             preserved_history_popup_hidden: false,
@@ -852,6 +876,7 @@ impl SessionController {
         let session = SessionTabState {
             profile_id: profile.id.clone(),
             port_forward_rule_id: Some(rule.id.clone()),
+            rdp: None,
             terminal: TerminalState::default(),
             connection_state: SessionConnectionState::Connecting,
             preserved_history_popup_hidden: false,
@@ -899,6 +924,7 @@ impl SessionController {
         let session = SessionTabState {
             profile_id: profile.id.clone(),
             port_forward_rule_id: None,
+            rdp: None,
             terminal: TerminalState::default(),
             connection_state: SessionConnectionState::Connecting,
             preserved_history_popup_hidden: false,
@@ -1326,6 +1352,9 @@ impl SessionController {
         decision: HostKeyDecision,
         cx: &mut Context<Self>,
     ) {
+        let rdp_id = self
+            .tab(tab_id)
+            .and_then(|tab| tab.rdp.as_ref().map(|s| s.id().to_string()));
         let Some((prompt, request_id, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let prompt = session.pending_host_key.take()?;
@@ -1356,7 +1385,10 @@ impl SessionController {
             request_id,
             prompt.clone(),
         )));
-        let result = if let Some((profile_id, rule_id)) = port_forward_key
+        let result = if let Some(id) = rdp_id {
+            self.rdp_service()
+                .respond_host_key(&id, request_id, decision)
+        } else if let Some((profile_id, rule_id)) = port_forward_key
             && let Some(manager) = self.services.port_forward_manager.as_ref()
         {
             manager.respond_host_key(&profile_id, &rule_id, decision)
@@ -1403,6 +1435,9 @@ impl SessionController {
         responses: Vec<String>,
         cx: &mut Context<Self>,
     ) {
+        let rdp_id = self
+            .tab(tab_id)
+            .and_then(|tab| tab.rdp.as_ref().map(|s| s.id().to_string()));
         let Some((challenge, request_id, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let challenge = session.pending_keyboard_interactive.take()?;
@@ -1427,7 +1462,11 @@ impl SessionController {
             return;
         };
 
-        if let Some((profile_id, rule_id)) = port_forward_key
+        if let Some(id) = rdp_id {
+            let _ = self
+                .rdp_service()
+                .respond_keyboard_interactive(&id, request_id, responses);
+        } else if let Some((profile_id, rule_id)) = port_forward_key
             && let Some(manager) = self.services.port_forward_manager.as_ref()
         {
             let _ = manager.respond_keyboard_interactive(&profile_id, &rule_id, responses);
@@ -1448,6 +1487,9 @@ impl SessionController {
     }
 
     pub(in crate::ui) fn cancel_keyboard_interactive(&self, tab_id: TabId, cx: &mut Context<Self>) {
+        let rdp_id = self
+            .tab(tab_id)
+            .and_then(|tab| tab.rdp.as_ref().map(|s| s.id().to_string()));
         let Some((challenge, request_id, commands, port_forward_key)) =
             self.tab_mut(tab_id).and_then(|mut session| {
                 let challenge = session.pending_keyboard_interactive.take()?;
@@ -1472,7 +1514,9 @@ impl SessionController {
             return;
         };
 
-        if let Some((profile_id, rule_id)) = port_forward_key
+        if let Some(id) = rdp_id {
+            self.rdp_service().stop(&id);
+        } else if let Some((profile_id, rule_id)) = port_forward_key
             && let Some(manager) = self.services.port_forward_manager.as_ref()
         {
             manager.stop(&profile_id, &rule_id);
@@ -2214,6 +2258,7 @@ mod tests {
         SessionTabState {
             profile_id: profile_id.to_string(),
             port_forward_rule_id: None,
+            rdp: None,
             terminal: TerminalState::default(),
             connection_state: SessionConnectionState::Ready,
             preserved_history_popup_hidden: false,

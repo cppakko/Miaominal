@@ -237,6 +237,7 @@ enum TopbarAction {
     Rename(TabId),
     Duplicate(TabId),
     OpenSftp(TabId),
+    OpenRdp(TabId),
     OpenInNewWindow(TabId),
     CloseOthers(TabId),
     Close(TabId),
@@ -280,6 +281,18 @@ impl TopbarHost for AppView {
             TopbarAction::Duplicate(tab_id) => {
                 if let Some(index) = topbar_action_index(&self.workspace.tabs, tab_id) {
                     self.duplicate_profile_tab(index, window, cx);
+                }
+            }
+            TopbarAction::OpenRdp(tab_id) => {
+                if let Some(profile) = self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .resolved_profile_for_tab(tab_id)
+                {
+                    self.controllers.session.update(cx, |controller, cx| {
+                        controller.open_rdp_launch(&profile.id, cx)
+                    });
                 }
             }
             TopbarAction::OpenSftp(tab_id) => {
@@ -383,6 +396,7 @@ fn build_tab_context_menu<V: TopbarHost>(
     let close_others_entity = entity.clone();
     let duplicate_entity = entity.clone();
     let sftp_entity = entity.clone();
+    let rdp_entity = entity.clone();
     let open_in_new_window_entity = entity.clone();
     let close_entity = entity;
 
@@ -407,6 +421,13 @@ fn build_tab_context_menu<V: TopbarHost>(
                     });
                 },
             ),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("rdp.open_menu")).on_click(move |_, window, cx| {
+                rdp_entity.update(cx, |this, cx| {
+                    this.handle_topbar_action(TopbarAction::OpenRdp(tab_id), window, cx)
+                });
+            }),
         )
         .item(
             PopupMenuItem::new(i18n::string("chrome.menu.open_sftp_tab")).on_click(
@@ -547,6 +568,11 @@ fn request_window_close(
 ) {
     if role == AppWindowRole::Primary {
         crate::ui::request_main_window_close(window, cx);
+        return;
+    }
+    if entity.update(cx, |view, cx| {
+        view.detached_window_close_needs_rdp_confirmation(cx)
+    }) {
         return;
     }
     entity.update(cx, |view, cx| {

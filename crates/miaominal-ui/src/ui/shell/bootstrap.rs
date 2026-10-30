@@ -368,6 +368,7 @@ impl AppView {
                     auto_collect_session_monitoring,
                     ssh_bridge_service: services.ssh_bridge_service.clone(),
                     port_forward_manager: services.port_forward_manager.clone(),
+                    rdp_service: services.rdp_service.clone(),
                 },
                 agent: AgentControllerArgs {
                     task_runtime: services.runtime.clone(),

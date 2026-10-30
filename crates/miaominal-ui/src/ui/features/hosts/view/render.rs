@@ -59,9 +59,12 @@ fn build_host_context_menu(
     profile_id: String,
     is_favorite: bool,
     is_local: bool,
+    is_ssh: bool,
 ) -> PopupMenu {
     let favorite_controller = controller.clone();
     let duplicate_controller = controller.clone();
+    let rdp_controller = controller.clone();
+    let rdp_id = profile_id.clone();
     let delete_controller = controller;
     let favorite_id = profile_id.clone();
     let duplicate_id = profile_id.clone();
@@ -103,6 +106,22 @@ fn build_host_context_menu(
                 },
             ),
         )
+    };
+
+    let menu = if is_ssh {
+        menu.item(
+            PopupMenuItem::new(i18n::string("rdp.open_menu")).on_click(move |_, _, cx| {
+                rdp_controller.update(cx, |_, cx| {
+                    cx.emit(crate::ui::contracts::AppCommand::OpenTab(
+                        crate::ui::contracts::TabOpenRequest::Rdp {
+                            profile_id: rdp_id.clone(),
+                        },
+                    ));
+                });
+            }),
+        )
+    } else {
+        menu
     };
 
     menu.item(PopupMenuItem::separator())
@@ -158,6 +177,7 @@ fn profile_item(
     let connect_id = menu_id.clone();
     let is_favorite = profile.is_favorite;
     let is_local = profile.is_local();
+    let is_ssh = profile.kind == miaominal_core::profile::ProfileKind::Ssh;
     let right_controller = controller.clone();
     let right_actions = actions.clone();
     let more_actions = actions.clone();
@@ -179,6 +199,7 @@ fn profile_item(
                 more_id.clone(),
                 is_favorite,
                 is_local,
+                is_ssh,
             )
         });
     div()
@@ -192,6 +213,7 @@ fn profile_item(
                 menu_id.clone(),
                 is_favorite,
                 is_local,
+                is_ssh,
             )
         })
         .child(host_card(

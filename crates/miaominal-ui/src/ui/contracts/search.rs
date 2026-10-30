@@ -24,6 +24,7 @@ impl SearchKind {
 pub(in crate::ui) enum SearchTarget {
     Setting(&'static str),
     Host(String),
+    Rdp(String),
     Key(String),
     Forward {
         profile: String,

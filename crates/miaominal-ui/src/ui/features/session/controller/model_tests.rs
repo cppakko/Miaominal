@@ -6,6 +6,7 @@ fn session_state(
     SessionTabState {
         profile_id: "profile".to_string(),
         port_forward_rule_id: None,
+        rdp: None,
         terminal: TerminalState::default(),
         connection_state,
         preserved_history_popup_hidden: false,

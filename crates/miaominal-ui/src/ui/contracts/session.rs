@@ -94,6 +94,7 @@ impl SessionTabDescriptor {
 pub(in crate::ui) enum SessionPurpose {
     Terminal,
     PortForwarding,
+    Rdp,
     ConnectionTest,
 }
 

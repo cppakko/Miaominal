@@ -38,6 +38,7 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_rdp_launch_input(window, cx);
         let pending = active_tab_id
             .into_iter()
             .chain(ordered_tab_ids.iter().copied())
@@ -82,6 +83,12 @@ impl SessionController {
         cx: &App,
     ) -> Vec<OverlaySnapshot> {
         let mut snapshots = Vec::new();
+        if let Some(snapshot) = self.rdp_launch_overlay(entity.clone()) {
+            snapshots.push(snapshot);
+        }
+        if let Some(snapshot) = self.rdp_confirmation_overlay(entity.clone()) {
+            snapshots.push(snapshot);
+        }
         if let Some((tab_id, request_id, prompt)) = visible_tab_ids.iter().find_map(|tab_id| {
             self.tab(*tab_id).and_then(|tab| {
                 tab.pending_host_key

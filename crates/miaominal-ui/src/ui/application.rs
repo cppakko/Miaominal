@@ -769,6 +769,9 @@ impl ApplicationState {
     }
 
     fn refresh_connection_catalog_services(&self) {
+        self.services
+            .rdp_service
+            .replace_catalogs(self.catalog.profiles(), self.catalog.proxies());
         if let Err(error) = self
             .services
             .open_ssh_integration_service
@@ -832,6 +835,9 @@ impl ApplicationState {
             self.services.known_hosts.clone(),
         );
         self.services.ssh_bridge_service.replace_secrets(secrets);
+        self.services
+            .rdp_service
+            .replace_secrets(self.services.secrets.clone());
         self.services
             .port_forward_manager
             .replace_secrets(self.services.secrets.clone());
@@ -1255,6 +1261,7 @@ impl Drop for ApplicationState {
             auto_sync.shutdown();
         }
         self.services.port_forward_manager.stop_all();
+        self.services.rdp_service.stop_all();
     }
 }
 

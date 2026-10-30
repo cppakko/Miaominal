@@ -210,6 +210,17 @@ impl LocalVaultRootExt for AppView {
                 });
             }
             DeferredAppCommand::Session(command) => match command {
+                SessionDeferredCommand::RestartRdp(tab_id) => {
+                    self.controllers.session.update(cx, |controller, cx| {
+                        controller.rdp_action(tab_id, "restart", cx)
+                    });
+                }
+                SessionDeferredCommand::OpenRdp {
+                    profile_id,
+                    options,
+                } => {
+                    self.start_rdp_connection(profile_id, options, window, cx);
+                }
                 SessionDeferredCommand::OpenProfile(profile) => {
                     self.open_session_tab(*profile, window, cx);
                 }

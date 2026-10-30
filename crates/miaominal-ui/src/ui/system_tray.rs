@@ -132,6 +132,11 @@ pub fn configure_detached_window_close(view: &Entity<AppView>, window: &Window, 
     let view = view.downgrade();
     window.on_window_should_close(cx, move |window, cx| {
         if let Some(view) = view.upgrade() {
+            if view.update(cx, |view, cx| {
+                view.detached_window_close_needs_rdp_confirmation(cx)
+            }) {
+                return false;
+            }
             view.update(cx, |view, cx| {
                 view.prepare_detached_window_close(window, cx);
             });

@@ -601,6 +601,7 @@ mod tests {
             SessionTabState {
                 profile_id: "profile-a".to_string(),
                 port_forward_rule_id: None,
+                rdp: None,
                 terminal: TerminalState::default(),
                 connection_state: SessionConnectionState::Connecting,
                 preserved_history_popup_hidden: false,
@@ -642,6 +643,7 @@ mod tests {
             SessionTabState {
                 profile_id: "local-a".to_string(),
                 port_forward_rule_id: None,
+                rdp: None,
                 terminal: TerminalState::default(),
                 connection_state: SessionConnectionState::Ready,
                 preserved_history_popup_hidden: false,

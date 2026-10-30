@@ -101,6 +101,9 @@ impl SessionController {
         rounded: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::AnyElement> {
+        if let Some(runtime) = self.tab(tab.id()).and_then(|session| session.rdp.clone()) {
+            return Some(super::rdp::render_status(cx.entity(), tab.id(), &runtime));
+        }
         let (summary, profile_id, purpose, connection_state) = {
             let session = self.tab(tab.id())?;
             if !session.uses_blocking_placeholder() {

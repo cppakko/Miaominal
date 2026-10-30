@@ -95,6 +95,13 @@ pub(in crate::ui) enum TabOpenRequest {
     Session {
         profile_id: String,
     },
+    Rdp {
+        profile_id: String,
+    },
+    RdpConnect {
+        profile_id: String,
+        options: miaominal_services::RdpLaunchOptions,
+    },
     Sftp {
         profile_id: String,
         owner: Option<TabId>,
@@ -121,6 +128,11 @@ pub(in crate::ui) enum DeferredAppCommand {
 #[derive(Clone, Debug)]
 pub(in crate::ui) enum SessionDeferredCommand {
     OpenProfile(Box<SessionProfile>),
+    RestartRdp(TabId),
+    OpenRdp {
+        profile_id: String,
+        options: miaominal_services::RdpLaunchOptions,
+    },
 }
 
 #[derive(Clone, Debug)]

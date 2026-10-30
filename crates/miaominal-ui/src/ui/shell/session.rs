@@ -273,6 +273,47 @@ impl AppView {
         (columns, lines)
     }
 
+    pub(in crate::ui::shell) fn start_rdp_connection(
+        &mut self,
+        profile_id: String,
+        options: miaominal_services::RdpLaunchOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .controllers
+            .session
+            .read(cx)
+            .rdp_requires_unlock(&profile_id, &options)
+        {
+            self.prompt_local_vault_unlock_for_action(
+                DeferredAppCommand::Session(SessionDeferredCommand::OpenRdp {
+                    profile_id,
+                    options,
+                }),
+                window,
+                cx,
+            );
+            return;
+        }
+        let tab_id = self.workspace.allocate_tab_id();
+        let descriptor = self.controllers.session.update(cx, |controller, cx| {
+            controller.start_rdp(tab_id, &profile_id, options, cx)
+        });
+        if let Some(tab) = descriptor {
+            self.unload_active_topbar_workspace(cx);
+            self.register_session_tab_metadata(tab.into(), cx);
+            self.workspace.active_topbar_tab = Some(tab_id);
+            if let Some(index) = self.workspace.tabs.index_of(tab_id) {
+                self.load_topbar_workspace(index, cx);
+            }
+            self.rebind_terminal_focus_reporting(window, cx);
+            self.sync_session_port_snapshot(cx);
+            self.sync_window_overlays(window, cx);
+        }
+        cx.notify();
+    }
+
     pub(in crate::ui::shell) fn open_session_tab(
         &mut self,
         profile: SessionProfile,
@@ -733,6 +774,15 @@ impl AppView {
             return;
         }
 
+        if let Some(id) = self.workspace.tabs.id_at(index) {
+            if self
+                .controllers
+                .session
+                .update(cx, |owner, cx| owner.request_rdp_close(&[id], cx))
+            {
+                return;
+            }
+        }
         let closed_bundle = self.build_closed_tab_bundle(index, cx);
         let tab = self
             .workspace
@@ -1044,6 +1094,13 @@ impl AppView {
             .iter()
             .filter_map(|index| self.workspace.tabs.id_at(*index))
             .collect::<Vec<_>>();
+        if self
+            .controllers
+            .session
+            .update(cx, |owner, cx| owner.request_rdp_close(&remove_ids, cx))
+        {
+            return;
+        }
         let mut affected_monitor_profiles = HashSet::new();
         let sftp_controller = self.controllers.sftp.clone();
 
@@ -1099,6 +1156,25 @@ impl AppView {
         self.sync_window_overlays(window, cx);
         self.shell.status_message = i18n::string("session.messages.closed_other_tabs");
         cx.notify();
+    }
+
+    /// Closing a detached window closes its tabs; remote desktop tunnels that still carry
+    /// connections ask first, exactly like closing those tabs one by one. Returns `true`
+    /// when the close must wait for that confirmation.
+    pub(in crate::ui) fn detached_window_close_needs_rdp_confirmation(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let tab_ids = self
+            .workspace
+            .tabs
+            .iter()
+            .filter(|tab| tab.is_top_level())
+            .map(|tab| tab.id)
+            .collect::<Vec<_>>();
+        self.controllers
+            .session
+            .update(cx, |owner, cx| owner.request_rdp_close(&tab_ids, cx))
     }
 
     pub(in crate::ui::shell) fn duplicate_profile_tab(

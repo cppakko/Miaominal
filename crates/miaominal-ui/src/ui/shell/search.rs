@@ -1,6 +1,7 @@
 use super::*;
 use crate::ui::contracts::search::{SearchEntry, SearchKind, SearchTarget};
 use crate::ui::features::search::SearchEvent;
+use crate::ui::i18n;
 
 impl AppView {
     pub(super) fn handle_management_search_event(
@@ -30,6 +31,11 @@ impl AppView {
                         {
                             self.navigate_to_settings_destination(destination, cx);
                         }
+                    }
+                    SearchTarget::Rdp(id) => {
+                        self.controllers
+                            .session
+                            .update(cx, |controller, cx| controller.open_rdp_launch(id, cx));
                     }
                     SearchTarget::Host(id) => {
                         self.controllers.hosts.update(cx, |controller, cx| {
@@ -192,6 +198,21 @@ impl AppView {
                 )
                 .with_recent(profile.last_connected_at),
             );
+            if profile.kind == miaominal_core::profile::ProfileKind::Ssh {
+                entries.push(SearchEntry::new(
+                    format!("rdp:{}", profile.id),
+                    SearchKind::Host,
+                    format!("{} · {}", i18n::string("rdp.title"), profile.name),
+                    profile.group.clone(),
+                    format!(
+                        "rdp remote desktop 远程桌面 {} {} {}",
+                        profile.host,
+                        profile.username,
+                        profile.tags.join(" ")
+                    ),
+                    SearchTarget::Rdp(profile.id.clone()),
+                ));
+            }
             for rule in &profile.port_forwarding_rules {
                 entries.push(SearchEntry::new(
                     format!("forward:{}:{}", profile.id, rule.id),

@@ -67,6 +67,9 @@ impl SessionController {
 
     pub(in crate::ui) fn reopen_profile_for_tab(&self, tab_id: TabId) -> Option<SessionProfile> {
         let session = self.tab(tab_id)?;
+        if session.purpose == SessionPurpose::Rdp {
+            return None;
+        }
         let profile_id = session.profile_id.clone();
         let pending_profile = session.pending_profile.clone();
         drop(session);
@@ -96,10 +99,15 @@ impl SessionController {
         let mut session = self.tab_mut(tab_id)?;
         let purpose = session.purpose;
         let profile_id = session.profile_id.clone();
+        let rdp_id = session.rdp.as_ref().map(|runtime| runtime.id().to_string());
         let commands = session.commands.take();
         let reconnect = session.reconnect_task.take();
         drop(session);
         drop(reconnect);
+        self.rdp_close_approved.borrow_mut().remove(&tab_id);
+        if let Some(id) = rdp_id {
+            self.rdp_service().forget(&id);
+        }
 
         self.terminal_port().close_session(tab_id);
         if should_close_commands_when_retiring(purpose)
