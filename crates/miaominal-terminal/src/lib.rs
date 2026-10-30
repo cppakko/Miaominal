@@ -2760,6 +2760,40 @@ mod tests {
     }
 
     #[test]
+    fn vim_scroll_regions_preserve_ruler_before_any_resize() {
+        for (columns, screen_lines) in [(146, 46), (83, 19), (20, 6)] {
+            for chunk_size in [usize::MAX, 1] {
+                let mut core = TerminalCore::new(columns, screen_lines);
+                exercise_vim_scroll_region(&mut core, chunk_size);
+            }
+        }
+    }
+
+    #[test]
+    fn vim_scroll_regions_preserve_ruler_after_first_viewport_resize() {
+        for (columns, screen_lines) in [(146, 46), (83, 19), (20, 6)] {
+            for chunk_size in [usize::MAX, 1] {
+                let mut core = TerminalCore::new(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_LINES);
+                assert!(core.resize(columns, screen_lines));
+                exercise_vim_scroll_region(&mut core, chunk_size);
+            }
+        }
+    }
+
+    #[test]
+    fn vim_scroll_regions_preserve_ruler_after_resizing_active_alternate_screen() {
+        for (columns, screen_lines) in [(146, 46), (83, 19), (20, 6)] {
+            for chunk_size in [usize::MAX, 1] {
+                let mut core = TerminalCore::new(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_LINES);
+                exercise_vim_scroll_region(&mut core, chunk_size);
+                assert!(core.resize(columns, screen_lines));
+                // Like Vim's SIGWINCH redraw, reinstall the application margins at the new size.
+                exercise_vim_scroll_region(&mut core, chunk_size);
+            }
+        }
+    }
+
+    #[test]
     fn free_type_target_is_limited_to_cursor_wrapped_line_on_main_screen() {
         let width = MIN_TERMINAL_COLUMNS;
         let mut core = TerminalCore::new(width, 4);
@@ -3484,6 +3518,95 @@ mod tests {
         assert_eq!(osc_link.start_column, 8);
         assert_eq!(osc_link.end_column, 15);
         assert_eq!(osc_link.uri.as_ref(), "https://osc.test/target");
+    }
+
+    fn exercise_vim_scroll_region(core: &mut TerminalCore, chunk_size: usize) {
+        let columns = core.columns();
+        let screen_lines = core.screen_lines();
+        let body_lines = screen_lines - 1;
+        let mut body = (0..body_lines)
+            .map(|line| format!("body-{line:04}"))
+            .collect::<Vec<_>>();
+        let mut redraw = format!("\x1b[?1049h\x1b[?6l\x1b[2J\x1b[1;{body_lines}r");
+        for (line, text) in body.iter().enumerate() {
+            write!(&mut redraw, "\x1b[{};1H{text}", line + 1).unwrap();
+        }
+        let mut ruler = format!("{:>columns$}", "RULER 000 0%");
+        write!(&mut redraw, "\x1b[{screen_lines};1H{ruler}").unwrap();
+        push_vim_replay(core, &redraw, chunk_size);
+        assert_vim_scroll_region(core, &body, &ruler);
+
+        for step in 0..screen_lines * 3 + 7 {
+            // Cover Vim-style scroll optimization: SU, SD, IL, DL, LF, and RI.
+            let (origin, count, scroll_up, command) = match step % 6 {
+                0 => (0, 3, true, "\x1b[3S".to_string()),
+                1 => (0, 2, false, "\x1b[2T".to_string()),
+                2 => (3, 2, false, "\x1b[4;1H\x1b[2L".to_string()),
+                3 => (3, 2, true, "\x1b[4;1H\x1b[2M".to_string()),
+                4 => (0, 1, true, format!("\x1b[{body_lines};1H\n")),
+                _ => (0, 1, false, "\x1b[1;1H\x1bM".to_string()),
+            };
+            let affected = &mut body[origin..];
+            let count = usize::min(count, affected.len());
+            if scroll_up {
+                affected.rotate_left(count);
+                let clear_from = affected.len() - count;
+                affected[clear_from..].fill(String::new());
+            } else {
+                affected.rotate_right(count);
+                affected[..count].fill(String::new());
+            }
+            push_vim_replay(core, &command, chunk_size);
+            // Check before repainting: a full-screen scroll must not be hidden by a ruler redraw.
+            assert_vim_scroll_region(core, &body, &ruler);
+
+            let mut update = String::new();
+            for (line, text) in body.iter_mut().enumerate() {
+                if text.is_empty() {
+                    *text = format!("new-{step:03}-{line:02}");
+                    write!(&mut update, "\x1b[{};1H{text}", line + 1).unwrap();
+                }
+            }
+            ruler = format!("{:>columns$}", format!("RULER {step:03} {}%", step % 101));
+            write!(&mut update, "\x1b[{screen_lines};1H{ruler}").unwrap();
+            push_vim_replay(core, &update, chunk_size);
+            assert_vim_scroll_region(core, &body, &ruler);
+        }
+
+        let snapshot = core.snapshot(false, &TerminalTheme::from_settings());
+        assert_eq!(snapshot.columns, columns);
+        assert_eq!(snapshot.screen_lines, screen_lines);
+        for (line, expected) in body.iter().chain(std::iter::once(&ruler)).enumerate() {
+            let actual = snapshot.cells[line]
+                .iter()
+                .map(|cell| cell.character)
+                .collect::<String>();
+            assert_eq!(actual.trim_end(), expected);
+        }
+    }
+
+    fn push_vim_replay(core: &mut TerminalCore, text: &str, chunk_size: usize) {
+        for bytes in text.as_bytes().chunks(chunk_size) {
+            core.push_bytes(bytes);
+        }
+    }
+
+    fn assert_vim_scroll_region(core: &TerminalCore, body: &[String], ruler: &str) {
+        assert_eq!(core.term.columns(), core.columns());
+        assert_eq!(core.term.screen_lines(), core.screen_lines());
+        assert!(core.term.mode().contains(TermMode::ALT_SCREEN));
+        assert_eq!(core.display_offset(), 0);
+        assert_eq!(core.history_size(), 0);
+        for (line, expected) in body.iter().enumerate() {
+            let actual = terminal_grid_row_text(core, line as i32);
+            assert_eq!(actual, *expected, "body row {line}");
+            assert!(!actual.contains('%'), "ruler leaked into body row {line}");
+        }
+        let bottom = terminal_grid_row_text(core, body.len() as i32);
+        assert_eq!(bottom, ruler, "ruler must remain on the last screen row");
+        assert_eq!(bottom.len(), core.columns());
+        assert!(bottom.ends_with('%'));
+        assert!(!bottom.starts_with('%'));
     }
 
     fn terminal_grid_row_text(core: &TerminalCore, line: i32) -> String {

@@ -212,6 +212,15 @@ impl SessionController {
 
             match event {
                 SessionEvent::Connected(connection_label) => {
+                    // Reconcile once the backend is ready, even if the local grid did not
+                    // change: a pre-shell resize may have been consumed during setup.
+                    if !is_connection_test
+                        && let Some(commands) = session.commands.as_ref()
+                        && let Err(error) = commands
+                            .resize(session.terminal.columns(), session.terminal.screen_lines())
+                    {
+                        log::debug!("failed to synchronize ready terminal PTY size: {error:?}");
+                    }
                     session.set_connection_state(SessionConnectionState::Ready);
                     session.reconnect_attempt = 0;
                     if is_connection_test {
@@ -590,6 +599,7 @@ mod tests {
     use super::super::{SessionMonitoringState, SessionTabState};
     use super::*;
     use crate::ui::features::session::SessionSftpProgressLayoutState;
+    use miaominal_ssh::{SessionCommand, session_channels};
     use miaominal_terminal::TerminalState;
     use tokio::sync::mpsc;
 
@@ -827,6 +837,91 @@ mod tests {
 
         assert_eq!(chunk, b"ab");
         assert!(matches!(pending, Some(SessionEvent::Status(status)) if status == "ready"));
+    }
+
+    #[test]
+    fn connected_terminal_resends_latest_viewport_without_window_resize() {
+        for local_terminal in [false, true] {
+            let (controller, tab_id) = local_terminal_controller();
+            let mut channels = session_channels();
+            {
+                let mut session = controller
+                    .tab_mut(tab_id)
+                    .expect("terminal tab should exist");
+                session.local_terminal = local_terminal;
+                session.connection_state = SessionConnectionState::Connecting;
+                session.commands = Some(channels.connection.commands.clone());
+            }
+
+            assert!(
+                controller
+                    .resize_terminal_for_viewport(tab_id, 146, 46, true, true)
+                    .0
+            );
+            // Simulate a pre-shell command consumer discarding the first resize.
+            assert!(matches!(
+                channels.commands.try_recv(),
+                Ok(SessionCommand::Resize {
+                    columns: 146,
+                    lines: 46
+                })
+            ));
+            assert!(channels.commands.try_recv().is_err());
+            // Another frame with unchanged geometry does not issue a live resize.
+            assert!(
+                !controller
+                    .resize_terminal_for_viewport(tab_id, 146, 46, true, true)
+                    .0
+            );
+            assert!(channels.commands.try_recv().is_err());
+
+            controller
+                .apply_session_event(
+                    tab_id,
+                    SessionEvent::Connected("terminal".into()),
+                    false,
+                    "Terminal",
+                )
+                .expect("connected event should be applied");
+
+            assert!(matches!(
+                channels.commands.try_recv(),
+                Ok(SessionCommand::Resize {
+                    columns: 146,
+                    lines: 46
+                })
+            ));
+            assert!(channels.commands.try_recv().is_err());
+            let session = controller.tab(tab_id).expect("terminal tab should exist");
+            assert_eq!(session.connection_state, SessionConnectionState::Ready);
+            assert_eq!(session.terminal.columns(), 146);
+            assert_eq!(session.terminal.screen_lines(), 46);
+        }
+    }
+
+    #[test]
+    fn connected_connection_test_does_not_resize_an_unused_terminal() {
+        let (controller, tab_id) = connection_test_controller();
+        let mut channels = session_channels();
+        controller
+            .tab_mut(tab_id)
+            .expect("connection test tab should exist")
+            .commands = Some(channels.connection.commands.clone());
+
+        controller
+            .apply_session_event(
+                tab_id,
+                SessionEvent::Connected("profile-a".into()),
+                false,
+                "Test profile-a",
+            )
+            .expect("connected event should be applied");
+
+        assert!(matches!(
+            channels.commands.try_recv(),
+            Ok(SessionCommand::Close)
+        ));
+        assert!(channels.commands.try_recv().is_err());
     }
 
     #[test]

@@ -393,15 +393,45 @@ impl CancelToken {
     }
 }
 
+/// Latest requested geometry survives connection/authentication command routing,
+/// which may consume resize commands before the interactive PTY exists.
+#[derive(Clone, Debug)]
+struct InitialPtySize {
+    dimensions: Arc<Mutex<(usize, usize)>>,
+}
+
+impl InitialPtySize {
+    fn new(columns: usize, lines: usize) -> Self {
+        Self {
+            dimensions: Arc::new(Mutex::new((
+                columns.max(MIN_TERMINAL_COLUMNS),
+                lines.max(1),
+            ))),
+        }
+    }
+
+    fn latest(&self) -> Result<(usize, usize)> {
+        self.dimensions
+            .lock()
+            .map(|dimensions| *dimensions)
+            .map_err(|_| anyhow!("PTY size mutex poisoned"))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionCommandSender {
     sender: UnboundedSender<SessionCommand>,
     cancel: CancelToken,
+    initial_pty_size: Option<InitialPtySize>,
 }
 
 impl SessionCommandSender {
     pub(super) fn new(sender: UnboundedSender<SessionCommand>, cancel: CancelToken) -> Self {
-        Self { sender, cancel }
+        Self {
+            sender,
+            cancel,
+            initial_pty_size: None,
+        }
     }
 
     /// Cancellation signal shared with [`SessionCommandSender::close`].
@@ -423,6 +453,21 @@ impl SessionCommandSender {
     }
 
     pub fn resize(&self, columns: usize, lines: usize) -> Result<()> {
+        // Record before enqueueing: connect/trust and keyboard-interactive
+        // routers may consume this command before request_pty can use it.
+        // Keep the guard through send so cloned senders preserve the same
+        // geometry order in both the startup snapshot and the command queue.
+        let mut initial_pty_size = match self.initial_pty_size.as_ref() {
+            Some(size) => Some(
+                size.dimensions
+                    .lock()
+                    .map_err(|_| anyhow!("PTY size mutex poisoned"))?,
+            ),
+            None => None,
+        };
+        if let Some(dimensions) = initial_pty_size.as_mut() {
+            **dimensions = (columns.max(MIN_TERMINAL_COLUMNS), lines.max(1));
+        }
         self.sender
             .send(SessionCommand::Resize { columns, lines })
             .map_err(|_| anyhow!("session is no longer available"))
@@ -593,8 +638,8 @@ pub fn start_session(
     let cancel = CancelToken::default();
     let worker_cancel = cancel.clone();
 
-    let columns = columns.max(MIN_TERMINAL_COLUMNS);
-    let lines = lines.max(1);
+    let initial_pty_size = InitialPtySize::new(columns, lines);
+    let worker_pty_size = initial_pty_size.clone();
 
     let thread = std::thread::Builder::new()
         .name(format!("ssh-session-{}", profile.id))
@@ -612,8 +657,7 @@ pub fn start_session(
                         known_hosts,
                         command_receiver,
                         event_sender.clone(),
-                        columns,
-                        lines,
+                        worker_pty_size,
                         monitoring_enabled,
                     ) => result,
                     () = worker_cancel.cancelled() => Err(ConnectionCancelled.into()),
@@ -641,11 +685,9 @@ pub fn start_session(
         })
         .expect("failed to spawn SSH session thread");
 
-    SessionConnection::new(
-        SessionCommandSender::new(command_sender, cancel),
-        event_receiver,
-        Some(thread),
-    )
+    let mut commands = SessionCommandSender::new(command_sender, cancel);
+    commands.initial_pty_size = Some(initial_pty_size);
+    SessionConnection::new(commands, event_receiver, Some(thread))
 }
 
 pub async fn execute_profile_command(
@@ -1221,8 +1263,7 @@ async fn run_session(
     known_hosts: KnownHostsStore,
     mut command_receiver: UnboundedReceiver<SessionCommand>,
     event_sender: SessionEventSender,
-    columns: usize,
-    lines: usize,
+    initial_pty_size: InitialPtySize,
     monitoring_enabled: bool,
 ) -> Result<()> {
     let remote_label = profile.connection_label();
@@ -1298,6 +1339,10 @@ async fn run_session(
         }
     }
 
+    // Snapshot only after every hop's connection/authentication routers have
+    // finished. Resizes arriving after this point stay queued for the live loop.
+    let (columns, lines) = initial_pty_size.latest()?;
+    log::debug!("requesting interactive SSH PTY: {columns}x{lines}");
     channel
         .request_pty(
             true,
@@ -1914,6 +1959,120 @@ mod tests {
     use super::*;
     use crate::forwarding::RemoteForwardTarget;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn interactive_test_commands(
+        columns: usize,
+        lines: usize,
+    ) -> (
+        SessionCommandSender,
+        UnboundedReceiver<SessionCommand>,
+        InitialPtySize,
+    ) {
+        let (sender, receiver) = unbounded_channel();
+        let size = InitialPtySize::new(columns, lines);
+        let mut commands = SessionCommandSender::new(sender, CancelToken::default());
+        commands.initial_pty_size = Some(size.clone());
+        (commands, receiver, size)
+    }
+
+    #[test]
+    fn initial_pty_size_preserves_initial_geometry_and_minimums() {
+        assert_eq!(InitialPtySize::new(120, 32).latest().unwrap(), (120, 32));
+        assert_eq!(
+            InitialPtySize::new(0, 0).latest().unwrap(),
+            (MIN_TERMINAL_COLUMNS, 1)
+        );
+    }
+
+    #[test]
+    fn cloned_resizes_share_initial_geometry_and_still_enqueue_live_commands() {
+        let (commands, mut receiver, size) = interactive_test_commands(120, 32);
+        let cloned_commands = commands.clone();
+
+        commands.resize(160, 40).unwrap();
+        assert_eq!(size.latest().unwrap(), (160, 40));
+        cloned_commands.resize(180, 48).unwrap();
+        assert_eq!(size.latest().unwrap(), (180, 48));
+        commands.resize(0, 0).unwrap();
+        assert_eq!(size.latest().unwrap(), (MIN_TERMINAL_COLUMNS, 1));
+
+        for expected in [(160, 40), (180, 48), (0, 0)] {
+            assert!(matches!(
+                receiver.try_recv(),
+                Ok(SessionCommand::Resize { columns, lines }) if (columns, lines) == expected
+            ));
+        }
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn non_pty_command_senders_keep_the_existing_resize_protocol() {
+        let mut channels = session_channels();
+        assert!(channels.connection.commands.initial_pty_size.is_none());
+        channels.connection.commands.resize(0, 0).unwrap();
+        assert!(matches!(
+            channels.commands.try_recv(),
+            Ok(SessionCommand::Resize {
+                columns: 0,
+                lines: 0,
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn connecting_router_cannot_discard_latest_initial_pty_geometry() {
+        let (commands, mut receiver, size) = interactive_test_commands(120, 32);
+        let (event_sender, _events) = session_event_channel();
+        let (decision_sender, decision_receiver) = oneshot::channel();
+        let pending_host_key = Arc::new(Mutex::new(Some(PendingHostKeyDecision {
+            request_id: 7,
+            decision: decision_sender,
+        })));
+        let mut configured_port_forward_rules = Vec::new();
+
+        // The production router must consume both resizes before it can reach
+        // the trust answer that releases the fake handshake. No transport or
+        // timing-dependent sleep is needed to reproduce the pre-PTY loss.
+        commands.resize(150, 38).unwrap();
+        commands.clone().resize(180, 44).unwrap();
+        commands
+            .respond_host_key(7, HostKeyDecision::AcceptOnce)
+            .unwrap();
+        let connect_future = async move {
+            assert!(matches!(
+                decision_receiver.await.unwrap(),
+                HostKeyDecision::AcceptOnce
+            ));
+            Err::<client::Handle<ClientHandler>, anyhow::Error>(anyhow!(
+                "test handshake stops after trust"
+            ))
+        };
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            await_session_connect(
+                connect_future,
+                &mut receiver,
+                pending_host_key,
+                &event_sender,
+                &mut configured_port_forward_rules,
+            ),
+        )
+        .await
+        .expect("trust answer should release the router")
+        .err()
+        .expect("the fake handshake should return its sentinel error");
+        assert_eq!(error.to_string(), "test handshake stops after trust");
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        // run_session takes this same snapshot immediately before request_pty.
+        assert_eq!(size.latest().unwrap(), (180, 44));
+    }
 
     #[tokio::test]
     async fn abort_task_guard_cancels_detached_event_work_on_drop() {
