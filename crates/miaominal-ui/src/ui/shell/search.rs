@@ -1,9 +1,109 @@
 use super::*;
 use crate::ui::contracts::search::{SearchEntry, SearchKind, SearchTarget};
-use crate::ui::features::search::SearchEvent;
+use crate::ui::features::search::{SearchContextMenuBuilder, SearchEvent};
 use crate::ui::i18n;
+use gpui_kit::component::menu::PopupMenu;
+
+/// Runs a result-menu action that leaves the search: close the results and
+/// release the field first, so the destination is visible and keeps focus.
+fn leave_search(
+    view: &gpui_kit::WeakEntity<AppView>,
+    window: &mut Window,
+    cx: &mut App,
+    action: impl FnOnce(&mut AppView, &mut Window, &mut Context<AppView>),
+) {
+    let Some(view) = view.upgrade() else {
+        return;
+    };
+    let search = view.read(cx).shell.search.clone();
+    search.update(cx, |search, cx| search.release_focus(window, cx));
+    view.update(cx, |this, cx| {
+        action(this, window, cx);
+        cx.notify();
+    });
+}
 
 impl AppView {
+    /// Result menus reuse each page's own context menu, so a right-click on a
+    /// search result offers exactly what a right-click on the item would.
+    pub(super) fn search_context_menu_builder(
+        view: gpui_kit::WeakEntity<Self>,
+    ) -> SearchContextMenuBuilder {
+        std::rc::Rc::new(move |target, menu: PopupMenu, _window, cx| {
+            let Some(app) = view.upgrade() else {
+                return menu;
+            };
+            let controllers = &app.read(cx).controllers;
+            match target {
+                SearchTarget::Host(profile_id) | SearchTarget::Rdp(profile_id) => {
+                    let hosts = controllers.hosts.clone();
+                    let (connect, edit, sftp) = (view.clone(), view.clone(), view.clone());
+                    hosts.read(cx).build_search_context_menu(
+                        hosts.clone(),
+                        menu,
+                        profile_id,
+                        move |id, window, cx| {
+                            leave_search(&connect, window, cx, |this, _, cx| {
+                                this.controllers.hosts.update(cx, |controller, cx| {
+                                    if let Some(index) = controller.profile_index(&id) {
+                                        controller.request_session_at_profile_index(index, cx);
+                                    }
+                                });
+                            })
+                        },
+                        move |id, window, cx| {
+                            leave_search(&edit, window, cx, |this, _, cx| {
+                                this.set_sidebar_section(SidebarSection::Hosts, cx);
+                                this.controllers.hosts.update(cx, |controller, cx| {
+                                    if let Some(index) = controller.profile_index(&id) {
+                                        controller.request_profile_editor_at_index(index, cx);
+                                    }
+                                });
+                            })
+                        },
+                        move |id, window, cx| {
+                            leave_search(&sftp, window, cx, |this, _, cx| {
+                                this.controllers.hosts.update(cx, |controller, cx| {
+                                    if let Some(index) = controller.profile_index(&id) {
+                                        controller.request_sftp_at_profile_index(index, cx);
+                                    }
+                                });
+                            })
+                        },
+                    )
+                }
+                SearchTarget::Key(key_id) => {
+                    let keychain = controllers.keychain.clone();
+                    keychain
+                        .read(cx)
+                        .build_search_context_menu(keychain.clone(), menu, key_id)
+                }
+                SearchTarget::Forward { profile, rule } => {
+                    let forwarding = controllers.forwarding.clone();
+                    let edit = view.clone();
+                    forwarding.read(cx).build_search_context_menu(
+                        forwarding.clone(),
+                        menu,
+                        profile,
+                        rule,
+                        move |profile, rule, window, cx| {
+                            leave_search(&edit, window, cx, |this, window, cx| {
+                                this.set_sidebar_section(SidebarSection::PortForwarding, cx);
+                                this.controllers.forwarding.update(cx, |controller, cx| {
+                                    controller.edit_port_forward_rule(profile, rule, window, cx)
+                                });
+                            })
+                        },
+                    )
+                }
+                // These pages have no item menu; their results only activate.
+                SearchTarget::Snippet(_)
+                | SearchTarget::Trust { .. }
+                | SearchTarget::Setting(_) => menu,
+            }
+        })
+    }
+
     pub(super) fn handle_management_search_event(
         &mut self,
         event: &SearchEvent,

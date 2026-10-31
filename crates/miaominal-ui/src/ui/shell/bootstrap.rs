@@ -469,6 +469,10 @@ impl AppView {
         ));
 
         let search = cx.new(|cx| crate::ui::features::search::SearchView::new(window, cx));
+        let search_menu_builder = Self::search_context_menu_builder(cx.weak_entity());
+        search.update(cx, |search, _| {
+            search.set_context_menu_builder(search_menu_builder)
+        });
         controller_subscriptions.push(cx.observe(&search, |_, _, cx| cx.notify()));
         controller_subscriptions.push(cx.subscribe_in(
             &search,

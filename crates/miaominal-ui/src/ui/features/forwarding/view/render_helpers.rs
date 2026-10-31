@@ -7,17 +7,43 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, SharedString, div, px, rgb};
+use gpui_kit::{App, Entity, SharedString, Window, div, px, rgb};
 use miaominal_core::profile::{PortForwardKind, PortForwardRule};
+use std::rc::Rc;
+
+type ForwardRuleEditAction = Rc<dyn Fn(String, String, &mut Window, &mut App)>;
 
 #[derive(Clone)]
 pub(super) struct ForwardRuleActions {
     controller: Entity<ForwardingController>,
+    edit: Option<ForwardRuleEditAction>,
 }
 
 impl ForwardRuleActions {
     pub(super) fn new(controller: Entity<ForwardingController>) -> Self {
-        Self { controller }
+        Self {
+            controller,
+            edit: None,
+        }
+    }
+
+    /// Replaces the default in-page edit, for callers that must navigate first.
+    pub(super) fn with_edit(
+        mut self,
+        edit: impl Fn(String, String, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.edit = Some(Rc::new(edit));
+        self
+    }
+
+    fn edit(&self, profile_id: String, rule_id: String, window: &mut Window, cx: &mut App) {
+        if let Some(edit) = &self.edit {
+            edit(profile_id, rule_id, window, cx);
+            return;
+        }
+        self.controller.update(cx, |controller, cx| {
+            controller.edit_port_forward_rule(profile_id, rule_id, window, cx);
+        });
     }
 
     fn set_connected(&self, profile_id: String, rule_id: String, connected: bool, cx: &mut App) {
@@ -55,9 +81,9 @@ pub(super) fn build_forward_rule_context_menu(
     listen_port: u16,
     kind: miaominal_core::profile::PortForwardKind,
 ) -> PopupMenu {
-    let edit_controller = controller.clone();
     let duplicate_controller = controller.clone();
     let remove_controller = controller;
+    let edit_actions = actions.clone();
     let connect_actions = actions.clone();
     let connect_profile_id = profile_id.clone();
     let connect_rule_id = rule_id.clone();
@@ -82,12 +108,7 @@ pub(super) fn build_forward_rule_context_menu(
     )
     .item(
         PopupMenuItem::new(i18n::string("forwarding.menu.edit")).on_click(move |_, window, cx| {
-            let controller = edit_controller.clone();
-            let profile_id = edit_profile_id.clone();
-            let rule_id = edit_rule_id.clone();
-            controller.update(cx, |controller, cx| {
-                controller.edit_port_forward_rule(profile_id.clone(), rule_id.clone(), window, cx);
-            });
+            edit_actions.edit(edit_profile_id.clone(), edit_rule_id.clone(), window, cx);
         }),
     )
     .item(

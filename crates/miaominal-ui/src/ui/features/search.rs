@@ -12,18 +12,23 @@ use gpui_kit::component::{
     Disableable, FocusTrapElement as _, Icon, IconName, Selectable,
     button::{Button, ButtonVariants as _},
     input::{InputEvent, InputState},
+    menu::{ContextMenuExt as _, PopupMenu},
     scroll::ScrollableElement as _,
 };
 use gpui_kit::{
-    Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _, IntoElement, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    TestSupportExt as _, Window, div, prelude::*, px,
+    Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _, IntoElement,
+    MouseButton, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, TestSupportExt as _, WeakEntity, Window, div, prelude::*, px,
 };
+use std::rc::Rc;
 
 pub(in crate::ui) enum SearchEvent {
     QueryChanged(String),
     Activate(SearchTarget),
 }
+/// Builds the context menu of one result; the owner of the target's actions supplies it.
+pub(in crate::ui) type SearchContextMenuBuilder =
+    Rc<dyn Fn(&SearchTarget, PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 pub(in crate::ui) struct SearchView {
     input: Entity<InputState>,
     entries: Vec<SearchEntry>,
@@ -33,6 +38,8 @@ pub(in crate::ui) struct SearchView {
     suppress_next_focus: bool,
     selected: usize,
     scroll: ScrollHandle,
+    context_menu_builder: Option<SearchContextMenuBuilder>,
+    context_menu: Option<WeakEntity<PopupMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<SearchEvent> for SearchView {}
@@ -98,8 +105,36 @@ impl SearchView {
             suppress_next_focus: false,
             selected: 0,
             scroll: ScrollHandle::new(),
+            context_menu_builder: None,
+            context_menu: None,
             _subscriptions: vec![subscription],
         }
+    }
+    pub(in crate::ui) fn set_context_menu_builder(&mut self, builder: SearchContextMenuBuilder) {
+        self.context_menu_builder = Some(builder);
+    }
+    /// Whether a result's context menu currently owns keyboard focus.
+    fn context_menu_focused(&self, window: &Window, cx: &gpui_kit::App) -> bool {
+        self.context_menu
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .is_some_and(|menu| {
+                let focus = menu.focus_handle(cx);
+                focus.is_focused(window) || focus.contains_focused(window, cx)
+            })
+    }
+    /// Closes the results and leaves the input unfocused. The blur is deferred
+    /// so focus a closing menu hands back to the input is released as well,
+    /// while focus that moved elsewhere (a dialog, another field) is kept.
+    pub(in crate::ui) fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open = false;
+        let input = self.input.clone();
+        window.defer(cx, move |window, cx| {
+            if input.focus_handle(cx).is_focused(window) {
+                window.blur(cx);
+            }
+        });
+        cx.notify();
     }
     fn refresh(&mut self) {
         let selected_id = self
@@ -166,6 +201,10 @@ impl SearchView {
         if !self.open {
             return false;
         }
+        // An open result menu handles its own navigation, confirm and cancel.
+        if self.context_menu_focused(window, cx) {
+            return false;
+        }
         match key {
             "escape" => self.dismiss(true, window, cx),
             "down" | "up" => {
@@ -229,6 +268,12 @@ impl Render for SearchView {
         let mut content = div()
             .id("management-search")
             .occlude()
+            // Pointer presses elsewhere release the field, as on any desktop surface.
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                if this.input.focus_handle(cx).is_focused(window) {
+                    this.release_focus(window, cx);
+                }
+            }))
             .w_full()
             .flex()
             .flex_col()
@@ -279,6 +324,9 @@ impl Render for SearchView {
                     let heading =
                         index == 0 || (!recent && self.results[index - 1].kind() != entry.kind());
                     let target = entry.target().clone();
+                    let menu_target = target.clone();
+                    let menu_builder = self.context_menu_builder.clone();
+                    let menu_owner = cx.weak_entity();
                     let selected = self.selected == index;
                     div()
                         .id(SharedString::from(format!("search-row:{}", entry.id())))
@@ -303,11 +351,50 @@ impl Render for SearchView {
                             )
                         })
                         .child(
+                            div()
+                                .id(SharedString::from(format!("search-result-item:{}", entry.id())))
+                                .w_full()
+                                // The keyboard selection follows the pointer, so the highlight
+                                // marks the result under the mouse or the one whose menu is open
+                                // rather than staying on the first result.
+                                .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                                    if this.selected != index && !this.context_menu_focused(window, cx) {
+                                        this.selected = index;
+                                        cx.notify();
+                                    }
+                                }))
+                                .capture_any_mouse_down(cx.listener(
+                                    move |this, event: &gpui_kit::MouseDownEvent, _, cx| {
+                                        if event.button == MouseButton::Right && this.selected != index {
+                                            this.selected = index;
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .context_menu(move |menu, window, cx| {
+                                    let Some(builder) = menu_builder.as_ref() else {
+                                        return menu;
+                                    };
+                                    let menu_handle = cx.weak_entity();
+                                    menu_owner
+                                        .update(cx, |search, _| search.context_menu = Some(menu_handle))
+                                        .ok();
+                                    builder(&menu_target, menu, window, cx)
+                                })
+                                .child(
                             Button::new(SharedString::from(format!(
                                 "search-result:{}",
                                 entry.id()
                             )))
                             .ghost()
+                            // Right-click opens the result menu; keep focus where it is so
+                            // the menu hands it back to the search field on dismiss. Capture
+                            // phase, so the press also never paints the pressed fill.
+                            .capture_any_mouse_down(|event, window, _| {
+                                if event.button == MouseButton::Right {
+                                    window.prevent_default()
+                                }
+                            })
                             .accessibility_label(format!(
                                 "{} · {}",
                                 entry.title(),
@@ -376,6 +463,7 @@ impl Render for SearchView {
                                     cx.notify();
                                 },
                             )),
+                                ),
                         )
                 })
                 .collect::<Vec<_>>();
@@ -619,6 +707,112 @@ mod interaction_tests {
         cx.update(|window, cx| {
             window.render_frame(cx);
             assert!(!search.read(cx).is_open());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn right_click_opens_the_owner_menu_and_it_keeps_its_keys(cx: &mut TestAppContext) {
+        use gpui_kit::component::menu::PopupMenuItem;
+        use std::{cell::Cell, rc::Rc};
+        cx.update(gpui_kit::init);
+        let captured = Rc::new(std::cell::RefCell::new(None));
+        let output = captured.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let search = cx.new(|cx| SearchView::new(window, cx));
+            output.replace(Some(search.clone()));
+            Root::new(search, window, cx)
+        });
+        let search = captured.borrow().as_ref().unwrap().clone();
+        let acted = Rc::new(Cell::new(None::<SearchTarget>));
+        let record = acted.clone();
+        cx.update(|window, cx| {
+            search.update(cx, |search, cx| {
+                search.set_context_menu_builder(Rc::new(move |target, menu, _, _| {
+                    let record = record.clone();
+                    let target = target.clone();
+                    menu.item(
+                        PopupMenuItem::new("Act")
+                            .on_click(move |_, _, _| record.set(Some(target.clone()))),
+                    )
+                }));
+                search.set_entries(vec![
+                    SearchEntry::new(
+                        "host:a".into(),
+                        SearchKind::Host,
+                        "Alpha".into(),
+                        "Work".into(),
+                        String::new(),
+                        SearchTarget::Host("a".into()),
+                    ),
+                    SearchEntry::new(
+                        "host:b".into(),
+                        SearchKind::Host,
+                        "Alpha Two".into(),
+                        "Work".into(),
+                        String::new(),
+                        SearchTarget::Host("b".into()),
+                    ),
+                ]);
+                search.load_query("alpha".into(), window, cx);
+            });
+            window.render_frame(cx);
+            window.click("search-input-region", cx);
+        });
+        cx.run_until_parked();
+        let center = cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert_eq!(search.read(cx).selected, 0);
+            window.find("search-result:host:b").bounds().center()
+        });
+        cx.simulate_mouse_down(center, MouseButton::Right, Default::default());
+        cx.simulate_mouse_up(center, MouseButton::Right, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(search.read(cx).is_open());
+            assert_eq!(
+                search.read(cx).selected,
+                1,
+                "the highlight follows the right-clicked result"
+            );
+            assert!(search.read(cx).context_menu_focused(window, cx));
+        });
+        cx.simulate_keystrokes("down enter");
+        cx.run_until_parked();
+        assert_eq!(acted.take(), Some(SearchTarget::Host("b".into())));
+    }
+
+    #[gpui_kit::test]
+    fn pressing_outside_releases_the_search_field(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let output = captured.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let search = cx.new(|cx| SearchView::new(window, cx));
+            output.replace(Some(search.clone()));
+            let host = cx.new(|_| NotificationSearchHost { search });
+            Root::new(host, window, cx)
+        });
+        let search = captured.borrow().as_ref().unwrap().clone();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            let input_id = ("input", search.read(cx).input.entity_id());
+            window.click(input_id, cx);
+        });
+        cx.run_until_parked();
+        let blank = cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(search.read(cx).is_open());
+            assert!(search.read(cx).input.focus_handle(cx).is_focused(window));
+            let region = window.find("search-input-region").bounds();
+            gpui_kit::point(region.center().x, region.bottom() + px(400.0))
+        });
+        cx.simulate_click(blank, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(!search.read(cx).is_open());
+            assert!(!search.read(cx).input.focus_handle(cx).is_focused(window));
         });
     }
 

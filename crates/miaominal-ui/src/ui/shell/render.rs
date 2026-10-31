@@ -239,7 +239,7 @@ impl Render for AppView {
                             },
                         ))
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            search.update(cx, |search, cx| search.dismiss(true, window, cx));
+                            search.update(cx, |search, cx| search.release_focus(window, cx));
                             cx.stop_propagation();
                         })
                         .on_scroll_wheel(|_, _, cx| cx.stop_propagation()),

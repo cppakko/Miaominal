@@ -127,9 +127,14 @@ pub(in crate::ui::features::hosts) fn host_card(
                 ))
                 // Right-click only opens the card's context menu. Without this the
                 // press focuses the button, and the menu restores that focus on
-                // dismiss, leaving a focus ring on the card.
-                .on_mouse_down(gpui_kit::MouseButton::Right, |_, window, _| {
-                    window.prevent_default()
+                // dismiss, leaving a focus ring on the card. It must run in the
+                // capture phase: GPUI sets the pressed fill for any button in the
+                // bubble phase, before a bubble listener could prevent it, so a
+                // right-click would flash the card.
+                .capture_any_mouse_down(|event, window, _| {
+                    if event.button == gpui_kit::MouseButton::Right {
+                        window.prevent_default()
+                    }
                 })
                 .child(
                     div()

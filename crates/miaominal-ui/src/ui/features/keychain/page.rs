@@ -58,6 +58,21 @@ fn build_managed_key_context_menu(
     )
 }
 
+impl KeychainController {
+    /// The managed key card's context menu, for a key shown outside this page.
+    pub(in crate::ui) fn build_search_context_menu(
+        &self,
+        controller: Entity<Self>,
+        menu: PopupMenu,
+        key_id: &str,
+    ) -> PopupMenu {
+        if !self.managed_keys().iter().any(|key| key.id == key_id) {
+            return menu;
+        }
+        build_managed_key_context_menu(menu, controller, key_id.to_owned(), key_id.to_owned())
+    }
+}
+
 fn managed_key_card(
     key: &ManagedKeyRecord,
     entity: Entity<KeychainController>,

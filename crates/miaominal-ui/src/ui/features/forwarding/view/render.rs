@@ -817,6 +817,43 @@ impl ForwardingController {
             )
             .into_any_element()
     }
+
+    /// The rule card's context menu, for a rule shown outside this page.
+    pub(in crate::ui) fn build_search_context_menu(
+        &self,
+        controller: Entity<Self>,
+        menu: gpui_kit::component::menu::PopupMenu,
+        profile_id: &str,
+        rule_id: &str,
+        on_edit: impl Fn(String, String, &mut Window, &mut App) + 'static,
+    ) -> gpui_kit::component::menu::PopupMenu {
+        let profiles = self.profiles();
+        let Some(rule) = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .and_then(|profile| {
+                profile
+                    .port_forwarding_rules
+                    .iter()
+                    .find(|rule| rule.id == rule_id)
+            })
+        else {
+            return menu;
+        };
+        let runtime_state = self.port_forward_rule_runtime_state(profile_id, rule_id);
+        let state = ForwardRuleConnectionUiState::from_runtime(runtime_state.as_ref());
+        build_forward_rule_context_menu(
+            menu,
+            controller.clone(),
+            ForwardRuleActions::new(controller).with_edit(on_edit),
+            profile_id.to_owned(),
+            rule_id.to_owned(),
+            state.session_active,
+            rule.listen_host.clone(),
+            rule.listen_port,
+            rule.kind,
+        )
+    }
 }
 
 #[cfg(test)]

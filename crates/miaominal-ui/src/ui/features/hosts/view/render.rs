@@ -194,8 +194,11 @@ fn profile_item(
         .rounded_full()
         // Right-click opens the card context menu; it must not focus this button,
         // or the menu restores that focus on dismiss and draws a focus ring.
-        .on_mouse_down(gpui_kit::MouseButton::Right, |_, window, _| {
-            window.prevent_default()
+        // Capture phase, so the press also never paints the pressed fill.
+        .capture_any_mouse_down(|event, window, _| {
+            if event.button == gpui_kit::MouseButton::Right {
+                window.prevent_default()
+            }
         })
         .dropdown_menu(move |menu, _, _| {
             build_host_context_menu(
@@ -235,6 +238,35 @@ fn profile_item(
 }
 
 impl HostsController {
+    /// The host card's context menu, for a profile shown outside this page.
+    pub(in crate::ui) fn build_search_context_menu(
+        &self,
+        controller: Entity<Self>,
+        menu: PopupMenu,
+        profile_id: &str,
+        on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_edit: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
+    ) -> PopupMenu {
+        let Some(profile) = self
+            .profiles()
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+        else {
+            return menu;
+        };
+        build_host_context_menu(
+            menu,
+            controller,
+            HostPageActions::new(on_connect, on_edit, on_open_sftp),
+            profile.id.clone(),
+            profile.is_favorite,
+            profile.is_local(),
+            profile.kind == miaominal_core::profile::ProfileKind::Ssh,
+        )
+    }
+
     pub(in crate::ui) fn render_hosts_page(
         &self,
         controller: Entity<Self>,
