@@ -59,6 +59,7 @@ mod terminal;
 
 pub(in crate::ui) const SESSION_MONITOR_HISTORY_LIMIT: usize = 900;
 pub(in crate::ui) use forwarding::PortForwardSessionStart;
+pub(in crate::ui) use rdp::RdpAction;
 
 #[derive(Debug, Clone)]
 pub(in crate::ui) struct MonitorChartPoint {
@@ -329,9 +330,16 @@ pub(in crate::ui) struct SessionController {
     /// Port field of the launch panel, created for one launch revision with a window.
     rdp_port_input: RefCell<Option<(u64, Entity<InputState>)>>,
     rdp_confirmation_revision: Cell<u64>,
-    rdp_direct: RefCell<HashSet<String>>,
+    /// Remote desktops launched from this window, in launch order.
+    rdp_sessions: RefCell<Vec<rdp::OwnedRdpSession>>,
+    /// Last service publication applied, to detect per-session transitions.
+    rdp_snapshot: RefCell<miaominal_services::RdpSnapshot>,
+    /// Sessions whose connection log is expanded in the footer panel.
+    rdp_logs_open: RefCell<HashSet<String>>,
+    /// Footer panel visibility; launches and failures open it so their state is seen.
+    rdp_panel_open: Cell<bool>,
     rdp_confirmation: RefCell<Option<rdp::RdpConfirmation>>,
-    rdp_close_approved: RefCell<HashSet<TabId>>,
+    rdp_window_close_approved: Cell<bool>,
 }
 
 pub(in crate::ui) struct SessionControllerArgs {
@@ -539,9 +547,12 @@ impl SessionController {
             rdp_launch_revision: Cell::new(0),
             rdp_port_input: RefCell::new(None),
             rdp_confirmation_revision: Cell::new(0),
-            rdp_direct: RefCell::new(HashSet::new()),
+            rdp_sessions: RefCell::new(Vec::new()),
+            rdp_snapshot: RefCell::new(Default::default()),
+            rdp_logs_open: RefCell::new(HashSet::new()),
+            rdp_panel_open: Cell::new(false),
             rdp_confirmation: RefCell::new(None),
-            rdp_close_approved: RefCell::new(HashSet::new()),
+            rdp_window_close_approved: Cell::new(false),
         }
     }
 

@@ -299,5 +299,8 @@ impl WorkspaceTransferHost for AppView {
     fn transfer_remove_tab_payload_and_metadata(&mut self, id: TabId, cx: &mut Context<Self>) {
         self.remove_tab_payload_and_metadata(id, cx);
     }
+    fn transfer_retire_window_resources(&mut self, cx: &mut Context<Self>) {
+        self.controllers.session.read(cx).retire_rdp_sessions();
+    }
 }
 use crate::ui::i18n;

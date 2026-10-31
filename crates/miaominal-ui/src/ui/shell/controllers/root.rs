@@ -737,7 +737,7 @@ impl AppView {
                 let profile_id = profile_id.clone();
                 let options = options.clone();
                 let entity = cx.entity();
-                // The tab belongs to this root's window, not whichever window has focus.
+                // The session belongs to this root's window, not whichever window has focus.
                 let window_handle = self.controllers.hosts.read(cx).owner_window();
                 cx.defer(move |cx| {
                     if let Err(error) = window_handle.update(cx, move |_, window, cx| {
@@ -950,6 +950,7 @@ impl AppView {
             | AppCommand::TerminalMenuRequested { .. }
             | AppCommand::VaultActionRequested(_)
             | AppCommand::ChatHistoryReopenRequested
+            | AppCommand::RdpSessionsChanged
             | AppCommand::LocalDataResetRequested
             | AppCommand::SaveSnippetRequested(_)
             | AppCommand::ImportProfilesRequested(_)

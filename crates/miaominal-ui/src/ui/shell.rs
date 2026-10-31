@@ -83,7 +83,7 @@ pub(in crate::ui::shell) use navigation::SidebarSection;
 pub(crate) use notification_center::publish_app_notification;
 pub(crate) use notification_center::{
     AppNotificationAction, initialize_notification_center, push_app_notification,
-    render_notification_center_popover, show_pending_app_notifications,
+    show_pending_app_notifications,
 };
 pub(in crate::ui::shell) use pages::SettingsDestination;
 pub(in crate::ui::shell) use panes::PaneId;

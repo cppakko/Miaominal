@@ -30,6 +30,10 @@ const NOTIFICATION_HISTORY_LIMIT: usize = 100;
 const NOTIFICATION_PANEL_WIDTH: f32 = 408.0;
 const NOTIFICATION_PANEL_HEIGHT: f32 = 480.0;
 const NOTIFICATION_EMPTY_PANEL_HEIGHT: f32 = 204.0;
+const NOTIFICATION_PANEL_HEADER_HEIGHT: f32 = 52.0;
+/// History height when live activity sits above it, so the whole panel stays compact.
+const NOTIFICATION_LIST_HEIGHT_WITH_ACTIVITY: f32 = 260.0;
+const STATUS_DOT_SIZE: f32 = 10.0;
 const NOTIFICATION_PANEL_CONTENT_PADDING: f32 = 8.0;
 const NOTIFICATION_ENTRY_WIDTH: f32 =
     NOTIFICATION_PANEL_WIDTH - NOTIFICATION_PANEL_CONTENT_PADDING * 2.0;
@@ -388,6 +392,8 @@ struct NotificationCenterTrigger {
     selected: bool,
     unread: usize,
     badge_color: u32,
+    /// Live-activity dot (e.g. running or failed remote desktops), separate from unread.
+    activity: Option<u32>,
     roles: miaominal_settings::theme::Md3Roles,
     tooltip: SharedString,
     focus_handle: gpui_kit::FocusHandle,
@@ -431,6 +437,20 @@ impl RenderOnce for NotificationCenterTrigger {
                     .top(px(-7.0))
                     .right(px(-10.0))
                     .into_any_element(),
+                )
+            })
+            .when_some(self.activity, |this, color| {
+                // Bottom corner so it never collides with the unread count above.
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom(px(2.0))
+                        .right(px(2.0))
+                        .size(px(STATUS_DOT_SIZE))
+                        .rounded_full()
+                        .border_2()
+                        .border_color(rgb(self.roles.surface))
+                        .bg(rgb(color)),
                 )
             })
     }
@@ -676,7 +696,21 @@ fn style_notification(notification: Notification) -> Notification {
         .rounded(px(NOTIFICATION_CORNER_RADIUS))
 }
 
-pub(crate) fn render_notification_center_popover(
+/// Live activity a feature shows above the notification history, e.g. running remote
+/// desktops. The status center only places it; the feature owns its content and state.
+pub(crate) struct StatusCenterActivity {
+    /// Trigger dot color for the most important live state; `None` hides the dot.
+    pub(crate) indicator: Option<u32>,
+    /// The center is controlled so a feature can open it when its state needs attention.
+    pub(crate) open: bool,
+    pub(crate) on_open_change: Rc<dyn Fn(bool, &mut Window, &mut App)>,
+    /// Section content; `None` when there is nothing live to show.
+    pub(crate) content: Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>,
+}
+
+/// Footer status center: live activity (when given) above the notification history.
+pub(crate) fn render_status_center_popover(
+    activity: Option<StatusCenterActivity>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -690,12 +724,20 @@ pub(crate) fn render_notification_center_popover(
         Some(AppNotificationPriority::Normal) => roles.primary,
         Some(AppNotificationPriority::Low) | None => roles.secondary,
     };
+    let status = activity.is_some();
+    let title: SharedString = i18n::string(if status {
+        "notifications.center.status_title"
+    } else {
+        "notifications.center.title"
+    })
+    .into();
     let trigger = NotificationCenterTrigger {
         selected: false,
         unread,
         badge_color,
+        activity: activity.as_ref().and_then(|activity| activity.indicator),
         roles,
-        tooltip: i18n::string("notifications.center.title").into(),
+        tooltip: title.clone(),
         focus_handle: window
             .use_keyed_state("notification-center-trigger-focus", cx, |_, cx| {
                 cx.focus_handle()
@@ -704,129 +746,174 @@ pub(crate) fn render_notification_center_popover(
             .clone(),
     };
     let trigger_focus = trigger.focus_handle.clone();
+    let (open, on_open_change, content) = match activity {
+        Some(activity) => (
+            Some(activity.open),
+            Some(activity.on_open_change),
+            Some(activity.content),
+        ),
+        None => (None, None, None),
+    };
 
-    Popover::new("notification-center-popover")
+    let popover = Popover::new("notification-center-popover")
         .anchor(Anchor::BottomRight)
         .appearance(false)
         .trigger(trigger)
         .track_focus(&trigger_focus)
-        .on_open_change(|open, window, cx| {
+        .when_some(open, |popover, open| popover.open(open))
+        .on_open_change(move |open, window, cx| {
             if *open {
                 mark_all_notifications_read(cx);
-                window.refresh();
             }
-        })
-        .content(|_, _, cx| {
-            let entries = notification_center_entries(cx);
-            let panel_height = if entries.is_empty() {
-                NOTIFICATION_EMPTY_PANEL_HEIGHT
-            } else {
-                NOTIFICATION_PANEL_HEIGHT
-            };
-            let roles = miaominal_settings::current_theme().material.roles;
-            let popover = cx.entity().clone();
-            v_flex()
-                .w(px(NOTIFICATION_PANEL_WIDTH))
-                .h(px(panel_height))
-                .rounded(px(24.0))
-                .bg(rgb(roles.surface_container_highest))
-                .shadow_lg()
-                .overflow_hidden()
-                .child(
-                    h_flex()
-                        .flex_none()
-                        .w_full()
-                        .min_h(px(52.0))
-                        .px_4()
-                        .pt_1()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_lg()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(roles.on_surface))
-                                .child(i18n::string("notifications.center.title")),
-                        )
-                        .child(
-                            Button::new("notification-center-clear")
-                                .ghost()
-                                .compact()
-                                .rounded(px(20.0))
-                                .label(i18n::string("notifications.center.clear_all"))
-                                .on_click(|_, window, cx| {
-                                    clear_all_notifications(cx);
-                                    window.refresh();
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .w_full()
-                        .min_h_0()
-                        .px(px(NOTIFICATION_PANEL_CONTENT_PADDING))
-                        .pb(px(NOTIFICATION_PANEL_CONTENT_PADDING))
-                        .overflow_hidden()
-                        .child(
-                            div().size_full().rounded(px(16.0)).overflow_hidden().child(
-                                div().size_full().overflow_y_scrollbar().child(
-                                    v_flex()
-                                        .w(px(NOTIFICATION_ENTRY_WIDTH))
-                                        .pb_2()
-                                        .gap_1()
-                                        .when(entries.is_empty(), |this| {
-                                            this.child(
-                                                v_flex()
-                                                    .h_full()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .gap_3()
-                                                    .text_color(rgb(roles.on_surface_variant))
-                                                    .child(
-                                                        div()
-                                                            .size(px(48.0))
-                                                            .rounded(px(999.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .bg(color_with_alpha(
-                                                                roles.secondary,
-                                                                0x20,
-                                                            ))
-                                                            .child(
-                                                                Icon::new(IconName::Bell)
-                                                                    .size(px(24.0))
-                                                                    .text_color(rgb(
-                                                                        roles.secondary
-                                                                    )),
-                                                            ),
-                                                    )
-                                                    .child(i18n::string(
-                                                        "notifications.center.empty",
-                                                    )),
-                                            )
-                                        })
-                                        .children(entries.into_iter().map(move |entry| {
-                                            render_notification_history_entry(
-                                                entry,
-                                                popover.clone(),
-                                            )
-                                        })),
-                                ),
+            if let Some(callback) = on_open_change.as_ref() {
+                callback(*open, window, cx);
+            }
+            window.refresh();
+        });
+    popover.content(move |_, window, cx| {
+        let live = content.as_ref().and_then(|content| content(window, cx));
+        let entries = notification_center_entries(cx);
+        let list_height = if entries.is_empty() {
+            NOTIFICATION_EMPTY_PANEL_HEIGHT - NOTIFICATION_PANEL_HEADER_HEIGHT
+        } else if live.is_some() {
+            NOTIFICATION_LIST_HEIGHT_WITH_ACTIVITY
+        } else {
+            NOTIFICATION_PANEL_HEIGHT - NOTIFICATION_PANEL_HEADER_HEIGHT
+        };
+        let roles = miaominal_settings::current_theme().material.roles;
+        let popover = cx.entity().clone();
+        let clear_all = || {
+            Button::new("notification-center-clear")
+                .ghost()
+                .compact()
+                .rounded(px(20.0))
+                .label(i18n::string("notifications.center.clear_all"))
+                .on_click(|_, window, cx| {
+                    clear_all_notifications(cx);
+                    window.refresh();
+                })
+        };
+        let has_live = live.is_some();
+        v_flex()
+            .w(px(NOTIFICATION_PANEL_WIDTH))
+            .rounded(px(24.0))
+            .bg(rgb(roles.surface_container_highest))
+            .shadow_lg()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .w_full()
+                    .min_h(px(NOTIFICATION_PANEL_HEADER_HEIGHT))
+                    .px_4()
+                    .pt_1()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(roles.on_surface))
+                            .child(title.clone()),
+                    )
+                    // With live activity above, "clear all" moves to the notifications
+                    // section so it plainly applies to notifications only.
+                    .when(!has_live, |row| row.child(clear_all())),
+            )
+            .when_some(live, |panel, live| {
+                panel
+                    .child(
+                        div()
+                            .flex_none()
+                            .w_full()
+                            .px(px(NOTIFICATION_PANEL_CONTENT_PADDING))
+                            .pb_2()
+                            .child(live),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .w_full()
+                            .min_h(px(40.0))
+                            .px_4()
+                            .justify_between()
+                            .child(section_label(
+                                i18n::string("notifications.center.title"),
+                                roles,
+                            ))
+                            .child(clear_all()),
+                    )
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .w_full()
+                    .h(px(list_height))
+                    .px(px(NOTIFICATION_PANEL_CONTENT_PADDING))
+                    .pb(px(NOTIFICATION_PANEL_CONTENT_PADDING))
+                    .overflow_hidden()
+                    .child(
+                        div().size_full().rounded(px(16.0)).overflow_hidden().child(
+                            div().size_full().overflow_y_scrollbar().child(
+                                v_flex()
+                                    .w(px(NOTIFICATION_ENTRY_WIDTH))
+                                    .pb_2()
+                                    .gap_1()
+                                    .when(entries.is_empty(), |this| {
+                                        this.child(
+                                            v_flex()
+                                                .h_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .gap_3()
+                                                .text_color(rgb(roles.on_surface_variant))
+                                                .child(
+                                                    div()
+                                                        .size(px(48.0))
+                                                        .rounded(px(999.0))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .bg(color_with_alpha(roles.secondary, 0x20))
+                                                        .child(
+                                                            Icon::new(IconName::Bell)
+                                                                .size(px(24.0))
+                                                                .text_color(rgb(roles.secondary)),
+                                                        ),
+                                                )
+                                                .child(i18n::string("notifications.center.empty")),
+                                        )
+                                    })
+                                    .children(entries.into_iter().map(move |entry| {
+                                        render_notification_history_entry(entry, popover.clone())
+                                    })),
                             ),
                         ),
-                )
-                .with_animation(
-                    "notification-center-panel-enter",
-                    notification_panel_enter_animation(),
-                    |element, delta| {
-                        element
-                            .opacity(delta)
-                            .top(px((1.0 - delta) * NOTIFICATION_PANEL_ENTER_OFFSET))
-                    },
-                )
-        })
+                    ),
+            )
+            .with_animation(
+                "notification-center-panel-enter",
+                notification_panel_enter_animation(),
+                |element, delta| {
+                    element
+                        .opacity(delta)
+                        .top(px((1.0 - delta) * NOTIFICATION_PANEL_ENTER_OFFSET))
+                },
+            )
+    })
+}
+
+/// Title-small label for a section inside the status center.
+pub(crate) fn section_label(
+    label: impl Into<SharedString>,
+    roles: miaominal_settings::theme::Md3Roles,
+) -> AnyElement {
+    div()
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(rgb(roles.on_surface_variant))
+        .child(label.into())
+        .into_any_element()
 }
 
 fn render_notification_history_entry(

@@ -656,8 +656,8 @@ mod interaction_tests {
                 .relative()
                 .child(div().w(px(420.0)).child(self.search.clone()))
                 .child(div().absolute().bottom_4().right_4().child(
-                    crate::ui::components::notifications::render_notification_center_popover(
-                        window, cx,
+                    crate::ui::components::notifications::render_status_center_popover(
+                        None, window, cx,
                     ),
                 ))
                 .child(

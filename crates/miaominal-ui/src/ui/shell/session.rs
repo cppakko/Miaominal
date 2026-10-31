@@ -296,21 +296,12 @@ impl AppView {
             );
             return;
         }
-        let tab_id = self.workspace.allocate_tab_id();
-        let descriptor = self.controllers.session.update(cx, |controller, cx| {
-            controller.start_rdp(tab_id, &profile_id, options, cx)
+        // Reserved for the session's SSH prompts; remote desktops never register a tab.
+        let prompt_tab = self.workspace.allocate_tab_id();
+        self.controllers.session.update(cx, |controller, cx| {
+            controller.start_rdp(prompt_tab, &profile_id, options, cx)
         });
-        if let Some(tab) = descriptor {
-            self.unload_active_topbar_workspace(cx);
-            self.register_session_tab_metadata(tab.into(), cx);
-            self.workspace.active_topbar_tab = Some(tab_id);
-            if let Some(index) = self.workspace.tabs.index_of(tab_id) {
-                self.load_topbar_workspace(index, cx);
-            }
-            self.rebind_terminal_focus_reporting(window, cx);
-            self.sync_session_port_snapshot(cx);
-            self.sync_window_overlays(window, cx);
-        }
+        self.sync_window_overlays(window, cx);
         cx.notify();
     }
 
@@ -774,15 +765,6 @@ impl AppView {
             return;
         }
 
-        if let Some(id) = self.workspace.tabs.id_at(index) {
-            if self
-                .controllers
-                .session
-                .update(cx, |owner, cx| owner.request_rdp_close(&[id], cx))
-            {
-                return;
-            }
-        }
         let closed_bundle = self.build_closed_tab_bundle(index, cx);
         let tab = self
             .workspace
@@ -1094,13 +1076,6 @@ impl AppView {
             .iter()
             .filter_map(|index| self.workspace.tabs.id_at(*index))
             .collect::<Vec<_>>();
-        if self
-            .controllers
-            .session
-            .update(cx, |owner, cx| owner.request_rdp_close(&remove_ids, cx))
-        {
-            return;
-        }
         let mut affected_monitor_profiles = HashSet::new();
         let sftp_controller = self.controllers.sftp.clone();
 
@@ -1158,9 +1133,9 @@ impl AppView {
         cx.notify();
     }
 
-    /// Closing a detached window closes its tabs; remote desktop tunnels that still carry
-    /// connections ask first, exactly like closing those tabs one by one. Returns `true`
-    /// when the close must wait for that confirmation.
+    /// Closing a detached window closes its tabs and ends the remote desktops it launched;
+    /// tunnels that still carry connections ask first. Returns `true` when the close must
+    /// wait for that confirmation.
     pub(in crate::ui) fn detached_window_close_needs_rdp_confirmation(
         &mut self,
         cx: &mut Context<Self>,
@@ -1174,7 +1149,7 @@ impl AppView {
             .collect::<Vec<_>>();
         self.controllers
             .session
-            .update(cx, |owner, cx| owner.request_rdp_close(&tab_ids, cx))
+            .update(cx, |owner, cx| owner.request_rdp_window_close(tab_ids, cx))
     }
 
     pub(in crate::ui::shell) fn duplicate_profile_tab(

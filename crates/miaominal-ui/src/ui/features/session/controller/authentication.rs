@@ -39,9 +39,12 @@ impl SessionController {
         cx: &mut Context<Self>,
     ) {
         self.sync_rdp_launch_input(window, cx);
+        // Remote desktop prompts have no tab; they are always visible in their window.
+        let rdp_prompt_tabs = self.rdp_prompt_tabs();
         let pending = active_tab_id
             .into_iter()
             .chain(ordered_tab_ids.iter().copied())
+            .chain(rdp_prompt_tabs)
             .find_map(|tab_id| {
                 self.tab(tab_id).and_then(|tab| {
                     tab.pending_keyboard_interactive.clone().map(|challenge| {
@@ -89,6 +92,13 @@ impl SessionController {
         if let Some(snapshot) = self.rdp_confirmation_overlay(entity.clone()) {
             snapshots.push(snapshot);
         }
+        let mut prompt_tabs = visible_tab_ids.to_vec();
+        prompt_tabs.extend(
+            self.rdp_prompt_tabs()
+                .into_iter()
+                .filter(|tab_id| !visible_tab_ids.contains(tab_id)),
+        );
+        let visible_tab_ids = prompt_tabs.as_slice();
         if let Some((tab_id, request_id, prompt)) = visible_tab_ids.iter().find_map(|tab_id| {
             self.tab(*tab_id).and_then(|tab| {
                 tab.pending_host_key

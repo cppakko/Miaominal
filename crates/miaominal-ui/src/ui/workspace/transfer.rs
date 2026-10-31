@@ -167,6 +167,8 @@ pub(crate) trait WorkspaceTransferHost: Sized {
     );
     fn transfer_sync_session_port_snapshot(&self, cx: &App);
     fn transfer_remove_tab_payload_and_metadata(&mut self, id: TabId, cx: &mut Context<Self>);
+    /// Ends window-owned resources that have no tab, such as launched remote desktops.
+    fn transfer_retire_window_resources(&mut self, cx: &mut Context<Self>);
 }
 
 pub(crate) trait WorkspaceTransferExt: WorkspaceTransferHost {
@@ -571,6 +573,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         for tab_id in tab_ids {
             self.transfer_remove_tab_payload_and_metadata(tab_id, cx);
         }
+        self.transfer_retire_window_resources(cx);
         self.transfer_state_mut().active_topbar_tab = None;
         self.transfer_reset_loaded_workspace(cx);
         self.transfer_sync_session_port_snapshot(cx);

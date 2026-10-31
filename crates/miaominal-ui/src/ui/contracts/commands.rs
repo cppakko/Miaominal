@@ -61,6 +61,8 @@ pub(in crate::ui) enum AppCommand {
     LocaleRefresh,
     RebuildApplication,
     ChatHistoryReopenRequested,
+    /// The remote desktops listed by this window changed (state, prompts, or membership).
+    RdpSessionsChanged,
 }
 
 impl AppCommand {
@@ -128,7 +130,7 @@ pub(in crate::ui) enum DeferredAppCommand {
 #[derive(Clone, Debug)]
 pub(in crate::ui) enum SessionDeferredCommand {
     OpenProfile(Box<SessionProfile>),
-    RestartRdp(TabId),
+    RestartRdp(String),
     OpenRdp {
         profile_id: String,
         options: miaominal_services::RdpLaunchOptions,

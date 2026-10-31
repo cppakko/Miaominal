@@ -209,6 +209,117 @@ mod tests {
         }
     }
 
+    /// Launches through a real service with an unavailable client: the session must be
+    /// listed immediately and its failure must stay visible with Reconnect / Remove.
+    #[gpui_kit::test]
+    fn launch_is_listed_and_failure_stays_visible(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let service = miaominal_services::RdpService::new(
+            runtime.handle().clone(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(directory.path().join("known_hosts")),
+        );
+        let mut profile = SessionProfile::blank("host", 1);
+        profile.host = "127.0.0.1".into();
+        service.replace_catalogs(vec![profile.clone()], Vec::new());
+        let owner = cx.update(|cx| {
+            cx.new(|cx| {
+                let mut owner = SessionController::new_for_test_with_profiles(vec![profile]);
+                owner.services.rdp_service = Some(service);
+                owner.subscribe_rdp(cx);
+                owner
+            })
+        });
+        let client = miaominal_settings::RdpClientSettings::new(
+            if cfg!(target_os = "macos") {
+                miaominal_settings::RdpClientKind::WindowsApp
+            } else if cfg!(windows) {
+                miaominal_settings::RdpClientKind::Mstsc
+            } else {
+                miaominal_settings::RdpClientKind::Remmina
+            },
+            directory
+                .path()
+                .join("missing-rdp-client")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        owner.update(cx, |owner, cx| {
+            owner.start_rdp(
+                TabId::new(900),
+                "host",
+                RdpLaunchOptions::new(RdpConnectionMode::Direct, client),
+                cx,
+            );
+            assert_eq!(owner.rdp_sessions().len(), 1, "a launch is listed at once");
+        });
+        let mut failed = false;
+        for _ in 0..200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            cx.run_until_parked();
+            failed = owner.read_with(cx, |owner, _| {
+                owner
+                    .rdp_sessions()
+                    .first()
+                    .is_some_and(|runtime| matches!(runtime.state(), RdpRuntimeState::Failed(_)))
+            });
+            if failed {
+                break;
+            }
+        }
+        assert!(failed, "a failed launch stays listed with its error");
+        // The status-center section must lay its rows out; a collapsed list once showed only
+        // the header.
+        struct PanelFixture(Entity<SessionController>);
+        impl Render for PanelFixture {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                div().children(self.0.read(cx).render_rdp_status_section(self.0.clone()))
+            }
+        }
+        let (handle, _) = cx.update(|cx| {
+            let panel_owner = owner.clone();
+            gpui_kit::open_window(WindowOptions::default(), cx, move |_, cx| {
+                cx.new(|_| PanelFixture(panel_owner))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let id = owner.read(cx).rdp_sessions()[0].id().to_string();
+            let reconnect = window
+                .find(gpui_kit::SharedString::from(format!("rdp-restart-{id}")))
+                .bounds();
+            let panel = window.find("rdp-panel").bounds();
+            // Rows keep their own size while a collapsed list lets them spill past the panel.
+            assert!(
+                reconnect.size.height > px(0.0) && reconnect.bottom() <= panel.bottom(),
+                "session rows are laid out inside the panel"
+            );
+            assert!(
+                window.try_find("rdp-clear-ended").is_some(),
+                "an ended session offers clearing"
+            );
+        })
+        .unwrap();
+        owner.update(cx, |owner, cx| {
+            assert!(owner.rdp_panel_open(), "a failure opens the status center");
+            let id = owner.rdp_sessions()[0].id().to_string();
+            assert!(owner.is_rdp_log_open(&id), "a failure expands its log");
+            owner.clear_ended_rdp(cx);
+            assert!(owner.rdp_sessions().is_empty());
+            assert!(
+                owner.render_rdp_status_section(cx.entity()).is_none(),
+                "without sessions the center shows notifications only"
+            );
+        });
+    }
+
     #[test]
     fn port_field_accepts_only_real_ports() {
         assert_eq!(parse_rdp_port(""), Some(3389));
@@ -264,12 +375,33 @@ mod tests {
         let mut key_profile = SessionProfile::blank("key", 1);
         key_profile.auth_method = Some(AuthMethod::Agent);
         let no_password = SessionProfile::blank("empty", 2);
+        let mut password = SessionProfile::blank("password", 3);
+        password.auth_method = Some(AuthMethod::Password);
+        password.password = "secret".into();
         let owner = cx.update(|cx| {
             cx.new(|_| {
-                SessionController::new_for_test_with_profiles(vec![key_profile, no_password])
+                SessionController::new_for_test_with_profiles(vec![
+                    key_profile,
+                    no_password,
+                    password,
+                ])
             })
         });
         owner.update(cx, |owner, cx| {
+            // Preselected whenever it can apply. Whether it can also depends on the
+            // configured client (mstsc / SDL FreeRDP accept passwords), so only the
+            // relation is fixed here.
+            owner.open_rdp_launch("password", cx);
+            let draft = owner.rdp_launch_draft().unwrap();
+            assert_eq!(draft.reuse, draft.reuse_unavailable.is_none());
+            owner.set_rdp_launch(None, Some(false), cx);
+            owner.open_rdp_launch("password", cx);
+            assert_eq!(
+                owner.rdp_launch_draft().unwrap().reuse,
+                draft.reuse_unavailable.is_none(),
+                "reopening restores the default"
+            );
+            owner.dismiss_rdp_launch(cx);
             for (id, reason) in [
                 ("key", "rdp.reuse_unavailable_auth"),
                 ("empty", "rdp.reuse_unavailable_no_password"),
@@ -284,7 +416,8 @@ mod tests {
                 owner.dismiss_rdp_launch(cx);
             }
             // A pending close confirmation survives another launch request.
-            *owner.rdp_confirmation.borrow_mut() = Some(RdpConfirmation::Disconnect(TabId::new(7)));
+            *owner.rdp_confirmation.borrow_mut() =
+                Some(RdpConfirmation::Disconnect("pending".into()));
             owner.bump_rdp_confirmation_revision();
             let revision = owner.rdp_confirmation_revision.get();
             owner.open_rdp_launch("key", cx);
@@ -295,14 +428,59 @@ mod tests {
 }
 #[derive(Clone)]
 pub(super) enum RdpConfirmation {
-    Close(Vec<TabId>),
-    Disconnect(TabId),
+    /// Closing this window closes the listed tabs and ends every remote desktop it launched.
+    CloseWindow(Vec<TabId>),
+    Disconnect(String),
+}
+
+/// Commands offered for one remote desktop in the footer panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui) enum RdpAction {
+    Reopen,
+    ToggleHold,
+    Disconnect,
+    Reconnect,
+    Remove,
+}
+
+/// A remote desktop launched from this window, kept in launch order. Remote desktops do not
+/// open tabs; the footer panel lists them. A tunnelled session also keeps a controller-only
+/// session payload under `prompt_tab`. That payload is never registered in the workspace; it
+/// exists so SSH host-key and keyboard-interactive prompts reuse the session overlays.
+#[derive(Clone, Debug)]
+pub(in crate::ui::features::session) struct OwnedRdpSession {
+    id: String,
+    prompt_tab: Option<TabId>,
 }
 
 pub(in crate::ui::features::session) fn status(runtime: &RdpSessionSnapshot) -> String {
     match runtime.state() {
+        // A tunnel waits on SSH before any client starts; say what it is waiting for.
+        _ if matches!(runtime.prompt(), Some(PortForwardPrompt::HostKey(_))) => {
+            i18n::string("rdp.awaiting_host_key")
+        }
+        _ if matches!(
+            runtime.prompt(),
+            Some(PortForwardPrompt::KeyboardInteractive(_))
+        ) =>
+        {
+            i18n::string("rdp.awaiting_auth")
+        }
+        RdpRuntimeState::Starting if runtime.mode() == RdpConnectionMode::SshTunnel => {
+            i18n::string("rdp.connecting_tunnel")
+        }
         RdpRuntimeState::Starting => i18n::string("rdp.starting"),
+        // msrdc-style clients pass the launch to a running instance that holds it until its
+        // own pending connection or dialog is finished, so "waiting" would be misleading.
+        RdpRuntimeState::WaitingForClient | RdpRuntimeState::ClientRunning
+            if runtime.client_handed_off() && runtime.active_connections() == 0 =>
+        {
+            i18n::string("rdp.handed_off_short")
+        }
         RdpRuntimeState::WaitingForClient => i18n::string("rdp.client_started"),
+        RdpRuntimeState::ClientRunning if runtime.mode() == RdpConnectionMode::Direct => {
+            i18n::string("rdp.direct_running")
+        }
         RdpRuntimeState::ClientRunning => i18n::string_args(
             "rdp.active",
             &[("count", &runtime.active_connections().to_string())],
@@ -353,16 +531,18 @@ impl SessionController {
             // A pending close/disconnect confirmation must not be dropped silently.
             return;
         }
-        // Opening any entry point creates the same transient defaults.
+        // Opening any entry point creates the same transient defaults. Reusing the SSH
+        // password is preselected whenever it can apply; otherwise it stays off and disabled.
+        let reuse_unavailable = reuse_unavailable_reason(&profile);
         *self.rdp_launch.borrow_mut() = Some(RdpLaunchDraft {
             name: profile.connection_label(),
-            reuse_unavailable: reuse_unavailable_reason(&profile),
+            reuse: reuse_unavailable.is_none(),
+            reuse_unavailable,
             host: profile.host.clone(),
             ssh_target: ssh_target(&profile),
             username: profile.username.clone(),
             profile_id: profile.id,
             mode: RdpConnectionMode::SshTunnel,
-            reuse: false,
         });
         self.rdp_launch_revision
             .set(self.rdp_launch_revision.get().wrapping_add(1));
@@ -483,15 +663,18 @@ impl SessionController {
                 })
         })
     }
+    /// Launches a remote desktop owned by this window. No tab opens: the session appears in
+    /// the footer's remote desktop panel until it ends or is removed. `prompt_tab` is a
+    /// workspace-allocated id reserved for the session's SSH prompts.
     pub(in crate::ui) fn start_rdp(
         &self,
-        tab_id: TabId,
+        prompt_tab: TabId,
         profile_id: &str,
         options: RdpLaunchOptions,
         cx: &mut Context<Self>,
-    ) -> Option<SessionTabDescriptor> {
+    ) {
         // Resolve the profile before launching so a missing profile cannot leave a
-        // running session without a tab that could ever stop it.
+        // running session that nothing lists or stops.
         let Some(profile) = self
             .profiles
             .borrow()
@@ -502,74 +685,173 @@ impl SessionController {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "rdp.profile_unavailable",
             )));
-            return None;
+            return;
         };
+        // One tunnel per profile and remote port: another launch opens a client on it
+        // instead of a second SSH connection that would only compete for the same session.
+        if let Some(existing) = self.reusable_rdp_tunnel(profile_id, &options) {
+            self.reuse_rdp_tunnel(&existing, options, cx);
+            return;
+        }
         let runtime = match self.rdp_service().launch(profile_id, options) {
             Ok(runtime) => runtime,
             Err(error) => {
-                cx.emit(AppCommand::Feedback(error.to_string()));
-                return None;
+                // Launched from any page, so a footer status message alone could go unseen.
+                self.notify_rdp_failure(
+                    &format!("launch-{profile_id}"),
+                    &profile.connection_label(),
+                    &error.to_string(),
+                    cx,
+                );
+                return;
             }
         };
-        if runtime.mode() == RdpConnectionMode::Direct {
-            self.rdp_direct
-                .borrow_mut()
-                .insert(runtime.id().to_string());
-            cx.emit(AppCommand::Feedback(i18n::string("rdp.starting")));
+        let prompt_tab = (runtime.mode() == RdpConnectionMode::SshTunnel).then(|| {
+            let rule = PortForwardRule {
+                id: runtime.id().into(),
+                label: "RDP".into(),
+                kind: PortForwardKind::Local,
+                listen_host: runtime.local_host().into(),
+                listen_port: 0,
+                target_host: "127.0.0.1".into(),
+                target_port: runtime.remote_port(),
+                enabled: true,
+            };
+            let (_, prepared) = Self::build_port_forwarding_tab(prompt_tab, &profile, &rule, None);
+            let mut state = prepared.into_payload::<SessionTabState>();
+            state.purpose = SessionPurpose::Rdp;
+            state.port_forward_rule_id = None;
+            state.rdp = Some(runtime.clone());
+            self.insert_tab(prompt_tab, state);
+            prompt_tab
+        });
+        self.rdp_sessions.borrow_mut().push(OwnedRdpSession {
+            id: runtime.id().to_string(),
+            prompt_tab,
+        });
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "rdp.launched",
+            &[("name", &profile.connection_label())],
+        )));
+        // The launch dialog closes here; the panel takes over showing progress.
+        self.rdp_panel_open.set(true);
+        self.apply_rdp_snapshot(&self.rdp_service().snapshot(), cx);
+        cx.notify();
+    }
+    /// An active tunnel this window launched for the same profile and remote port.
+    fn reusable_rdp_tunnel(
+        &self,
+        profile_id: &str,
+        options: &RdpLaunchOptions,
+    ) -> Option<RdpSessionSnapshot> {
+        if options.mode() != RdpConnectionMode::SshTunnel {
             return None;
         }
-        let rule = PortForwardRule {
-            id: runtime.id().into(),
-            label: "RDP".into(),
-            kind: PortForwardKind::Local,
-            listen_host: runtime.local_host().into(),
-            listen_port: 0,
-            target_host: "127.0.0.1".into(),
-            target_port: runtime.remote_port(),
-            enabled: true,
-        };
-        let (_, prepared) = Self::build_port_forwarding_tab(tab_id, &profile, &rule, None);
-        let mut state = prepared.into_payload::<SessionTabState>();
-        state.purpose = SessionPurpose::Rdp;
-        state.port_forward_rule_id = None;
-        state.rdp = Some(runtime);
-        self.insert_tab(tab_id, state);
-        self.apply_rdp_snapshot(&self.rdp_service().snapshot(), cx);
-        Some(SessionTabDescriptor::new(
-            tab_id,
-            format!("RDP · {}", profile.connection_label()),
-            i18n::string("rdp.starting"),
-            TabKindTag::Session,
-            TabPlacement::TopLevel,
-        ))
+        let snapshot = self.rdp_service().snapshot();
+        self.rdp_sessions.borrow().iter().find_map(|session| {
+            snapshot
+                .session(&session.id)
+                .filter(|runtime| {
+                    runtime.profile_id() == profile_id
+                        && runtime.mode() == RdpConnectionMode::SshTunnel
+                        && runtime.remote_port() == options.port()
+                        && runtime.state().is_active()
+                })
+                .cloned()
+        })
+    }
+    fn reuse_rdp_tunnel(
+        &self,
+        existing: &RdpSessionSnapshot,
+        options: RdpLaunchOptions,
+        cx: &mut Context<Self>,
+    ) {
+        self.rdp_panel_open.set(true);
+        let name = existing.profile_name().to_string();
+        match self
+            .rdp_service()
+            .relaunch_client_with(existing.id(), options)
+        {
+            // A tunnel still connecting opens its client once it listens.
+            Ok(()) => cx.emit(AppCommand::Feedback(i18n::string_args(
+                if existing.local_port().is_some() {
+                    "rdp.reused"
+                } else {
+                    "rdp.reuse_pending"
+                },
+                &[("name", &name)],
+            ))),
+            Err(error) => self.notify_rdp_failure(
+                &format!("reuse-{}", existing.id()),
+                &name,
+                &error.to_string(),
+                cx,
+            ),
+        }
+        cx.notify();
+    }
+    /// A failure is announced as a notification and opens the panel with its log, wherever
+    /// the user currently is.
+    fn notify_rdp_failure(&self, key: &str, name: &str, error: &str, cx: &mut Context<Self>) {
+        self.rdp_panel_open.set(true);
+        cx.emit(AppCommand::SessionNotificationRequested(
+            SessionNotificationRequest {
+                tone: SessionNotificationTone::Error,
+                title: i18n::string("rdp.failed_title"),
+                message: i18n::string_args("rdp.failed", &[("name", name), ("error", error)]),
+                id: format!("rdp-failed-{key}"),
+            },
+        ));
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "rdp.failed",
+            &[("name", name), ("error", error)],
+        )));
+    }
+    pub(in crate::ui) fn rdp_panel_open(&self) -> bool {
+        self.rdp_panel_open.get()
+    }
+    pub(in crate::ui) fn set_rdp_panel_open(&self, open: bool, cx: &mut Context<Self>) {
+        if self.rdp_panel_open.replace(open) != open {
+            cx.notify();
+        }
+    }
+    /// Forgets every listed session that has stopped or failed; running ones stay.
+    pub(in crate::ui::features::session) fn clear_ended_rdp(&self, cx: &mut Context<Self>) {
+        let snapshot = self.rdp_service().snapshot();
+        let ended = self
+            .rdp_sessions
+            .borrow()
+            .iter()
+            .filter(|session| {
+                snapshot
+                    .session(&session.id)
+                    .is_none_or(|runtime| !runtime.state().is_active())
+            })
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        if ended.is_empty() {
+            return;
+        }
+        for id in ended {
+            self.rdp_service().forget(&id);
+            self.release_owned_rdp(&id);
+        }
+        cx.emit(AppCommand::RdpSessionsChanged);
+        cx.notify();
     }
     fn apply_rdp_snapshot(&self, snapshot: &RdpSnapshot, cx: &mut Context<Self>) {
-        let mut updates = Vec::new();
-        for (tab_id, tab) in self.tabs.borrow_mut().iter_mut() {
-            let Some(previous) = tab.rdp.as_ref() else {
+        let previous = self.rdp_snapshot.replace(snapshot.clone());
+        // Prompt payloads mirror their runtime so the authentication overlays see requests.
+        for tab in self.tabs.borrow_mut().values_mut() {
+            let Some(current) = tab.rdp.as_ref() else {
                 continue;
             };
-            let Some(runtime) = snapshot.session(previous.id()) else {
+            let Some(runtime) = snapshot.session(current.id()) else {
                 continue;
             };
-            if previous.revision() == runtime.revision() {
+            if current.revision() == runtime.revision() {
                 continue;
             }
-            tab.set_connection_state(match runtime.state() {
-                RdpRuntimeState::Starting => SessionConnectionState::Connecting,
-                RdpRuntimeState::WaitingForClient | RdpRuntimeState::ClientRunning => {
-                    SessionConnectionState::Ready
-                }
-                RdpRuntimeState::Reconnecting => SessionConnectionState::Reconnecting {
-                    error: i18n::string("rdp.reconnecting"),
-                    attempt: 0,
-                },
-                RdpRuntimeState::Stopped => SessionConnectionState::Disconnected,
-                RdpRuntimeState::Failed(error) => SessionConnectionState::Failed {
-                    error: error.clone(),
-                    status: Some(SessionFailureStatus::Closed),
-                },
-            });
             tab.pending_host_key = None;
             tab.pending_host_key_request_id = 0;
             tab.pending_keyboard_interactive = None;
@@ -586,85 +868,175 @@ impl SessionController {
                 None => {}
             }
             tab.rdp = Some(runtime.clone());
-            updates.push((*tab_id, status(runtime)));
         }
-        let changed = !updates.is_empty();
-        for (tab_id, status) in updates {
-            cx.emit(AppCommand::TabStatusChanged { tab_id, status });
-        }
-        let completed = self
-            .rdp_direct
-            .borrow()
-            .iter()
-            .filter_map(|id| {
-                snapshot
-                    .session(id)
-                    .and_then(|runtime| match runtime.state() {
-                        RdpRuntimeState::ClientRunning => {
-                            Some((id.clone(), i18n::string("rdp.direct_started"), false))
-                        }
-                        RdpRuntimeState::Failed(error) => Some((id.clone(), error.clone(), true)),
-                        _ => None,
-                    })
-            })
-            .collect::<Vec<_>>();
-        let completed_any = !completed.is_empty();
-        for (id, message, failed) in completed {
-            self.rdp_direct.borrow_mut().remove(&id);
-            cx.emit(AppCommand::Feedback(message));
-            if failed {
-                self.rdp_service().forget(&id);
+        let owned = self.rdp_sessions.borrow().clone();
+        let mut changed = false;
+        let mut messages = Vec::new();
+        let mut failures = Vec::new();
+        let mut ended = Vec::new();
+        for session in owned {
+            let before = previous.session(&session.id);
+            let Some(now) = snapshot.session(&session.id) else {
+                // Direct launches leave the service once the client is gone; forgotten
+                // sessions leave it immediately.
+                ended.push(session.id);
+                continue;
+            };
+            if before.is_some_and(|before| before.revision() == now.revision()) {
+                continue;
             }
+            changed = true;
+            let was = before.map(RdpSessionSnapshot::state);
+            if now.client_handed_off() && !before.is_some_and(|b| b.client_handed_off()) {
+                // Nothing may appear on screen; show why where the user is looking.
+                self.rdp_panel_open.set(true);
+                self.rdp_logs_open.borrow_mut().insert(now.id().to_string());
+                messages.push(i18n::string("rdp.handed_off_short"));
+            }
+            match now.state() {
+                RdpRuntimeState::ClientRunning
+                    if now.mode() == RdpConnectionMode::Direct
+                        && was != Some(&RdpRuntimeState::ClientRunning) =>
+                {
+                    messages.push(i18n::string_args(
+                        "rdp.direct_started",
+                        &[("name", now.profile_name())],
+                    ));
+                }
+                RdpRuntimeState::Failed(error)
+                    if !matches!(was, Some(RdpRuntimeState::Failed(_))) =>
+                {
+                    failures.push((
+                        format!("{}-{}", now.id(), now.revision()),
+                        now.id().to_string(),
+                        now.profile_name().to_string(),
+                        error.clone(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        changed |= !ended.is_empty();
+        for id in ended {
+            self.release_owned_rdp(&id);
+        }
+        for message in messages {
+            cx.emit(AppCommand::Feedback(message));
+        }
+        for (key, id, name, error) in failures {
+            self.rdp_logs_open.borrow_mut().insert(id);
+            self.notify_rdp_failure(&key, &name, &error, cx);
         }
         // Publications for sessions owned by other windows or unchanged revisions
         // must not re-render every window.
-        if changed || completed_any {
+        if changed {
+            cx.emit(AppCommand::RdpSessionsChanged);
             cx.notify();
         }
     }
-    pub(in crate::ui) fn rdp_action(&self, tab_id: TabId, action: &str, cx: &mut Context<Self>) {
-        let Some(runtime) = self.tab(tab_id).and_then(|tab| tab.rdp.clone()) else {
+    /// Drops this window's record of a session and its prompt payload. The service entry
+    /// is left alone; callers stop or forget it first when needed.
+    fn release_owned_rdp(&self, id: &str) {
+        let removed = {
+            let mut sessions = self.rdp_sessions.borrow_mut();
+            let index = sessions.iter().position(|session| session.id == id);
+            index.map(|index| sessions.remove(index))
+        };
+        self.rdp_logs_open.borrow_mut().remove(id);
+        if let Some(tab) = removed.and_then(|session| session.prompt_tab) {
+            self.remove_tab(tab);
+        }
+    }
+    /// Remote desktops launched from this window, in launch order.
+    pub(in crate::ui) fn rdp_sessions(&self) -> Vec<RdpSessionSnapshot> {
+        let snapshot = self.rdp_snapshot.borrow();
+        self.rdp_sessions
+            .borrow()
+            .iter()
+            .filter_map(|session| snapshot.session(&session.id).cloned())
+            .collect()
+    }
+    /// Payload ids that may carry SSH prompts for this window's remote desktops.
+    pub(super) fn rdp_prompt_tabs(&self) -> Vec<TabId> {
+        self.rdp_sessions
+            .borrow()
+            .iter()
+            .filter_map(|session| session.prompt_tab)
+            .collect()
+    }
+    pub(in crate::ui::features::session) fn is_rdp_log_open(&self, id: &str) -> bool {
+        self.rdp_logs_open.borrow().contains(id)
+    }
+    pub(in crate::ui::features::session) fn toggle_rdp_log(
+        &self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut open = self.rdp_logs_open.borrow_mut();
+        if !open.remove(id) {
+            open.insert(id.to_string());
+        }
+        drop(open);
+        cx.notify();
+    }
+    pub(in crate::ui) fn rdp_action(&self, id: &str, action: RdpAction, cx: &mut Context<Self>) {
+        if !self
+            .rdp_sessions
+            .borrow()
+            .iter()
+            .any(|session| session.id == id)
+        {
+            return;
+        }
+        let Some(runtime) = self.rdp_service().snapshot().session(id).cloned() else {
             return;
         };
-        if action == "restart"
+        if action == RdpAction::Reconnect
             && self.rdp_requires_unlock(
                 runtime.profile_id(),
                 &RdpLaunchOptions::new(
-                    RdpConnectionMode::SshTunnel,
+                    runtime.mode(),
                     miaominal_settings::current_settings().rdp_client.clone(),
                 ),
             )
         {
             cx.emit(AppCommand::vault_unlock(
                 crate::ui::contracts::commands::DeferredAppCommand::Session(
-                    crate::ui::contracts::commands::SessionDeferredCommand::RestartRdp(tab_id),
+                    crate::ui::contracts::commands::SessionDeferredCommand::RestartRdp(
+                        id.to_string(),
+                    ),
                 ),
             ));
             return;
         }
-        if action == "stop" && self.rdp_has_connections(tab_id) {
-            *self.rdp_confirmation.borrow_mut() = Some(RdpConfirmation::Disconnect(tab_id));
+        if action == RdpAction::Disconnect && runtime.active_connections() > 0 {
+            *self.rdp_confirmation.borrow_mut() = Some(RdpConfirmation::Disconnect(id.to_string()));
             self.bump_rdp_confirmation_revision();
             cx.notify();
             return;
         }
         let result = match action {
-            "reopen" => self.rdp_service().relaunch_client(runtime.id()),
-            "hold" => self
+            RdpAction::Reopen => self.rdp_service().relaunch_client(id),
+            RdpAction::ToggleHold => self
                 .rdp_service()
-                .set_keep_tunnel(runtime.id(), !runtime.keep_tunnel()),
-            "stop" => {
-                self.rdp_service().stop(runtime.id());
+                .set_keep_tunnel(id, !runtime.keep_tunnel()),
+            RdpAction::Disconnect => {
+                self.rdp_service().stop(id);
                 Ok(())
             }
-            "restart" => self
+            RdpAction::Reconnect => self
                 .rdp_service()
                 .restart(
-                    runtime.id(),
+                    id,
                     miaominal_settings::current_settings().rdp_client.clone(),
                 )
                 .map(|_| ()),
-            _ => return,
+            RdpAction::Remove => {
+                self.rdp_service().forget(id);
+                self.release_owned_rdp(id);
+                cx.emit(AppCommand::RdpSessionsChanged);
+                Ok(())
+            }
         };
         if let Err(error) = result {
             cx.emit(AppCommand::Feedback(error.to_string()));
@@ -685,26 +1057,42 @@ impl SessionController {
     pub(in crate::ui::features::session) fn is_rdp_launch_current(&self, revision: u64) -> bool {
         self.rdp_launch.borrow().is_some() && self.rdp_launch_revision.get() == revision
     }
-    fn rdp_has_connections(&self, tab_id: TabId) -> bool {
-        self.tab(tab_id)
-            .and_then(|tab| tab.rdp.as_ref().map(|runtime| runtime.id().to_string()))
-            .and_then(|id| self.rdp_service().snapshot().session(&id).cloned())
-            .is_some_and(|runtime| runtime.active_connections() > 0)
+    fn rdp_has_connections(&self) -> bool {
+        let snapshot = self.rdp_service().snapshot();
+        self.rdp_sessions.borrow().iter().any(|session| {
+            snapshot
+                .session(&session.id)
+                .is_some_and(|runtime| runtime.active_connections() > 0)
+        })
     }
-    pub(in crate::ui) fn request_rdp_close(&self, tabs: &[TabId], cx: &mut Context<Self>) -> bool {
-        let requires = tabs.iter().any(|id| {
-            !self.rdp_close_approved.borrow().contains(id) && self.rdp_has_connections(*id)
-        });
-        if !requires {
-            for id in tabs {
-                self.rdp_close_approved.borrow_mut().remove(id);
-            }
+    /// Closing a detached window ends the remote desktops it launched. Tunnels that still
+    /// carry connections ask first. Returns `true` when the close must wait for that answer;
+    /// confirming closes `tabs`, which closes the window.
+    pub(in crate::ui) fn request_rdp_window_close(
+        &self,
+        tabs: Vec<TabId>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.rdp_window_close_approved.get() || !self.rdp_has_connections() {
             return false;
         }
-        *self.rdp_confirmation.borrow_mut() = Some(RdpConfirmation::Close(tabs.to_vec()));
+        *self.rdp_confirmation.borrow_mut() = Some(RdpConfirmation::CloseWindow(tabs));
         self.bump_rdp_confirmation_revision();
         cx.notify();
         true
+    }
+    /// Window teardown: ends every remote desktop this window launched.
+    pub(in crate::ui) fn retire_rdp_sessions(&self) {
+        let ids = self
+            .rdp_sessions
+            .borrow()
+            .iter()
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.rdp_service().forget(&id);
+            self.release_owned_rdp(&id);
+        }
     }
     fn bump_rdp_confirmation_revision(&self) {
         self.rdp_confirmation_revision
@@ -720,18 +1108,14 @@ impl SessionController {
         };
         if confirmed {
             match action {
-                RdpConfirmation::Close(tabs) => {
-                    self.rdp_close_approved
-                        .borrow_mut()
-                        .extend(tabs.iter().copied());
+                RdpConfirmation::CloseWindow(tabs) => {
+                    self.rdp_window_close_approved.set(true);
                     for tab in tabs {
                         cx.emit(AppCommand::CloseTab(tab));
                     }
                 }
-                RdpConfirmation::Disconnect(tab) => {
-                    if let Some(runtime) = self.tab(tab).and_then(|tab| tab.rdp.clone()) {
-                        self.rdp_service().stop(runtime.id());
-                    }
+                RdpConfirmation::Disconnect(id) => {
+                    self.rdp_service().stop(&id);
                 }
             }
         }

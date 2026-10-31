@@ -8,8 +8,8 @@ use crate::ui::components::{
     BasicDialogActionTone, BasicDialogHeaderAlignment, BasicDialogIcon, TextInputSurface,
     basic_dialog_action_button, field_label, surface_text_input,
 };
-use crate::ui::contracts::{overlay::OverlaySnapshot, workspace::TabId};
-use crate::ui::features::session::SessionController;
+use crate::ui::contracts::overlay::OverlaySnapshot;
+use crate::ui::features::session::{RdpAction, SessionController};
 use crate::ui::i18n;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::{
@@ -157,8 +157,8 @@ pub(in crate::ui::features::session) fn launch_overlay(
                     reuse_target
                         .update(cx, |owner, cx| owner.set_rdp_launch(None, Some(*reuse), cx));
                 });
-            // MD3 text field: label, field, then supporting text that turns into the error
-            // message (with an error outline) when the value is not a port.
+            // MD3 text field: label and field; an error message (with an error outline)
+            // appears only when the value is not a port.
             let port_field = port_input.map(|input| {
                 let invalid = port.is_none();
                 v_flex()
@@ -173,18 +173,12 @@ pub(in crate::ui::features::session) fn launch_overlay(
                                 }),
                         ),
                     )
-                    .child(supporting_text(
-                        i18n::string(if invalid {
-                            "rdp.port_invalid"
-                        } else {
-                            "rdp.port_supporting"
-                        }),
-                        if invalid {
-                            roles.error
-                        } else {
-                            roles.on_surface_variant
-                        },
-                    ))
+                    .when(invalid, |field| {
+                        field.child(supporting_text(
+                            i18n::string("rdp.port_invalid"),
+                            roles.error,
+                        ))
+                    })
             });
             let body = v_flex()
                 .w_full()
@@ -282,112 +276,278 @@ fn supporting_text(text: String, color: u32) -> AnyElement {
         .into_any_element()
 }
 
-pub(in crate::ui::features::session) fn render_status(
-    entity: Entity<SessionController>,
-    tab_id: TabId,
-    runtime: &RdpSessionSnapshot,
-) -> AnyElement {
-    let roles = miaominal_settings::current_theme().material.roles;
-    let running = runtime.state().is_active();
-    let ready =
-        runtime.local_port().is_some() && !matches!(runtime.state(), RdpRuntimeState::Reconnecting);
-    let mut actions = h_flex().flex_wrap().gap_2();
-    for (id, key, enabled) in [
-        ("reopen", "rdp.reopen", ready),
-        (
-            "hold",
+impl SessionController {
+    /// Footer status-center section: the remote desktops this window launched, with their
+    /// commands. `None` when there are none, so the center shows notifications only.
+    pub(in crate::ui) fn render_rdp_status_section(
+        &self,
+        entity: Entity<Self>,
+    ) -> Option<AnyElement> {
+        let sessions = self.rdp_sessions();
+        if sessions.is_empty() {
+            return None;
+        }
+        let roles = miaominal_settings::current_theme().material.roles;
+        let has_ended = sessions.iter().any(|runtime| !runtime.state().is_active());
+        let clear = entity.clone();
+        Some(
+            v_flex()
+                .id("rdp-panel")
+                .test_support()
+                .w_full()
+                .gap_2()
+                .text_color(rgb(roles.on_surface))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_h(px(32.0))
+                        .px_2()
+                        .justify_between()
+                        .child(crate::ui::components::notifications::section_label(
+                            i18n::string("rdp.title"),
+                            roles,
+                        ))
+                        .when(has_ended, |row| {
+                            row.child(
+                                Button::new("rdp-clear-ended")
+                                    .label(i18n::string("rdp.clear_ended"))
+                                    .ghost()
+                                    .compact()
+                                    .rounded(px(20.0))
+                                    .on_click(move |_, _, cx| {
+                                        clear.update(cx, |owner, cx| owner.clear_ended_rdp(cx));
+                                    }),
+                            )
+                        }),
+                )
+                .child(
+                    // The popover has no definite height, so a flex-filled list would
+                    // collapse to nothing; the list sizes to its rows and scrolls past a limit.
+                    div()
+                        .id("rdp-panel-list")
+                        .w_full()
+                        .max_h(px(LIST_MAX_HEIGHT))
+                        .overflow_y_scrollbar()
+                        .child(
+                            v_flex().gap_1().children(
+                                sessions
+                                    .iter()
+                                    .map(|runtime| self.render_rdp_row(&entity, runtime, roles)),
+                            ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// One remote desktop: a status dot, its name, a one-line summary and the main actions.
+    /// Technical detail (port mapping, keep-tunnel, explanations, log) sits behind Details.
+    fn render_rdp_row(
+        &self,
+        entity: &Entity<Self>,
+        runtime: &RdpSessionSnapshot,
+        roles: miaominal_settings::theme::Md3Roles,
+    ) -> AnyElement {
+        let id = runtime.id().to_string();
+        let tunnel = runtime.mode() == RdpConnectionMode::SshTunnel;
+        let running = runtime.state().is_active();
+        let failed = matches!(runtime.state(), RdpRuntimeState::Failed(_));
+        let ready = runtime.local_port().is_some()
+            && !matches!(runtime.state(), RdpRuntimeState::Reconnecting);
+        let details_open = self.is_rdp_log_open(&id);
+
+        // Summary: state, then the one fact that changes what happens next.
+        let mut summary = super::super::controller::rdp::status(runtime);
+        if failed {
+            // The full error is in the log under Details.
+            summary = i18n::string("rdp.failed_short");
+        } else if running && tunnel {
             if runtime.keep_tunnel() {
-                "rdp.release_hold"
-            } else {
-                "rdp.hold"
-            },
-            running,
-        ),
-        ("stop", "rdp.disconnect", running),
-        ("restart", "rdp.reconnect", !running),
-    ] {
-        let entity = entity.clone();
-        actions = actions.child(
-            Button::new(SharedString::from(format!("rdp-{id}-{tab_id}")))
-                .label(i18n::string(key))
+                summary = format!("{summary} · {}", i18n::string("rdp.held"));
+            } else if let Some(seconds) = runtime.release_in() {
+                let release =
+                    i18n::string_args("rdp.release_in", &[("seconds", &seconds.to_string())]);
+                summary = format!("{summary} · {release}");
+            }
+        }
+        let dot = if failed {
+            roles.error
+        } else if running {
+            roles.primary
+        } else {
+            roles.outline
+        };
+
+        let action = |key: &'static str, label: String, enabled: bool, action: RdpAction| {
+            let entity = entity.clone();
+            let id = id.clone();
+            Button::new(SharedString::from(format!("rdp-{key}-{id}")))
+                .label(label)
                 .ghost()
+                .compact()
                 .disabled(!enabled)
                 .on_click(move |_, _, cx| {
-                    entity.update(cx, |owner, cx| {
-                        owner.rdp_action(tab_id, id, cx);
-                    })
+                    entity.update(cx, |owner, cx| owner.rdp_action(&id, action, cx));
+                })
+        };
+        let mut buttons = h_flex().flex_wrap().gap_1();
+        if running && tunnel {
+            buttons = buttons
+                .child(action(
+                    "reopen",
+                    i18n::string("rdp.reopen"),
+                    ready,
+                    RdpAction::Reopen,
+                ))
+                .child(action(
+                    "stop",
+                    i18n::string("rdp.disconnect"),
+                    true,
+                    RdpAction::Disconnect,
+                ));
+        } else if !running {
+            buttons = buttons
+                .child(action(
+                    "restart",
+                    i18n::string("rdp.reconnect"),
+                    true,
+                    RdpAction::Reconnect,
+                ))
+                .child(action(
+                    "remove",
+                    i18n::string("rdp.remove"),
+                    true,
+                    RdpAction::Remove,
+                ));
+        }
+        let toggle_entity = entity.clone();
+        let toggle_id = id.clone();
+        buttons = buttons.child(
+            Button::new(SharedString::from(format!("rdp-log-{id}")))
+                .label(i18n::string(if details_open {
+                    "rdp.hide_log"
+                } else {
+                    "rdp.show_log"
+                }))
+                .ghost()
+                .compact()
+                .on_click(move |_, _, cx| {
+                    toggle_entity.update(cx, |owner, cx| owner.toggle_rdp_log(&toggle_id, cx));
                 }),
         );
-    }
-    v_flex()
-        .size_full()
-        .min_h_0()
-        .p_6()
-        .gap_4()
-        .bg(rgb(roles.background))
-        .text_color(rgb(roles.on_surface))
-        .child(
-            div()
-                .text_lg()
-                .child(format!("RDP · {}", runtime.profile_name())),
-        )
-        .child(div().child(super::super::controller::rdp::status(runtime)))
-        .when_some(runtime.local_port(), |view, port| {
-            let host = if runtime.local_host().is_empty() {
-                "127.0.0.1"
-            } else {
-                runtime.local_host()
-            };
-            view.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(roles.on_surface_variant))
-                    .child(format!(
-                        "{host}:{port} → 127.0.0.1:{}",
-                        runtime.remote_port()
-                    )),
-            )
-        })
-        .when_some(runtime.release_in(), |view, seconds| {
-            view.child(i18n::string_args(
-                "rdp.release_in",
-                &[("seconds", &seconds.to_string())],
-            ))
-        })
-        .when(runtime.keep_tunnel(), |view| {
-            view.child(i18n::string("rdp.held"))
-        })
-        .when(runtime.reopen_required(), |view| {
-            view.child(
-                div()
-                    .text_color(rgb(roles.error))
-                    .child(i18n::string("rdp.port_changed")),
-            )
-        })
-        .child(actions)
-        .child(
-            div()
-                .text_sm()
+
+        let details = details_open.then(|| {
+            let mut lines = Vec::new();
+            if let Some(port) = runtime.local_port() {
+                let host = if runtime.local_host().is_empty() {
+                    "127.0.0.1"
+                } else {
+                    runtime.local_host()
+                };
+                lines.push(format!(
+                    "{host}:{port} → 127.0.0.1:{}",
+                    runtime.remote_port()
+                ));
+            }
+            if runtime.client_handed_off() {
+                lines.push(i18n::string("rdp.handed_off"));
+            }
+            v_flex()
+                .w_full()
+                .gap_1()
+                .pt_1()
+                .text_xs()
                 .text_color(rgb(roles.on_surface_variant))
-                .child(i18n::string("rdp.logs")),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!("rdp-logs-{tab_id}")))
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .child(
-                    v_flex().gap_1().children(
-                        runtime
-                            .log()
-                            .iter()
-                            .map(|line| div().text_sm().child(line.clone())),
+                .children(lines.into_iter().map(|line| div().child(line)))
+                .when(running && tunnel, |details| {
+                    details.child(h_flex().child(action(
+                        "hold",
+                        i18n::string(if runtime.keep_tunnel() {
+                            "rdp.release_hold"
+                        } else {
+                            "rdp.hold"
+                        }),
+                        true,
+                        RdpAction::ToggleHold,
+                    )))
+                })
+                .when(!runtime.log().is_empty(), |details| {
+                    details.child(
+                        div()
+                            .id(SharedString::from(format!("rdp-log-lines-{id}")))
+                            .max_h(px(LOG_MAX_HEIGHT))
+                            .overflow_y_scrollbar()
+                            .child(v_flex().gap_1().children(
+                                runtime.log().iter().map(|line| div().child(line.clone())),
+                            )),
+                    )
+                })
+        });
+
+        v_flex()
+            .w_full()
+            .px_3()
+            .py_2()
+            .gap_1()
+            .rounded(px(ROW_RADIUS))
+            .bg(rgb(roles.surface_container_high))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_none().size(px(8.0)).rounded_full().bg(rgb(dot)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(runtime.profile_name().to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(rgb(roles.on_surface_variant))
+                            .child(i18n::string(if tunnel {
+                                "rdp.tunnel"
+                            } else {
+                                "rdp.direct"
+                            })),
                     ),
-                ),
-        )
-        .into_any_element()
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(rgb(if failed {
+                        roles.error
+                    } else {
+                        roles.on_surface_variant
+                    }))
+                    .child(summary),
+            )
+            .when(runtime.reopen_required(), |row| {
+                row.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(roles.error))
+                        .child(i18n::string("rdp.port_changed")),
+                )
+            })
+            .child(buttons)
+            .children(details)
+            .into_any_element()
+    }
 }
+
+/// Matches the notification history entries below the section.
+const ROW_RADIUS: f32 = 18.0;
+/// Session list height before it scrolls, leaving room for notifications below.
+const LIST_MAX_HEIGHT: f32 = 240.0;
+const LOG_MAX_HEIGHT: f32 = 160.0;
 
 pub(in crate::ui::features::session) fn confirmation_overlay(
     entity: Entity<SessionController>,

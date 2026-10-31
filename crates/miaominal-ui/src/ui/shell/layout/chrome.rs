@@ -1449,6 +1449,41 @@ impl ChromeAppViewExt for AppView {
                 .tooltip(label.clone())
                 .accessibility_label(label)
         };
+        // The status center holds live remote desktops above the notification history. Its
+        // dot marks running (primary) or failed (error) remote desktops of this window.
+        let status_activity = {
+            let session = self.controllers.session.read(cx);
+            let rdp_sessions = session.rdp_sessions();
+            let roles = miaominal_settings::current_theme().material.roles;
+            let indicator = if rdp_sessions.iter().any(|runtime| {
+                matches!(
+                    runtime.state(),
+                    miaominal_services::RdpRuntimeState::Failed(_)
+                )
+            }) {
+                Some(roles.error)
+            } else if rdp_sessions
+                .iter()
+                .any(|runtime| runtime.state().is_active())
+            {
+                Some(roles.primary)
+            } else {
+                None
+            };
+            let open_change = self.controllers.session.clone();
+            let content = self.controllers.session.clone();
+            crate::ui::components::notifications::StatusCenterActivity {
+                indicator,
+                open: session.rdp_panel_open(),
+                on_open_change: std::rc::Rc::new(move |open, _, cx| {
+                    open_change.update(cx, |owner, cx| owner.set_rdp_panel_open(open, cx));
+                }),
+                content: std::rc::Rc::new(move |_, cx| {
+                    let owner = content.clone();
+                    content.read(cx).render_rdp_status_section(owner)
+                }),
+            }
+        };
         div()
             .w_full()
             .flex_shrink_0()
@@ -1607,7 +1642,13 @@ impl ChromeAppViewExt for AppView {
                                     )
                                 })
                             })
-                            .child(render_notification_center_popover(window, cx)),
+                            .child(
+                                crate::ui::components::notifications::render_status_center_popover(
+                                    Some(status_activity),
+                                    window,
+                                    cx,
+                                ),
+                            ),
                     ),
             )
     }

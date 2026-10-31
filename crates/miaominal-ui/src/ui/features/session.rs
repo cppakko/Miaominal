@@ -7,7 +7,7 @@ use controller::{
     MonitorChartPoint, SessionConnectionState, SessionFailureStatus, SessionTabState,
 };
 pub(in crate::ui) use controller::{
-    PortForwardSessionStart, SessionController, SessionControllerArgs,
+    PortForwardSessionStart, RdpAction, SessionController, SessionControllerArgs,
 };
 pub(in crate::ui) use input::{
     PaneViewState, TerminalDragState, TerminalHoveredLink, TerminalInputHost,

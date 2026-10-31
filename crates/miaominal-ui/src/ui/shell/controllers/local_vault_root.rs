@@ -210,9 +210,13 @@ impl LocalVaultRootExt for AppView {
                 });
             }
             DeferredAppCommand::Session(command) => match command {
-                SessionDeferredCommand::RestartRdp(tab_id) => {
+                SessionDeferredCommand::RestartRdp(id) => {
                     self.controllers.session.update(cx, |controller, cx| {
-                        controller.rdp_action(tab_id, "restart", cx)
+                        controller.rdp_action(
+                            &id,
+                            crate::ui::features::session::RdpAction::Reconnect,
+                            cx,
+                        )
                     });
                 }
                 SessionDeferredCommand::OpenRdp {
