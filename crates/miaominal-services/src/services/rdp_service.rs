@@ -102,6 +102,9 @@ pub struct RdpSessionSnapshot {
     keep_tunnel: bool,
     release_in: Option<u64>,
     reopen_required: bool,
+    /// The launched client passed the connection to an already running instance
+    /// (e.g. msrdc), which may hold it until its own pending connection finishes.
+    client_handed_off: bool,
     prompt: Option<PortForwardPrompt>,
     log: Vec<String>,
     revision: u64,
@@ -142,6 +145,9 @@ impl RdpSessionSnapshot {
     }
     pub fn reopen_required(&self) -> bool {
         self.reopen_required
+    }
+    pub fn client_handed_off(&self) -> bool {
+        self.client_handed_off
     }
     pub fn prompt(&self) -> Option<&PortForwardPrompt> {
         self.prompt.as_ref()
@@ -300,7 +306,9 @@ impl Activity {
 
 enum Control {
     Stop,
-    Reopen,
+    /// Opens another client on the running tunnel, optionally with updated client
+    /// settings and password reuse (mode and port never change).
+    Reopen(Option<Box<RdpLaunchOptions>>),
     Hold(bool),
 }
 struct Entry {
@@ -441,6 +449,7 @@ impl RdpService {
             keep_tunnel: false,
             release_in: None,
             reopen_required: false,
+            client_handed_off: false,
             prompt: None,
             log: Vec::new(),
             revision: 1,
@@ -549,7 +558,30 @@ impl RdpService {
         Ok(snapshot)
     }
     pub fn relaunch_client(&self, id: &str) -> Result<()> {
-        self.control(id, Control::Reopen)
+        self.control(id, Control::Reopen(None))
+    }
+    /// Reuses a running tunnel for a new launch request: opens another client with the
+    /// request's client settings and password choice. The request must target the same
+    /// mode and remote port; later restarts keep using the updated options.
+    pub fn relaunch_client_with(&self, id: &str, options: RdpLaunchOptions) -> Result<()> {
+        let mut entries = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|_| anyhow!("RDP state unavailable"))?;
+        let entry = entries.get_mut(id).context("RDP session not found")?;
+        if !entry.snapshot.state.is_active() {
+            bail!("RDP session has stopped");
+        }
+        if entry.options.mode != options.mode || entry.options.port != options.port {
+            bail!("the running RDP session uses a different connection");
+        }
+        entry
+            .control
+            .send(Control::Reopen(Some(Box::new(options.clone()))))
+            .map_err(|_| anyhow!("RDP session has stopped"))?;
+        entry.options = options;
+        Ok(())
     }
     pub fn set_keep_tunnel(&self, id: &str, keep: bool) -> Result<()> {
         self.control(id, Control::Hold(keep))
@@ -743,7 +775,7 @@ impl RdpService {
         profile: SessionProfile,
         profiles: Vec<SessionProfile>,
         proxies: Vec<ProxyProfile>,
-        options: RdpLaunchOptions,
+        mut options: RdpLaunchOptions,
         mut controls: mpsc::UnboundedReceiver<Control>,
     ) -> Result<()> {
         // Detect before authenticating so missing clients do not leave unnecessary tunnels.
@@ -795,11 +827,11 @@ impl RdpService {
             if options.mode == RdpConnectionMode::Direct {
                 let direct = RdpEndpoint::new(&profile.host, options.port)?;
                 let client = self.open_client(&profile, &options, direct).await?;
-                let message = launch_message(&options, client.password_delivery());
+                let message = launch_log(&options, &client);
                 clients.push(client);
                 self.update(id, generation, |entry| {
                     entry.snapshot.state = RdpRuntimeState::ClientRunning;
-                    append_log(&mut entry.snapshot.log, message.into());
+                    append_log(&mut entry.snapshot.log, message);
                 });
             }
             let mut ticker = tokio::time::interval(Duration::from_secs(2));
@@ -817,20 +849,26 @@ impl RdpService {
                             entry.snapshot.release_in = None;
                         });
                     }
-                    Some(Control::Reopen) => {
+                    Some(Control::Reopen(next)) => {
+                        if let Some(next) = next {
+                            // Same mode and port (checked by the caller); client and password
+                            // reuse follow the latest request.
+                            options = *next;
+                        }
                         if activity.reconnecting { continue; }
                         if let Some(endpoint) = endpoint.clone() {
                             match self.open_client(&profile, &options, endpoint).await {
                                 Ok(client) => {
                                     let state = client.initial_process_state();
-                                    let message = launch_message(&options, client.password_delivery());
+                                    let message = launch_log(&options, &client);
                                     clients.push(client);
                                     activity.reopened(Instant::now());
                                     activity.process(state, Instant::now());
                                     self.update(id, generation, |entry| {
                                         entry.snapshot.reopen_required = false;
+                                        entry.snapshot.client_handed_off = false;
                                         entry.snapshot.release_in = None;
-                                        append_log(&mut entry.snapshot.log, message.into());
+                                        append_log(&mut entry.snapshot.log, message);
                                     });
                                 }
                                 Err(error) => self.update(id, generation, |entry| {
@@ -854,10 +892,10 @@ impl RdpService {
                             activity.ready(binding.binding_id, Instant::now());
                             if clients.is_empty() {
                                 let client = self.open_client(&profile, &options, next.clone()).await?;
-                                let message = launch_message(&options, client.password_delivery());
+                                let message = launch_log(&options, &client);
                                 clients.push(client);
                                 self.update(id, generation, |entry| {
-                                    append_log(&mut entry.snapshot.log, message.into());
+                                    append_log(&mut entry.snapshot.log, message);
                                 });
                             }
                             endpoint = Some(next);
@@ -925,6 +963,7 @@ impl RdpService {
                 _ = ticker.tick() => {
                     let mut running = false;
                     let mut untracked = false;
+                    let mut handed_off = false;
                     for client in &mut clients {
                         // Process tracking is auxiliary. Losing a process handle must not
                         // terminate a tunnel that still carries live TCP connections.
@@ -933,6 +972,16 @@ impl RdpService {
                             ClientProcessState::Untracked => untracked = true,
                             ClientProcessState::Exited => {}
                         }
+                        handed_off |= client.take_handoff_notice();
+                    }
+                    if handed_off {
+                        self.update(id, generation, |entry| {
+                            entry.snapshot.client_handed_off = true;
+                            append_log(
+                                &mut entry.snapshot.log,
+                                "The RDP client process exited right after launch and passed the connection to an already running instance. That instance (e.g. msrdc) starts it only after its own pending connection or dialog is finished. Keeping the tunnel open while it connects".into(),
+                            );
+                        });
                     }
                     let state = if running {
                         ClientProcessState::Running
@@ -997,6 +1046,15 @@ fn append_log(log: &mut Vec<String>, message: String) {
         log.remove(0);
     }
     log.push(message);
+}
+/// Connection log line for a started client, naming the program so a configured
+/// client path can be checked from the log.
+fn launch_log(options: &RdpLaunchOptions, client: &LaunchedClient) -> String {
+    format!(
+        "{} ({})",
+        launch_message(options, client.password_delivery()),
+        client.program().display()
+    )
 }
 fn launch_message(options: &RdpLaunchOptions, delivery: PasswordDelivery) -> &'static str {
     match delivery {
@@ -1174,6 +1232,7 @@ mod tests {
             keep_tunnel: false,
             release_in: None,
             reopen_required: false,
+            client_handed_off: false,
             prompt: Some(PortForwardPrompt::HostKey(miaominal_ssh::HostKeyRequest {
                 request_id: 99,
                 hop: miaominal_ssh::SessionHop::new("host", 1, 1),
@@ -1316,6 +1375,47 @@ mod tests {
         catalog.profiles.clear();
         assert!(route_identity("host", &catalog).is_none());
     }
+    #[tokio::test]
+    async fn reuse_reopens_the_running_tunnel_with_the_latest_client_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = RdpService::new(
+            Handle::current(),
+            SecretStore::new_locked_vault(),
+            KnownHostsStore::with_path(directory.path().join("known_hosts")),
+        );
+        let (control, mut controls) = mpsc::unbounded_channel();
+        let mut entry = test_entry("a", "127.0.0.1", RdpRuntimeState::WaitingForClient);
+        entry.control = control;
+        service
+            .inner
+            .entries
+            .lock()
+            .unwrap()
+            .insert("a".into(), entry);
+        let client = RdpClientSettings::new(miaominal_settings::RdpClientKind::Mstsc, "C:/x.exe");
+        let request = RdpLaunchOptions::new(RdpConnectionMode::SshTunnel, client.clone())
+            .with_reuse_ssh_password(true);
+        service.relaunch_client_with("a", request).unwrap();
+        match controls.try_recv().unwrap() {
+            Control::Reopen(Some(options)) => {
+                assert_eq!(options.client, client);
+                assert!(options.reuses_ssh_password());
+            }
+            _ => panic!("expected a reopen carrying the new options"),
+        }
+        // Restarts keep the latest choice.
+        assert_eq!(
+            service.inner.entries.lock().unwrap()["a"].options.client,
+            client
+        );
+        // A different connection is never folded into this tunnel.
+        let other_port =
+            RdpLaunchOptions::new(RdpConnectionMode::SshTunnel, client.clone()).with_port(3390);
+        assert!(service.relaunch_client_with("a", other_port).is_err());
+        let direct = RdpLaunchOptions::new(RdpConnectionMode::Direct, client);
+        assert!(service.relaunch_client_with("a", direct).is_err());
+        assert!(controls.try_recv().is_err());
+    }
     fn test_entry(id: &str, listen_host: &str, state: RdpRuntimeState) -> Entry {
         let (control, _) = mpsc::unbounded_channel();
         Entry {
@@ -1332,6 +1432,7 @@ mod tests {
                 keep_tunnel: false,
                 release_in: None,
                 reopen_required: false,
+                client_handed_off: false,
                 prompt: None,
                 log: vec![],
                 revision: 1,

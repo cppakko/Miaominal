@@ -174,10 +174,19 @@ pub enum PasswordDelivery {
     WindowsCredential,
 }
 
+/// Some clients (e.g. msrdc) pass the connection to another or an already running
+/// instance and exit right after launch. An exit this early says nothing about the
+/// desktop's lifetime, so such a client is treated as untracked from then on.
+const HANDOFF_WINDOW: Duration = Duration::from_secs(10);
+
 /// Owns the launched child and its temporary resources, never the external application's lifetime.
 pub struct LaunchedClient {
     child: Option<Child>,
     trackable: bool,
+    /// The launched process exited within [`HANDOFF_WINDOW`].
+    handed_off: bool,
+    handoff_reported: bool,
+    program: PathBuf,
     file: Option<ConnectionFile>,
     lease: Option<CredentialLease>,
     started: Instant,
@@ -187,6 +196,10 @@ impl LaunchedClient {
     pub fn password_delivery(&self) -> PasswordDelivery {
         self.password_delivery
     }
+    /// The client program that was started.
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
     /// State right after launch, without polling the child. Use [`Self::poll`] afterwards.
     pub fn initial_process_state(&self) -> ClientProcessState {
         if self.trackable {
@@ -194,6 +207,12 @@ impl LaunchedClient {
         } else {
             ClientProcessState::Untracked
         }
+    }
+    /// `true` exactly once, after the launched process was found to have handed off.
+    pub fn take_handoff_notice(&mut self) -> bool {
+        let notice = self.handed_off && !self.handoff_reported;
+        self.handoff_reported |= notice;
+        notice
     }
     pub fn poll(&mut self) -> Result<ClientProcessState> {
         if self.started.elapsed() >= Duration::from_secs(30) {
@@ -206,12 +225,17 @@ impl LaunchedClient {
             .transpose()?
             .flatten()
             .is_some();
-        if exited && self.trackable && self.started.elapsed() >= Duration::from_secs(30)
+        if exited && self.trackable && self.started.elapsed() < HANDOFF_WINDOW {
+            self.handed_off = true;
+        }
+        let tracked = self.trackable && !self.handed_off;
+        // A handed-off instance may read the connection file later; keep it until expiry.
+        if exited && tracked && self.started.elapsed() >= Duration::from_secs(30)
             || self.started.elapsed() >= Duration::from_secs(600)
         {
             self.file.take();
         }
-        Ok(if !self.trackable {
+        Ok(if !tracked {
             ClientProcessState::Untracked
         } else if exited {
             ClientProcessState::Exited
@@ -330,6 +354,9 @@ pub fn launch(
             client.kind,
             RdpClientKind::Mstsc | RdpClientKind::SdlFreeRdp
         ),
+        handed_off: false,
+        handoff_reported: false,
+        program: client.path.clone(),
         file: Some(file),
         lease,
         started: Instant::now(),
@@ -340,6 +367,44 @@ pub fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exited_client(age: Duration) -> LaunchedClient {
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 0"]).spawn()
+        } else {
+            Command::new("true").spawn()
+        }
+        .unwrap();
+        child.wait().unwrap();
+        LaunchedClient {
+            child: Some(child),
+            trackable: true,
+            handed_off: false,
+            handoff_reported: false,
+            program: PathBuf::from("client"),
+            file: None,
+            lease: None,
+            started: Instant::now().checked_sub(age).unwrap(),
+            password_delivery: PasswordDelivery::Prompt,
+        }
+    }
+
+    #[test]
+    fn early_exit_is_a_handoff_and_late_exit_ends_the_client() {
+        // msrdc-style launchers exit at once; the desktop lives on in another process.
+        let mut early = exited_client(Duration::from_secs(1));
+        assert_eq!(early.poll().unwrap(), ClientProcessState::Untracked);
+        assert!(early.take_handoff_notice());
+        assert!(
+            !early.take_handoff_notice(),
+            "the hand-off is reported once"
+        );
+        assert_eq!(early.poll().unwrap(), ClientProcessState::Untracked);
+
+        let mut late = exited_client(HANDOFF_WINDOW + Duration::from_secs(5));
+        assert_eq!(late.poll().unwrap(), ClientProcessState::Exited);
+        assert!(!late.take_handoff_notice());
+    }
     #[test]
     fn arguments_keep_paths_atomic_and_do_not_contain_passwords() {
         let path = Path::new("/tmp/远程 desktop & $host.rdp");
