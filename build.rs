@@ -26,8 +26,11 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={SYSTEM_ICON_PATH}");
-    #[cfg(all(windows, target_env = "msvc"))]
-    {
+    // Build scripts run on the host, so `cfg(windows)` describes the host rather
+    // than the compilation target. Inspect the target through Cargo's env vars.
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os == "windows" && target_env == "msvc" {
         println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
     }
 
@@ -46,7 +49,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     write_ico(system_icon_path, &windows_icon_path, WINDOWS_ICON_SIZES)?;
 
     #[cfg(windows)]
-    embed_windows_icon(&windows_icon_path)?;
+    if target_os == "windows" {
+        embed_windows_icon(&windows_icon_path)?;
+    }
 
     Ok(())
 }

@@ -491,27 +491,30 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
 }
 
 fn closing_behavior_items(settings: Entity<SettingsController>) -> Vec<SettingItem> {
-    let mut items = vec![
-        SettingItem::new(
-            i18n::string("settings.connections.last_tab_close_behavior.label"),
-            SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
-        )
-        .description(i18n::string(
-            "settings.connections.last_tab_close_behavior.description",
-        )),
-    ];
+    let last_tab_item = SettingItem::new(
+        i18n::string("settings.connections.last_tab_close_behavior.label"),
+        SettingField::element(LastTabCloseBehaviorField::new(settings.clone())),
+    )
+    .description(i18n::string(
+        "settings.connections.last_tab_close_behavior.description",
+    ));
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    items.insert(
-        0,
-        SettingItem::new(
-            i18n::string("settings.connections.window_close_behavior.label"),
-            SettingField::element(WindowCloseBehaviorField::new(settings)),
-        )
-        .description(i18n::string(
-            "settings.connections.window_close_behavior.description",
-        )),
-    );
-    items
+    {
+        vec![
+            SettingItem::new(
+                i18n::string("settings.connections.window_close_behavior.label"),
+                SettingField::element(WindowCloseBehaviorField::new(settings)),
+            )
+            .description(i18n::string(
+                "settings.connections.window_close_behavior.description",
+            )),
+            last_tab_item,
+        ]
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        vec![last_tab_item]
+    }
 }
 
 fn openssh_page(settings: Entity<SettingsController>) -> NamedSettingPage {
@@ -1858,11 +1861,14 @@ struct LastTabCloseBehaviorField {
     controller: Entity<SettingsController>,
 }
 
+// Only shown where a system tray exists (Windows and Linux).
+#[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]
 #[derive(Clone)]
 struct WindowCloseBehaviorField {
     controller: Entity<SettingsController>,
 }
 
+#[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]
 impl WindowCloseBehaviorField {
     fn new(controller: Entity<SettingsController>) -> Self {
         Self { controller }

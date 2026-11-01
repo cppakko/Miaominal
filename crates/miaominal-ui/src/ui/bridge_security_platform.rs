@@ -257,11 +257,10 @@ fn enter_winrt_apartment() -> anyhow::Result<WinRtApartment> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
     #[test]
     fn system_auth_results_fail_closed_except_verified() {
         use windows::Security::Credentials::UI::UserConsentVerificationResult;

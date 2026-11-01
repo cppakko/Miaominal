@@ -6,9 +6,14 @@ use miaominal_settings::WindowCloseBehavior;
 use super::AppView;
 use super::i18n;
 
+// The tray menu is only implemented on Windows and Linux; other platforms use
+// a no-op backend, so the menu plumbing below is unused there.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 const SHOW_MENU_ID: &str = "miaominal-tray-show";
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 const QUIT_MENU_ID: &str = "miaominal-tray-quit";
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayCommand {
     Show,
@@ -36,6 +41,7 @@ enum DesktopPlatform {
     Other,
 }
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 #[derive(Clone)]
 struct TraySnapshot {
     visible: bool,

@@ -468,7 +468,7 @@ pub(in crate::ui) fn bridge_security_notification_window_options(
 fn bridge_security_notification_window_kind() -> gpui_kit::WindowKind {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty()) {
-        use super::*;
+        use gpui_kit::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
 
         return gpui_kit::WindowKind::LayerShell(LayerShellOptions {
             namespace: "miaominal-ssh-bridge-notification".to_string(),

@@ -118,6 +118,7 @@ fn main() {
         std::fs::read(root.join("public/assets/RobotoFlex.ttf"))
             .expect("React reference must contain public/assets/RobotoFlex.ttf")
     });
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     let reference_typography = reference_font.is_some();
     let fixture = output
         .parent()
