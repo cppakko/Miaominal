@@ -25,6 +25,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Test AppImage validation
+        run: python3 -m unittest discover -s scripts/tests -p test_check_appimage.py -v
+
       - name: Read app version
         id: version
         shell: bash
@@ -59,7 +62,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-bundle
-        run: cargo install cargo-bundle --locked
+        run: cargo install cargo-bundle --version 0.12.0 --locked
 
       - name: Build macOS app bundle
         run: cargo bundle --release --format osx
@@ -100,7 +103,7 @@ jobs:
           - runner: ubuntu-22.04
             arch_label: x86_64
             artifact_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}
-            appimage_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}.AppImage
+            appimage_name: Miaominal-${{ needs.prepare.outputs.version }}-x86_64.AppImage
             deb_name: Miaominal-linux-amd64-${{ needs.prepare.outputs.version }}.deb
             rpm_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}.rpm
             portable_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}-portable.zip
@@ -110,7 +113,7 @@ jobs:
           - runner: ubuntu-22.04-arm
             arch_label: arm64
             artifact_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}
-            appimage_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}.AppImage
+            appimage_name: Miaominal-${{ needs.prepare.outputs.version }}-aarch64.AppImage
             deb_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}.deb
             rpm_name: Miaominal-linux-aarch64-${{ needs.prepare.outputs.version }}.rpm
             portable_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}-portable.zip
@@ -131,6 +134,7 @@ jobs:
             cmake \
             curl \
             dpkg-dev \
+            desktop-file-utils \
             elfutils \
             file \
             g++ \
@@ -173,7 +177,7 @@ jobs:
 
       - name: Install Linux packaging tools
         run: |
-          cargo install cargo-bundle --locked
+          cargo install cargo-bundle --version 0.12.0 --locked
           cargo install cargo-deb --version 3.7.0 --locked
           cargo install cargo-generate-rpm --version 0.21.0 --locked
 
@@ -215,6 +219,7 @@ jobs:
           set -euo pipefail
           file "dist/${{ matrix.appimage_name }}" | tee /tmp/miaominal-file.txt
           grep -F "${{ matrix.file_arch }}" /tmp/miaominal-file.txt
+          python3 scripts/check_appimage.py "dist/${{ matrix.appimage_name }}"
 
           deb_arch="$(dpkg-deb --field "dist/${{ matrix.deb_name }}" Architecture)"
           test "$deb_arch" = "${{ matrix.deb_arch }}"

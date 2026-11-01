@@ -70,12 +70,12 @@ A file ending in `-standalone.exe` runs without installation and still uses the 
 
 ### Linux
 
-1. Download the `.AppImage` for your architecture, or install a `.deb` / `.rpm` package with your distribution's package manager.
+1. Download the `.AppImage` for your architecture (`x86_64` or `aarch64` for ARM64), or install a `.deb` / `.rpm` package with your distribution's package manager.
 2. For AppImage, make it executable and run it. This example uses x86_64 version `0.2.4`; replace the filename with the one you downloaded:
 
 ```bash
-chmod +x Miaominal-linux-x86_64-0.2.4.AppImage
-./Miaominal-linux-x86_64-0.2.4.AppImage
+chmod +x Miaominal-0.2.4-x86_64.AppImage
+./Miaominal-0.2.4-x86_64.AppImage
 ```
 
 ## Core Workflows

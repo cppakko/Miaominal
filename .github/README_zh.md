@@ -69,12 +69,12 @@
 
 ### Linux
 
-1. 下载对应架构的 `.AppImage`，或使用发行版的包管理器安装 `.deb` / `.rpm`。
+1. 下载对应架构的 `.AppImage`（`x86_64` 或用于 ARM64 的 `aarch64`），或使用发行版的包管理器安装 `.deb` / `.rpm`。
 2. 使用 AppImage 时，授予执行权限并运行。以下以 x86_64 的 `0.2.4` 版本为例，请替换为实际下载的文件名：
 
 ```bash
-chmod +x Miaominal-linux-x86_64-0.2.4.AppImage
-./Miaominal-linux-x86_64-0.2.4.AppImage
+chmod +x Miaominal-0.2.4-x86_64.AppImage
+./Miaominal-0.2.4-x86_64.AppImage
 ```
 
 ## 核心工作流

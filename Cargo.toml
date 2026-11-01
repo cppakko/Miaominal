@@ -178,7 +178,9 @@ long_description = """
 Miaominal is a desktop terminal application built with Rust, GPUI, and alacritty_terminal.
 It focuses on SSH sessions, SFTP file transfers, configuration management, and secure credential storage.
 """
-linux_use_terminal = false
+
+[package.metadata.bundle.linux]
+use_terminal = false
 
 [package.metadata.deb]
 maintainer = "cppakko <cppakko@users.noreply.github.com>"
