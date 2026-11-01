@@ -7,6 +7,8 @@ use gpui_kit::{StatefulInteractiveElement, TestSupportExt as _, WindowControlAre
 use std::time::{Duration, Instant};
 
 const TOPBAR_TAB_GAP: f32 = 8.0;
+/// Gap between tabs inside the scrolling tab strip.
+const TOPBAR_TAB_STRIP_GAP: f32 = 12.0;
 const TOPBAR_ACTION_BUTTON_WIDTH: f32 = 36.0;
 const TOPBAR_WINDOW_CONTROLS_WIDTH: f32 = TOPBAR_ACTION_BUTTON_WIDTH * 3.0 + TOPBAR_TAB_GAP * 2.0;
 const MACOS_TRAFFIC_LIGHT_PADDING: f32 = 71.0;
@@ -886,17 +888,11 @@ impl ChromeAppViewExt for AppView {
         let tab_layout_animating = !self.workspace.topbar_entering_tabs.is_empty()
             || !self.workspace.topbar_exiting_tabs.is_empty();
         self.sync_topbar_tab_animation_state(&tabs, active, window);
-        if (active_changed
+        let should_scroll_to_active = active_changed
             || tab_layout_animating
-            || !self.workspace.topbar_entering_tabs.is_empty())
-            && let Some(index) = tabs
-                .iter()
-                .position(|tab| Some(tab.snapshot.tab_id) == active)
-        {
-            self.workspace
-                .topbar_tab_scroll_handle
-                .scroll_to_item(index);
-        }
+            || !self.workspace.topbar_entering_tabs.is_empty()
+            || !self.workspace.topbar_exiting_tabs.is_empty();
+        let exiting_tabs = self.topbar_exiting_tabs_render_state(active);
         self.shell
             .topbar_tab_focus
             .retain(|id, _| tabs.iter().any(|tab| tab.snapshot.tab_id == *id));
@@ -919,7 +915,16 @@ impl ChromeAppViewExt for AppView {
         } else {
             128.0
         };
-        let strip_width = (tabs.len() as f32 * (tab_width + 12.0) + 4.0)
+        // Size the strip from each tab's *animated* footprint (width plus its
+        // share of the gap), so entering/exiting tabs grow and shrink the strip
+        // in lockstep with their own width instead of snapping to the final size.
+        let tab_footprint = tab_width + TOPBAR_TAB_STRIP_GAP;
+        let animated_tab_count = tabs
+            .iter()
+            .map(|tab| self.topbar_tab_visibility(tab.snapshot.tab_id))
+            .chain(exiting_tabs.iter().map(|exiting| exiting.visibility))
+            .sum::<f32>();
+        let strip_width = (animated_tab_count * tab_footprint + 4.0)
             .min((width - controls_width - 88.0).max(0.0));
         let rename_height = miaominal_settings::scaled_line_height(24.0);
         let role = self.window_role;
@@ -1054,6 +1059,7 @@ impl ChromeAppViewExt for AppView {
                     .focus(move |style| style.border_1().border_color(colors.primary))
                     .relative()
                     .w(space(tab_width * visibility))
+                    .mr(space(-TOPBAR_TAB_STRIP_GAP * (1.0 - visibility)))
                     .opacity(visibility)
                     .h(space(ShellMetrics::TAB_HEIGHT))
                     .flex_shrink_0()
@@ -1186,15 +1192,24 @@ impl ChromeAppViewExt for AppView {
             .into_iter()
             .map(IntoElement::into_any_element)
             .collect::<Vec<_>>();
-        for exiting in self.topbar_exiting_tabs_render_state(active) {
+        // Mirrors `tab_elements` so the scroll target index accounts for the
+        // exiting placeholders inserted between live tabs.
+        let mut element_tab_ids = tabs
+            .iter()
+            .map(|tab| Some(tab.snapshot.tab_id))
+            .collect::<Vec<_>>();
+        for exiting in exiting_tabs {
             let index = exiting.snapshot.visible_index.min(tab_elements.len());
             let roles = miaominal_settings::current_theme().material.roles;
+            element_tab_ids.insert(index, None);
             tab_elements.insert(
                 index,
                 div()
                     .w(space(tab_width * exiting.visibility))
+                    .mr(space(-TOPBAR_TAB_STRIP_GAP * (1.0 - exiting.visibility)))
                     .h(space(ShellMetrics::TAB_HEIGHT))
                     .flex_shrink_0()
+                    .overflow_hidden()
                     .opacity(exiting.visibility)
                     .rounded_t(space(16.0))
                     .bg(rgb(blend_rgb(
@@ -1211,6 +1226,15 @@ impl ChromeAppViewExt for AppView {
                     )
                     .into_any_element(),
             );
+        }
+        if should_scroll_to_active
+            && let Some(index) = element_tab_ids
+                .iter()
+                .position(|id| id.is_some() && *id == active)
+        {
+            self.workspace
+                .topbar_tab_scroll_handle
+                .scroll_to_item(index);
         }
         let scroll_entity = entity.clone();
         let scroll_wheel = scroll.clone();
