@@ -924,8 +924,14 @@ impl ChromeAppViewExt for AppView {
             .map(|tab| self.topbar_tab_visibility(tab.snapshot.tab_id))
             .chain(exiting_tabs.iter().map(|exiting| exiting.visibility))
             .sum::<f32>();
-        let strip_width = (animated_tab_count * tab_footprint + 4.0)
-            .min((width - controls_width - 88.0).max(0.0));
+        let content_width = animated_tab_count * tab_footprint + 4.0;
+        let available_strip_width = (width - controls_width - 88.0).max(0.0);
+        // When every tab fits, the strip never needs to scroll. Pixel rounding
+        // of the animated widths can still overflow by a fraction of a pixel,
+        // and chasing that with `scroll_to_item` each frame makes the whole
+        // row jitter, so pin the offset instead.
+        let tabs_fit = content_width <= available_strip_width;
+        let strip_width = content_width.min(available_strip_width);
         let rename_height = miaominal_settings::scaled_line_height(24.0);
         let role = self.window_role;
         let tab_elements = tabs
@@ -1227,7 +1233,14 @@ impl ChromeAppViewExt for AppView {
                     .into_any_element(),
             );
         }
-        if should_scroll_to_active
+        if tabs_fit {
+            let offset = self.workspace.topbar_tab_scroll_handle.offset();
+            if offset.x != px(0.0) {
+                self.workspace
+                    .topbar_tab_scroll_handle
+                    .set_offset(point(px(0.0), offset.y));
+            }
+        } else if should_scroll_to_active
             && let Some(index) = element_tab_ids
                 .iter()
                 .position(|id| id.is_some() && *id == active)
