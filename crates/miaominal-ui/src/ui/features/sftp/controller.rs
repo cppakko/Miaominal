@@ -5590,6 +5590,10 @@ impl SftpController {
 impl EventEmitter<AppCommand> for SftpController {}
 
 #[cfg(test)]
+#[path = "context_menu_lifecycle_tests.rs"]
+mod context_menu_lifecycle_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::components::animation::CONTAINER_TRANSITION_DURATION;

@@ -43,6 +43,7 @@ mod controller;
 use controller::*;
 pub(in crate::ui) use controller::{SftpController, SftpControllerArgs};
 mod browser;
+mod context_menu;
 mod page;
 mod system_file_icons;
 use browser::*;

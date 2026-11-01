@@ -91,6 +91,10 @@ impl Render for SftpSplitDragMarker {
 }
 
 #[cfg(test)]
+#[path = "context_menu_tests.rs"]
+mod context_menu_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
@@ -397,6 +401,11 @@ fn sftp_path_input_shell(input: &Entity<InputState>) -> impl IntoElement {
         .flex()
         .items_center()
         .overflow_hidden()
+        .on_mouse_down(MouseButton::Right, |_, _, cx| {
+            // Preserve the input's native edit menu instead of opening the
+            // surrounding browser section's file commands.
+            cx.stop_propagation();
+        })
         .child(
             HintedInput::new(input)
                 .appearance(false)
@@ -899,6 +908,7 @@ struct SftpBrowserSection<P, T, C, M> {
     path_bar: P,
     toolbar: T,
     content: C,
+    table: Entity<TableState<SftpBrowserTableDelegate>>,
     menu_builder: M,
 }
 
@@ -922,8 +932,16 @@ where
         path_bar,
         toolbar,
         content,
+        table,
         menu_builder,
     } = section;
+    let menu_builder: Rc<super::context_menu::SftpMenuBuilder> = Rc::new(menu_builder);
+    let content = super::context_menu::SftpTableContextMenu::new(
+        (section_id.clone(), "table-menu").into(),
+        table.clone(),
+        content.into_any_element(),
+        menu_builder.clone(),
+    );
 
     sftp_panel_card()
         .bg(ShellColors::current().canvas)
@@ -936,7 +954,13 @@ where
         .id(section_id)
         .flex()
         .flex_col()
-        .context_menu(menu_builder)
+        .on_mouse_down(MouseButton::Right, move |_, _, cx| {
+            table.update(cx, |table, cx| {
+                table.delegate_mut().take_nested_context_menu_requested();
+                table.set_right_clicked_row(None, cx);
+            });
+        })
+        .context_menu(move |menu, window, cx| menu_builder(menu, window, cx))
         .child(
             div().w_full().flex_shrink_0().px_3().pt_2().pb_2().child(
                 v_flex()
@@ -2788,14 +2812,15 @@ impl SftpController {
             path_bar: remote_path_bar,
             toolbar: remote_toolbar,
             content: remote_list,
+            table: self.remote_table(),
             menu_builder: {
                 let controller = controller.clone();
                 let remote_table_for_menu = remote_table_for_menu.clone();
                 move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
-                    let is_header = remote_table_for_menu.update(cx, |state, _| {
-                        state.delegate_mut().take_col_header_right_clicked()
+                    let is_nested_menu = remote_table_for_menu.update(cx, |state, _| {
+                        state.delegate_mut().take_nested_context_menu_requested()
                     });
-                    if is_header {
+                    if is_nested_menu {
                         return menu;
                     }
                     build_remote_sftp_context_menu(menu, controller.clone(), tab_id, true, cx)
@@ -3435,14 +3460,15 @@ impl SftpController {
                         path_bar: local_path_bar,
                         toolbar: local_toolbar,
                         content: local_list,
+                        table: self.local_table(),
                         menu_builder: {
                             let controller = entity.clone();
                             let local_table_for_menu = local_table_for_menu.clone();
                             move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
-                                let is_header = local_table_for_menu.update(cx, |state, _| {
-                                    state.delegate_mut().take_col_header_right_clicked()
+                                let is_nested_menu = local_table_for_menu.update(cx, |state, _| {
+                                    state.delegate_mut().take_nested_context_menu_requested()
                                 });
-                                if is_header {
+                                if is_nested_menu {
                                     return menu;
                                 }
                                 build_local_sftp_context_menu(menu, controller.clone(), tab_id, cx)
@@ -3479,14 +3505,16 @@ impl SftpController {
                         path_bar: remote_path_bar,
                         toolbar: remote_toolbar,
                         content: remote_list,
+                        table: self.remote_table(),
                         menu_builder: {
                             let controller = entity.clone();
                             let remote_table_for_menu = remote_table_for_menu.clone();
                             move |menu, _window: &mut Window, cx: &mut Context<PopupMenu>| {
-                                let is_header = remote_table_for_menu.update(cx, |state, _| {
-                                    state.delegate_mut().take_col_header_right_clicked()
-                                });
-                                if is_header {
+                                let is_nested_menu =
+                                    remote_table_for_menu.update(cx, |state, _| {
+                                        state.delegate_mut().take_nested_context_menu_requested()
+                                    });
+                                if is_nested_menu {
                                     return menu;
                                 }
                                 build_remote_sftp_context_menu(

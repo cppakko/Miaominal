@@ -134,7 +134,7 @@ pub(in crate::ui) struct SftpBrowserTableDelegate {
     hidden_columns: HashSet<usize>,
     visible_col_map: Vec<usize>,
     pending_select_modifiers: SftpBrowserSelectionModifiers,
-    pub(in crate::ui) col_header_right_clicked: bool,
+    pub(in crate::ui) nested_context_menu_requested: bool,
     pub(in crate::ui) inline_rename_path: Option<String>,
 }
 
@@ -165,7 +165,7 @@ impl SftpBrowserTableDelegate {
             hidden_columns,
             visible_col_map,
             pending_select_modifiers: SftpBrowserSelectionModifiers::default(),
-            col_header_right_clicked: false,
+            nested_context_menu_requested: false,
             inline_rename_path: None,
         }
     }
@@ -464,9 +464,9 @@ impl SftpBrowserTableDelegate {
         self.apply_sort();
     }
 
-    pub(in crate::ui) fn take_col_header_right_clicked(&mut self) -> bool {
-        let v = self.col_header_right_clicked;
-        self.col_header_right_clicked = false;
+    pub(in crate::ui) fn take_nested_context_menu_requested(&mut self) -> bool {
+        let v = self.nested_context_menu_requested;
+        self.nested_context_menu_requested = false;
         v
     }
 
@@ -607,7 +607,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
                 MouseButton::Right,
                 cx.listener(|table, _: &MouseDownEvent, _, cx| {
                     table.set_right_clicked_row(None, cx);
-                    table.delegate_mut().col_header_right_clicked = true;
+                    table.delegate_mut().nested_context_menu_requested = true;
                 }),
             )
             .child(col_name)
@@ -846,6 +846,19 @@ impl TableDelegate for SftpBrowserTableDelegate {
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                                    // The input handles the press before this wrapper; do not
+                                    // let the table's empty menu steal its focus afterwards.
+                                    cx.stop_propagation();
+                                })
+                                .capture_any_mouse_down(cx.listener(
+                                    |table, event: &MouseDownEvent, _, _| {
+                                        if event.button == MouseButton::Right {
+                                            table.delegate_mut().nested_context_menu_requested =
+                                                true;
+                                        }
+                                    },
+                                ))
                                 .child(
                                     HintedInput::new(&inline_rename_input)
                                         .appearance(false)
