@@ -502,22 +502,19 @@ fn window_control_button(
     control_area: WindowControlArea,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let roles = miaominal_settings::current_theme().material.roles;
+    let colors = ShellColors::current();
     let is_windows = cfg!(target_os = "windows");
-    let hover_background = ShellColors::current().hover;
 
     div()
         .id(SharedString::from(id))
+        .group(id)
         .w(space(40.0))
         .h(space(32.0))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(space(8.0))
-        .bg(ShellColors::current().chrome)
-        .text_color(rgb(roles.on_surface_variant))
-        .cursor_pointer()
-        .hover(move |this| this.bg(hover_background))
+        .text_color(colors.muted)
+        .cursor_default()
         .active(|this| this.opacity(0.85))
         .occlude()
         .when(is_windows, |this| this.window_control_area(control_area))
@@ -529,7 +526,18 @@ fn window_control_button(
                 cx.stop_propagation();
             })
         })
-        .child(Icon::from(icon).size(space(20.0)))
+        // Keep the native hit target wider than the circular visual surface.
+        .child(
+            div()
+                .size(space(32.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(colors.chip)
+                .group_hover(id, move |style| style.bg(colors.hover))
+                .child(Icon::from(icon).size(space(16.0))),
+        )
         .on_click(move |_, window, cx| on_click(window, cx))
 }
 
