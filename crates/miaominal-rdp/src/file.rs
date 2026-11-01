@@ -99,6 +99,30 @@ fn directory() -> Result<PathBuf> {
     Ok(miaominal_paths::config_dir()?.join("cache").join("rdp"))
 }
 
+fn snap_remmina_cache_directory(home: &Path) -> PathBuf {
+    home.join("snap")
+        .join("remmina")
+        .join("common")
+        .join("miaominal-rdp")
+}
+
+fn snap_remmina_directory(program: &Path, home: Option<&Path>) -> Result<Option<PathBuf>> {
+    // Keep the Snap launcher path: resolving its symlink yields /usr/bin/snap
+    // and loses the application identity. Do not guess from a wrapper's basename.
+    if program != Path::new("/snap/bin/remmina")
+        && program != Path::new("/var/lib/snapd/snap/bin/remmina")
+    {
+        return Ok(None);
+    }
+    let home = home
+        .filter(|home| home.is_absolute())
+        .context("an absolute HOME is required for Snap Remmina connection files")?;
+    // A strict Snap cannot read Miaominal's hidden/private data directory.
+    // Its own common directory is accessible and survives Snap refreshes.
+    // SNAP_USER_COMMON is not used: it may belong to the launching application.
+    Ok(Some(snap_remmina_cache_directory(home)))
+}
+
 pub(crate) struct ConnectionFile {
     path: PathBuf,
 }
@@ -106,11 +130,31 @@ impl ConnectionFile {
     pub(crate) fn new(contents: &str) -> Result<Self> {
         Self::write(&directory()?, contents, false)
     }
-    pub(crate) fn remmina(contents: &str) -> Result<Self> {
+    pub(crate) fn remmina(contents: &str, program: &Path) -> Result<Self> {
+        if cfg!(target_os = "linux") {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            return Self::remmina_with_home(contents, program, home.as_deref());
+        }
         Self::write(&directory()?, contents, true)
     }
+    fn remmina_with_home(contents: &str, program: &Path, home: Option<&Path>) -> Result<Self> {
+        let directory = match snap_remmina_directory(program, home)? {
+            Some(directory) => directory,
+            None => directory()?,
+        };
+        Self::write(&directory, contents, true)
+    }
     fn write(directory: &Path, contents: &str, remmina: bool) -> Result<Self> {
-        fs::create_dir_all(&directory).context("could not create RDP cache directory")?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(directory)
+            .context("could not create RDP cache directory")?;
         let path = directory.join(format!(
             "{}.{}",
             uuid::Uuid::new_v4(),
@@ -137,7 +181,29 @@ impl Drop for ConnectionFile {
 }
 
 pub fn cleanup_stale_files() -> Result<()> {
-    cleanup_directory(&directory()?)
+    let mut directories = vec![directory()];
+    if cfg!(target_os = "linux")
+        && let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+    {
+        directories.push(Ok(snap_remmina_cache_directory(&home)));
+    }
+    cleanup_directories(directories)
+}
+
+fn cleanup_directories(directories: impl IntoIterator<Item = Result<PathBuf>>) -> Result<()> {
+    // Even failure to resolve the old cache must not prevent Snap cache cleanup.
+    let mut first_error = None;
+    for directory in directories {
+        if let Err(error) = directory.and_then(|directory| cleanup_directory(&directory)) {
+            first_error.get_or_insert(error);
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn cleanup_directory(directory: &Path) -> Result<()> {
@@ -233,6 +299,114 @@ mod tests {
         assert!(!path.exists());
         let file = ConnectionFile::write(directory.path(), "username:s:用户\r\n", false).unwrap();
         assert!(fs::read(file.path()).unwrap().starts_with(&[0xff, 0xfe]));
+    }
+
+    #[test]
+    fn snap_remmina_uses_its_own_common_directory_only_for_known_launchers() {
+        let home = tempfile::tempdir().unwrap();
+        let expected = home.path().join("snap/remmina/common/miaominal-rdp");
+        for launcher in ["/snap/bin/remmina", "/var/lib/snapd/snap/bin/remmina"] {
+            assert_eq!(
+                snap_remmina_directory(Path::new(launcher), Some(home.path())).unwrap(),
+                Some(expected.clone())
+            );
+        }
+        for launcher in [
+            "/usr/bin/remmina",
+            "/usr/local/bin/remmina",
+            "/usr/bin/snap",
+            "/snap/bin/other",
+            "remmina",
+            "snap/bin/remmina",
+        ] {
+            assert_eq!(
+                snap_remmina_directory(Path::new(launcher), None).unwrap(),
+                None,
+                "do not change the cache location for {launcher}"
+            );
+        }
+    }
+
+    #[test]
+    fn snap_remmina_requires_an_absolute_home_without_a_private_cache_fallback() {
+        let launcher = Path::new("/snap/bin/remmina");
+        assert!(
+            ConnectionFile::remmina_with_home("[remmina]\nname=Test\n", launcher, None).is_err()
+        );
+        for home in ["relative-home", ""] {
+            assert!(
+                ConnectionFile::remmina_with_home(
+                    "[remmina]\nname=Test\n",
+                    launcher,
+                    Some(Path::new(home)),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn snap_remmina_files_preserve_utf8_permissions_and_drop_cleanup() {
+        let home = tempfile::tempdir().unwrap();
+        let home_with_spaces = home.path().join("home with spaces 用户");
+        let cache = snap_remmina_cache_directory(&home_with_spaces);
+        let endpoint = RdpEndpoint::new("127.0.0.2", 49152).unwrap();
+        let contents = render_remmina_file(&endpoint, "域\\用户").unwrap();
+        let file = ConnectionFile::remmina_with_home(
+            &contents,
+            Path::new("/snap/bin/remmina"),
+            Some(&home_with_spaces),
+        )
+        .unwrap();
+        let path = file.path().to_path_buf();
+        assert_eq!(path.parent(), Some(cache.as_path()));
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("remmina")
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&cache).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(file);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn cleanup_reaches_snap_cache_even_when_another_directory_fails() {
+        let home = tempfile::tempdir().unwrap();
+        let invalid_cache = home.path().join("not-a-directory");
+        fs::write(&invalid_cache, "not a directory").unwrap();
+        let snap_cache = snap_remmina_cache_directory(home.path());
+        let recent = ConnectionFile::write(&snap_cache, "recent", true).unwrap();
+        let unrelated = snap_cache.parent().unwrap().join("user-connection.remmina");
+        fs::write(&unrelated, "user file").unwrap();
+        for unavailable in [
+            Err(anyhow::anyhow!("native cache directory resolution failed")),
+            Ok(invalid_cache),
+        ] {
+            let expired = ConnectionFile::write(&snap_cache, "expired", true).unwrap();
+            let timestamp = std::time::SystemTime::now() - FILE_TTL - Duration::from_secs(1);
+            fs::File::options()
+                .write(true)
+                .open(expired.path())
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(timestamp))
+                .unwrap();
+            assert!(cleanup_directories([unavailable, Ok(snap_cache.clone())]).is_err());
+            assert!(!expired.path().exists());
+            assert!(recent.path().exists());
+            assert!(unrelated.exists());
+        }
     }
 
     #[test]

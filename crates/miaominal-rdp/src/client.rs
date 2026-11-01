@@ -300,7 +300,7 @@ pub fn launch(
     let from_stdin =
         client.kind == RdpClientKind::SdlFreeRdp && password.is_some_and(|p| p.len() < 512);
     let file = if client.kind == RdpClientKind::Remmina {
-        ConnectionFile::remmina(&render_remmina_file(endpoint, username)?)?
+        ConnectionFile::remmina(&render_remmina_file(endpoint, username)?, &client.path)?
     } else {
         ConnectionFile::new(&render_connection_file(
             endpoint,
