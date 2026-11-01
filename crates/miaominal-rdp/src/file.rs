@@ -70,7 +70,7 @@ pub fn render_connection_file(
 ) -> Result<String> {
     validate_value(username)?;
     Ok(format!(
-        "full address:s:{}\r\nusername:s:{}\r\nscreen mode id:i:2\r\nuse multimon:i:0\r\nredirectclipboard:i:1\r\ndrivestoredirect:s:\r\nredirectdrives:i:0\r\naudiomode:i:0\r\naudiocapturemode:i:0\r\nauthentication level:i:2\r\nprompt for credentials:i:{}\r\nautoreconnection enabled:i:1\r\n",
+        "full address:s:{}\r\nusername:s:{}\r\nscreen mode id:i:2\r\nuse multimon:i:0\r\ndynamic resolution:i:1\r\nredirectclipboard:i:1\r\ndrivestoredirect:s:\r\nredirectdrives:i:0\r\naudiomode:i:0\r\naudiocapturemode:i:0\r\nauthentication level:i:2\r\nprompt for credentials:i:{}\r\nautoreconnection enabled:i:1\r\n",
         endpoint.address(),
         username,
         u8::from(prompt)
@@ -201,6 +201,19 @@ mod tests {
         assert!(RdpEndpoint::new("[]", 3389).is_err());
         assert!(RdpEndpoint::new("[::1", 3389).is_err());
     }
+    #[test]
+    fn connection_files_enable_dynamic_resolution_by_default() {
+        for endpoint in [
+            RdpEndpoint::new("rdp.example", 3389).unwrap(),
+            RdpEndpoint::new("127.0.0.2", 49152).unwrap(),
+        ] {
+            for prompt in [false, true] {
+                let file = render_connection_file(&endpoint, "user", prompt).unwrap();
+                assert!(file.lines().any(|line| line == "dynamic resolution:i:1"));
+            }
+        }
+    }
+
     #[test]
     fn native_files_use_correct_encoding_and_are_deleted_on_drop() {
         let directory = tempfile::tempdir().unwrap();
