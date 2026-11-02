@@ -7,4 +7,5 @@ pub mod proxy;
 pub mod sftp;
 pub mod snippet;
 pub mod ssh_bridge_security;
+pub mod telnet;
 pub mod terminal;

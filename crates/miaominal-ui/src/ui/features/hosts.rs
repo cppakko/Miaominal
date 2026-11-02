@@ -2140,6 +2140,7 @@ impl HostsController {
                 local_shell,
                 local_shell_args,
                 local_working_directory,
+                telnet_agent_exec: false,
                 last_connected_at: existing.and_then(|profile| profile.last_connected_at),
             });
         }
@@ -2308,6 +2309,7 @@ impl HostsController {
             local_shell,
             local_shell_args,
             local_working_directory,
+            telnet_agent_exec: false,
             last_connected_at: existing.and_then(|profile| profile.last_connected_at),
         })
     }

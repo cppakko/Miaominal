@@ -134,6 +134,11 @@ pub struct SessionProfile {
     pub local_shell_args: String,
     #[serde(default)]
     pub local_working_directory: String,
+    /// Telnet only: let the AI assistant run commands by typing them into the
+    /// terminal (needs a POSIX shell). Off by default: the assistant only
+    /// suggests commands for the user to run.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub telnet_agent_exec: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected_at: Option<u64>,
 }
@@ -172,6 +177,7 @@ impl SessionProfile {
             local_shell: String::new(),
             local_shell_args: String::new(),
             local_working_directory: String::new(),
+            telnet_agent_exec: false,
             last_connected_at: None,
         }
     }
@@ -188,6 +194,20 @@ impl SessionProfile {
         self.kind == ProfileKind::Local
     }
 
+    pub fn is_ssh(&self) -> bool {
+        self.kind == ProfileKind::Ssh
+    }
+
+    pub fn is_telnet(&self) -> bool {
+        self.kind == ProfileKind::Telnet
+    }
+
+    /// The AI assistant may only suggest commands for this target: Telnet
+    /// hosts run nothing on their own unless the profile opts in.
+    pub fn agent_suggests_only(&self) -> bool {
+        self.is_telnet() && !self.telnet_agent_exec
+    }
+
     pub fn summary(&self) -> String {
         if self.is_local() {
             let shell = self.local_shell.trim();
@@ -196,6 +216,9 @@ impl SessionProfile {
             } else {
                 shell.to_string()
             };
+        }
+        if self.username.trim().is_empty() {
+            return format!("{}:{}", self.host, self.port);
         }
         format!("{}@{}:{}", self.username, self.host, self.port)
     }
@@ -589,6 +612,45 @@ mod tests {
             restored.local_working_directory,
             profile.local_working_directory
         );
+    }
+
+    #[test]
+    fn telnet_profile_round_trips_and_summarizes_without_username() {
+        let mut profile = SessionProfile::blank("session-telnet", 1);
+        profile.kind = ProfileKind::Telnet;
+        profile.host = "switch.lan".into();
+        profile.port = 23;
+
+        assert!(profile.is_telnet());
+        assert!(!profile.is_ssh());
+        assert_eq!(profile.summary(), "switch.lan:23");
+
+        let json = serde_json::to_string(&profile).expect("profile should serialize");
+        assert!(json.contains("\"kind\":\"telnet\""));
+        let restored: SessionProfile =
+            serde_json::from_str(&json).expect("profile should deserialize");
+        assert_eq!(restored.kind, ProfileKind::Telnet);
+
+        profile.username = "admin".into();
+        assert_eq!(profile.summary(), "admin@switch.lan:23");
+    }
+
+    #[test]
+    fn telnet_agent_execution_is_opt_in_and_round_trips() {
+        let mut profile = SessionProfile::blank("session-telnet", 1);
+        assert!(!profile.agent_suggests_only());
+        profile.kind = ProfileKind::Telnet;
+        assert!(profile.agent_suggests_only());
+
+        let json = serde_json::to_string(&profile).expect("profile should serialize");
+        assert!(!json.contains("telnet_agent_exec"));
+
+        profile.telnet_agent_exec = true;
+        assert!(!profile.agent_suggests_only());
+        let json = serde_json::to_string(&profile).expect("profile should serialize");
+        let restored: SessionProfile =
+            serde_json::from_str(&json).expect("profile should deserialize");
+        assert!(restored.telnet_agent_exec);
     }
 
     #[test]

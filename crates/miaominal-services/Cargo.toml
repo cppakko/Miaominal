@@ -54,7 +54,7 @@ miaominal-sync = { path = "../miaominal-sync", optional = true, default-features
 notify = { workspace = true, optional = true }
 sha2.workspace = true
 rand.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
 toml.workspace = true
 uuid.workspace = true
 zeroize = { workspace = true, optional = true }

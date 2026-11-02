@@ -21,6 +21,8 @@ impl TerminalService {
         }
     }
 
+    /// Starts the terminal session for a remote profile: Telnet profiles use
+    /// the Telnet backend, every other remote profile uses SSH.
     pub fn start_session(
         &self,
         profile: SessionProfile,
@@ -30,6 +32,17 @@ impl TerminalService {
         lines: usize,
         monitoring_enabled: bool,
     ) -> SessionConnection {
+        if profile.is_telnet() {
+            let profile = ssh::hydrate_profile_from_secrets(profile, &self.secrets);
+            return crate::telnet_session::start_telnet_session(
+                &self.runtime,
+                profile,
+                all_proxies,
+                self.secrets.clone(),
+                columns,
+                lines,
+            );
+        }
         ssh::start_session(
             &self.runtime,
             profile,

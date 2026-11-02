@@ -47,6 +47,8 @@ mod sync_executor;
 #[cfg(any(feature = "desktop", feature = "mobile"))]
 #[path = "services/sync_service.rs"]
 mod sync_service;
+#[path = "services/telnet_session.rs"]
+mod telnet_session;
 #[path = "services/terminal_service.rs"]
 mod terminal_service;
 
