@@ -26,6 +26,26 @@ use tokio::sync::{Mutex, Notify, mpsc};
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 pub const TERMINAL_OUTPUT_TAP_CAPACITY: usize = 8;
 pub const TERMINAL_INTERRUPT_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Upper bound for one non-interactive command typed into a terminal-only
+/// target; tool wrappers apply their own shorter timeouts inside the script.
+const TERMINAL_SCRIPT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Base64 replay of the largest tool output plus echoed input and prompts.
+const TERMINAL_SCRIPT_MAX_COLLECTED_BYTES: usize = 32 * 1024 * 1024;
+/// Why tools refuse a suggest-only (read-only Telnet) target; written for
+/// the model so it switches to suggesting commands.
+pub const SUGGEST_ONLY_REASON: &str = "this Telnet target is read-only for the assistant: do not run commands; \
+give the user each command in a fenced code block with what it does and its risk, \
+then read the result with terminal_read after they run it";
+
+fn unique_terminal_token() -> String {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed) as u64;
+    format!("MIAOMINAL_{nanos:016x}{sequence:04x}")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalOutputTapError {
@@ -487,6 +507,12 @@ impl TerminalOutputTap {
 impl TerminalOutputReceiver {
     pub async fn recv(&mut self) -> Option<Vec<u8>> {
         self.receiver.recv().await
+    }
+
+    /// Discards output queued since the previous command (prompts, banners)
+    /// so the small tap has room for the next command's output.
+    fn drain_pending(&mut self) {
+        while self.receiver.try_recv().is_ok() {}
     }
 
     pub fn overflowed(&self) -> bool {
@@ -1111,6 +1137,17 @@ impl AgentExecChannel {
         }
 
         self.policy.enforce_path(access, &normalized, true)?;
+        if self.is_terminal_only() {
+            let resolved = self.resolve_path_via_terminal(&normalized).await?;
+            return authorize_resolved_path(
+                &self.policy,
+                self.shell_type(),
+                access,
+                expected_kind,
+                &normalized,
+                resolved,
+            );
+        }
         let mut resolved = miaominal_sftp::resolve_profile_paths(
             self.profile.clone(),
             self.all_profiles.clone(),
@@ -1171,6 +1208,11 @@ impl AgentExecChannel {
         if !request.skip_policy {
             self.policy.enforce(&request.tool_name, request.approved)?;
             self.enforce_context_policy(&request)?;
+        }
+        if self.is_suggest_only()
+            && !matches!(request.tool_name.as_str(), "web_search" | "web_fetch")
+        {
+            return Err(self.suggest_only_error());
         }
         let route = request.route.unwrap_or(BackendRoute::SshExec);
         self.backend_router.ensure_supported(route)?;
@@ -1278,6 +1320,9 @@ impl AgentExecChannel {
         command: impl Into<String>,
         mode: ExecMode,
     ) -> AgentResult<String> {
+        if self.is_terminal_only() {
+            return self.exec_script_via_terminal(command.into()).await;
+        }
         self.backend_router
             .exec(
                 route,
@@ -1292,6 +1337,156 @@ impl AgentExecChannel {
                 },
             )
             .await
+    }
+
+    /// Telnet targets have no exec channel or SFTP: every command is typed
+    /// into the user's terminal tab through the leased terminal handle.
+    pub fn is_terminal_only(&self) -> bool {
+        self.profile.is_telnet()
+    }
+
+    /// Read-only target: the assistant may read the terminal screen and
+    /// suggest commands, but runs nothing (Telnet unless the profile opts in).
+    pub fn is_suggest_only(&self) -> bool {
+        self.profile.agent_suggests_only()
+    }
+
+    fn suggest_only_error(&self) -> AgentError {
+        AgentError::Denied {
+            tool_name: format!("@{}", self.profile.name),
+            reason: SUGGEST_ONLY_REASON.into(),
+        }
+    }
+
+    /// Runs `command` like an SSH exec channel would (stdout returned, a
+    /// non-zero exit becomes an error), but inside the visible terminal.
+    async fn exec_script_via_terminal(&self, command: String) -> AgentResult<String> {
+        let output = self.run_script_via_terminal(&command).await?;
+        if output.status != 0 {
+            let stderr = output.stderr.trim();
+            let detail = if stderr.is_empty() {
+                output.stdout.trim()
+            } else {
+                stderr
+            };
+            return Err(AgentError::Backend(anyhow!(
+                "remote command failed with exit status {}: {detail}",
+                output.status
+            )));
+        }
+        Ok(output.stdout)
+    }
+
+    async fn run_script_via_terminal(
+        &self,
+        command: &str,
+    ) -> AgentResult<crate::terminal_script::TerminalScriptOutput> {
+        use crate::terminal_script::{
+            TerminalScriptMarkers, parse_terminal_script_output, terminal_script_input,
+            terminal_script_status,
+        };
+
+        if self.is_suggest_only() {
+            return Err(self.suggest_only_error());
+        }
+        let handle = self.terminal_exec.as_ref().ok_or_else(|| {
+            AgentError::Backend(anyhow!(
+                "this target runs commands in its terminal tab; open the Telnet session and keep it connected"
+            ))
+        })?;
+        let markers = TerminalScriptMarkers::new(unique_terminal_token());
+        let end = markers.end();
+
+        let mut guard = handle.output_tap.lock().await;
+        let receiver = guard
+            .as_mut()
+            .ok_or_else(|| AgentError::Backend(anyhow!("terminal output tap is closed")))?;
+        receiver.drain_pending();
+        let mut command_guard =
+            handle.begin_command(terminal_script_input(command, &markers), &end)?;
+
+        let mut collected = String::new();
+        let wait = tokio::time::timeout(TERMINAL_SCRIPT_TIMEOUT, async {
+            loop {
+                let Some(chunk) = receiver.recv().await else {
+                    let message = if receiver.overflowed() {
+                        "terminal output tap overflowed before command completion"
+                    } else {
+                        "terminal output tap closed before command completion"
+                    };
+                    return Err(AgentError::Backend(anyhow!(message)));
+                };
+                collected.push_str(&String::from_utf8_lossy(&chunk));
+                if terminal_script_status(&collected, &markers).is_some() {
+                    return Ok(());
+                }
+                if collected.len() > TERMINAL_SCRIPT_MAX_COLLECTED_BYTES {
+                    return Err(AgentError::Backend(anyhow!(
+                        "terminal command produced more output than the agent accepts"
+                    )));
+                }
+            }
+        })
+        .await;
+
+        match wait {
+            Ok(Ok(())) => command_guard.complete(),
+            Ok(Err(error)) => {
+                let _ = command_guard
+                    .cancel_and_wait(TERMINAL_INTERRUPT_SETTLE_TIMEOUT)
+                    .await;
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = command_guard
+                    .cancel_and_wait(TERMINAL_INTERRUPT_SETTLE_TIMEOUT)
+                    .await;
+                return Err(AgentError::Backend(anyhow!(
+                    "timed out waiting for the terminal command; the target needs a POSIX shell prompt"
+                )));
+            }
+        }
+        parse_terminal_script_output(&collected, &markers)
+    }
+
+    /// Resolves a workspace path with a shell probe, mirroring the SFTP
+    /// resolver used for SSH targets (relative paths start at `$HOME`).
+    async fn resolve_path_via_terminal(
+        &self,
+        normalized: &str,
+    ) -> AgentResult<miaominal_sftp::ResolvedRemotePath> {
+        let denied = |reason: String| AgentError::Denied {
+            tool_name: format!("path:{normalized}"),
+            reason,
+        };
+        let probe = crate::terminal_script::path_probe_command(&crate::path_guard::shell_quote(
+            normalized,
+            ShellType::Posix,
+        ));
+        let output = self.run_script_via_terminal(&probe).await?;
+        match output.status {
+            0 => {}
+            2 => {
+                return Err(AgentError::InvalidPath(format!(
+                    "`{normalized}` does not exist"
+                )));
+            }
+            status => {
+                return Err(denied(format!(
+                    "remote path could not be resolved safely (exit status {status}): {}",
+                    output.stderr.trim()
+                )));
+            }
+        }
+        let probed = crate::terminal_script::parse_path_probe(&output.stdout).map_err(|error| {
+            denied(format!("remote path could not be resolved safely: {error}"))
+        })?;
+        Ok(miaominal_sftp::ResolvedRemotePath {
+            requested_path: normalized.to_string(),
+            canonical_path: probed.canonical_path,
+            kind: probed.kind,
+            is_symlink: probed.is_symlink,
+        })
     }
 
     /// Execute a command inside the user-visible terminal tab's PTY.
@@ -1318,12 +1513,18 @@ impl AgentExecChannel {
 
         // Send wrapper + Enter as raw bytes (no stty, no bracketed paste).
         let wrapper = format!("{}\r", command.into());
+        let mut guard = handle.output_tap.lock().await;
+        // Output queued since the previous command cannot contain this
+        // command's unique sentinel; dropping it keeps the small tap from
+        // overflowing on prompts and banners.
+        if let Some(receiver) = guard.as_mut() {
+            receiver.drain_pending();
+        }
         let mut command_guard = handle.begin_command(wrapper.into_bytes(), sentinel)?;
 
         let mut collected = String::new();
         let sentinel_owned = sentinel.to_string();
         let wait_result = {
-            let mut guard = handle.output_tap.lock().await;
             let receiver = guard
                 .as_mut()
                 .ok_or_else(|| AgentError::Backend(anyhow!("terminal output tap is closed")))?;
@@ -2171,5 +2372,169 @@ mod tests {
                 .chars()
                 .all(|character| character == '🚀' || character == '你')
         );
+    }
+
+    mod telnet_terminal_exec {
+        use super::*;
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD;
+        use miaominal_core::profile::ProfileKind;
+        use miaominal_ssh::{SessionChannels, SessionCommand};
+
+        fn telnet_profile() -> SessionProfile {
+            let mut profile = profile(ShellType::Posix);
+            profile.kind = ProfileKind::Telnet;
+            profile.telnet_agent_exec = true;
+            profile
+        }
+
+        fn channel_without_terminal() -> AgentExecChannel {
+            AgentExecChannel::for_profile(
+                telnet_profile(),
+                vec![],
+                SecretStore::new_locked_vault(),
+                KnownHostsStore::with_path(std::env::temp_dir().join("agent-telnet-known-hosts")),
+            )
+        }
+
+        /// Decoded script and token of one typed command, once complete.
+        fn typed_script(input: &str) -> Option<(String, String)> {
+            if !input.ends_with("\"$?\"\r") {
+                return None;
+            }
+            let mut lines = input.split('\r');
+            let first = lines.next()?;
+            let token = first.split("<<'").nth(1)?.strip_suffix("_X'")?.to_string();
+            let encoded: String = lines.take_while(|line| !line.starts_with(&token)).collect();
+            let script = String::from_utf8(STANDARD.decode(encoded).ok()?).ok()?;
+            Some((token, script))
+        }
+
+        /// Fake Telnet shell: echoes the typed input (as a Telnet server
+        /// does) and replays canned results for the decoded script.
+        fn spawn_fake_terminal(
+            mut commands: tokio::sync::mpsc::UnboundedReceiver<SessionCommand>,
+            tap: TerminalOutputTap,
+        ) -> tokio::task::JoinHandle<Vec<String>> {
+            tokio::spawn(async move {
+                let mut scripts = Vec::new();
+                let mut input = String::new();
+                while let Some(command) = commands.recv().await {
+                    let SessionCommand::Send(bytes) = command else {
+                        continue;
+                    };
+                    input.push_str(&String::from_utf8_lossy(&bytes));
+                    let Some((token, script)) = typed_script(&input) else {
+                        continue;
+                    };
+                    let echo = input.replace('\r', "\r\n> ");
+                    input.clear();
+                    let (stdout, stderr, status) = if script.contains("readlink -f") {
+                        ("d\n0\n/home/akko\n", "", 0)
+                    } else if script.contains("fail-me") {
+                        ("", "boom\n", 3)
+                    } else {
+                        ("hello\n", "", 0)
+                    };
+                    let reply = format!(
+                        "{echo}{token}_O\r\n{}\r\n{token}_R\r\n{}\r\n\r\n{token}_E{status}\r\n$ ",
+                        STANDARD.encode(stdout),
+                        STANDARD.encode(stderr),
+                    );
+                    tap.try_send(reply.into_bytes())
+                        .expect("agent should be reading the tap");
+                    scripts.push(script);
+                }
+                scripts
+            })
+        }
+
+        #[tokio::test]
+        async fn telnet_exec_and_path_resolution_run_in_the_terminal() {
+            let SessionChannels {
+                connection,
+                commands,
+                ..
+            } = miaominal_ssh::session_channels();
+            let (tap, output) = TerminalOutputTap::channel();
+            // Output that arrived before the agent ran anything.
+            for _ in 0..3 {
+                tap.try_send(b"stale prompt $ ".to_vec()).unwrap();
+            }
+            let fake = spawn_fake_terminal(commands, tap.clone());
+            let channel = channel_without_terminal()
+                .with_terminal_exec(TerminalExecHandle::new(connection.commands.clone(), output));
+
+            assert!(channel.is_terminal_only());
+            assert_eq!(channel.exec("echo hello").await.unwrap(), "hello\n");
+
+            let error = channel.exec("fail-me").await.unwrap_err().to_string();
+            assert!(error.contains("exit status 3"), "{error}");
+            assert!(error.contains("boom"), "{error}");
+
+            let authorized = channel
+                .authorize_existing_path(".", AgentPathAccess::Read, RemotePathKind::Directory)
+                .await
+                .unwrap();
+            assert_eq!(authorized.as_str(), "/home/akko");
+
+            let wrong_kind = channel
+                .authorize_existing_path(".", AgentPathAccess::Read, RemotePathKind::File)
+                .await
+                .unwrap_err();
+            assert!(matches!(wrong_kind, AgentError::InvalidPath(_)));
+
+            drop(channel);
+            drop(connection);
+            let scripts = fake.await.unwrap();
+            assert_eq!(scripts.len(), 4);
+            assert!(scripts[0].contains("( echo hello\n) </dev/null"));
+            assert!(scripts[2].contains("cd \"$HOME\""));
+        }
+
+        #[tokio::test]
+        async fn read_only_telnet_targets_never_type_into_the_terminal() {
+            let mut profile = telnet_profile();
+            profile.telnet_agent_exec = false;
+            let SessionChannels {
+                connection,
+                mut commands,
+                ..
+            } = miaominal_ssh::session_channels();
+            let (_tap, output) = TerminalOutputTap::channel();
+            let channel = AgentExecChannel::for_profile(
+                profile,
+                vec![],
+                SecretStore::new_locked_vault(),
+                KnownHostsStore::with_path(std::env::temp_dir().join("agent-telnet-read-only")),
+            )
+            .with_terminal_exec(TerminalExecHandle::new(connection.commands.clone(), output));
+
+            assert!(channel.is_suggest_only());
+            let error = channel.exec("show version").await.unwrap_err();
+            assert!(matches!(error, AgentError::Denied { .. }), "{error}");
+            let error = channel
+                .call_tool(AgentToolCallRequest {
+                    tool_name: "read".into(),
+                    arguments: serde_json::json!({"path": "/etc/hosts"}),
+                    approved: true,
+                    route: None,
+                    skip_policy: true,
+                })
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("terminal_read"), "{error}");
+            assert!(commands.try_recv().is_err(), "nothing may be typed");
+        }
+
+        #[tokio::test]
+        async fn telnet_exec_without_an_open_terminal_explains_why() {
+            let error = channel_without_terminal()
+                .exec("echo hello")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("terminal tab"), "{error}");
+        }
     }
 }

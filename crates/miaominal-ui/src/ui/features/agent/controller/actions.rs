@@ -1086,10 +1086,49 @@ impl AgentController {
                     {
                         continue;
                     }
-                    resolved.aux_channels.insert(
-                        format!("@{}", profile.name),
-                        self.agent_exec_channel_for_profile(profile.clone()),
-                    );
+                    let channel = if profile.agent_suggests_only() {
+                        // Read-only Telnet target: known to the model, runs nothing.
+                        self.agent_exec_channel_for_profile(profile.clone())
+                    } else if profile.is_telnet() {
+                        // Telnet has no exec channel; lease its open terminal tab.
+                        let Some(target) = self.terminal_targets().into_iter().find(|target| {
+                            target.profile_id == profile.id && target.command_available
+                        }) else {
+                            continue;
+                        };
+                        if active_terminal_tab_id == Some(target.tab_id) {
+                            resolved_names.push(profile.name.clone());
+                            continue;
+                        }
+                        match self.acquire_terminal(target.tab_id) {
+                            Ok(TerminalLeaseGrant {
+                                commands,
+                                output,
+                                lease,
+                            }) => {
+                                resolved.leases.push(lease);
+                                self.agent_exec_channel_for_profile(profile.clone())
+                                    .with_terminal_exec(TerminalExecHandle::new(commands, output))
+                            }
+                            Err(TerminalLeaseError::Busy) => {
+                                retire_session_agent_pty_leases(&resolved.leases);
+                                return ResolvedMentions {
+                                    pty_busy: true,
+                                    ..Default::default()
+                                };
+                            }
+                            Err(TerminalLeaseError::Missing | TerminalLeaseError::Disconnected) => {
+                                continue;
+                            }
+                        }
+                    } else if profile.is_ssh() {
+                        self.agent_exec_channel_for_profile(profile.clone())
+                    } else {
+                        continue;
+                    };
+                    resolved
+                        .aux_channels
+                        .insert(format!("@{}", profile.name), channel);
                     resolved_names.push(profile.name.clone());
                 }
             }
@@ -1106,6 +1145,15 @@ impl AgentController {
                     };
                     if active_terminal_tab_id == Some(target.tab_id) {
                         resolved_names.push(target.title.clone());
+                        continue;
+                    }
+                    if profile.agent_suggests_only() {
+                        // Read-only Telnet target: no terminal lease needed.
+                        resolved.aux_channels.insert(
+                            format!("@{}", target.title),
+                            self.agent_exec_channel_for_profile(profile),
+                        );
+                        resolved_names.push(target.title);
                         continue;
                     }
                     let TerminalLeaseGrant {

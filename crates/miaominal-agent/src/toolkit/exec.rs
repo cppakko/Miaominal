@@ -96,8 +96,32 @@ fn target_info(name: &str, channel: &AgentExecChannel, is_default: bool) -> Targ
         exec_shell: shell_name(shell).into(),
         cwd: String::new(),
         pty: channel.uses_pty(),
-        notes: Vec::new(),
+        notes: if channel.is_suggest_only() {
+            vec![SUGGEST_ONLY_NOTE.into()]
+        } else if channel.is_terminal_only() {
+            vec![TERMINAL_ONLY_NOTE.into()]
+        } else {
+            Vec::new()
+        },
     }
+}
+
+/// Telnet targets have no exec channel or SFTP: every tool call is typed into
+/// the user's visible terminal, so the model should keep calls few and small.
+const TERMINAL_ONLY_NOTE: &str = "telnet target: every command is typed into the user's visible terminal (no exec channel, no SFTP); prefer few, short commands and avoid large outputs";
+
+/// Read-only Telnet targets: the model sees the screen but runs nothing.
+const SUGGEST_ONLY_NOTE: &str = "telnet target (read-only): you cannot run commands or read files here; suggest each command in a fenced code block (one command per block) with what it does and its risk, and use terminal_read to see the result after the user runs it";
+
+/// Whether no configured target can run anything, so execution tools are
+/// not offered at all.
+fn all_targets_suggest_only(channel: &AgentExecChannel) -> bool {
+    channel.is_suggest_only()
+        && channel.aux_target_names().iter().all(|name| {
+            channel
+                .target_channel(Some(name))
+                .map_or(true, AgentExecChannel::is_suggest_only)
+        })
 }
 
 fn shell_name(shell: ShellType) -> &'static str {
@@ -201,7 +225,12 @@ fn patch_paths(patch: &str) -> Vec<String> {
 impl ToolRuntime for ChannelToolRuntime {
     fn specs(&self, options: &ToolSetOptions) -> Vec<ToolSpec> {
         let mut options = options.clone();
-        if self.inner.channel.is_none() {
+        if self
+            .inner
+            .channel
+            .as_ref()
+            .is_none_or(all_targets_suggest_only)
+        {
             options.has_targets = false;
         }
         if self.inner.terminal.is_none() {
@@ -267,6 +296,11 @@ impl ToolRuntime for ChannelToolRuntime {
             }
             for (name, target_channel, is_default) in entries {
                 let base = target_info(&name, &target_channel, is_default);
+                // Probing would type into a read-only target's terminal.
+                if target_channel.is_suggest_only() {
+                    targets.push(base);
+                    continue;
+                }
                 targets.push(probe_target(base, target_channel).await);
             }
             Some(targets)
@@ -350,14 +384,14 @@ fn target_info_from_probe(mut base: TargetInfo, output: ToolOutput) -> TargetInf
     }
     base.cwd = cwd;
     let yes_no = |value: bool| if value { "yes" } else { "no" };
-    base.notes = vec![format!(
+    base.notes.push(format!(
         "tools: rg={} git={} python3={} patch={} sed={}",
         yes_no(capabilities.rg),
         yes_no(capabilities.git),
         yes_no(capabilities.python3),
         yes_no(capabilities.patch),
         yes_no(capabilities.sed),
-    )];
+    ));
     base
 }
 
@@ -385,6 +419,9 @@ impl ChannelToolRuntime {
         } else {
             None
         };
+        if channel.is_some_and(AgentExecChannel::is_suggest_only) {
+            return Err(format!("Denied: {}.", crate::channel::SUGGEST_ONLY_REASON));
+        }
 
         match call.name.as_str() {
             "shell" | "job_start" => {
@@ -1311,5 +1348,83 @@ mod tests {
         let runtime = ChannelToolRuntime::new(None, "web", None);
         let outcome = terminal_read(&runtime.inner, &json!({}));
         assert_eq!(outcome.status, ToolResultStatus::Failed);
+    }
+
+    fn telnet_runtime(exec_enabled: bool) -> ChannelToolRuntime {
+        let mut profile = miaominal_core::profile::SessionProfile::blank("telnet", 1);
+        profile.kind = miaominal_core::profile::ProfileKind::Telnet;
+        profile.name = "switch".into();
+        profile.host = "switch.lan".into();
+        profile.telnet_agent_exec = exec_enabled;
+        let channel = AgentExecChannel::for_profile(
+            profile,
+            vec![],
+            miaominal_secrets::SecretStore::new_locked_vault(),
+            miaominal_storage::known_hosts_store::KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-telnet-suggest-known-hosts"),
+            ),
+        );
+        ChannelToolRuntime::new(Some(channel), "switch", None)
+    }
+
+    #[test]
+    fn suggest_only_telnet_targets_offer_no_execution_tools() {
+        let options = ToolSetOptions {
+            has_targets: true,
+            web_search: true,
+            ..Default::default()
+        };
+        let names = |runtime: &ChannelToolRuntime| -> Vec<String> {
+            runtime
+                .specs(&options)
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect()
+        };
+
+        let read_only = names(&telnet_runtime(false));
+        assert!(
+            !read_only.iter().any(|name| name == "shell"),
+            "{read_only:?}"
+        );
+        assert!(
+            read_only.iter().any(|name| name == "web_search"),
+            "{read_only:?}"
+        );
+        assert!(
+            names(&telnet_runtime(true))
+                .iter()
+                .any(|name| name == "shell")
+        );
+    }
+
+    #[test]
+    fn suggest_only_telnet_targets_refuse_calls_and_explain_why() {
+        let runtime = telnet_runtime(false);
+        let denied = runtime
+            .assess_sync(&invocation("shell", json!({"command": "show version"})))
+            .unwrap_err();
+        assert!(denied.contains("read-only"), "{denied}");
+        assert!(denied.contains("terminal_read"), "{denied}");
+        assert!(
+            runtime
+                .assess_sync(&invocation("web_fetch", json!({"url": "https://x"})))
+                .is_ok()
+        );
+
+        let infos = runtime.target_infos();
+        assert!(infos[0].notes[0].contains("read-only"));
+        let infos = telnet_runtime(true).target_infos();
+        assert!(infos[0].notes[0].contains("visible terminal"));
+    }
+
+    #[tokio::test]
+    async fn suggest_only_targets_are_never_probed() {
+        let infos = telnet_runtime(false)
+            .environment()
+            .await
+            .expect("configured target");
+        assert_eq!(infos.len(), 1);
+        assert!(infos[0].notes[0].contains("read-only"));
     }
 }

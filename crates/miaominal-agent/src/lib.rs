@@ -13,6 +13,7 @@ pub mod model;
 mod path_guard;
 pub mod policy;
 mod runtime;
+mod terminal_script;
 pub mod toolkit;
 mod tools;
 pub mod transcript;

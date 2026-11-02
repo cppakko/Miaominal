@@ -62,8 +62,14 @@ impl AgentController {
                             .and_then(|id| self.catalog_query.profile(&id))
                     });
                 profile.map(|profile| SessionAgentExecutionContext {
+                    // Telnet has no exec channel: commands always run in its
+                    // terminal tab, whichever mode the composer selects.
+                    exec_mode: if profile.is_telnet() {
+                        AgentExecMode::Pty
+                    } else {
+                        AgentExecMode::ExecChannel
+                    },
                     profile_id: profile.id,
-                    exec_mode: AgentExecMode::ExecChannel,
                     terminal_tab_id: active_tab_id,
                 })
             }
@@ -110,6 +116,13 @@ impl AgentController {
         if context.exec_mode != AgentExecMode::Pty {
             return Ok(None);
         }
+        // Read-only Telnet targets run nothing, so they never take the terminal.
+        if self
+            .profile_for_execution_context(context)
+            .is_some_and(|profile| profile.agent_suggests_only())
+        {
+            return Ok(None);
+        }
 
         let Some(tab_id) = context.terminal_tab_id else {
             return Err(i18n::string(
@@ -141,6 +154,15 @@ pub(in crate::ui) fn insertable_command(code: &str) -> Option<String> {
     (!command.trim().is_empty() && !command.contains(['\r', '\n'])).then(|| command.to_string())
 }
 
+/// `user@host` for SSH; Telnet logins are optional, so its summary is used.
+fn candidate_detail(profile: &SessionProfile) -> String {
+    if profile.is_telnet() {
+        profile.summary()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    }
+}
+
 pub(in crate::ui) fn agent_target_candidates(
     exec_mode: AgentExecMode,
     profiles: &[SessionProfile],
@@ -149,11 +171,23 @@ pub(in crate::ui) fn agent_target_candidates(
     match exec_mode {
         AgentExecMode::ExecChannel => profiles
             .iter()
-            .filter(|profile| !profile.is_local())
-            .map(|profile| SessionAgentTargetCandidate {
-                name: profile.name.clone(),
-                detail: format!("{}@{}", profile.username, profile.host),
-                resolved: true,
+            .filter_map(|profile| {
+                // Telnet hosts are reachable only through their open terminal tab.
+                let resolved = if profile.is_ssh() {
+                    true
+                } else if profile.is_telnet() {
+                    terminal_targets
+                        .iter()
+                        .find(|target| target.profile_id == profile.id)?
+                        .command_available
+                } else {
+                    return None;
+                };
+                Some(SessionAgentTargetCandidate {
+                    name: profile.name.clone(),
+                    detail: candidate_detail(profile),
+                    resolved,
+                })
             })
             .collect(),
         AgentExecMode::Pty => terminal_targets
@@ -162,13 +196,13 @@ pub(in crate::ui) fn agent_target_candidates(
                 profiles
                     .iter()
                     .find(|profile| profile.id == target.profile_id)
-                    .is_none_or(|profile| !profile.is_local())
+                    .is_none_or(|profile| profile.is_ssh() || profile.is_telnet())
             })
             .map(|target| {
                 let detail = profiles
                     .iter()
                     .find(|profile| profile.id == target.profile_id)
-                    .map(|profile| format!("{}@{}", profile.username, profile.host))
+                    .map(candidate_detail)
                     .unwrap_or_else(|| {
                         i18n::string("workspace.panel.agent.messages.terminal_session")
                     });
@@ -247,5 +281,35 @@ mod tests {
         assert_eq!(insertable_command("conf t\ninterface g0/1\n"), None);
         assert_eq!(insertable_command("echo a\r\necho b"), None);
         assert_eq!(insertable_command("\n  \n"), None);
+    }
+
+    fn telnet_profile(id: &str, name: &str) -> SessionProfile {
+        let mut profile = SessionProfile::blank(id, 1);
+        profile.kind = miaominal_core::profile::ProfileKind::Telnet;
+        profile.name = name.to_string();
+        profile.host = "switch.lan".to_string();
+        profile.port = 23;
+        profile
+    }
+
+    #[test]
+    fn telnet_targets_need_their_open_terminal_tab() {
+        let profiles = vec![
+            ssh_profile("ssh-a", "A"),
+            telnet_profile("telnet-open", "Open"),
+            telnet_profile("telnet-closed", "Closed"),
+        ];
+        let targets = vec![terminal(7, "telnet-open", "Open")];
+
+        let exec = agent_target_candidates(AgentExecMode::ExecChannel, &profiles, &targets);
+        let names: Vec<_> = exec.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["A", "Open"]);
+        assert_eq!(exec[1].detail, "switch.lan:23");
+        assert!(exec[1].resolved);
+
+        let pty = agent_target_candidates(AgentExecMode::Pty, &profiles, &targets);
+        assert_eq!(pty.len(), 1);
+        assert_eq!(pty[0].name, "Open");
+        assert_eq!(pty[0].detail, "switch.lan:23");
     }
 }

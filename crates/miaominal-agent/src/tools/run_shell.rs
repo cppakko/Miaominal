@@ -44,13 +44,20 @@ pub async fn run_shell(channel: &AgentExecChannel, args: RunShellArgs) -> AgentR
             .unwrap_or(0),
     );
 
-    let exec_path = select_exec_path_for_shell(
-        st,
-        channel.terminal_exec().is_some(),
-        channel.uses_pty(),
-        explicit_shell,
-        &cwd,
-    );
+    let exec_path = if channel.is_terminal_only() {
+        // Terminal-only targets run the exec wrapper as a typed script
+        // (see `terminal_script`), which keeps stderr, exit status and the
+        // timeout exactly like an SSH exec channel.
+        ShellExecPath::Exec
+    } else {
+        select_exec_path_for_shell(
+            st,
+            channel.terminal_exec().is_some(),
+            channel.uses_pty(),
+            explicit_shell,
+            &cwd,
+        )
+    };
     let command = match st {
         ShellType::PowerShell => {
             build_powershell_non_terminal(&args.command, &cwd, timeout_secs, max_bytes, st)
