@@ -72,7 +72,7 @@ pub(crate) fn editor_footer_button(
         .border_0()
         .bg(background)
         .text_color(foreground)
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight::NORMAL)
         .accessibility_label(label.clone())
         .child(content.child(label))
         .on_click(move |_, window, cx| on_click(window, cx))

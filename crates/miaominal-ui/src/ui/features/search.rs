@@ -338,7 +338,7 @@ impl Render for SearchView {
                                     .gap(space(8.0))
                                     .text_size(space(ShellTypography::BODY_SIZE))
                                     .line_height(space(ShellTypography::SEARCH_GROUP_LINE_HEIGHT))
-                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::NORMAL)
                                     .text_color(colors.primary)
                                     .child(i18n::string(if recent {
                                         "search.recent"
@@ -441,7 +441,7 @@ impl Render for SearchView {
                                                     .truncate()
                                                     .text_size(space(ShellTypography::TITLE_SIZE))
                                                     .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
-                                                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                                    .font_weight(gpui_kit::FontWeight::NORMAL)
                                                     .child(entry.title().to_owned()),
                                             )
                                             .child(

@@ -1013,9 +1013,7 @@ impl ChromeAppViewExt for AppView {
                                 .truncate()
                                 .text_size(space(ShellTypography::BODY_SIZE))
                                 .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
-                                .when(is_active, |label| {
-                                    label.font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                })
+                                .font_weight(gpui_kit::FontWeight::NORMAL)
                                 .child(snapshot.title.clone()),
                         )
                         .on_click(move |_, window, cx| {
@@ -1451,7 +1449,7 @@ impl ChromeAppViewExt for AppView {
                     .gap(space(12.0))
                     .child(
                         div()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::NORMAL)
                             .child(i18n::string("hosts.home.session_info")),
                     )
                     .child(div().child(detail_name.clone()))

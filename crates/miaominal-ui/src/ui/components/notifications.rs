@@ -910,7 +910,7 @@ pub(crate) fn section_label(
 ) -> AnyElement {
     div()
         .text_sm()
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight::NORMAL)
         .text_color(rgb(roles.on_surface_variant))
         .child(label.into())
         .into_any_element()

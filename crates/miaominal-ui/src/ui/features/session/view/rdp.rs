@@ -258,7 +258,7 @@ fn section_label(label: String, roles: miaominal_settings::theme::Md3Roles) -> A
     div()
         .w_full()
         .text_size(miaominal_settings::FontSize::Heading.scaled())
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight::NORMAL)
         .text_color(rgb(roles.on_surface_variant))
         .child(label)
         .into_any_element()
@@ -501,7 +501,7 @@ impl SessionController {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::NORMAL)
                             .child(runtime.profile_name().to_string()),
                     )
                     .child(

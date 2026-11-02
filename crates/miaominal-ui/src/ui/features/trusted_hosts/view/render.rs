@@ -253,7 +253,7 @@ fn trusted_host_card(
         })
         .child(catalog_card_content(
             catalog_card_icon(AppIcon::FingerPrint),
-            catalog_card_title(address),
+            catalog_card_title(address).font_weight(FontWeight::MEDIUM),
             view.linked_profiles
                 .first()
                 .map(|profile| SharedString::from(profile.name.clone())),

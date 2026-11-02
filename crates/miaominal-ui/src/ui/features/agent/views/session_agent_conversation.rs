@@ -913,14 +913,14 @@ fn render_session_agent_text_action_button(
         .accessibility_label(label.clone())
         .when(full_width, |this| this.w_full())
         .map(|button| match description {
-            None => button.label(label),
+            None => button.font_weight(FontWeight::SEMIBOLD).label(label),
             Some(description) => button.h_auto().min_h_8().py_2().rounded_lg().child(
                 v_flex()
                     .w_full()
                     .min_w_0()
                     .whitespace_normal()
                     .gap_1()
-                    .child(div().font_weight(FontWeight::MEDIUM).child(label))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
                     .child(
                         div()
                             .text_color(rgb(if primary {
@@ -1310,7 +1310,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
                             .child(
                                 div()
                                     .text_size(miaominal_settings::FontSize::Input.scaled())
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(roles.on_surface))
                                     .child(session_agent_tool_title(&tool_call.name)),
                             )

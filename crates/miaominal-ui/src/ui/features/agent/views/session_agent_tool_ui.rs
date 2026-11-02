@@ -107,7 +107,7 @@ pub(in crate::ui::features::agent) fn render_tool_terminal_block_content(
                 .px_3()
                 .pt_2()
                 .text_size(miaominal_settings::FontSize::Body.scaled())
-                .font_weight(FontWeight::MEDIUM)
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(colors.text_muted))
                 .child(label),
         )

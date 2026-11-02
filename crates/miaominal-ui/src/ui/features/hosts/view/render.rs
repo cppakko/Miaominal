@@ -375,9 +375,7 @@ impl HostsController {
                         .truncate()
                         .text_size(space(ShellTypography::BODY_SIZE))
                         .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
-                        .when(active, |label| {
-                            label.font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                        })
+                        .font_weight(gpui_kit::FontWeight::NORMAL)
                         .child(label),
                 )
                 .child(
@@ -552,7 +550,7 @@ fn section_heading(text: String) -> impl IntoElement {
         .truncate()
         .text_size(space(ShellTypography::TITLE_SIZE))
         .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
-        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+        .font_weight(gpui_kit::FontWeight::NORMAL)
         .text_color(ShellColors::current().foreground)
         .child(text)
 }

@@ -97,7 +97,7 @@ fn fab_base(
     Button::new(id)
         .large()
         .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight::NORMAL)
         .occlude()
         .custom(
             ButtonCustomVariant::new(cx)

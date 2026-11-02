@@ -46,7 +46,7 @@ pub(in crate::ui) fn catalog_card_title(text: impl Into<SharedString>) -> Div {
         .truncate()
         .text_size(space(ShellTypography::TITLE_SIZE))
         .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight::NORMAL)
         .text_color(ShellColors::current().foreground)
         .child(text.into())
 }
@@ -122,4 +122,25 @@ pub(in crate::ui) fn catalog_card_content(
                 }),
         )
         .when_some(trailing, |row, trailing| row.child(trailing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_titles_keep_regular_weight_without_changing_size_or_line_height() {
+        let mut title = catalog_card_title("Profile");
+        let style = title.text_style();
+
+        assert_eq!(style.font_weight, Some(FontWeight::NORMAL));
+        assert_eq!(
+            style.font_size,
+            Some(space(ShellTypography::TITLE_SIZE).into())
+        );
+        assert_eq!(
+            style.line_height,
+            Some(space(ShellTypography::TITLE_LINE_HEIGHT).into())
+        );
+    }
 }
