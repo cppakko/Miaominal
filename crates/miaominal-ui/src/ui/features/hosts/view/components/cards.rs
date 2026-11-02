@@ -149,7 +149,12 @@ pub(in crate::ui::features::hosts) fn host_card(
                         })
                         .child(content),
                 )
-                .on_click(move |_, window, cx| on_connect(window, cx)),
+                .on_click(move |event, window, cx| {
+                    // A double/triple-click is one activation, not multiple sessions.
+                    if event.click_count() == 1 {
+                        on_connect(window, cx);
+                    }
+                }),
         )
         .child(
             div()
@@ -299,6 +304,67 @@ mod interaction_tests {
                 assert_eq!(connects.get(), 1);
             }
             assert_eq!(more.get(), 3);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn card_multi_click_connects_once_and_allows_later_activations(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let connects = Rc::new(Cell::new(0));
+        let more = Rc::new(Cell::new(0));
+        let output = connects.clone();
+        let more_output = more.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|_| CardHarness {
+                profile: SessionProfile::blank("fixture", 0),
+                connects: output,
+                more: more_output,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.double_click("fixture:connect", cx);
+            assert_eq!(connects.get(), 1, "a double-click must connect only once");
+            window.click_with_options(
+                "fixture:connect",
+                gpui_kit::test::ClickOptions::new().with_count(3),
+                cx,
+            );
+            assert_eq!(connects.get(), 2, "a triple-click must connect only once");
+            window.click("fixture:connect", cx);
+            window.click("fixture:connect", cx);
+            assert_eq!(
+                connects.get(),
+                4,
+                "separate single-clicks must still connect"
+            );
+            assert_eq!(more.get(), 0);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn card_keyboard_activation_connects_once_per_press(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let connects = Rc::new(Cell::new(0));
+        let output = connects.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|_| CardHarness {
+                profile: SessionProfile::blank("fixture", 0),
+                connects: output,
+                more: Rc::new(Cell::new(0)),
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.focus_next(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("fixture:connect").focused(), Some(true));
+            window.press("enter", cx);
+            assert_eq!(connects.get(), 1);
+            window.press("space", cx);
+            assert_eq!(connects.get(), 2);
         });
     }
 
