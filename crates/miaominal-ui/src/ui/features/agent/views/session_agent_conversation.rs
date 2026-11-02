@@ -200,7 +200,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_markdown(
     message: &SessionAgentMessage,
     markdown_state: Option<Entity<TextViewState>>,
     _color: u32,
-    _entity: Entity<AgentController>,
+    entity: Entity<AgentController>,
     _window: &mut Window,
     _cx: &mut Context<AgentController>,
 ) -> gpui_kit::AnyElement {
@@ -232,6 +232,26 @@ pub(in crate::ui::features::agent) fn render_session_agent_markdown(
                 .code_block_actions(move |code_block, _window, _cx| {
                     let code = code_block.code();
                     let language = code_block.lang().unwrap_or_else(|| "text".into());
+                    // One-line commands can be typed into the terminal for the
+                    // user to review and run (Enter is never pressed).
+                    let insert = crate::ui::features::agent::controller::insertable_command(&code)
+                        .map(|command| {
+                            let entity = entity.clone();
+                            crate::ui::components::icon_button_with_tooltip(
+                                crate::ui::assets::AppIcon::Computer,
+                                i18n::string("workspace.panel.agent.tooltips.insert_into_terminal"),
+                                24.0,
+                                6.0,
+                                None,
+                                Some(on_surface_variant),
+                                None,
+                                move |_, cx| {
+                                    entity.update(cx, |controller, cx| {
+                                        controller.insert_command_into_terminal(&command, cx);
+                                    });
+                                },
+                            )
+                        });
 
                     gpui_kit::component::h_flex()
                         .gap_1()
@@ -245,6 +265,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_markdown(
                                 .text_color(rgb(on_surface_variant))
                                 .child(language.to_string()),
                         )
+                        .when_some(insert, |row, insert| row.child(insert))
                         .child(
                             gpui_kit::component::clipboard::Clipboard::new("copy")
                                 .value(code.clone()),

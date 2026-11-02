@@ -17,6 +17,18 @@ impl AgentController {
         self.session_terminal.targets()
     }
 
+    /// Types a suggested one-line command into the active terminal without
+    /// pressing Enter, so the user reviews and runs it themselves.
+    pub(in crate::ui) fn insert_command_into_terminal(&self, code: &str, cx: &mut App) -> bool {
+        let Some(command) = insertable_command(code) else {
+            return false;
+        };
+        let Some(target) = self.session_terminal.active_target() else {
+            return false;
+        };
+        self.session_terminal.paste_text(target.tab_id, command, cx)
+    }
+
     pub(in crate::ui) fn acquire_terminal(
         &self,
         tab_id: TabId,
@@ -121,6 +133,14 @@ impl AgentController {
     }
 }
 
+/// A code block that can be typed into a terminal without running anything:
+/// exactly one non-empty line (a newline would act as Enter on devices that
+/// do not support bracketed paste).
+pub(in crate::ui) fn insertable_command(code: &str) -> Option<String> {
+    let command = code.trim_matches(['\r', '\n']).trim_end();
+    (!command.trim().is_empty() && !command.contains(['\r', '\n'])).then(|| command.to_string())
+}
+
 pub(in crate::ui) fn agent_target_candidates(
     exec_mode: AgentExecMode,
     profiles: &[SessionProfile],
@@ -212,5 +232,20 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].name, "A");
         assert_eq!(candidates[0].detail, "user@example.test");
+    }
+
+    #[test]
+    fn only_single_line_commands_can_be_inserted_without_running() {
+        assert_eq!(
+            insertable_command("show running-config\n").as_deref(),
+            Some("show running-config")
+        );
+        assert_eq!(
+            insertable_command("  ls -la  ").as_deref(),
+            Some("  ls -la")
+        );
+        assert_eq!(insertable_command("conf t\ninterface g0/1\n"), None);
+        assert_eq!(insertable_command("echo a\r\necho b"), None);
+        assert_eq!(insertable_command("\n  \n"), None);
     }
 }

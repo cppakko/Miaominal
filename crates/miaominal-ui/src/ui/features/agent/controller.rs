@@ -47,6 +47,7 @@ pub(in crate::ui) use runtime::{
     SessionAgentToolCall, SessionAgentToolStatus, split_message_into_blocks,
     trailing_at_mention_query,
 };
+pub(in crate::ui) use session_ports::insertable_command;
 
 pub(in crate::ui) struct WorkspaceAgentForms {
     pub(in crate::ui) prompt_input: Entity<TextareaState>,

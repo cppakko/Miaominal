@@ -866,6 +866,7 @@ edit = "编辑后批准…"
 approve_edited = "按修改后的内容批准"
 
 [workspace.panel.agent.tooltips]
+insert_into_terminal = "填入终端（不会自动回车）"
 new_chat = "新建对话"
 close_panel = "关闭对话面板"
 back_to_history = "返回对话历史"

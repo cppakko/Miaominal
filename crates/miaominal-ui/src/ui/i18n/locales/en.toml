@@ -1004,6 +1004,7 @@ edit = "Edit and approve…"
 approve_edited = "Approve the edited version"
 
 [workspace.panel.agent.tooltips]
+insert_into_terminal = "Type into the terminal (does not press Enter)"
 new_chat = "New chat"
 close_panel = "Close chat panel"
 back_to_history = "Back to chat history"
