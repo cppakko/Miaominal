@@ -1314,7 +1314,6 @@ impl ChromeAppViewExt for AppView {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        use gpui_kit::component::popover::Popover;
         let colors = ShellColors::current();
         let active_tab = self
             .workspace
@@ -1359,16 +1358,6 @@ impl ChromeAppViewExt for AppView {
             active_tab.map(|tab| tab.status.clone()).unwrap_or_default()
         };
         let name = active_tab.map(|tab| tab.title.clone()).unwrap_or_default();
-        let endpoint = profile
-            .as_ref()
-            .map(|profile| {
-                if profile.is_local() {
-                    profile.local_shell.clone()
-                } else {
-                    format!("{}@{}:{}", profile.username, profile.host, profile.port)
-                }
-            })
-            .unwrap_or_default();
         let FooterMetrics {
             dimensions,
             traffic,
@@ -1413,54 +1402,6 @@ impl ChromeAppViewExt for AppView {
         drop(profiles);
         let wide =
             f32::from(window.bounds().size.width) / (f32::from(window.rem_size()) / 14.0) > 1100.0;
-        let detail_name = name.clone();
-        let detail_dimensions = dimensions.clone();
-        let detail_traffic = traffic.clone();
-        let session_info = Popover::new("footer-session-info")
-            .anchor(gpui_kit::Anchor::BottomRight)
-            .trigger(
-                Button::new("footer-session-info-trigger")
-                    .ghost()
-                    .accessibility_label(i18n::string("hosts.home.session_info"))
-                    .h(space(32.0))
-                    .max_w(space(if wide { 224.0 } else { 144.0 }))
-                    .text_color(colors.muted)
-                    .child(
-                        Icon::new(if local {
-                            AppIcon::Computer
-                        } else {
-                            AppIcon::LaptopMinimal
-                        })
-                        .small(),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(space(12.0))
-                            .child(name),
-                    )
-                    .child(Icon::new(AppIcon::ChevronUp).small()),
-            )
-            .content(move |_, _, _| {
-                v_flex()
-                    .w(space(320.0))
-                    .p(space(16.0))
-                    .gap(space(12.0))
-                    .child(
-                        div()
-                            .font_weight(gpui_kit::FontWeight::NORMAL)
-                            .child(i18n::string("hosts.home.session_info")),
-                    )
-                    .child(div().child(detail_name.clone()))
-                    .child(div().child(endpoint.clone()))
-                    .when_some(detail_dimensions.clone(), |column, value| {
-                        column.child(div().child(value))
-                    })
-                    .when_some(detail_traffic.clone(), |column, value| {
-                        column.child(div().child(value))
-                    })
-            });
         let monitor = entity.clone();
         let agent = entity.clone();
         let session_id = self
@@ -1577,16 +1518,13 @@ impl ChromeAppViewExt for AppView {
                             .text_color(colors.muted)
                             .child(context),
                     )
-                    .when(workspace, |row| {
-                        row.when(wide, |row| {
-                            row.when_some(dimensions, |row, value| {
-                                row.child(div().text_color(colors.muted).child(value))
-                            })
-                            .when_some(traffic, |row, value| {
-                                row.child(div().text_color(colors.muted).child(value))
-                            })
+                    .when(workspace && wide, |row| {
+                        row.when_some(dimensions, |row, value| {
+                            row.child(div().text_color(colors.muted).child(value))
                         })
-                        .child(session_info)
+                        .when_some(traffic, |row, value| {
+                            row.child(div().text_color(colors.muted).child(value))
+                        })
                     })
                     .child(
                         h_flex()

@@ -2369,7 +2369,6 @@ local = "本地终端"
 connect_name = "连接 {name}"
 ready = "就绪"
 summary = "{remote} 台 SSH 主机 · {local} 个本地终端"
-session_info = "会话信息"
 
 [search]
 result_count = "找到 {count} 个结果"

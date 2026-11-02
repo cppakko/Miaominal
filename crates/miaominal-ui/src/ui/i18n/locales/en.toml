@@ -2368,7 +2368,6 @@ local = "Local terminal"
 connect_name = "Connect to {name}"
 ready = "Ready"
 summary = "{remote} SSH hosts · {local} local terminals"
-session_info = "Session information"
 
 [search]
 result_count = "{count} results"
